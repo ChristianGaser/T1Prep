@@ -415,8 +415,9 @@ def crop_volume_with_idx(volume, crop_idx, aff=None, n_dims=None, return_copy=Tr
         raise Exception('cannot crop volumes with more than 3 dimensions')
 
     if aff is not None:
-        aff[0:3, -1] = aff[0:3, -1] + aff[:3, :3] @ crop_idx[:3]
-        return new_volume, aff
+        aff_crop = aff + 0 # we have to add zero to create a new variable and not overwrite aff
+        aff_crop[0:3, -1] = aff_crop[0:3, -1] + aff_crop[:3, :3] @ crop_idx[:3]
+        return new_volume, aff_crop
     else:
         return new_volume
 
@@ -529,7 +530,10 @@ def resample_volume(volume, aff, new_vox_size, interpolation='linear', blur=True
 
     start = - (factor - 1) / (2 * factor)
     step = 1.0 / factor
-    stop = start + step * np.ceil(volume_filt.shape * factor)
+    
+    # we have to rather use round instead of ceil to obtain reliable results for several resolutions
+    stop = start + step * np.round(volume_filt.shape * factor)
+    #stop = start + step * np.ceil(volume_filt.shape * factor)
 
     xi = np.arange(start=start[0], stop=stop[0], step=step[0])
     yi = np.arange(start=start[1], stop=stop[1], step=step[1])

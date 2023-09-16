@@ -2716,7 +2716,7 @@ def gaussian_kernel(sigma, max_sigma=None, blur_range=None, separable=True):
             sigma_tens = sigma_tens * tf.random.uniform(tf.shape(sigma_tens), minval=1 / blur_range, maxval=blur_range)
 
     # get size of blurring kernels
-    windowsize = np.int32(np.ceil(tissue_labels["GWM"] * max_sigma) / 2) * 2 + 1
+    windowsize = np.int32(np.ceil(2.5 * max_sigma) / 2) * 2 + 1
 
     if separable:
 
