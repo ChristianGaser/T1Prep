@@ -1,0 +1,7 @@
+------------------------------------------------------------------------
+r3 | gaser | 2023-09-16 20:09:41
+
+Changed paths:
+ M .gitignore
+
+First functional version
