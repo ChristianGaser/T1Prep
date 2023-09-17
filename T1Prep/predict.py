@@ -250,10 +250,14 @@ def predict(path_images,
         print('Apply nu-correction and skull-stripping' )
         resamp, aff_resamp, h_resamp = tools.load_volume(path_images, im_only=False, dtype='float32')
 
+        # resample original input to 1.0mm voxel size for bias correction
+        im_res = np.array([1.0]*3)
+        im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
+
         # resample original input to 0.5mm voxel size
         im_res = np.array([.5]*3)
         resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
-
+        
         # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
         cortex_mask = (seg == 3)  | (seg == 4)  | (seg == 41) | (seg == 42) | (seg == 24) | \
                       (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54) | (seg == 0)
@@ -266,10 +270,23 @@ def predict(path_images,
         cortex_mask = np.round(cortex_mask) > 0.5
         
         # correct vessels and skull-strip image
-        resamp = utils.correct_and_skull_strip(resamp, label, vessel_mask=cortex_mask)
-                    
+        print('Vessel-correction and skull-stripping')
+        resamp = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_mask=cortex_mask)
+        
+        # bias correction works better if it's called after vessel correction
+        # we use the 1mm data from SynthSeg because it's much faster
+        print('NU-correction')
+        bias = utils.get_bias_field(im, label0)
+
+        # resample bias field to 0.5mm voxel size
+        im_res = np.array([.5]*3)
+        bias, aff_resamp = edit_volumes.resample_volume(bias, aff, im_res)
+        
+        # apply bias correction
+        resamp -= bias
+        
         tools.save_volume(resamp, aff_resamp, h, path_resampled)
-                    
+                                          
     # write volumes to disc if necessary
     if path_volumes is not None:
         row = [os.path.basename(path_images).replace('.nii.gz', '')] + [str(vol) for vol in volumes]
@@ -280,7 +297,6 @@ def predict(path_images,
         qc_score = np.around(np.clip(np.squeeze(qc_score)[1:], 0, 1), 4)
         row = [os.path.basename(path_images).replace('.nii.gz', '')] + ['%.4f' % q for q in qc_score]
         write_csv(path_qc_scores, row, unique_qc_file, labels_qc, names_qc)
-
 
     if len(list_errors) > 0:
         print('\nERROR: some problems occured for the following inputs (see corresponding errors above):')
