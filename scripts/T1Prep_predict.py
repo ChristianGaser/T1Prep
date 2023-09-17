@@ -1,51 +1,39 @@
-"""
-This script enables to launch predictions with SynthSeg from the terminal.
-
-If you use this code, please cite one of the SynthSeg papers:
-https://github.com/BBillot/SynthSeg/blob/master/bibtex.bib
-
-Copyright 2020 Benjamin Billot
-
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in
-compliance with the License. You may obtain a copy of the License at
-https://www.apache.org/licenses/LICENSE-2.0
-Unless required by applicable law or agreed to in writing, software distributed under the License is
-distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-implied. See the License for the specific language governing permissions and limitations under the
-License.
-"""
+#!/usr/bin/env python3
 
 # python imports
 import os
 import sys
 from argparse import ArgumentParser
 
-# add main folder to python path and import ./SynthSeg/predict_synthseg.py
-synthseg_home = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0]))))
+# add main folder to python path and import ./ext/SynthSeg/predict_synthseg.py
+synthseg_home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
 sys.path.append(synthseg_home)
+sys.path.append(os.path.join(synthseg_home, 'ext'))
+
 model_dir = os.path.join(synthseg_home, 'models')
 labels_dir = os.path.join(synthseg_home, 'data/labels_classes_priors')
-from SynthSeg.predict_synthseg import predict
-
+from T1Prep.predict import predict
 
 # parse arguments
 parser = ArgumentParser(description="SynthSeg", epilog='\n')
 
 # input/outputs
-parser.add_argument("--i", help="Image(s) to segment. Can be a path to an image or to a folder.")
-parser.add_argument("--o", help="Segmentation output(s). Must be a folder if --i designates a folder.")
+parser.add_argument("--i", help="Image(s) to segment.")
+parser.add_argument("--o", help="Segmentation output(s).")
 parser.add_argument("--parc", action="store_true", help="(optional) Whether to perform cortex parcellation.")
 parser.add_argument("--robust", action="store_true", help="(optional) Whether to use robust predictions (slower).")
-parser.add_argument("--fast", action="store_true", help="(optional) Bypass some postprocessing for faster predictions.")
-parser.add_argument("--ct", action="store_true", help="(optional) Clip intensities to [0,80] for CT scans.")
-parser.add_argument("--vol", help="(optional) Path to output CSV file with volumes (mm3) for all regions and subjects.")
-parser.add_argument("--qc", help="(optional) Path to output CSV file with qc scores for all subjects.")
-parser.add_argument("--post", help="(optional) Posteriors output(s). Must be a folder if --i designates a folder.")
-parser.add_argument("--resample", help="(optional) Resampled image(s). Must be a folder if --i designates a folder.")
-parser.add_argument("--crop", nargs='+', type=int, help="(optional) Size of 3D patches to analyse. Default is 192.")
+parser.add_argument("--fast", action="store_true", help="(optional) Bypass some processing for faster prediction.")
+parser.add_argument("--vol", help="(optional) Output CSV file with volumes for all structures and subjects.")
+parser.add_argument("--qc", help="(optional) Output CSV file with qc scores for all subjects.")
+parser.add_argument("--post", help="(optional) Posteriors output(s).")
+parser.add_argument("--label", help="(optional) Label output(s).")
+parser.add_argument("--hemi", help="(optional) Hemispheric label output(s).")
+parser.add_argument("--resample", help="(optional) Resampled image(s).")
+parser.add_argument("--crop", nargs='+', type=int, help="(optional) Only analyse an image patch of the given size.")
 parser.add_argument("--threads", type=int, default=1, help="(optional) Number of cores to be used. Default is 1.")
 parser.add_argument("--cpu", action="store_true", help="(optional) Enforce running with CPU rather than GPU.")
 parser.add_argument("--v1", action="store_true", help="(optional) Use SynthSeg 1.0 (updated 25/06/22).")
+
 
 # check for no arguments
 if len(sys.argv) < 2:
@@ -122,15 +110,16 @@ predict(path_images=args['i'],
         names_segmentation=args['names_segmentation_labels'],
         labels_denoiser=args['labels_denoiser'],
         path_posteriors=args['post'],
+        path_label=args['label'],
+        path_hemi=args['hemi'],
         path_resampled=args['resample'],
         path_volumes=args['vol'],
         path_model_parcellation=args['path_model_parcellation'],
         labels_parcellation=args['labels_parcellation'],
         names_parcellation=args['names_parcellation_labels'],
+        path_qc_scores=args['qc'],
         path_model_qc=args['path_model_qc'],
         labels_qc=args['labels_qc'],
-        path_qc_scores=args['qc'],
         names_qc=args['names_qc_labels'],
         cropping=args['crop'],
-        topology_classes=args['topology_classes'],
-        ct=args['ct'])
+        topology_classes=args['topology_classes'])
