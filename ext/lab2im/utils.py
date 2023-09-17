@@ -1,3 +1,16 @@
+# emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
+# vi: set ft=python sts=4 ts=4 sw=4 et:
+#
+# STATEMENT OF CHANGES: This file is derived from sources licensed under the Apache 2.0 license
+# terms, and this file has been changed.
+#
+# The original file this work derives from is found at:
+# https://github.com/BBillot/SynthSeg/blob/0369118b9a0dbd410b35d1abde2529f0f46f9341/ext/lab2im/utils.py
+#
+# [September 2023] CHANGES:
+#    * removed data types np.int and np.float in reformat_to_list that are not supported 
+#      in newer numpy versions
+
 """
 This file contains all the utilities used in that project. They are classified in 5 categories:
 1- loading/saving functions:

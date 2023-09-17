@@ -19,9 +19,9 @@ tissue_labels = {
   "WM":  3.0
 }
 
-def correct_and_skull_strip(volume, label, vessel_mask=None):
+def suppress_vessels_and_skull_strip(volume, label, vessel_mask=None):
     """
-    Use label image to correct input volume for non-uniformities and skull-strip
+    Use label image to correct vessels in input volume and skull-strip
     the image by removing non-brain parts of the brain.
     """
     
@@ -47,24 +47,36 @@ def correct_and_skull_strip(volume, label, vessel_mask=None):
     # remove remaining background
     volume[label < 0.1] = 0
 
-    # bias correction works better if it's called after vessel correction
+    return volume
+
+def get_bias_field(volume, label):
+    """
+    Use label image to correct input volume for non-uniformities
+    We apply bias correction to the resampled image while the correction itself is
+    estimated using the 1mm images from SynthSeg which is quite faster
+    """
+    
+    # resample to 0.5mm voxel size
+    im_res = np.array([.5]*3)
+
+    # we need the final bias field later to apply it to the resampled data
+    bias = np.zeros(shape=np.shape(volume), dtype='float32')
+
     # we use decreasing smoothing sizes
-    print('NU correction')
-    for sigma in [24, 18, 12, 9, 6]:
-        bias = np.zeros(shape=np.shape(volume), dtype='float32')
+    for sigma in [12, 9, 6, 3]:
+        bias_step = np.zeros(shape=np.shape(volume), dtype='float32')
 
         for i in range(0, 3):
             tissue_idx = np.round(label) == i + 1
             mean_tissue = np.mean(np.array(volume[tissue_idx]))
-            bias[tissue_idx]  += volume[tissue_idx] - mean_tissue;
+            bias_step[tissue_idx]  += volume[tissue_idx] - mean_tissue;
                 
-        # sigma = fwhm / 2.354 / voxelsize
-        # here we use fwhm of 20mm and have 0.5mm voxel size
-        bias = gaussian_filter(bias, sigma=sigma)
-        volume -= bias;
+        gaussian_filter(bias_step, sigma=sigma)
+        volume -= bias_step;
+        bias += bias_step
 
-    return volume
-
+    return bias
+    
 def posteriors2label(posterior):
     """
     Use posteriors with 33 classes to create a label image with CSF=1, GM=2, and WM=3
@@ -281,3 +293,4 @@ def write_csv(path_csv, data, unique_file, labels, names, skip_first=True, last_
     with open(path_csv, type_open) as csvFile:
         writer = csv.writer(csvFile)
         writer.writerows(data)
+

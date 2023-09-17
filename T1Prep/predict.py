@@ -1,3 +1,17 @@
+# emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
+# vi: set ft=python sts=4 ts=4 sw=4 et:
+#
+# STATEMENT OF CHANGES: This file is derived from sources licensed under the Apache 2.0 license
+# terms, and this file has been changed.
+#
+# The original file this work derives from is found at:
+# https://github.com/BBillot/SynthSeg/blob/0369118b9a0dbd410b35d1abde2529f0f46f9341/SynthSeg/predict_synthseg.py
+#
+# [September 2023] CHANGES:
+#    * changes to only consider single files and no folders
+#    * massive extensions to predict to allow creation of hemispheric maps for CAT
+
+
 """
 If you use this code, please cite one of the SynthSeg papers:
 https://github.com/BBillot/SynthSeg/blob/master/bibtex.bib
@@ -22,9 +36,6 @@ import tensorflow as tf
 import keras.layers as KL
 import keras.backend as K
 from keras.models import Model
-
-# set tensorflow logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
 # third-party imports
 from ext.lab2im import utils as tools
@@ -99,24 +110,14 @@ def predict(path_images,
     Prediction pipeline.
     '''
 
-    # prepare input/output filepaths
-    outputs = prepare_output_files(path_images, path_segmentations, path_posteriors, path_label, path_hemi, \
-                                   path_resampled, path_volumes, path_qc_scores)
-    path_images = outputs[0]
-    path_segmentations = outputs[1]
-    path_posteriors = outputs[2]
-    path_label = outputs[3]
-    path_hemi = outputs[4]
-    path_resampled = outputs[5]
-    path_volumes = outputs[6]
-    unique_vol_file = outputs[7]
-    path_qc_scores = outputs[8]
-    unique_qc_file = outputs[9]
-
+    # check whether volume and qc files should be saved
+    unique_vol_file = True if path_volumes is not None else False
+    unique_qc_file  = True if path_qc_scores is not None else False
+    
     # get label lists
     labels_segmentation, _ = tools.get_list_labels(label_list=labels_segmentation)
     if (n_neutral_labels is not None) & (not fast) & (not robust):
-        labels_segmentation, flip_indices, unique_idx = get_flip_indices(labels_segmentation, n_neutral_labels)
+        labels_segmentation, flip_indices, unique_idx = utils.get_flip_indices(labels_segmentation, n_neutral_labels)
     else:
         labels_segmentation, unique_idx = np.unique(labels_segmentation, return_index=True)
         flip_indices = None
@@ -136,7 +137,7 @@ def predict(path_images,
     if not v1:
         labels_volumes = np.concatenate([labels_volumes, np.array([np.max(labels_volumes + 1)])])
         names_volumes = np.concatenate([names_volumes, np.array(['total intracranial'])])
-    do_qc = True if path_qc_scores[0] is not None else False
+    do_qc = True if path_qc_scores is not None else False
     if do_qc:
         labels_qc = tools.get_list_labels(labels_qc)[0][unique_idx]
         names_qc = tools.load_array_if_path(names_qc)[unique_idx]
@@ -149,10 +150,10 @@ def predict(path_images,
         min_pad = 128
 
     # prepare volume/QC files if necessary
-    if unique_vol_file & (path_volumes[0] is not None):
-        write_csv(path_volumes[0], None, True, labels_volumes, names_volumes, last_first=(not v1))
+    if unique_vol_file & (path_volumes is not None):
+        write_csv(path_volumes, None, True, labels_volumes, names_volumes, last_first=(not v1))
     if unique_qc_file & do_qc:
-        write_csv(path_qc_scores[0], None, True, labels_qc, names_qc)
+        write_csv(path_qc_scores, None, True, labels_qc, names_qc)
 
     # build network
     net = build_model(model_file_segmentation=path_model_segmentation,
@@ -168,224 +169,146 @@ def predict(path_images,
                       do_qc=do_qc)
 
     # perform segmentation
-    if len(path_images) <= 10:
-        loop_info = tools.LoopInfo(len(path_images), 1, 'predicting', True)
-    else:
-        loop_info = tools.LoopInfo(len(path_images), 10, 'predicting', True)
     list_errors = list()
-    for i in range(len(path_images)):
-        loop_info.update(i)
 
-        try:
+    try:
 
-            # preprocessing
-            image, aff, h, im_res, shape, pad_idx, crop_idx = preprocess(path_image=path_images[i],
-                                                                         crop=cropping,
-                                                                         min_pad=min_pad,
-                                                                         path_resample=path_resampled[i])
-                                                                         
+        # preprocessing
+        image, aff, h, im_res, shape, pad_idx, crop_idx = preprocess(path_image=path_images,
+                                                                     crop=cropping,
+                                                                     min_pad=min_pad,
+                                                                     path_resample=path_resampled)
+                                                                     
 
-            # prediction
-            shape_input = tools.add_axis(np.array(image.shape[1:-1]))
-            if do_parcellation & do_qc:
-                post_patch_segmentation, post_patch_parcellation, qc_score = net.predict([image, shape_input])
-            elif do_parcellation & (not do_qc):
-                post_patch_segmentation, post_patch_parcellation = net.predict(image)
-                qc_score = None
-            elif (not do_parcellation) & do_qc:
-                post_patch_segmentation, qc_score = net.predict([image, shape_input])
-                post_patch_parcellation = None
-            else:
-                post_patch_segmentation = net.predict(image)
-                post_patch_parcellation = qc_score = None
+        # prediction
+        shape_input = tools.add_axis(np.array(image.shape[1:-1]))
+        if do_parcellation & do_qc:
+            post_patch_segmentation, post_patch_parcellation, qc_score = net.predict([image, shape_input])
+        elif do_parcellation & (not do_qc):
+            post_patch_segmentation, post_patch_parcellation = net.predict(image)
+            qc_score = None
+        elif (not do_parcellation) & do_qc:
+            post_patch_segmentation, qc_score = net.predict([image, shape_input])
+            post_patch_parcellation = None
+        else:
+            post_patch_segmentation = net.predict(image)
+            post_patch_parcellation = qc_score = None
 
-            # postprocessing
-            seg, posteriors, volumes = postprocess(post_patch_seg=post_patch_segmentation,
-                                                   post_patch_parc=post_patch_parcellation,
-                                                   shape=shape,
-                                                   pad_idx=pad_idx,
-                                                   crop_idx=crop_idx,
-                                                   labels_segmentation=labels_segmentation,
-                                                   labels_parcellation=labels_parcellation,
-                                                   aff=aff,
-                                                   im_res=im_res,
-                                                   fast=fast,
-                                                   topology_classes=topology_classes,
-                                                   v1=v1)
-                                                   
-            # write predictions to disc
-            tools.save_volume(seg, aff, h, path_segmentations[i], dtype='int32')
-            if path_posteriors[i] is not None:
-                tools.save_volume(posteriors, aff, h, path_posteriors[i], dtype='float32')
+        # postprocessing
+        seg, posteriors, volumes = postprocess(post_patch_seg=post_patch_segmentation,
+                                               post_patch_parc=post_patch_parcellation,
+                                               shape=shape,
+                                               pad_idx=pad_idx,
+                                               crop_idx=crop_idx,
+                                               labels_segmentation=labels_segmentation,
+                                               labels_parcellation=labels_parcellation,
+                                               aff=aff,
+                                               im_res=im_res,
+                                               fast=fast,
+                                               topology_classes=topology_classes,
+                                               v1=v1)
+                                               
+        # write predictions to disc
+        tools.save_volume(seg, aff, h, path_segmentations, dtype='int32')
+        if path_posteriors is not None:
+            tools.save_volume(posteriors, aff, h, path_posteriors, dtype='float32')
+        
+        # estimate label image
+        if path_label is not None or path_resampled is not None:
+            print('Estimate label')
+            label0 = utils.posteriors2label(posteriors)
             
-            # write label image
-            if path_label[i] is not None:
-                print('Estimate label')
-                label0 = utils.posteriors2label(posteriors)
+            # resample to 0.5mm voxel size
+            im_res = np.array([.5]*3)
+            label, aff_label = edit_volumes.resample_volume(label0, aff, im_res)
+
+        # write label image
+        if path_label is not None:
+            tools.save_volume(label, aff_label, h, path_label, dtype='uint8')
+
+        # write hemi images
+        if path_hemi is not None:
+            
+            hemi_str = ['left', 'right']
+            
+            for j in [0, 1]:
+                print('Estimate hemispheric label for %s hemisphere' % hemi_str[j])
+                hemi_name = path_hemi.replace('.nii', '_%s.nii' % hemi_str[j])
+                hemi = utils.posteriors2hemiseg(posteriors, hemi=j+1)
                 
                 # resample to 0.5mm voxel size
                 im_res = np.array([.5]*3)
-                label, aff_label = edit_volumes.resample_volume(label0, aff, im_res)
+                hemi, aff_hemi = edit_volumes.resample_volume(hemi, aff, im_res)
 
-                tools.save_volume(label, aff_label, h, path_label[i], dtype='uint8')
-
-            # write hemi images
-            if path_hemi[i] is not None:
+                # crop hemi image and add 2 voxels
+                crop_idx = utils.bbox_volume(hemi > 1, pad=2)
+                hemi, aff_hemi = edit_volumes.crop_volume_with_idx(hemi, crop_idx, aff=aff_hemi, n_dims=3, return_copy=False)
                 
-                hemi_str = ['left', 'right']
-                
-                for j in [0, 1]:
-                    print('Estimate hemispheric label for %s hemisphere' % hemi_str[j])
-                    hemi_name = path_hemi[i].replace('.nii', '_%s.nii' % hemi_str[j])
-                    hemi = utils.posteriors2hemiseg(posteriors, hemi=j+1)
-                    
-                    # resample to 0.5mm voxel size
-                    im_res = np.array([.5]*3)
-                    hemi, aff_hemi = edit_volumes.resample_volume(hemi, aff, im_res)
+                tools.save_volume(hemi, aff_hemi, h, hemi_name, dtype='uint8')
 
-                    # crop hemi image and add 2 voxels
-                    crop_idx = utils.bbox_volume(hemi > 1, pad=2)
-                    hemi, aff_hemi = edit_volumes.crop_volume_with_idx(hemi, crop_idx, aff=aff_hemi, n_dims=3, return_copy=False)
-                    
-                    tools.save_volume(hemi, aff_hemi, h, hemi_name, dtype='uint8')
+        if path_resampled is not None:
+            print('Apply nu-correction and skull-stripping' )
+            resamp, aff_resamp, h_resamp = tools.load_volume(path_images, im_only=False, dtype='float32')
 
-            if path_resampled[i] is not None:
-                print('Apply nu-correction and skull-stripping' )
-                resamp, aff_resamp, h_resamp = tools.load_volume(path_images[i], im_only=False, dtype='float32')
+            # resample original input to 1.0mm voxel size for bias correction
+            im_res = np.array([1.0]*3)
+            im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
 
-                # resample to 0.5mm voxel size
-                im_res = np.array([.5]*3)
-                resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
+            # resample original input to 0.5mm voxel size
+            im_res = np.array([.5]*3)
+            resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
+            
+            # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
+            cortex_mask = (seg == 3)  | (seg == 4)  | (seg == 41) | (seg == 42) | (seg == 24) | \
+                          (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54) | (seg == 0)
 
-                # resample seg to 0.5mm voxel size using nn-interpolation because its a label map
-                im_res = np.array([.5]*3)
-                seg, aff_seg = edit_volumes.resample_volume(seg, aff, im_res, interpolation='nearest')
-                
-                # finally we need integer values for the labels
-                seg = np.round(seg)
-                
-                # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
-                cortex_mask = (seg == 3)  | (seg == 4)  | (seg == 41) | (seg == 42) | (seg == 24) | \
-                              (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54) | (seg == 0)
+            # resample cortex_mask to 0.5mm voxel size
+            im_res = np.array([.5]*3)
+            cortex_mask, aff_cortex = edit_volumes.resample_volume(cortex_mask, aff, im_res)
+            
+            # finally a boolean type for the mask and have to round because of resampling
+            cortex_mask = np.round(cortex_mask) > 0.5
+            
+            # correct vessels and skull-strip image
+            print('Vessel-correction and skull-stripping')
+            resamp = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_mask=cortex_mask)
+            
+            # bias correction works better if it's called after vessel correction
+            # we use the 1mm data from SynthSeg because it's much faster
+            print('NU-correction')
+            bias = utils.get_bias_field(im, label0)
 
-                tools.save_volume(resamp, aff_resamp, h, './resamp.nii', dtype='float32')
-                tools.save_volume(label, aff_resamp, h, './seg.nii', dtype='float32')
+            # resample bias field to 0.5mm voxel size
+            im_res = np.array([.5]*3)
+            bias, aff_resamp = edit_volumes.resample_volume(bias, aff, im_res)
+            
+            # apply bias correction
+            resamp -= bias
+            
+            tools.save_volume(resamp, aff_resamp, h, path_resampled)
+                        
+        # write volumes to disc if necessary
+        if path_volumes is not None:
+            row = [os.path.basename(path_images).replace('.nii.gz', '')] + [str(vol) for vol in volumes]
+            write_csv(path_volumes, row, unique_vol_file, labels_volumes, names_volumes, last_first=(not v1))
 
-                # correct intensity non-uniformities and vessels, and skull-strip image
-                resamp = utils.correct_and_skull_strip(resamp, label, vessel_mask=cortex_mask)
-                
-                tools.save_volume(resamp, aff_resamp, h, path_resampled[i])
-                
-                # call Amap segmentation
-                print('Segment image using Amap')
-                cmd = 'CAT_VolAmap -mrf 0 -sub 128 -write_seg 1 1 1 -iters_icm 0 -label ' + path_label[i]
-                cmd += ' ' + path_resampled[i]
+        # write QC scores to disc if necessary
+        if path_qc_scores is not None:
+            qc_score = np.around(np.clip(np.squeeze(qc_score)[1:], 0, 1), 4)
+            row = [os.path.basename(path_images).replace('.nii.gz', '')] + ['%.4f' % q for q in qc_score]
+            write_csv(path_qc_scores, row, unique_qc_file, labels_qc, names_qc)
 
-                if os.system(cmd) > 0:
-                    print('CAT_VolAmap could not be called')
-                              
-                path_amap = path_resampled[i].replace('.nii', '_seg.nii')
-
-                amap, aff_amap, h_amap = tools.load_volume(path_amap, im_only=False, dtype='float32')
-
-                hemi_str = ['left', 'right']
-                
-                for j in [0,1]:
-                    print('Estimate hemispheric amap label for %s hemisphere' % hemi_str[j])
-                    hemi_name = path_amap.replace('_seg.nii', '_%s_amap.nii' % hemi_str[j])
-                    hemi = utils.amap2hemiseg(amap, seg, hemi=j+1)
-
-                    # crop hemi image and add 5 voxels
-                    crop_idx = utils.bbox_volume(hemi > 1, pad=5)
-                    hemi, aff_hemi = edit_volumes.crop_volume_with_idx(hemi, crop_idx, aff=aff_amap, n_dims=3, return_copy=False)
-
-                    tools.save_volume(hemi, aff_hemi, h_amap, hemi_name, dtype='uint8')
-                
-                
-            # write volumes to disc if necessary
-            if path_volumes[i] is not None:
-                row = [os.path.basename(path_images[i]).replace('.nii.gz', '')] + [str(vol) for vol in volumes]
-                write_csv(path_volumes[i], row, unique_vol_file, labels_volumes, names_volumes, last_first=(not v1))
-
-            # write QC scores to disc if necessary
-            if path_qc_scores[i] is not None:
-                qc_score = np.around(np.clip(np.squeeze(qc_score)[1:], 0, 1), 4)
-                row = [os.path.basename(path_images[i]).replace('.nii.gz', '')] + ['%.4f' % q for q in qc_score]
-                write_csv(path_qc_scores[i], row, unique_qc_file, labels_qc, names_qc)
-
-        except Exception as e:
-            list_errors.append(path_images[i])
-            print('\nthe following problem occured with image %s :' % path_images[i])
-            print(traceback.format_exc())
-            print('resuming program execution\n')
-            continue
+    except Exception as e:
+        list_errors.append(path_images)
+        print('\nthe following problem occured with image %s :' % path_images)
+        print(traceback.format_exc())
+        print('resuming program execution\n')
 
     if len(list_errors) > 0:
         print('\nERROR: some problems occured for the following inputs (see corresponding errors above):')
         for path_error_image in list_errors:
             print(path_error_image)
         sys.exit(1)
-
-
-def prepare_output_files(path_images, out_seg, out_posteriors, out_label, out_hemi, out_resampled, out_volumes, out_qc):
-    '''
-    Prepare output files.
-    '''
-
-    # check inputs
-    if path_images is None:
-        sf.system.fatal('please specify an input file/folder (--i)')
-    if out_seg is None:
-        sf.system.fatal('please specify an output file/folder (--o)')
-
-    # convert path to absolute paths
-    path_images = os.path.abspath(path_images)
-    basename = os.path.basename(path_images)
-    out_seg = os.path.abspath(out_seg)
-    out_posteriors = os.path.abspath(out_posteriors) if (out_posteriors is not None) else out_posteriors
-    out_label = os.path.abspath(out_label) if (out_label is not None) else out_label
-    out_hemi = os.path.abspath(out_hemi) if (out_hemi is not None) else out_hemi
-    out_resampled = os.path.abspath(out_resampled) if (out_resampled is not None) else out_resampled
-    out_volumes = os.path.abspath(out_volumes) if (out_volumes is not None) else out_volumes
-    out_qc = os.path.abspath(out_qc) if (out_qc is not None) else out_qc
-
-
-    # input images
-    if not os.path.isfile(path_images):
-        sf.system.fatal('file does not exist: %s \n'
-                        'please make sure the path and the extension are correct' % path_images)
-    path_images = [path_images]
-
-    # define helper to deal with outputs
-    def helper_im(path, name, file_type, suffix):
-        unique_file = False
-        if path is not None:
-            if file_type == 'csv':
-                if path[-4:] != '.csv':
-                    print('%s provided without csv extension. Adding csv extension.' % name)
-                    path += '.csv'
-                recompute_files = [True]
-                unique_file = True
-            else:
-                recompute_files = [not os.path.isfile(path)]
-            tools.mkdir(os.path.dirname(path))
-        else:
-            recompute_files = [False]
-        path = [path]
-        return path, recompute_files, unique_file
-
-    # use helper on all outputs
-    out_seg, recompute_seg, _ = helper_im(out_seg, 'path_segmentations', '', 'synthseg')
-    out_posteriors, recompute_post, _ = helper_im(out_posteriors, 'path_posteriors', '', 'posteriors')
-    out_label, recompute_label, _ = helper_im(out_label, 'path_label', '', 'label')
-    out_hemi, recompute_hemi, _ = helper_im(out_hemi, 'path_hemi', '', 'hemi')
-    out_resampled, recompute_resampled, _ = helper_im(out_resampled, 'path_resampled', '', 'resampled')
-    out_volumes, recompute_volume, unique_volume_file = helper_im(out_volumes, 'path_volumes', 'csv', '')
-    out_qc, recompute_qc, unique_qc_file = helper_im(out_qc, 'path_qc_scores', 'csv', '')
-
-    return path_images, out_seg, out_posteriors, out_label, out_hemi, out_resampled, out_volumes, unique_volume_file, \
-           out_qc, unique_qc_file
-
 
 def preprocess(path_image, target_res=1., n_levels=5, crop=None, min_pad=None, path_resample=None):
 
@@ -548,11 +471,11 @@ def build_model(model_file_segmentation,
 
             # segment flipped image
             seg = net.output
-            image_flipped = RandomFlip(flip_axis=0, prob=1)(input_image)
+            image_flipped = layers.RandomFlip(flip_axis=0, prob=1)(input_image)
             last_tensor = net(image_flipped)
 
             # flip back and re-order channels
-            last_tensor = RandomFlip(flip_axis=0, prob=1)(last_tensor)
+            last_tensor = layers.RandomFlip(flip_axis=0, prob=1)(last_tensor)
             last_tensor = KL.Lambda(lambda x: tf.split(x, [1] * n_labels_seg, axis=-1), name='split')(last_tensor)
             reordered_channels = [last_tensor[flip_indices[i]] for i in range(n_labels_seg)]
             # we need the [0, ...] below because in this vresion of TF, tf.split adds a dim at the beginning...

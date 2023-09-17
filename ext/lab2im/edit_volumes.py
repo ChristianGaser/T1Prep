@@ -1,3 +1,17 @@
+# emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
+# vi: set ft=python sts=4 ts=4 sw=4 et:
+#
+# STATEMENT OF CHANGES: This file is derived from sources licensed under the Apache 2.0 license
+# terms, and this file has been changed.
+#
+# The original file this work derives from is found at:
+# https://github.com/BBillot/SynthSeg/blob/0369118b9a0dbd410b35d1abde2529f0f46f9341/ext/lab2im/edit_volumes.py
+#
+# [September 2023] CHANGES:
+#    * added zero to aff to create a new variable and not overwrite aff in crop_volume_with_idx
+#    *  replaced np.ceil by np.round in resample_volume to obtain reliable results for varying input resolutions
+
+
 """
 This file contains functions to edit/preprocess volumes (i.e. not tensors!).
 These functions are sorted in five categories:

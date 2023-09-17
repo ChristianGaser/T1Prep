@@ -1,4 +1,15 @@
-#!/usr/bin/env python3
+# emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
+# vi: set ft=python sts=4 ts=4 sw=4 et:
+#
+# STATEMENT OF CHANGES: This file is derived from sources licensed under the Apache 2.0 license
+# terms, and this file has been changed.
+#
+# The original file this work derives from is found at:
+# https://github.com/BBillot/SynthSeg/blob/0369118b9a0dbd410b35d1abde2529f0f46f9341/scripts/commands/SynthSeg_predict.py
+#
+# [September 2023] CHANGES:
+#    * added a few new options
+
 
 # python imports
 import os
@@ -6,29 +17,45 @@ import sys
 from argparse import ArgumentParser
 
 # add main folder to python path and import ./ext/SynthSeg/predict_synthseg.py
-synthseg_home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
-sys.path.append(synthseg_home)
-sys.path.append(os.path.join(synthseg_home, 'ext'))
+home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
+sys.path.append(home)
+sys.path.append(os.path.join(home, 'ext'))
 
-model_dir = os.path.join(synthseg_home, 'models')
-labels_dir = os.path.join(synthseg_home, 'data/labels_classes_priors')
+model_dir = os.path.join(home, 'models')
+labels_dir = os.path.join(home, 'data/labels_classes_priors')
+
+# set tensorflow logging
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 from T1Prep.predict import predict
 
 # parse arguments
-parser = ArgumentParser(description="SynthSeg", epilog='\n')
+parser = ArgumentParser(description="SynthSeg_predict", epilog='\n')
 
 # input/outputs
-parser.add_argument("--i", help="Image(s) to segment.")
-parser.add_argument("--o", help="Segmentation output(s).")
+"""
+parser.add_argument(
+    "-i",
+    "--image",
+    metavar="file",
+    required=True,
+    help="Input image to skullstrip.",
+)
+parser.add_argument(
+    "-o", "--out", metavar="file", help="Save stripped image to path."
+)
+"""
+parser.add_argument("--i", help="Image to segment.")
+parser.add_argument("--o", help="Segmentation output.")
 parser.add_argument("--parc", action="store_true", help="(optional) Whether to perform cortex parcellation.")
 parser.add_argument("--robust", action="store_true", help="(optional) Whether to use robust predictions (slower).")
 parser.add_argument("--fast", action="store_true", help="(optional) Bypass some processing for faster prediction.")
 parser.add_argument("--vol", help="(optional) Output CSV file with volumes for all structures and subjects.")
 parser.add_argument("--qc", help="(optional) Output CSV file with qc scores for all subjects.")
-parser.add_argument("--post", help="(optional) Posteriors output(s).")
-parser.add_argument("--label", help="(optional) Label output(s).")
-parser.add_argument("--hemi", help="(optional) Hemispheric label output(s).")
-parser.add_argument("--resample", help="(optional) Resampled image(s).")
+parser.add_argument("--post", help="(optional) Posteriors output.")
+parser.add_argument("--label", help="(optional) Label output.")
+parser.add_argument("--hemi", help="(optional) Hemispheric label output.")
+parser.add_argument("--resample", help="(optional) Image resampled to 0.5mm.")
 parser.add_argument("--crop", nargs='+', type=int, help="(optional) Only analyse an image patch of the given size.")
 parser.add_argument("--threads", type=int, default=1, help="(optional) Number of cores to be used. Default is 1.")
 parser.add_argument("--cpu", action="store_true", help="(optional) Enforce running with CPU rather than GPU.")
@@ -37,6 +64,7 @@ parser.add_argument("--v1", action="store_true", help="(optional) Use SynthSeg 1
 
 # check for no arguments
 if len(sys.argv) < 2:
+    print("\nMust provide at least --i or --o output flags.")
     parser.print_help()
     sys.exit(1)
 

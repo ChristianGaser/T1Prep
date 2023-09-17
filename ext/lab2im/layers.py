@@ -1,3 +1,16 @@
+# emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
+# vi: set ft=python sts=4 ts=4 sw=4 et:
+#
+# STATEMENT OF CHANGES: This file is derived from sources licensed under the Apache 2.0 license
+# terms, and this file has been changed.
+#
+# The original file this work derives from is found at:
+# https://github.com/BBillot/SynthSeg/blob/0369118b9a0dbd410b35d1abde2529f0f46f9341/ext/lab2im/layers.py
+
+# [September 2023] CHANGES:
+#    * modified RandomFlip function and save the original one
+
+
 """
 This file regroups several custom keras layers used in the generation model:
     - RandomSpatialDeformation,
@@ -271,7 +284,153 @@ class RandomCrop(Layer):
         return output_shape if self.several_inputs else output_shape[0]
 
 
-class RandomFlip(Layer):
+class RandomFlip(keras.layers.Layer):
+
+    """This function flips the input tensors along the specified axes with a probability of 0.5.
+    The input tensors are expected to have shape [batchsize, shape_dim1, ..., shape_dimn, channel].
+    If specified, this layer can also swap corresponding values, such that the flip tensors stay consistent with the
+    native spatial orientation (especially when flipping in the righ/left dimension).
+    :param flip_axis: integer, or list of integers specifying the dimensions along which to flip. The values exclude the
+    batch dimension (e.g. 0 will flip the tensor along the first axis after the batch dimension). Default is None, where
+    the tensors can be flipped along any of the axes (except batch and channel axes).
+    :param swap_labels: list of booleans to specify wether to swap the values of each input. All the inputs for which
+    the values need to be swapped must have a int32 ot int64 dtype.
+    :param label_list: if swap_labels is True, list of all labels contained in labels. Must be ordered as follows, first
+     the neutral labels (i.e. non-sided), then left labels and right labels.
+    :param n_neutral_labels: if swap_labels is True, number of non-sided labels
+
+    example 1:
+    if input is a tensor of shape (batchsize, 10, 100, 200, 3)
+    output = RandomFlip()(input) will randomly flip input along one of the 1st, 2nd, or 3rd axis (i.e. those with shape
+    10, 100, 200).
+
+    example 2:
+    if input is a tensor of shape (batchsize, 10, 100, 200, 3)
+    output = RandomFlip(flip_axis=1)(input) will randomly flip input along the 3rd axis (with shape 100), i.e. the axis
+    with index 1 if we don't count the batch axis.
+
+    example 3:
+    input = tf.convert_to_tensor(np.array([[1, 0, 0, 0, 0, 0, 0],
+                                           [1, 0, 0, 0, 2, 2, 0],
+                                           [1, 0, 0, 0, 2, 2, 0],
+                                           [1, 0, 0, 0, 2, 2, 0],
+                                           [1, 0, 0, 0, 0, 0, 0]]))
+    label_list = np.array([0, 1, 2])
+    n_neutral_labels = 1
+    output = RandomFlip(flip_axis=1, swap_labels=True, label_list=label_list, n_neutral_labels=n_neutral_labels)(input)
+    where output will either be equal to input (bear in mind the flipping occurs with a 0.5 probability), or:
+    output = [[0, 0, 0, 0, 0, 0, 2],
+              [0, 1, 1, 0, 0, 0, 2],
+              [0, 1, 1, 0, 0, 0, 2],
+              [0, 1, 1, 0, 0, 0, 2],
+              [0, 0, 0, 0, 0, 0, 2]]
+    Note that the input must have a dtype int32 or int64 for its values to be swapped, otherwise an error will be raised
+
+    example 4:
+    if labels is the same as in the input of example 3, and image is a float32 image, then we can swap consistently both
+    the labels and the image with:
+    labels, image = RandomFlip(flip_axis=1, swap_labels=[True, False], label_list=label_list,
+                               n_neutral_labels=n_neutral_labels)([labels, image]])
+    Note that the labels must have a dtype int32 or int64 to be swapped, otherwise an error will be raised.
+    This doesn't concern the image input, as its values are not swapped.
+    """
+
+    def __init__(self, flip_axis=None, swap_labels=False, label_list=None, n_neutral_labels=None, prob=0.5, **kwargs):
+
+        # shape attributes
+        self.several_inputs = True
+        self.n_dims = None
+        self.list_n_channels = None
+
+        # axis along which to flip
+        self.flip_axis = utils.reformat_to_list(flip_axis)
+
+        # wether to swap labels, and corresponding label list
+        self.swap_labels = utils.reformat_to_list(swap_labels)
+        self.label_list = label_list
+        self.n_neutral_labels = n_neutral_labels
+        self.swap_lut = None
+
+        self.prob = prob
+
+        super(RandomFlip, self).__init__(**kwargs)
+
+    def get_config(self):
+        config = super().get_config()
+        config["flip_axis"] = self.flip_axis
+        config["swap_labels"] = self.swap_labels
+        config["label_list"] = self.label_list
+        config["n_neutral_labels"] = self.n_neutral_labels
+        config["prob"] = self.prob
+        return config
+
+    def build(self, input_shape):
+
+        if not isinstance(input_shape, list):
+            self.several_inputs = False
+            inputshape = [input_shape]
+        else:
+            inputshape = input_shape
+        self.n_dims = len(inputshape[0][1:-1])
+        self.list_n_channels = [i[-1] for i in inputshape]
+        self.swap_labels = utils.reformat_to_list(self.swap_labels, length=len(inputshape))
+
+        # create label list with swapped labels
+        if any(self.swap_labels):
+            assert (self.label_list is not None) & (self.n_neutral_labels is not None), \
+                'please provide a label_list, and n_neutral_labels when swapping the values of at least one input'
+            n_labels = len(self.label_list)
+            if self.n_neutral_labels == n_labels:
+                self.swap_labels = [False] * len(self.swap_labels)
+            else:
+                rl_split = np.split(self.label_list, [self.n_neutral_labels,
+                                                      self.n_neutral_labels + int((n_labels-self.n_neutral_labels)/2)])
+                label_list_swap = np.concatenate((rl_split[0], rl_split[2], rl_split[1]))
+                swap_lut = get_mapping_lut(self.label_list, label_list_swap)
+                self.swap_lut = tf.convert_to_tensor(swap_lut, dtype='int32')
+
+        self.built = True
+        super(RandomFlip, self).build(input_shape)
+
+    def call(self, inputs, **kwargs):
+
+        # convert inputs to list, and get each input type
+        if not self.several_inputs:
+            inputs = [inputs]
+        types = [v.dtype for v in inputs]
+
+        # sample boolean for each element of the batch
+        batchsize = tf.split(tf.shape(inputs[0]), [1, self.n_dims + 1])[0]
+        rand_flip = K.less(tf.random.uniform(tf.concat([batchsize, tf.ones(1, dtype='int32')], axis=0), 0, 1),
+                           self.prob)
+
+        # swap r/l labels if necessary
+        swapped_inputs = list()
+        for i in range(len(inputs)):
+            if self.swap_labels[i]:
+                swapped_inputs.append(tf.map_fn(self._single_swap, [inputs[i], rand_flip], dtype=types[i]))
+            else:
+                swapped_inputs.append(inputs[i])
+
+        # flip inputs and convert them back to their original type
+        inputs = tf.concat([tf.cast(v, 'float32') for v in swapped_inputs], axis=-1)
+        inputs = tf.map_fn(self._single_flip, [inputs, rand_flip], dtype=tf.float32)
+        inputs = tf.split(inputs, self.list_n_channels, axis=-1)
+
+        return [tf.cast(v, t) for (t, v) in zip(types, inputs)]
+
+    def _single_swap(self, inputs):
+        return K.switch(inputs[1], tf.gather(self.swap_lut, inputs[0]), inputs[0])
+
+    def _single_flip(self, inputs):
+        if self.flip_axis is None:
+            flip_axis = tf.random.uniform([1], 0, self.n_dims, dtype='int32')
+        else:
+            idx = tf.squeeze(tf.random.uniform([1], 0, len(self.flip_axis), dtype='int32'))
+            flip_axis = tf.expand_dims(tf.convert_to_tensor(self.flip_axis, dtype='int32')[idx], axis=0)
+        return K.switch(inputs[1], K.reverse(inputs[0], axes=flip_axis), inputs[0])
+
+class RandomFlip_orig(Layer):
     """This layer randomly flips the input tensor along the specified axes with a specified probability.
     It can also take multiple tensors as inputs (if they have the same shape). The same flips will be applied to all
     input tensors. These are expected to have shape [batchsize, shape_dim1, ..., shape_dimn, channel].
