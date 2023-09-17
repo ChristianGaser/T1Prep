@@ -5,6 +5,7 @@ import traceback
 import numpy as np
 
 from ext.lab2im import edit_volumes
+from ext.lab2im import utils as tools
 from scipy.ndimage import binary_dilation, binary_erosion, binary_closing, binary_opening, grey_opening, grey_closing, gaussian_filter, distance_transform_edt, binary_fill_holes
 
 # globally define tissue labels or better understanding the applied thresholds 
@@ -142,9 +143,9 @@ def amap2hemiseg(amap, seg, hemi=1):
     # to ensure that no brain is removed in the final step where areas outside label_mask
     # are set to CSF
     label_mask = label > tissue_labels["CSF"]
-    label_mask = binary_opening(label_mask, build_binary_structure(1, 3))
+    label_mask = binary_opening(label_mask, tools.build_binary_structure(1, 3))
     label_mask = edit_volumes.get_largest_connected_component(label_mask)
-    label_mask = binary_closing(label_mask, build_binary_structure(5, 3))
+    label_mask = binary_closing(label_mask, tools.build_binary_structure(5, 3))
     
     # set areas outside label_mask to CSF
     label[~label_mask | (label == tissue_labels["BKG"])] = tissue_labels["CSF"]

@@ -251,7 +251,7 @@ def predict(path_images,
 
             if path_resampled[i] is not None:
                 print('Apply nu-correction and skull-stripping' )
-                resamp, aff_resamp, h_resamp = load_volume(path_images[i], im_only=False, dtype='float32')
+                resamp, aff_resamp, h_resamp = tools.load_volume(path_images[i], im_only=False, dtype='float32')
 
                 # resample to 0.5mm voxel size
                 im_res = np.array([.5]*3)
@@ -272,7 +272,7 @@ def predict(path_images,
                 tools.save_volume(label, aff_resamp, h, './seg.nii', dtype='float32')
 
                 # correct intensity non-uniformities and vessels, and skull-strip image
-                resamp = correct_and_skull_strip(resamp, label, vessel_mask=cortex_mask)
+                resamp = utils.correct_and_skull_strip(resamp, label, vessel_mask=cortex_mask)
                 
                 tools.save_volume(resamp, aff_resamp, h, path_resampled[i])
                 
@@ -286,7 +286,7 @@ def predict(path_images,
                               
                 path_amap = path_resampled[i].replace('.nii', '_seg.nii')
 
-                amap, aff_amap, h_amap = load_volume(path_amap, im_only=False, dtype='float32')
+                amap, aff_amap, h_amap = tools.load_volume(path_amap, im_only=False, dtype='float32')
 
                 hemi_str = ['left', 'right']
                 
@@ -295,11 +295,10 @@ def predict(path_images,
                     hemi_name = path_amap.replace('_seg.nii', '_%s_amap.nii' % hemi_str[j])
                     hemi = utils.amap2hemiseg(amap, seg, hemi=j+1)
 
-                    # crop hemi image and add 2 voxels
+                    # crop hemi image and add 5 voxels
                     crop_idx = utils.bbox_volume(hemi > 1, pad=5)
                     hemi, aff_hemi = edit_volumes.crop_volume_with_idx(hemi, crop_idx, aff=aff_amap, n_dims=3, return_copy=False)
 
-                    #tools.save_volume(hemi, aff_amap, h_amap, hemi_name, dtype='uint8')
                     tools.save_volume(hemi, aff_hemi, h_amap, hemi_name, dtype='uint8')
                 
                 
@@ -321,42 +320,6 @@ def predict(path_images,
             print('resuming program execution\n')
             continue
 
-    # print output info
-    if len(path_segmentations) == 1:  # only one image is processed
-        print('\nsegmentation  saved in:    ' + path_segmentations[0])
-        if path_posteriors[0] is not None:
-            print('posteriors saved in:       ' + path_posteriors[0])
-        if path_resampled[0] is not None:
-            print('resampled image saved in:  ' + path_resampled[0])
-        if path_label[0] is not None:
-            print('label image saved in:  ' + path_label[0])
-        if path_hemi[0] is not None:
-            print('label image saved in:  ' + path_hemi[0])
-        if path_volumes[0] is not None:
-            print('volumes saved in:          ' + path_volumes[0])
-        if path_qc_scores[0] is not None:
-            print('QC scores saved in:        ' + path_qc_scores[0])
-    else:  # all segmentations are in the same folder, and we have unique vol/QC files
-        if len(set([os.path.dirname(path_segmentations[i]) for i in range(len(path_segmentations))])) <= 1:
-            print('\nsegmentations saved in:    ' + os.path.dirname(path_segmentations[0]))
-            if path_posteriors[0] is not None:
-                print('posteriors saved in:       ' + os.path.dirname(path_posteriors[0]))
-            if path_resampled[0] is not None:
-                print('resampled images saved in: ' + os.path.dirname(path_resampled[0]))
-            if path_volumes[0] is not None:
-                print('volumes saved in:          ' + path_volumes[0])
-            if path_qc_scores[0] is not None:
-                print('QC scores saved in:        ' + path_qc_scores[0])
-    """
-    if robust:
-        print('\nIf you use the new robust version of SynthSeg in a publication, please cite:')
-        print('Robust Segmentation of Brain MRI in the Wild with Hierarchical CNNs and no Retraining')
-        print('B. Billot, M. Collin, S.E. Arnold, S. Das, J.E. Iglesias')
-    else:
-        print('\nIf you use this tool in a publication, please cite:')
-        print('SynthSeg: domain randomisation for segmentation of brain MRI scans of any contrast and resolution')
-        print('B. Billot, D.N. Greeve, O. Puonti, A. Thielscher, K. Van Leemput, B. Fischl, A.V. Dalca, J.E. Iglesias')
-    """
     if len(list_errors) > 0:
         print('\nERROR: some problems occured for the following inputs (see corresponding errors above):')
         for path_error_image in list_errors:
