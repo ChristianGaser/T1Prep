@@ -49,15 +49,33 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_mask=None):
 
     return volume
 
+def nu_correction(volume, label):
+    """
+    Use label image to correct input volume for non-uniformities
+    We apply bias correction to the resampled image while the correction itself is
+    estimated using the 1mm images from SynthSeg which is quite faster
+    """
+
+    # we use decreasing smoothing sizes
+    for sigma in [12, 9, 6, 3]:
+        bias_step = np.zeros(shape=np.shape(volume), dtype='float32')
+
+        for i in range(0, 3):
+            tissue_idx = np.round(label) == i + 1
+            mean_tissue = np.mean(np.array(volume[tissue_idx]))
+            bias_step[tissue_idx]  += volume[tissue_idx] - mean_tissue;
+                
+        bias_step = gaussian_filter(bias_step, sigma=sigma)
+        volume -= bias_step;
+
+    return volume
+
 def get_bias_field(volume, label):
     """
     Use label image to correct input volume for non-uniformities
     We apply bias correction to the resampled image while the correction itself is
     estimated using the 1mm images from SynthSeg which is quite faster
     """
-    
-    # resample to 0.5mm voxel size
-    im_res = np.array([.5]*3)
 
     # we need the final bias field later to apply it to the resampled data
     bias = np.zeros(shape=np.shape(volume), dtype='float32')
@@ -71,10 +89,11 @@ def get_bias_field(volume, label):
             mean_tissue = np.mean(np.array(volume[tissue_idx]))
             bias_step[tissue_idx]  += volume[tissue_idx] - mean_tissue;
                 
-        gaussian_filter(bias_step, sigma=sigma)
+        bias_step = gaussian_filter(bias_step, sigma=sigma)
         volume -= bias_step;
         bias += bias_step
 
+    bias[label == 0] = 0.0
     return bias
 
 def posteriors2label(posterior):

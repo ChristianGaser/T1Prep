@@ -169,9 +169,6 @@ def predict(path_images,
                       do_qc=do_qc)
 
     # perform segmentation
-    #loop_info = tools.LoopInfo(len(path_images), 1, 'predicting', True)
-    list_errors = list()
-    #loop_info.update(i)
 
     # preprocessing
     image, aff, h, im_res, shape, pad_idx, crop_idx = preprocess(path_image=path_images,
@@ -250,9 +247,9 @@ def predict(path_images,
         print('Apply nu-correction and skull-stripping' )
         resamp, aff_resamp, h_resamp = tools.load_volume(path_images, im_only=False, dtype='float32')
 
-        # resample original input to 1.0mm voxel size for bias correction
-        im_res = np.array([1.0]*3)
-        im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
+        # resample original input to 1mm voxel size
+        #im_res = np.array([1.0]*3)
+        #im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
 
         # resample original input to 0.5mm voxel size
         im_res = np.array([.5]*3)
@@ -276,15 +273,14 @@ def predict(path_images,
         # bias correction works better if it's called after vessel correction
         # we use the 1mm data from SynthSeg because it's much faster
         print('NU-correction')
-        bias = utils.get_bias_field(im, label0)
+        resamp = utils.nu_correction(resamp, label)
+        #bias = utils.get_bias_field(im, label0)
+                
+        min_resamp = np.min(np.array(resamp))
+        if (min_resamp < 0):
+            resamp -= min_resamp
+        resamp[label < 0.1] = 0
 
-        # resample bias field to 0.5mm voxel size
-        im_res = np.array([.5]*3)
-        bias, aff_resamp = edit_volumes.resample_volume(bias, aff, im_res)
-        
-        # apply bias correction
-        resamp -= bias
-        
         tools.save_volume(resamp, aff_resamp, h, path_resampled)
                                           
     # write volumes to disc if necessary
@@ -297,12 +293,6 @@ def predict(path_images,
         qc_score = np.around(np.clip(np.squeeze(qc_score)[1:], 0, 1), 4)
         row = [os.path.basename(path_images).replace('.nii.gz', '')] + ['%.4f' % q for q in qc_score]
         write_csv(path_qc_scores, row, unique_qc_file, labels_qc, names_qc)
-
-    if len(list_errors) > 0:
-        print('\nERROR: some problems occured for the following inputs (see corresponding errors above):')
-        for path_error_image in list_errors:
-            print(path_error_image)
-        sys.exit(1)
 
 def preprocess(path_image, target_res=1., n_levels=5, crop=None, min_pad=None, path_resample=None):
 
@@ -330,8 +320,6 @@ def preprocess(path_image, target_res=1., n_levels=5, crop=None, min_pad=None, p
     if np.any((im_res > target_res + 0.05) | (im_res < target_res - 0.05)):
         im_res = target_res
         im, aff = edit_volumes.resample_volume(im, aff, im_res)
-        if path_resample is not None:
-            tools.save_volume(im, aff, h, path_resample)
 
     # align image
     im = edit_volumes.align_volume_to_ref(im, aff, aff_ref=np.eye(4), n_dims=n_dims, return_copy=False)
