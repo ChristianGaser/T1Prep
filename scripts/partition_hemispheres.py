@@ -19,8 +19,12 @@ from T1Prep import utils
 parser = ArgumentParser(description="partition_hemispheres", epilog='\n')
 
 # input/outputs
-parser.add_argument("--atlas", help="Atlas (segmentation) from SynthSeg output")
-parser.add_argument("--label", help="Label segmentation")
+parser.add_argument("--atlas", 
+    help="Atlas (segmentation) from SynthSeg output")
+parser.add_argument("--label", 
+    help="Label segmentation")
+parser.add_argument("--target-size", type=float, default=0.5, 
+    help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5.")
 
 
 # check for no arguments
@@ -36,7 +40,7 @@ amap, aff_amap, h_amap = tools.load_volume(args['label'], im_only=False, dtype='
 seg, aff, h_seg = tools.load_volume(args['atlas'], im_only=False, dtype='float32')
 
 # resample seg to 0.5mm voxel size using nn-interpolation because its a label map
-im_res = np.array([.5]*3)
+im_res = np.array([args['target_size']]*3)
 seg, aff_seg = edit_volumes.resample_volume(seg, aff, im_res, interpolation='nearest')
 
 

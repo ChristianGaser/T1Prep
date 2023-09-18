@@ -39,8 +39,6 @@ parser.add_argument("--i", metavar="file", required=True,
     help="Input image to segment.")
 parser.add_argument("--o", metavar="file", required=True,
     help="Segmentation output.")
-parser.add_argument("--parc", action="store_true", 
-    help="(optional) Whether to perform cortex parcellation.")
 parser.add_argument("--robust", action="store_true", 
     help="(optional) Whether to use robust predictions (slower).")
 parser.add_argument("--fast", action="store_true", 
@@ -49,26 +47,20 @@ parser.add_argument("--vol",
     help="(optional) Output CSV file with volumes for all structures and subjects.")
 parser.add_argument("--qc", 
     help="(optional) Output CSV file with qc scores for all subjects.")
-parser.add_argument("--post", 
-    help="(optional) Posteriors output.")
+parser.add_argument("--hemi", 
+    help="(optional) Hemispheric label output in target voxel size.")
+parser.add_argument("--resample", 
+    help="(optional) Image resampled to target voxl size.")
 parser.add_argument("--label", 
     help="(optional) Label output.")
-parser.add_argument("--hemi", 
-    help="(optional) Hemispheric label output.")
-parser.add_argument("--resample", 
-    help="(optional) Image resampled to 0.5mm.")
 parser.add_argument("--target-size", type=float, default=0.5, 
-    help="(optional) Target voxel size in mm for resampled data that will be used for cortical surface extraction. Default is 0.5.")
+    help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5.")
 parser.add_argument("--nu-strength", type=float, default=2, 
     help="(optional) Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.")
-parser.add_argument("--crop", nargs='+', type=int, 
-    help="(optional) Only analyse an image patch of the given size.")
 parser.add_argument("--threads", type=int, default=1, 
     help="(optional) Number of cores to be used. Default is 1.")
 parser.add_argument("--cpu", action="store_true", 
     help="(optional) Enforce running with CPU rather than GPU.")
-parser.add_argument("--v1", action="store_true", 
-    help="(optional) Use SynthSeg 1.0 (updated 25/06/22).")
 
 
 # check for no arguments
@@ -89,10 +81,9 @@ if ((args['nu_strength']<0) | (args['nu_strength']>4)):
 # print SynthSeg version and checks boolean params for SynthSeg-robust
 if args['robust']:
     args['fast'] = True
-    assert not args['v1'], 'The flag --v1 cannot be used with --robust since SynthSeg-robust only came out with 2.0.'
     version = 'SynthSeg-robust 2.0'
 else:
-    version = 'SynthSeg 1.0' if args['v1'] else 'SynthSeg 2.0'
+    version = 'SynthSeg 2.0'
     if args['fast']:
         version += ' (fast)'
 print('\n' + version + '\n')
@@ -130,16 +121,6 @@ args['names_qc_labels'] = os.path.join(labels_dir, 'synthseg_qc_names_2.0.npy')
 args['topology_classes'] = os.path.join(labels_dir, 'synthseg_topological_classes_2.0.npy')
 args['n_neutral_labels'] = 19
 
-# use previous model if needed
-if args['v1']:
-    args['path_model_segmentation'] = os.path.join(model_dir, 'synthseg_1.0.h5')
-    args['labels_segmentation'] = args['labels_segmentation'].replace('_2.0.npy', '.npy')
-    args['labels_qc'] = args['labels_qc'].replace('_2.0.npy', '.npy')
-    args['names_segmentation_labels'] = args['names_segmentation_labels'].replace('_2.0.npy', '.npy')
-    args['names_qc_labels'] = args['names_qc_labels'].replace('_2.0.npy', '.npy')
-    args['topology_classes'] = args['topology_classes'].replace('_2.0.npy', '.npy')
-    args['n_neutral_labels'] = 18
-
 # run prediction
 predict(path_images=args['i'],
         path_segmentations=args['o'],
@@ -147,12 +128,12 @@ predict(path_images=args['i'],
         labels_segmentation=args['labels_segmentation'],
         robust=args['robust'],
         fast=args['fast'],
-        v1=args['v1'],
-        do_parcellation=args['parc'],
+        v1=False, # we cannot use this option because we need the 33-class label
+        do_parcellation=False, # we cannot use this option because we need the 33-calss label
         n_neutral_labels=args['n_neutral_labels'],
         names_segmentation=args['names_segmentation_labels'],
         labels_denoiser=args['labels_denoiser'],
-        path_posteriors=args['post'],
+        path_posteriors=None, # not necessary
         path_label=args['label'],
         path_hemi=args['hemi'],
         path_resampled=args['resample'],
@@ -164,7 +145,7 @@ predict(path_images=args['i'],
         path_model_qc=args['path_model_qc'],
         labels_qc=args['labels_qc'],
         names_qc=args['names_qc_labels'],
-        cropping=args['crop'],
+        cropping=None, # not necessary
         topology_classes=args['topology_classes'],
         target_size=args['target_size'],
         nu_strength=args['nu_strength'])

@@ -490,9 +490,9 @@ def build_model(model_file_segmentation,
 
         last_tensor = net.output
         last_tensor = KL.Lambda(lambda x: tf.cast(tf.argmax(x, axis=-1), 'int32'))(last_tensor)
-        last_tensor = ConvertLabels(np.arange(n_labels_seg), labels_segmentation)(last_tensor)
+        last_tensor = layers.ConvertLabels(np.arange(n_labels_seg), labels_segmentation)(last_tensor)
         parcellation_masking_values = np.array([1 if ((ll == 3) | (ll == 42)) else 0 for ll in labels_segmentation])
-        last_tensor = ConvertLabels(labels_segmentation, parcellation_masking_values)(last_tensor)
+        last_tensor = layers.ConvertLabels(labels_segmentation, parcellation_masking_values)(last_tensor)
         last_tensor = KL.Lambda(lambda x: tf.one_hot(tf.cast(x, 'int32'), depth=2, axis=-1))(last_tensor)
         last_tensor = KL.Lambda(lambda x: tf.cast(tf.concat(x, axis=-1), 'float32'))([input_image, last_tensor])
         net = Model(inputs=net.inputs, outputs=last_tensor)
@@ -528,8 +528,8 @@ def build_model(model_file_segmentation,
         else:
             last_tensor = KL.Lambda(lambda x: tf.cast(tf.argmax(x, axis=-1), 'int32'))(net.output)
         last_tensor = MakeShape(224)([last_tensor, shape_prediction])
-        last_tensor = ConvertLabels(np.arange(n_labels_seg), labels_segmentation)(last_tensor)
-        last_tensor = ConvertLabels(labels_segmentation, labels_qc)(last_tensor)
+        last_tensor = layers.ConvertLabels(np.arange(n_labels_seg), labels_segmentation)(last_tensor)
+        last_tensor = layers.ConvertLabels(labels_segmentation, labels_qc)(last_tensor)
         last_tensor = KL.Lambda(lambda x: tf.one_hot(tf.cast(x, 'int32'), depth=n_labels_qc, axis=-1))(last_tensor)
         net = Model(inputs=[*net.inputs, shape_prediction], outputs=last_tensor)
 

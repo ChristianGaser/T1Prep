@@ -14,34 +14,81 @@
 ########################################################
 # global parameters
 ########################################################
-version='T1Prep.sh, v 1.00 2003/04/24 Christian Gaser'
+
+CPUINFO=/proc/cpuinfo
+ARCH=`uname`
+NUMBER_OF_JOBS=-1
+target_size=0.5
+
+# check whether python or python3 is in your path
+found=`which python 2>/dev/null`
+if [ ! -n "$found" ]; then
+  found=`which python3 2>/dev/null`
+  if [ ! -n "$found" ]; then
+    exit 1
+  else
+    python=python3
+  fi
+else
+  python=python
+fi
+
+echo $PYTHON
+
+########################################################
+# run main
+########################################################
 
 main ()
 {
   parse_args ${1+"$@"}
+  
+  check_python
+  check_files
+  get_no_of_cpus
   process
 
   exit 0
 }
 
 
+########################################################
+# check arguments and files
+########################################################
+
 parse_args ()
 {
   local optname optarg
 
-  while [ $# -gt 0 ]
-  do
+  if [ $# -lt 1 ]; then
+    help
+    exit 1
+  fi
+
+  while [ $# -gt 0 ]; do
     optname="`echo $1 | sed 's,=.*,,'`"
-    optarg="`echo $1 | sed 's,^[^=]*=,,'`"
+    optarg="`echo $2`"
+    paras="$paras $optname $optarg"
+
     case "$1" in
-        --columns=* | --cols=*)
-            optarg=`echo $optarg | sed 's,[^0-9],,g'`
-            exit_if_empty "$optname" "$optarg"
-            GLOBAL_columns=$optarg
-            ;;
-        --one-index-page* | --one-index*)
-            GLOBAL_single_index_page=1
-            ;;
+        --python*)
+          exit_if_empty "$optname" "$optarg"
+          python=$optarg
+          shift
+          ;;
+        --outdir*)
+          exit_if_empty "$optname" "$optarg"
+          outdir=$optarg
+          if [ ! -d $LOGDIR ]; then
+            mkdir -p $outdir
+          fi
+          shift
+          ;;
+        --target-size*)
+          exit_if_empty "$optname" "$optarg"
+          target_size=$optarg
+          shift
+          ;;
         --quiet | -q)
             GLOBAL_show_progress=0
             ;;
@@ -53,13 +100,18 @@ parse_args ()
             echo "`basename $0`: ERROR: Unrecognized option \"$1\"" >&2
             ;;
         *)
-            ARGV_list="$ARGV_list $1"
+            ARRAY[$count]=$1
+            ((count++))
             ;;
     esac
     shift
   done
 
 }
+
+########################################################
+# check arguments
+########################################################
 
 exit_if_empty ()
 {
@@ -69,26 +121,147 @@ exit_if_empty ()
   shift
   val="$*"
 
-  if [ -z "$val" ]
-  then
+  if [ ! -n "$val" ]; then
     echo ERROR: No argument given with \"$desc\" command line argument! >&2
     exit 1
   fi
 }
 
-process ()
+########################################################
+# check files
+########################################################
+
+check_files ()
 {
-  if [ -n "$ARGV_list" ]
-  then
-    for i in $ARGV_list
-    do
-        echo $i
-    done
-  else
-    echo "No arguments given."
+  
+  SIZE_OF_ARRAY="${#ARRAY[@]}"
+  if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
+    echo 'ERROR: No files given!' >&2
     help
     exit 1
   fi
+
+  i=0
+  while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
+    if [ ! -f "${ARRAY[$i]}" ]; then
+      if [ ! -L "${ARRAY[$i]}" ]; then
+      echo ERROR: File ${ARRAY[$i]} not found
+      help
+      exit 1
+      fi
+    fi
+    ((i++))
+  done
+
+}
+
+########################################################
+# check for python
+########################################################
+
+check_python ()
+{
+  found=`which "${python}" 2>/dev/null`
+  if [ ! -n "$found" ]; then
+    echo $python not found.
+    exit 1
+  fi
+}
+
+########################################################
+# get # of cpus
+########################################################
+# modified code from
+# PPSS, the Parallel Processing Shell Script
+# 
+# Copyright (c) 2009, Louwrentius
+# All rights reserved.
+
+get_no_of_cpus () {
+
+  if [ ! -n "$NUMBER_OF_JOBS" ] | [ $NUMBER_OF_JOBS -le -1 ]; then
+    if [ "$ARCH" == "Linux" ]; then
+      NUMBER_OF_PROC=`grep ^processor $CPUINFO | wc -l`
+    elif [ "$ARCH" == "Darwin" ]; then
+      NUMBER_OF_PROC=`sysctl -a hw | grep -w hw.logicalcpu | awk '{ print $2 }'`
+    elif [ "$ARCH" == "FreeBSD" ]; then
+      NUMBER_OF_PROC=`sysctl hw.ncpu | awk '{ print $2 }'`
+    else
+      NUMBER_OF_PROC=`grep ^processor $CPUINFO | wc -l`
+    fi
+  
+    if [ ! -n "$NUMBER_OF_PROC" ]; then
+      echo "$FUNCNAME ERROR - number of CPUs not obtained. Use -p to define number of processes."
+      exit 1
+    fi
+  
+    # use all processors if not defined otherwise
+    if [ ! -n "$NUMBER_OF_JOBS" ]; then
+      NUMBER_OF_JOBS=$NUMBER_OF_PROC
+    fi
+
+    if [ $NUMBER_OF_JOBS -le -1 ]; then
+      NUMBER_OF_JOBS=$(echo "$NUMBER_OF_PROC + $NUMBER_OF_JOBS" | bc)
+      
+      if [ "$NUMBER_OF_JOBS" -lt 1 ]; then
+        NUMBER_OF_JOBS=1
+      fi
+    fi
+    if [ "$NUMBER_OF_JOBS" -gt "$NUMBER_OF_PROC" ]; then
+      NUMBER_OF_JOBS=$NUMBER_OF_PROC
+    fi
+  fi
+}
+
+########################################################
+# process data
+########################################################
+
+process ()
+{
+  
+  cmd_dir=`dirname $0`
+  
+  SIZE_OF_ARRAY="${#ARRAY[@]}"
+
+  i=0
+  while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
+
+    # check whether absolute or relative names were given
+    if [ ! -f "${ARRAY[$i]}" ]; then
+      if [ -f "${pwd}/${ARRAY[$i]}" ]; then
+        FILE="${pwd}/${ARRAY[$i]}"
+      fi
+    else
+      FILE=${ARRAY[$i]}
+    fi
+
+    # replace white spaces
+    FILE=$(echo "$FILE" | sed -e 's/ /\\ /g')
+
+    dn=$(dirname "$FILE")
+    bn=$(basename "$FILE")
+    
+    if [ ! -n "$outdir" ]; then
+      outdir=${dn}
+    fi
+
+    
+    resampled=$(echo $bn |sed 's/.nii/_corr.nii/g')
+    label=$(echo $bn |sed 's/.nii/_label.nii/g')
+    atlas=$(echo $bn |sed 's/.nii/_atlas.nii/g')
+    hemi=$(echo $bn |sed 's/.nii/_hemi.nii/g')
+    seg=$(echo $bn |sed 's/.nii/_corr_seg.nii/g')
+    
+    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${FILE} --o ${outdir}/${atlas} \
+        --target-size ${target_size} --threads $NUMBER_OF_PROC --target-size ${target_size} \
+        --fast --label ${outdir}/${label} --resamp ${outdir}/${resampled}
+    CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub 128 -label ${outdir}/${label} ${outdir}/${resampled}
+    ${python} ${cmd_dir}/partition_hemispheres.py --target-size ${target_size} \
+        --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
+
+    ((i++))
+  done
 
 }
 
@@ -111,7 +284,6 @@ OUTPUT:
 USED FUNCTIONS:
 
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).
-This is version ${version}.
 
 __EOM__
 }
