@@ -15,16 +15,16 @@
 # global parameters
 ########################################################
 
-CPUINFO=/proc/cpuinfo
-ARCH=`uname`
 NUMBER_OF_JOBS=-1
 target_size=0.5
+nu_strength=2
 
 # check whether python or python3 is in your path
 found=`which python 2>/dev/null`
 if [ ! -n "$found" ]; then
   found=`which python3 2>/dev/null`
   if [ ! -n "$found" ]; then
+    echo "python or python3 not found. Please use '--python' flag to define python command"
     exit 1
   else
     python=python3
@@ -89,6 +89,17 @@ parse_args ()
           target_size=$optarg
           shift
           ;;
+        --nu-strength*)
+          exit_if_empty "$optname" "$optarg"
+          nu_strength=$optarg
+          shift
+          ;;
+        --fast)
+            fast=" --fast "
+            ;;
+        --robust)
+            robust=" --robust "
+            ;;
         --quiet | -q)
             GLOBAL_show_progress=0
             ;;
@@ -179,6 +190,9 @@ check_python ()
 
 get_no_of_cpus () {
 
+  CPUINFO=/proc/cpuinfo
+  ARCH=`uname`
+
   if [ ! -n "$NUMBER_OF_JOBS" ] | [ $NUMBER_OF_JOBS -le -1 ]; then
     if [ "$ARCH" == "Linux" ]; then
       NUMBER_OF_PROC=`grep ^processor $CPUINFO | wc -l`
@@ -242,21 +256,27 @@ process ()
     dn=$(dirname "$FILE")
     bn=$(basename "$FILE")
     
+    # if defined use outputdir otherwise use the folder of input files
     if [ ! -n "$outdir" ]; then
       outdir=${dn}
     fi
 
-    
+    # get names
     resampled=$(echo $bn |sed 's/.nii/_corr.nii/g')
-    label=$(echo $bn |sed 's/.nii/_label.nii/g')
-    atlas=$(echo $bn |sed 's/.nii/_atlas.nii/g')
-    hemi=$(echo $bn |sed 's/.nii/_hemi.nii/g')
-    seg=$(echo $bn |sed 's/.nii/_corr_seg.nii/g')
+    label=$(echo $bn     |sed 's/.nii/_label.nii/g')
+    atlas=$(echo $bn     |sed 's/.nii/_atlas.nii/g')
+    hemi=$(echo $bn      |sed 's/.nii/_hemi.nii/g')
+    seg=$(echo $bn       |sed 's/.nii/_corr_seg.nii/g')
     
-    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${FILE} --o ${outdir}/${atlas} \
+    # call SynthSeg segmentation
+    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${FILE} --o ${outdir}/${atlas} ${fast} ${robust} \
         --target-size ${target_size} --threads $NUMBER_OF_PROC --target-size ${target_size} \
-        --fast --label ${outdir}/${label} --resamp ${outdir}/${resampled}
+        --nu-strength ${nu_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}
+        
+    # use output from SynthSeg segmentation to estimate Amap segmentation
     CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub 128 -label ${outdir}/${label} ${outdir}/${resampled}
+    
+    # create hemispheric label maps for cortical surface extraction
     ${python} ${cmd_dir}/partition_hemispheres.py --target-size ${target_size} \
         --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
 
