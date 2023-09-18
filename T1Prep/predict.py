@@ -105,7 +105,9 @@ def predict(path_images,
             labels_qc,
             names_qc,
             cropping,
-            topology_classes):
+            topology_classes,
+            target_size = 0.5,
+            nu_strength = 2):
     '''
     Prediction pipeline.
     '''
@@ -176,7 +178,6 @@ def predict(path_images,
                                                                  min_pad=min_pad,
                                                                  path_resample=path_resampled)
                                                                  
-
     # prediction
     shape_input = tools.add_axis(np.array(image.shape[1:-1]))
     if do_parcellation & do_qc:
@@ -204,7 +205,7 @@ def predict(path_images,
                                            fast=fast,
                                            topology_classes=topology_classes,
                                            v1=v1)
-                                           
+
     # write predictions to disc
     tools.save_volume(seg, aff, h, path_segmentations, dtype='int32')
     if path_posteriors is not None:
@@ -213,11 +214,11 @@ def predict(path_images,
     # write label image
     if path_label is not None or path_resampled is not None:
         print('Estimate label')
-        label0 = utils.posteriors2label(posteriors)
+        label_orig = utils.posteriors2label(posteriors)
         
-        # resample to 0.5mm voxel size
-        im_res = np.array([.5]*3)
-        label, aff_label = edit_volumes.resample_volume(label0, aff, im_res)
+        # resample to target voxel size
+        im_res_resampled = np.array([target_size]*3)
+        label, aff_label = edit_volumes.resample_volume(label_orig, aff, im_res_resampled)
 
     # write label image
     if path_label is not None:
@@ -233,49 +234,64 @@ def predict(path_images,
             hemi_name = path_hemi.replace('.nii', '_%s.nii' % hemi_str[j])
             hemi = utils.posteriors2hemiseg(posteriors, hemi=j+1)
             
-            # resample to 0.5mm voxel size
-            im_res = np.array([.5]*3)
-            hemi, aff_hemi = edit_volumes.resample_volume(hemi, aff, im_res)
+            # resample to target voxel size
+            im_res_resampled = np.array([target_size]*3)
+            hemi, aff_hemi = edit_volumes.resample_volume(hemi, aff, im_res_resampled)
 
-            # crop hemi image and add 2 voxels
-            crop_idx = utils.bbox_volume(hemi > 1, pad=2)
+            # crop hemi image and add 5 voxels
+            crop_idx = utils.bbox_volume(hemi > 1, pad=5)
             hemi, aff_hemi = edit_volumes.crop_volume_with_idx(hemi, crop_idx, aff=aff_hemi, n_dims=3, return_copy=False)
             
             tools.save_volume(hemi, aff_hemi, h, hemi_name, dtype='uint8')
 
     if path_resampled is not None:
+        # use fast nu-correction with lower resolution of original preprocessed images
+        use_fast_nu_correction = False
+        
         print('Apply nu-correction and skull-stripping' )
         resamp, aff_resamp, h_resamp = tools.load_volume(path_images, im_only=False, dtype='float32')
 
-        # resample original input to 1mm voxel size
-        #im_res = np.array([1.0]*3)
-        #im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
+        # resample original input to 1mm voxel size for fast nu-correction
+        if use_fast_nu_correction:
+            im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
 
-        # resample original input to 0.5mm voxel size
-        im_res = np.array([.5]*3)
-        resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
+        # resample original input to target voxel size
+        im_res_resampled = np.array([target_size]*3)
+        resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, im_res_resampled)
         
         # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
         cortex_mask = (seg == 3)  | (seg == 4)  | (seg == 41) | (seg == 42) | (seg == 24) | \
                       (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54) | (seg == 0)
 
-        # resample cortex_mask to 0.5mm voxel size
-        im_res = np.array([.5]*3)
-        cortex_mask, aff_cortex = edit_volumes.resample_volume(cortex_mask, aff, im_res)
+        # resample cortex_mask to target voxel size
+        im_res_resampled = np.array([target_size]*3)
+        cortex_mask, aff_cortex = edit_volumes.resample_volume(cortex_mask, aff, im_res_resampled)
         
-        # finally a boolean type for the mask and have to round because of resampling
+        # finally convert to boolean type for the mask and ound because of resampling
         cortex_mask = np.round(cortex_mask) > 0.5
         
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
         resamp = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_mask=cortex_mask)
         
-        # bias correction works better if it's called after vessel correction
-        # we use the 1mm data from SynthSeg because it's much faster
+        # nu-correction works better if it's called after vessel correction
         print('NU-correction')
-        resamp = utils.nu_correction(resamp, label)
-        #bias = utils.get_bias_field(im, label0)
-                
+
+        # Using the 1mm data from SynthSeg is a bit faster
+        if use_fast_nu_correction:
+            bias = utils.get_bias_field(im, label_orig, im_res, nu_strength)
+            
+            # resample bias field to the target voxel size of the resampled input volume
+            im_res_resampled = np.array([target_size]*3)
+            bias, aff_bias = edit_volumes.resample_volume(bias, aff, im_res_resampled)
+        else:
+            im_res_resampled = np.array([target_size]*3)
+            bias = utils.get_bias_field(resamp, label, im_res_resampled, nu_strength)
+        
+        # apply nu-correction
+        resamp -= bias
+        
+        # after nu-correction we might have negative values that should be prevented
         min_resamp = np.min(np.array(resamp))
         if (min_resamp < 0):
             resamp -= min_resamp

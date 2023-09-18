@@ -9,7 +9,8 @@
 #
 # [September 2023] CHANGES:
 #    * added zero to aff to create a new variable and not overwrite aff in crop_volume_with_idx
-#    *  replaced np.ceil by np.round in resample_volume to obtain reliable results for varying input resolutions
+#    * replaced np.ceil by np.round in resample_volume to obtain reliable results for varying input resolutions
+#    * added check to resample_volume whether resampling is necessary
 
 
 """
@@ -530,6 +531,14 @@ def resample_volume(volume, aff, new_vox_size, interpolation='linear', blur=True
     pixdim = np.sqrt(np.sum(aff * aff, axis=0))[:-1]
     new_vox_size = np.array(new_vox_size)
     factor = pixdim / new_vox_size
+
+    # skip resampling is factor close to 1
+    if np.all((factor > 0.99) & (factor < 1.01)):
+        print('No resampling necessary')
+        volume2 = volume
+        aff2 = aff
+        return volume2, aff2
+            
     sigmas = 0.25 / factor
     sigmas[factor > 1] = 0  # don't blur if upsampling
 

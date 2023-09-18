@@ -70,30 +70,52 @@ def nu_correction(volume, label):
 
     return volume
 
-def get_bias_field(volume, label):
+def get_bias_field(volume, label, target_size, nu_strength=2):
     """
     Use label image to correct input volume for non-uniformities
-    We apply bias correction to the resampled image while the correction itself is
-    estimated using the 1mm images from SynthSeg which is quite faster
+    We estimate bias correction by smoothing the residuals that remain after
+    using the mean vavlues inside the label values and repeat that with decreasing
+    smoothing kernels.
+    
     """
 
+    # size of smoothing kernel in sigma w.r.t. target size and weighting
+    if (nu_strength == 0):
+        return np.zeros(shape=np.shape(corrected_volume), dtype='float32')
+    elif (nu_strength == 1):
+        sigma = [16, 12, 8, 6]
+    elif (nu_strength == 2):
+        sigma = [12, 9, 6, 3]
+    elif (nu_strength == 3):
+        sigma = [11, 8, 4, 2]
+    elif (nu_strength == 4):
+        sigma = [9, 6, 3, 1]
+      
+    # correct for target size
+    sigma = sigma/np.array([np.mean(target_size)]*len(sigma))
+    
+    # we have to create a new volume to not overwrite the original one
+    corrected_volume = volume + 0
+    
     # we need the final bias field later to apply it to the resampled data
-    bias = np.zeros(shape=np.shape(volume), dtype='float32')
+    bias = np.zeros(shape=np.shape(corrected_volume), dtype='float32')
 
     # we use decreasing smoothing sizes
-    for sigma in [12, 9, 6, 3]:
+    for sigma in sigma:
         bias_step = np.zeros(shape=np.shape(volume), dtype='float32')
 
         for i in range(0, 3):
             tissue_idx = np.round(label) == i + 1
             mean_tissue = np.mean(np.array(volume[tissue_idx]))
-            bias_step[tissue_idx]  += volume[tissue_idx] - mean_tissue;
+            bias_step[tissue_idx]  += corrected_volume[tissue_idx] - mean_tissue;
                 
         bias_step = gaussian_filter(bias_step, sigma=sigma)
-        volume -= bias_step;
+        corrected_volume -= bias_step;
         bias += bias_step
 
+    # we have to set bias field outside label mask to 0
     bias[label == 0] = 0.0
+    
     return bias
 
 def posteriors2label(posterior):

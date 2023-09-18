@@ -33,43 +33,58 @@ from T1Prep.predict import predict
 parser = ArgumentParser(description="SynthSeg_predict", epilog='\n')
 
 # input/outputs
-"""
-parser.add_argument(
-    "-i",
-    "--image",
-    metavar="file",
-    required=True,
-    help="Input image to skullstrip.",
-)
-parser.add_argument(
-    "-o", "--out", metavar="file", help="Save stripped image to path."
-)
-"""
-parser.add_argument("--i", help="Image to segment.")
-parser.add_argument("--o", help="Segmentation output.")
-parser.add_argument("--parc", action="store_true", help="(optional) Whether to perform cortex parcellation.")
-parser.add_argument("--robust", action="store_true", help="(optional) Whether to use robust predictions (slower).")
-parser.add_argument("--fast", action="store_true", help="(optional) Bypass some processing for faster prediction.")
-parser.add_argument("--vol", help="(optional) Output CSV file with volumes for all structures and subjects.")
-parser.add_argument("--qc", help="(optional) Output CSV file with qc scores for all subjects.")
-parser.add_argument("--post", help="(optional) Posteriors output.")
-parser.add_argument("--label", help="(optional) Label output.")
-parser.add_argument("--hemi", help="(optional) Hemispheric label output.")
-parser.add_argument("--resample", help="(optional) Image resampled to 0.5mm.")
-parser.add_argument("--crop", nargs='+', type=int, help="(optional) Only analyse an image patch of the given size.")
-parser.add_argument("--threads", type=int, default=1, help="(optional) Number of cores to be used. Default is 1.")
-parser.add_argument("--cpu", action="store_true", help="(optional) Enforce running with CPU rather than GPU.")
-parser.add_argument("--v1", action="store_true", help="(optional) Use SynthSeg 1.0 (updated 25/06/22).")
+
+
+parser.add_argument("--i", metavar="file", required=True,
+    help="Input image to segment.")
+parser.add_argument("--o", metavar="file", required=True,
+    help="Segmentation output.")
+parser.add_argument("--parc", action="store_true", 
+    help="(optional) Whether to perform cortex parcellation.")
+parser.add_argument("--robust", action="store_true", 
+    help="(optional) Whether to use robust predictions (slower).")
+parser.add_argument("--fast", action="store_true", 
+    help="(optional) Bypass some processing for faster prediction.")
+parser.add_argument("--vol", 
+    help="(optional) Output CSV file with volumes for all structures and subjects.")
+parser.add_argument("--qc", 
+    help="(optional) Output CSV file with qc scores for all subjects.")
+parser.add_argument("--post", 
+    help="(optional) Posteriors output.")
+parser.add_argument("--label", 
+    help="(optional) Label output.")
+parser.add_argument("--hemi", 
+    help="(optional) Hemispheric label output.")
+parser.add_argument("--resample", 
+    help="(optional) Image resampled to 0.5mm.")
+parser.add_argument("--target-size", type=float, default=0.5, 
+    help="(optional) Target voxel size in mm for resampled data that will be used for cortical surface extraction. Default is 0.5.")
+parser.add_argument("--nu-strength", type=float, default=2, 
+    help="(optional) Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.")
+parser.add_argument("--crop", nargs='+', type=int, 
+    help="(optional) Only analyse an image patch of the given size.")
+parser.add_argument("--threads", type=int, default=1, 
+    help="(optional) Number of cores to be used. Default is 1.")
+parser.add_argument("--cpu", action="store_true", 
+    help="(optional) Enforce running with CPU rather than GPU.")
+parser.add_argument("--v1", action="store_true", 
+    help="(optional) Use SynthSeg 1.0 (updated 25/06/22).")
 
 
 # check for no arguments
 if len(sys.argv) < 2:
-    print("\nMust provide at least --i or --o output flags.")
+    print("\nMust provide at least -i or -o output flags.")
     parser.print_help()
     sys.exit(1)
 
 # parse commandline
 args = vars(parser.parse_args())
+
+# check rage of nu_strength
+if ((args['nu_strength']<0) | (args['nu_strength']>4)):
+    print("\nParameter nu-strength must be in the range 0..4")
+    parser.print_help()
+    sys.exit(1)
 
 # print SynthSeg version and checks boolean params for SynthSeg-robust
 if args['robust']:
@@ -150,4 +165,6 @@ predict(path_images=args['i'],
         labels_qc=args['labels_qc'],
         names_qc=args['names_qc_labels'],
         cropping=args['crop'],
-        topology_classes=args['topology_classes'])
+        topology_classes=args['topology_classes'],
+        target_size=args['target_size'],
+        nu_strength=args['nu_strength'])
