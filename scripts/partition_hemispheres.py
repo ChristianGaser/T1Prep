@@ -23,8 +23,6 @@ parser.add_argument("--atlas",
     help="Atlas (segmentation) from SynthSeg output")
 parser.add_argument("--label", 
     help="Label segmentation")
-parser.add_argument("--target-size", type=float, default=0.5, 
-    help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5.")
 
 
 # check for no arguments
@@ -37,19 +35,16 @@ if len(sys.argv) < 2:
 args = vars(parser.parse_args())
 
 amap, aff_amap, h_amap = tools.load_volume(args['label'], im_only=False, dtype='float32')
-seg, aff, h_seg = tools.load_volume(args['atlas'], im_only=False, dtype='float32')
+#amap, _, aff_amap, n_dims, n_channels, h_amap, res_amap = tools.get_volume_info(args['label'], True)
+seg, aff_seg, h_seg = tools.load_volume(args['atlas'], im_only=False, dtype='float32')
 
-# resample seg to 0.5mm voxel size using nn-interpolation because its a label map
-im_res = np.array([args['target_size']]*3)
-seg, aff_seg = edit_volumes.resample_volume(seg, aff, im_res, interpolation='nearest')
-
-
-hemi_str = ['left', 'right']
+hemi_str  = ['-L_seg', '-R_seg'] # name for output file
+hemi_name = ['left', 'left']     # name for print
 
 for j in [0, 1]:
-    print('Estimate hemispheric amap label for %s hemisphere' % hemi_str[j])
+    print('Estimate hemispheric amap label for %s hemisphere' % hemi_name[j])
     hemi_name = args['label'].replace('_seg.nii', '_%s_amap.nii' % hemi_str[j])
-    hemi = utils.amap2hemiseg(amap, seg, hemi=j+1)
+    hemi = utils.amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=j+1)
 
     # crop hemi image and add 5 voxels
     crop_idx = utils.bbox_volume(hemi > 1, pad=5)

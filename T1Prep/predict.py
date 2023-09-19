@@ -106,7 +106,7 @@ def predict(path_images,
             names_qc,
             cropping,
             topology_classes,
-            target_size = 0.5,
+            target_res = 0.5,
             nu_strength = 2):
     '''
     Prediction pipeline.
@@ -173,7 +173,7 @@ def predict(path_images,
     # perform segmentation
 
     # preprocessing
-    image, aff, h, im_res, shape, pad_idx, crop_idx = preprocess(path_image=path_images,
+    image, aff, h, im_res, shape, pad_idx, crop_idx, im_res_orig = preprocess(path_image=path_images,
                                                                  crop=cropping,
                                                                  min_pad=min_pad,
                                                                  path_resample=path_resampled)
@@ -205,6 +205,13 @@ def predict(path_images,
                                            fast=fast,
                                            topology_classes=topology_classes,
                                            v1=v1)
+                                           
+    # use resolution of input image if target_res <= 0
+    if (target_res <= 0):
+        target_res = im_res_orig
+        print('Use original image resolution for resampling')
+    else: # otherwise extend to array
+        target_res = np.array([target_res]*3)
 
     # write predictions to disc
     tools.save_volume(seg, aff, h, path_segmentations, dtype='int32')
@@ -217,8 +224,7 @@ def predict(path_images,
         label_orig = utils.posteriors2label(posteriors)
         
         # resample to target voxel size
-        im_res_resampled = np.array([target_size]*3)
-        label, aff_label = edit_volumes.resample_volume(label_orig, aff, im_res_resampled)
+        label, aff_label = edit_volumes.resample_volume(label_orig, aff, target_res)
 
     # write label image
     if path_label is not None:
@@ -227,16 +233,16 @@ def predict(path_images,
     # write hemi images
     if path_hemi is not None:
         
-        hemi_str = ['left', 'right']
+        hemi_str  = ['-L_seg', '-R_seg'] # name for output file
+        hemi_name = ['left', 'left']     # name for print
         
         for j in [0, 1]:
-            print('Estimate hemispheric label for %s hemisphere' % hemi_str[j])
+            print('Estimate hemispheric label for %s hemisphere' % hemi_name[j])
             hemi_name = path_hemi.replace('.nii', '_%s.nii' % hemi_str[j])
             hemi = utils.posteriors2hemiseg(posteriors, hemi=j+1)
             
             # resample to target voxel size
-            im_res_resampled = np.array([target_size]*3)
-            hemi, aff_hemi = edit_volumes.resample_volume(hemi, aff, im_res_resampled)
+            hemi, aff_hemi = edit_volumes.resample_volume(hemi, aff, target_res)
 
             # crop hemi image and add 5 voxels
             crop_idx = utils.bbox_volume(hemi > 1, pad=5)
@@ -256,18 +262,16 @@ def predict(path_images,
             im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
 
         # resample original input to target voxel size
-        im_res_resampled = np.array([target_size]*3)
-        resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, im_res_resampled)
+        resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, target_res)
         
         # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
         cortex_mask = (seg == 3)  | (seg == 4)  | (seg == 41) | (seg == 42) | (seg == 24) | \
                       (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54) | (seg == 0)
 
         # resample cortex_mask to target voxel size
-        im_res_resampled = np.array([target_size]*3)
-        cortex_mask, aff_cortex = edit_volumes.resample_volume(cortex_mask, aff, im_res_resampled)
+        cortex_mask, aff_cortex = edit_volumes.resample_volume(cortex_mask, aff, target_res)
         
-        # finally convert to boolean type for the mask and ound because of resampling
+        # finally convert to boolean type for the mask and round because of resampling
         cortex_mask = np.round(cortex_mask) > 0.5
         
         # correct vessels and skull-strip image
@@ -282,10 +286,9 @@ def predict(path_images,
             bias = utils.get_bias_field(im, label_orig, im_res, nu_strength)
             
             # resample bias field to the target voxel size of the resampled input volume
-            im_res_resampled = np.array([target_size]*3)
-            bias, aff_bias = edit_volumes.resample_volume(bias, aff, im_res_resampled)
+            bias, aff_bias = edit_volumes.resample_volume(bias, aff, target_res)
         else:
-            im_res_resampled = np.array([target_size]*3)
+            im_res_resampled = target_res
             bias = utils.get_bias_field(resamp, label, im_res_resampled, nu_strength)
         
         # apply nu-correction
@@ -310,10 +313,14 @@ def predict(path_images,
         row = [os.path.basename(path_images).replace('.nii.gz', '')] + ['%.4f' % q for q in qc_score]
         write_csv(path_qc_scores, row, unique_qc_file, labels_qc, names_qc)
 
-def preprocess(path_image, target_res=1., n_levels=5, crop=None, min_pad=None, path_resample=None):
+def preprocess(path_image, target_res_synthseg=1., n_levels=5, crop=None, min_pad=None, path_resample=None):
 
     # read image and corresponding info
     im, _, aff, n_dims, n_channels, h, im_res = tools.get_volume_info(path_image, True)
+    
+    # save original resolution
+    im_res_orig = im_res
+    
     if n_dims == 2 and 1 < n_channels < 4:
         raise Exception('either the input is 2D with several channels, or is 3D with at most 3 slices. '
                         'Either way, results are going to be poor...')
@@ -332,9 +339,9 @@ def preprocess(path_image, target_res=1., n_levels=5, crop=None, min_pad=None, p
         im = im[..., 0]
 
     # resample image if necessary
-    target_res = np.squeeze(tools.reformat_to_n_channels_array(target_res, n_dims))
-    if np.any((im_res > target_res + 0.05) | (im_res < target_res - 0.05)):
-        im_res = target_res
+    target_res_synthseg = np.squeeze(tools.reformat_to_n_channels_array(target_res_synthseg, n_dims))
+    if np.any((im_res > target_res_synthseg + 0.05) | (im_res < target_res_synthseg - 0.05)):
+        im_res = target_res_synthseg
         im, aff = edit_volumes.resample_volume(im, aff, im_res)
 
     # align image
@@ -363,7 +370,7 @@ def preprocess(path_image, target_res=1., n_levels=5, crop=None, min_pad=None, p
     # add batch and channel axes
     im = tools.add_axis(im, axis=[0, -1])
 
-    return im, aff, h, im_res, shape, pad_idx, crop_idx
+    return im, aff, h, im_res, shape, pad_idx, crop_idx, im_res_orig
 
 
 def build_model(model_file_segmentation,

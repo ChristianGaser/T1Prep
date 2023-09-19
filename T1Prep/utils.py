@@ -154,14 +154,17 @@ def posteriors2label(posterior):
     return label
 
 
-def amap2hemiseg(amap, seg, hemi=1):
+def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
     """
     Use Amap label segmentation to create a hemispheric label image with CSF=1, GM=2, 
     and WM=3 where any subcortical structures or ventricles close to the midline are 
     filled with WM.
-    Information about which regions should be filled is used from synthSeg segmentation.
+    Information about which regions should be filled is used from SynthSeg segmentation.
     Use hemi=1 for estimating the left and hemi=2 for the right hemisphere.
     """
+    
+    # we have to round seg because we need the integer labels
+    seg = np.round(seg)
     
     # CSF + BKG
     if hemi==1:
@@ -174,6 +177,14 @@ def amap2hemiseg(amap, seg, hemi=1):
         wm = (seg == 4)  | (seg == 5)  | ((seg > 9) & (seg < 14))  | (seg == 26) | (seg == 28)
     else:
         wm = (seg == 43) | (seg == 44) | ((seg > 48) & (seg < 53)) | (seg == 58) | (seg == 60)
+
+    # resample wm and csf to voxel size of Amap label 
+    wm  = edit_volumes.resample_volume_like(amap, aff_amap, wm,  aff_seg, interpolation='linear')
+    csf = edit_volumes.resample_volume_like(amap, aff_amap, csf, aff_seg, interpolation='linear')
+    
+    # finally round and convert wm and csf masks to boolean type because of interpolation during resampling
+    wm  = np.round(wm) > 0.5
+    csf = np.round(csf) > 0.5
 
     # build hemispheric label with CSF=1, GM=2, and WM=3
     # adding 0 is necessary to create a new variable otherwise amap is also modified

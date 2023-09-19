@@ -16,8 +16,10 @@
 ########################################################
 
 NUMBER_OF_JOBS=-1
-target_size=0.5
+target_res=0.5
 nu_strength=2
+estimate_surf=1
+sub=64
 
 # check whether python or python3 is in your path
 found=`which python 2>/dev/null`
@@ -84,9 +86,9 @@ parse_args ()
           fi
           shift
           ;;
-        --target-size*)
+        --target-res*)
           exit_if_empty "$optname" "$optarg"
-          target_size=$optarg
+          target_res=$optarg
           shift
           ;;
         --nu-strength*)
@@ -94,6 +96,14 @@ parse_args ()
           nu_strength=$optarg
           shift
           ;;
+        --nproc*)
+          exit_if_empty "$optname" "$optarg"
+          NUMBER_OF_JOBS="-$optarg"
+          shift
+          ;; 
+        --no-surf)
+            estimate_surf=0
+            ;;
         --fast)
             fast=" --fast "
             ;;
@@ -205,7 +215,7 @@ get_no_of_cpus () {
     fi
   
     if [ ! -n "$NUMBER_OF_PROC" ]; then
-      echo "$FUNCNAME ERROR - number of CPUs not obtained. Use -p to define number of processes."
+      echo "$FUNCNAME ERROR - number of CPUs not obtained. Use --nproc to define number of processes."
       exit 1
     fi
   
@@ -262,24 +272,42 @@ process ()
     fi
 
     # get names
-    resampled=$(echo $bn |sed 's/.nii/_corr.nii/g')
-    label=$(echo $bn     |sed 's/.nii/_label.nii/g')
-    atlas=$(echo $bn     |sed 's/.nii/_atlas.nii/g')
-    hemi=$(echo $bn      |sed 's/.nii/_hemi.nii/g')
-    seg=$(echo $bn       |sed 's/.nii/_corr_seg.nii/g')
+    resampled=$(echo $bn | sed 's/.nii/_res-high_desc-corr.nii/g')
+    label=$(echo $bn     | sed 's/.nii/_res-low_label.nii/g')
+    atlas=$(echo $bn     | sed 's/.nii/_res-low_atlas.nii/g')
+    hemi=$(echo $bn      | sed 's/.nii/_res-high_hemi.nii/g') # -[L|R]_seg will be added internally
+    seg=$(echo $bn       | sed 's/.nii/_res-high_desc-corr_seg.nii/g')
     
+    # size of sub is dependent on voxel size
+    # supress floting number by using scale = 0
+    sub=`echo "scale = 0; ${sub} / $target_res" | bc` 
+
     # call SynthSeg segmentation
     ${python} ${cmd_dir}/SynthSeg_predict.py --i ${FILE} --o ${outdir}/${atlas} ${fast} ${robust} \
-        --target-size ${target_size} --threads $NUMBER_OF_PROC --target-size ${target_size} \
-        --nu-strength ${nu_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}
-        
-    # use output from SynthSeg segmentation to estimate Amap segmentation
-    CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub 128 -label ${outdir}/${label} ${outdir}/${resampled}
+        --target-res ${target_res} --threads $NUMBER_OF_PROC --nu-strength ${nu_strength}\
+        --label ${outdir}/${label} --resamp ${outdir}/${resampled}
     
-    # create hemispheric label maps for cortical surface extraction
-    ${python} ${cmd_dir}/partition_hemispheres.py --target-size ${target_size} \
-        --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
+    if [ ! -f "${outdir}/${resampled}" ] ||  [ ! -f "${outdir}/${label}" ]; then
+      echo
+      echo ERROR: ${cmd_dir}/SynthSeg_predict.py failed
+      exit 1
+    fi
+    
+    # use output from SynthSeg segmentation to estimate Amap segmentation
+    CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}
+    
+    if [ ! -f "${outdir}/${seg}" ]; then
+      echo
+      echo ERROR: CAT_VolAmap failed
+      exit 1
+    fi
 
+    # create hemispheric label maps for cortical surface extraction
+    if [ "$estimate_surf" -eq 1 ]; then
+        ${python} ${cmd_dir}/partition_hemispheres.py \
+            --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
+    fi
+    
     ((i++))
   done
 

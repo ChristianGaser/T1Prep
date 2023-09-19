@@ -53,7 +53,7 @@ parser.add_argument("--resample",
     help="(optional) Image resampled to target voxl size.")
 parser.add_argument("--label", 
     help="(optional) Label output.")
-parser.add_argument("--target-size", type=float, default=0.5, 
+parser.add_argument("--target-res", type=float, default=0.5, 
     help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5.")
 parser.add_argument("--nu-strength", type=float, default=2, 
     help="(optional) Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.")
@@ -86,7 +86,7 @@ else:
     version = 'SynthSeg 2.0'
     if args['fast']:
         version += ' (fast)'
-print('\n' + version + '\n')
+print(version)
 
 # enforce CPU processing if necessary
 if args['cpu']:
@@ -147,5 +147,5 @@ predict(path_images=args['i'],
         names_qc=args['names_qc_labels'],
         cropping=None, # not necessary
         topology_classes=args['topology_classes'],
-        target_size=args['target_size'],
+        target_res=args['target_res'],
         nu_strength=args['nu_strength'])
