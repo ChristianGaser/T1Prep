@@ -73,57 +73,57 @@ parse_args ()
     paras="$paras $optname $optarg"
 
     case "$1" in
-        --python*)
-          exit_if_empty "$optname" "$optarg"
-          python=$optarg
-          shift
+      --python*)
+        exit_if_empty "$optname" "$optarg"
+        python=$optarg
+        shift
+        ;;
+      --outdir*)
+        exit_if_empty "$optname" "$optarg"
+        outdir=$optarg
+        if [ ! -d $LOGDIR ]; then
+          mkdir -p $outdir
+        fi
+        shift
+        ;;
+      --target-res*)
+        exit_if_empty "$optname" "$optarg"
+        target_res=$optarg
+        shift
+        ;;
+      --nu-strength*)
+        exit_if_empty "$optname" "$optarg"
+        nu_strength=$optarg
+        shift
+        ;;
+      --nproc*)
+        exit_if_empty "$optname" "$optarg"
+        NUMBER_OF_JOBS="-$optarg"
+        shift
+        ;; 
+      --no-surf)
+          estimate_surf=0
           ;;
-        --outdir*)
-          exit_if_empty "$optname" "$optarg"
-          outdir=$optarg
-          if [ ! -d $LOGDIR ]; then
-            mkdir -p $outdir
-          fi
-          shift
+      --fast)
+          fast=" --fast "
           ;;
-        --target-res*)
-          exit_if_empty "$optname" "$optarg"
-          target_res=$optarg
-          shift
+      --robust)
+          robust=" --robust "
           ;;
-        --nu-strength*)
-          exit_if_empty "$optname" "$optarg"
-          nu_strength=$optarg
-          shift
+      --quiet | -q)
+          GLOBAL_show_progress=0
           ;;
-        --nproc*)
-          exit_if_empty "$optname" "$optarg"
-          NUMBER_OF_JOBS="-$optarg"
-          shift
-          ;; 
-        --no-surf)
-            estimate_surf=0
-            ;;
-        --fast)
-            fast=" --fast "
-            ;;
-        --robust)
-            robust=" --robust "
-            ;;
-        --quiet | -q)
-            GLOBAL_show_progress=0
-            ;;
-        -h | --help | -v | --version | -V)
-            help
-            exit 1
-            ;;
-        -*)
-            echo "`basename $0`: ERROR: Unrecognized option \"$1\"" >&2
-            ;;
-        *)
-            ARRAY[$count]=$1
-            ((count++))
-            ;;
+      -h | --help | -v | --version | -V)
+          help
+          exit 1
+          ;;
+      -*)
+          echo "`basename $0`: ERROR: Unrecognized option \"$1\"" >&2
+          ;;
+      *)
+          ARRAY[$count]=$1
+          ((count++))
+          ;;
     esac
     shift
   done

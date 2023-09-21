@@ -300,7 +300,7 @@ def predict(path_images,
             resamp -= min_resamp
         resamp[label < 0.1] = 0
 
-        tools.save_volume(resamp, aff_resamp, h, path_resampled)
+        tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='int16')
                                           
     # write volumes to disc if necessary
     if path_volumes is not None:
