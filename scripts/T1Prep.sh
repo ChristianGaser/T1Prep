@@ -16,10 +16,12 @@
 ########################################################
 
 NUMBER_OF_JOBS=-1
+estimate_surf=1
 target_res=0.5
 nu_strength=2
-estimate_surf=1
 sub=64
+use_sanlm=1
+debug=0
 
 # check whether python or python3 is in your path
 found=`which python 2>/dev/null`
@@ -98,14 +100,20 @@ parse_args ()
         ;;
       --nproc*)
         exit_if_empty "$optname" "$optarg"
-        NUMBER_OF_JOBS="-$optarg"
+        NUMBER_OF_JOBS="$optarg"
         shift
         ;; 
       --no-surf)
           estimate_surf=0
           ;;
+      --no-sanlm)
+          use_sanlm=0
+          ;;
       --fast)
           fast=" --fast "
+          ;;
+      --debug)
+          debug=1
           ;;
       --robust)
           robust=" --robust "
@@ -272,6 +280,7 @@ process ()
     fi
 
     # get names
+    sanlm=$(echo $bn     | sed 's/.nii/_desc-sanlm.nii/g')
     resampled=$(echo $bn | sed 's/.nii/_res-high_desc-corr.nii/g')
     label=$(echo $bn     | sed 's/.nii/_res-low_label.nii/g')
     atlas=$(echo $bn     | sed 's/.nii/_res-low_atlas.nii/g')
@@ -279,12 +288,23 @@ process ()
     seg=$(echo $bn       | sed 's/.nii/_res-high_desc-corr_seg.nii/g')
     
     # size of sub is dependent on voxel size
-    # supress floting number by using scale = 0
+    # supress floating number by using scale = 0
     sub=`echo "scale = 0; ${sub} / $target_res" | bc` 
-
+    
+    echo Processing ${FILE}
+    
+    # apply SANLM denoising filter
+    if [ "${use_sanlm}" -eq 1 ]; then
+      echo SANLM denoising
+      CAT_VolSanlm ${FILE} ${outdir}/${sanlm}
+      input=${outdir}/${sanlm}
+    else
+      input=${FILE}
+    fi
+    
     # call SynthSeg segmentation
-    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${FILE} --o ${outdir}/${atlas} ${fast} ${robust} \
-        --target-res ${target_res} --threads $NUMBER_OF_PROC --nu-strength ${nu_strength}\
+    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
+        --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
         --label ${outdir}/${label} --resamp ${outdir}/${resampled}
     
     if [ ! -f "${outdir}/${resampled}" ] ||  [ ! -f "${outdir}/${label}" ]; then
@@ -303,11 +323,15 @@ process ()
     fi
 
     # create hemispheric label maps for cortical surface extraction
-    if [ "$estimate_surf" -eq 1 ]; then
+    if [ "${estimate_surf}" -eq 1 ]; then
         ${python} ${cmd_dir}/partition_hemispheres.py \
             --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
     fi
     
+    if [ "${debug}" -eq 0 ]; then
+      rm ${outdir}/${sanlm} ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
+    fi
+      
     ((i++))
   done
 

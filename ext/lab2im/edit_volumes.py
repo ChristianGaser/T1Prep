@@ -9,7 +9,6 @@
 #
 # [September 2023] CHANGES:
 #    * added zero to aff to create a new variable and not overwrite aff in crop_volume_with_idx
-#    * replaced np.ceil by np.round in resample_volume to obtain reliable results for varying input resolutions
 #    * added check to resample_volume whether resampling is necessary
 
 
@@ -87,6 +86,7 @@ License.
 
 # python imports
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import csv
 import shutil
 import numpy as np
@@ -553,10 +553,7 @@ def resample_volume(volume, aff, new_vox_size, interpolation='linear', blur=True
 
     start = - (factor - 1) / (2 * factor)
     step = 1.0 / factor
-    
-    # we have to rather use round instead of ceil to obtain reliable results for several resolutions
-    stop = start + step * np.round(volume_filt.shape * factor)
-    #stop = start + step * np.ceil(volume_filt.shape * factor)
+    stop = start + step * np.ceil(volume_filt.shape * factor)
 
     xi = np.arange(start=start[0], stop=stop[0], step=step[0])
     yi = np.arange(start=start[1], stop=stop[1], step=step[1])

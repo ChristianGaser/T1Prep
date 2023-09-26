@@ -29,6 +29,7 @@ License.
 
 # python imports
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import sys
 import traceback
 import numpy as np
@@ -234,10 +235,10 @@ def predict(path_images,
     if path_hemi is not None:
         
         hemi_str  = ['-L_seg', '-R_seg'] # name for output file
-        hemi_name = ['left', 'left']     # name for print
+        hemi_str2 = ['left', 'right']     # name for print
         
         for j in [0, 1]:
-            print('Estimate hemispheric label for %s hemisphere' % hemi_name[j])
+            print('Estimate hemispheric label for %s hemisphere' % hemi_str2[j])
             hemi_name = path_hemi.replace('.nii', '_%s.nii' % hemi_str[j])
             hemi = utils.posteriors2hemiseg(posteriors, hemi=j+1)
             
@@ -262,7 +263,9 @@ def predict(path_images,
             im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
 
         # resample original input to target voxel size
-        resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, target_res)
+        resamp = edit_volumes.resample_volume_like(label, aff_label, resamp, aff_resamp, interpolation='linear')
+        aff_resamp = aff_label   
+        #resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, target_res)
         
         # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
         cortex_mask = (seg == 3)  | (seg == 4)  | (seg == 41) | (seg == 42) | (seg == 24) | \
