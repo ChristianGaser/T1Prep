@@ -30,8 +30,8 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_mask=None):
         vessel_mask = np.ones(shape=np.shape(volume), dtype='int8') > 0
 
     # obtain a threshold based on median for GM and CSF
-    median_csf = np.median(np.array(volume[np.round(label) == 1]))
-    median_gm  = np.median(np.array(volume[np.round(label) == 2]))
+    median_csf = np.median(np.array(volume[np.round(label) == tissue_labels["CSF"]]))
+    median_gm  = np.median(np.array(volume[np.round(label) == tissue_labels["GM"]]))
     th_csf = (median_csf + median_gm)/2
     
     # set high-intensity areas above threshold inside CSF to a CSF-like

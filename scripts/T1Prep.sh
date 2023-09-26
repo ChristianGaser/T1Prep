@@ -280,12 +280,12 @@ process ()
     fi
 
     # get names
-    sanlm=$(echo $bn     | sed 's/.nii/_desc-sanlm.nii/g')
-    resampled=$(echo $bn | sed 's/.nii/_res-high_desc-corr.nii/g')
-    label=$(echo $bn     | sed 's/.nii/_res-low_label.nii/g')
-    atlas=$(echo $bn     | sed 's/.nii/_res-low_atlas.nii/g')
-    hemi=$(echo $bn      | sed 's/.nii/_res-high_hemi.nii/g') # -[L|R]_seg will be added internally
-    seg=$(echo $bn       | sed 's/.nii/_res-high_desc-corr_seg.nii/g')
+    sanlm=$(echo $bn     | sed -e 's/.nii/_desc-sanlm.nii/g' -e 's/.img/_desc-sanlm.nii/g')
+    resampled=$(echo $bn | sed -e 's/.nii/_res-high_desc-corr.nii/g')
+    label=$(echo $bn     | sed -e 's/.nii/_res-low_label.nii/g')
+    atlas=$(echo $bn     | sed -e 's/.nii/_res-low_atlas.nii/g')
+    hemi=$(echo $bn      | sed -e 's/.nii/_res-high_hemi.nii/g') # -[L|R]_seg will be added internally
+    seg=$(echo $bn       | sed -e 's/.nii/_res-high_desc-corr_seg.nii/g')
     
     # size of sub is dependent on voxel size
     # supress floating number by using scale = 0
