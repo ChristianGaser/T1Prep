@@ -16,16 +16,17 @@ import os
 import sys
 from argparse import ArgumentParser
 
+# set tensorflow logging
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+
 # add main folder to python path and import ./ext/SynthSeg/predict_synthseg.py
 home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
 sys.path.append(home)
 sys.path.append(os.path.join(home, 'ext'))
 
-model_dir = os.path.join(home, 'models')
+model_dir  = os.path.join(home, 'models')
 labels_dir = os.path.join(home, 'data/labels_classes_priors')
-
-# set tensorflow logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from T1Prep.predict import predict
 
@@ -94,7 +95,6 @@ if args['cpu']:
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 # limit the number of threads to be used if running on CPU
-import tensorflow as tf
 if args['threads'] == 1:
     print('using 1 thread')
 else:

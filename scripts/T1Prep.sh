@@ -271,8 +271,9 @@ process ()
     # replace white spaces
     FILE=$(echo "$FILE" | sed -e 's/ /\\ /g')
 
+    # get directory and basename and also consider ancient Analyze img files
     dn=$(dirname "$FILE")
-    bn=$(basename "$FILE")
+    bn=$(basename "$FILE" | sed -e 's/.img/.nii/g')
     
     # if defined use outputdir otherwise use the folder of input files
     if [ ! -n "$outdir" ]; then
@@ -280,8 +281,8 @@ process ()
     fi
 
     # get names
-    sanlm=$(echo $bn     | sed -e 's/.nii/_desc-sanlm.nii/g' -e 's/.img/_desc-sanlm.nii/g')
     resampled=$(echo $bn | sed -e 's/.nii/_res-high_desc-corr.nii/g')
+    sanlm=$(echo $bn     | sed -e 's/.nii/_desc-sanlm.nii/g')
     label=$(echo $bn     | sed -e 's/.nii/_res-low_label.nii/g')
     atlas=$(echo $bn     | sed -e 's/.nii/_res-low_atlas.nii/g')
     hemi=$(echo $bn      | sed -e 's/.nii/_res-high_hemi.nii/g') # -[L|R]_seg will be added internally
@@ -291,6 +292,7 @@ process ()
     # supress floating number by using scale = 0
     sub=`echo "scale = 0; ${sub} / $target_res" | bc` 
     
+    echo
     echo Processing ${FILE}
     
     # apply SANLM denoising filter

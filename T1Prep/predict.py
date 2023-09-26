@@ -29,11 +29,14 @@ License.
 
 # python imports
 import os
+
+# set tensorflow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+
 import sys
 import traceback
 import numpy as np
-import tensorflow as tf
 import keras.layers as KL
 import keras.backend as K
 from keras.models import Model
