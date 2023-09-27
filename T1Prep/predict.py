@@ -9,7 +9,7 @@
 #
 # [September 2023] CHANGES:
 #    * changes to only consider single files and no folders
-#    * massive extensions to predict to allow creation of hemispheric maps for CAT
+#    * massive extensions to predict function to allow creating hemispheric maps for CAT
 
 
 """
@@ -49,39 +49,39 @@ from ext.neuron import models as nrn_models
 
 from T1Prep import utils
 
-region_labels = {
-    2:  "Left Cerebral WM",
-    3:  "Left Cerebral Cortex",
-    4:  "Left Lateral Ventricle",
-    5:  "Left Inf Lat Vent",
-    7:  "Left Cerebellum WM",
-    8:  "Left Cerebellum Cortex",
-    10: "Left Thalamus",
-    11: "Left Caudate",
-    12: "Left Putamen",
-    13: "Left Pallidum",
-    14: "3rd Ventricle",
-    15: "4th Ventricle",
-    16: "Brain Stem",
-    17: "Left Hippocampus",
-    18: "Left Amygdala",
+regions = {
+    2:  "lCerebralWM",
+    3:  "lCerebralCortex",
+    4:  "lLateralVentricle",
+    5:  "lInfLatVent",
+    7:  "lCerebellumWM",
+    8:  "lCerebellumCortex",
+    10: "lThalamus",
+    11: "lCaudate",
+    12: "lPutamen",
+    13: "lPallidum",
+    14: "3rdVentricle",
+    15: "4thVentricle",
+    16: "BrainStem",
+    17: "lHippocampus",
+    18: "lAmygdala",
     24: "CSF",
-    26: "Left Accumbens area",
-    28: "Left VentralDC",
-    41: "Right Cerebral WM",
-    42: "Right Cerebral Cortex",
-    43: "Right Lateral Ventricle",
-    44: "Right Inf Lat Vent",
-    46: "Right Cerebellum WM",
-    47: "Right Cerebellum Cortex", 
-    49: "Right Thalamus",
-    50: "Right Caudate",
-    51: "Right Putamen",
-    52: "Right Pallidum",
-    53: "Right Hippocampus",
-    54: "Right Amygdala",
-    58: "Right Accumbens area",
-    60: "Right VentralDC"
+    26: "lAccumbensArea",
+    28: "lVentralDC",
+    41: "rCerebralWM",
+    42: "rCerebralCortex",
+    43: "rLateralVentricle",
+    44: "rInfLatVent",
+    46: "rCerebellumWM",
+    47: "rCerebellumCortex", 
+    49: "rThalamus",
+    50: "rCaudate",
+    51: "rPutamen",
+    52: "rPallidum",
+    53: "rHippocampus",
+    54: "rAmygdala",
+    58: "rAccumbensArea",
+    60: "rVentralDC"
 }
 
 
@@ -111,7 +111,8 @@ def predict(path_images,
             cropping,
             topology_classes,
             target_res = 0.5,
-            nu_strength = 2):
+            nu_strength = 2,
+            many_vessels = False):
     '''
     Prediction pipeline.
     '''
@@ -222,16 +223,13 @@ def predict(path_images,
     if path_posteriors is not None:
         tools.save_volume(posteriors, aff, h, path_posteriors, dtype='float32')
     
-    # write label image
+    # obtain and save label image
     if path_label is not None or path_resampled is not None:
         print('Estimate label')
         label_orig = utils.posteriors2label(posteriors)
         
         # resample to target voxel size
         label, aff_label = edit_volumes.resample_volume(label_orig, aff, target_res)
-
-    # write label image
-    if path_label is not None:
         tools.save_volume(label, aff_label, h, path_label, dtype='uint8')
 
     # write hemi images
@@ -256,7 +254,7 @@ def predict(path_images,
 
     if path_resampled is not None:
         # use fast nu-correction with lower resolution of original preprocessed images
-        use_fast_nu_correction = False
+        use_fast_nu_correction = True
         
         print('Apply nu-correction and skull-stripping' )
         resamp, aff_resamp, h_resamp = tools.load_volume(path_images, im_only=False, dtype='float32')
@@ -268,10 +266,10 @@ def predict(path_images,
         # resample original input to target voxel size
         resamp = edit_volumes.resample_volume_like(label, aff_label, resamp, aff_resamp, interpolation='linear')
         aff_resamp = aff_label   
-        #resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, target_res)
+        resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, target_res)
         
         # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
-        cortex_mask = (seg == 3)  | (seg == 4)  | (seg == 41) | (seg == 42) | (seg == 24) | \
+        cortex_mask = (seg == 2)  | (seg == 3)  | (seg == 41) | (seg == 42) | (seg == 24) | \
                       (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54) | (seg == 0)
 
         # resample cortex_mask to target voxel size
@@ -280,22 +278,33 @@ def predict(path_images,
         # finally convert to boolean type for the mask and round because of resampling
         cortex_mask = np.round(cortex_mask) > 0.5
         
+        # create mask for weighting nu-correction
+        cortex_weight = np.ones(shape=np.shape(seg), dtype='float32')
+        # weight subcortical structures with 50%
+        cortex_weight[((seg > 9)  & (seg < 14)) | ((seg > 48) & (seg < 53))] = 0.5
+        # weight Amygdala + Hippocampus with 20%
+        cortex_weight[(seg == 17) | (seg == 18) | (seg == 53) | (seg == 54)] = 0.2
+
+        # resample cortex_mask to target voxel size except for fast nu-correction
+        if not use_fast_nu_correction:
+            cortex_weight, aff_cortex = edit_volumes.resample_volume(cortex_weight, aff, target_res)
+        
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
-        resamp = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_mask=cortex_mask)
+        resamp = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_mask=cortex_mask, many_vessels=many_vessels)
         
         # nu-correction works better if it's called after vessel correction
         print('NU-correction')
 
         # Using the 1mm data from SynthSeg is a bit faster
         if use_fast_nu_correction:
-            bias = utils.get_bias_field(im, label_orig, im_res, nu_strength)
+            bias = utils.get_bias_field(im, label_orig, im_res, nu_strength, bias_weight=cortex_weight)
             
             # resample bias field to the target voxel size of the resampled input volume
             bias, aff_bias = edit_volumes.resample_volume(bias, aff, target_res)
         else:
             im_res_resampled = target_res
-            bias = utils.get_bias_field(resamp, label, im_res_resampled, nu_strength)
+            bias = utils.get_bias_field(resamp, label, im_res_resampled, nu_strength, bias_weight=cortex_weight)
         
         # apply nu-correction
         resamp -= bias

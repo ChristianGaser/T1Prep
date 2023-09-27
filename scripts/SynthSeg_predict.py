@@ -58,6 +58,8 @@ parser.add_argument("--target-res", type=float, default=0.5,
     help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5.")
 parser.add_argument("--nu-strength", type=float, default=2, 
     help="(optional) Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.")
+parser.add_argument("--many-vessels", action="store_true", 
+    help="(optional) Apply stronger vessel correction.")
 parser.add_argument("--threads", type=int, default=1, 
     help="(optional) Number of cores to be used. Default is 1.")
 parser.add_argument("--cpu", action="store_true", 
@@ -148,4 +150,5 @@ predict(path_images=args['i'],
         cropping=None, # not necessary
         topology_classes=args['topology_classes'],
         target_res=args['target_res'],
-        nu_strength=args['nu_strength'])
+        nu_strength=args['nu_strength'],
+        many_vessels=args['many_vessels'])

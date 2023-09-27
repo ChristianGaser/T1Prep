@@ -19,7 +19,7 @@ tissue_labels = {
   "WM":  3.0
 }
 
-def suppress_vessels_and_skull_strip(volume, label, vessel_mask=None):
+def suppress_vessels_and_skull_strip(volume, label, vessel_mask=None, many_vessels=False):
     """
     Use label image to correct vessels in input volume and skull-strip
     the image by removing non-brain parts of the brain.
@@ -33,44 +33,27 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_mask=None):
     median_csf = np.median(np.array(volume[np.round(label) == tissue_labels["CSF"]]))
     median_gm  = np.median(np.array(volume[np.round(label) == tissue_labels["GM"]]))
     th_csf = (median_csf + median_gm)/2
-    
+        
     # set high-intensity areas above threshold inside CSF to a CSF-like
-    # intensity which works quite reasonable to remove vessels
-    mask = (label < (tissue_labels["CSF"]+tissue_labels["GM"])/2) & (volume > th_csf) & vessel_mask
-    volume[mask] = 0.5*median_csf
+    # intensity which works quite reasonable to remove large vessels
+    mask_csf = (label < (tissue_labels["CSF"]+tissue_labels["GM"])/2) & (volume > th_csf) & vessel_mask
+    volume[mask_csf] = median_csf
 
-    # additionally suppress structures with higher intensity in non-WM areas
-    volume_open = grey_opening(volume, size=(3,3,3))
-    mask = (label < (tissue_labels["GM"]+0.2)) & vessel_mask
-    volume[mask] = volume_open[mask]
-
+    # additionally suppress structures with higher intensity in non-WM areas  
+    if many_vessels:
+        print('Apply stronger vessel-correction')
+        volume_open = grey_opening(volume, size=(3,3,3))
+        mask = (label < (tissue_labels["GM"])) & (volume > th_csf) & vessel_mask
+        volume[mask] = volume_open[mask]
+    
+    
     # remove remaining background
     volume[label < 0.1] = 0
 
     return volume
 
-def nu_correction(volume, label):
-    """
-    Use label image to correct input volume for non-uniformities
-    We apply bias correction to the resampled image while the correction itself is
-    estimated using the 1mm images from SynthSeg which is quite faster
-    """
 
-    # we use decreasing smoothing sizes
-    for sigma in [12, 9, 6, 3]:
-        bias_step = np.zeros(shape=np.shape(volume), dtype='float32')
-
-        for i in range(0, 3):
-            tissue_idx = np.round(label) == i + 1
-            mean_tissue = np.mean(np.array(volume[tissue_idx]))
-            bias_step[tissue_idx]  += volume[tissue_idx] - mean_tissue;
-                
-        bias_step = gaussian_filter(bias_step, sigma=sigma)
-        volume -= bias_step;
-
-    return volume
-
-def get_bias_field(volume, label, target_size, nu_strength=2):
+def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
     """
     Use label image to correct input volume for non-uniformities
     We estimate bias correction by smoothing the residuals that remain after
@@ -108,7 +91,11 @@ def get_bias_field(volume, label, target_size, nu_strength=2):
             tissue_idx = np.round(label) == i + 1
             mean_tissue = np.mean(np.array(volume[tissue_idx]))
             bias_step[tissue_idx]  += corrected_volume[tissue_idx] - mean_tissue;
-                
+        
+        # weight bias field
+        if bias_weight is not None:
+            bias_step *= bias_weight
+             
         bias_step = gaussian_filter(bias_step, sigma=sigma)
         corrected_volume -= bias_step;
         bias += bias_step

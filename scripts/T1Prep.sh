@@ -22,6 +22,7 @@ nu_strength=2
 sub=64
 use_sanlm=1
 debug=0
+many_vessels=0
 
 # check whether python or python3 is in your path
 found=`which python 2>/dev/null`
@@ -108,6 +109,9 @@ parse_args ()
           ;;
       --no-sanlm)
           use_sanlm=0
+          ;;
+      --many-vessels)
+          vessels=" --many-vessels "
           ;;
       --fast)
           fast=" --fast "
@@ -305,7 +309,7 @@ process ()
     fi
     
     # call SynthSeg segmentation
-    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
+    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${vessels} ${fast} ${robust} \
         --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
         --label ${outdir}/${label} --resamp ${outdir}/${resampled}
     
@@ -331,7 +335,10 @@ process ()
     fi
     
     if [ "${debug}" -eq 0 ]; then
-      rm ${outdir}/${sanlm} ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
+      if [ "${use_sanlm}" -eq 1 ]; then
+        rm ${outdir}/${sanlm} 
+      fi
+      rm ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
     fi
       
     ((i++))

@@ -10,6 +10,7 @@
 # [September 2023] CHANGES:
 #    * removed data types np.int and np.float in reformat_to_list that are not supported 
 #      in newer numpy versions
+#    * check whether path is empty before mkdir command 
 
 """
 This file contains all the utilities used in that project. They are classified in 5 categories:
@@ -149,7 +150,9 @@ def save_volume(volume, aff, header, path, res=None, dtype=None, n_dims=3):
     n_dims is automatically inferred.
     """
 
-    mkdir(os.path.dirname(path))
+    if (os.path.dirname(path) != ''):
+        mkdir(os.path.dirname(path))
+        
     if '.npz' in path:
         np.savez_compressed(path, vol_data=volume)
     else:

@@ -1,3 +1,15 @@
+# emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
+# vi: set ft=python sts=4 ts=4 sw=4 et:
+#
+# STATEMENT OF CHANGES: This file is derived from sources licensed under the Apache 2.0 license
+# terms, and this file has been changed.
+#
+# The original file this work derives from is found at:
+# https://github.com/BBillot/SynthSeg/blob/0369118b9a0dbd410b35d1abde2529f0f46f9341/ext/neuron/models.py
+#
+# [September 2023] CHANGES:
+#    * changed call to KL.BatchNormalization where a 4D tensor is expected
+
 """
 tensorflow/keras utilities for the neuron project
 
@@ -348,7 +360,10 @@ def conv_enc(nb_features,
 
         if batch_norm is not None:
             name = '%s_bn_down_%d' % (prefix, level)
-            last_tensor = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor)
+            last_tensor4d = last_tensor[0,...]
+            last_tensor4d = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor4d)
+            last_tensor = tf.expand_dims(last_tensor4d, axis=0)
+
 
         # max pool if we're not at the last level
         if level < (nb_levels - 1):
@@ -474,7 +489,9 @@ def conv_dec(nb_features,
 
         if batch_norm is not None:
             name = '%s_bn_up_%d' % (prefix, level)
-            last_tensor = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor)
+            last_tensor4d = last_tensor[0,...]
+            last_tensor4d = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor4d)
+            last_tensor = tf.expand_dims(last_tensor4d, axis=0)
 
     # Compute likelihood prediction (no activation yet)
     name = '%s_likelihood' % prefix
@@ -656,7 +673,9 @@ def single_ae(enc_size,
 
     if batch_norm is not None:
         name = '%s_ae_mu_bn' % prefix
-        last_tensor = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor)
+        last_tensor4d = last_tensor[0,...]
+        last_tensor4d = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor4d)
+        last_tensor = tf.expand_dims(last_tensor4d, axis=0)
 
     # have a simple layer that does nothing to have a clear name before sampling
     name = '%s_ae_mu' % prefix
@@ -703,7 +722,9 @@ def single_ae(enc_size,
 
         if batch_norm is not None:
             name = '%s_ae_sigma_bn' % prefix
-            last_tensor = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor)
+            last_tensor4d = last_tensor[0,...]
+            last_tensor4d = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor4d)
+            last_tensor = tf.expand_dims(last_tensor4d, axis=0)
 
         # have a simple layer that does nothing to have a clear name before sampling
         name = '%s_ae_sigma' % prefix
@@ -746,7 +767,9 @@ def single_ae(enc_size,
 
     if batch_norm is not None:
         name = '%s_bn_ae_%s_dec' % (prefix, ae_type)
-        last_tensor = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor)
+        last_tensor4d = last_tensor[0,...]
+        last_tensor4d = KL.BatchNormalization(axis=batch_norm, name=name)(last_tensor4d)
+        last_tensor = tf.expand_dims(last_tensor4d, axis=0)
 
     # create the model and return
     model = Model(inputs=input_tensor, outputs=[last_tensor], name=model_name)
