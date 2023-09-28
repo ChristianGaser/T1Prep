@@ -19,9 +19,6 @@ License: GPLv3
 import os
 import itertools
 import numpy as np
-
-# set tensorflow logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 import keras.backend as K
 

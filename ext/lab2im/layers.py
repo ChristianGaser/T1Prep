@@ -51,9 +51,6 @@ License.
 
 import os
 
-# set tensorflow logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 # python imports
 import keras
 import numpy as np

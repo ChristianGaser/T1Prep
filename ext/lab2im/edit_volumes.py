@@ -87,10 +87,6 @@ License.
 
 # python imports
 import os
-
-# set tensorflow logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import csv
 import shutil
 import numpy as np

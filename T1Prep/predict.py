@@ -29,14 +29,10 @@ License.
 
 # python imports
 import os
-
-# set tensorflow logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-import tensorflow as tf
-
 import sys
 import traceback
 import numpy as np
+import tensorflow as tf
 import keras.layers as KL
 import keras.backend as K
 from keras.models import Model
@@ -221,7 +217,7 @@ def predict(path_images,
     # use resolution of input image if target_res <= 0
     if (target_res <= 0):
         target_res = im_res_orig
-        print('Use original image resolution for resampling')
+        print('Use original image resolution for resampling: %g %g %g mm' % (target_res[0],target_res[1],target_res[2]))
     else: # otherwise extend to array
         target_res = np.array([target_res]*3)
 

@@ -48,19 +48,27 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     elif vessel_strength == 2: # strong correction
         ratio_high = 15
 
-    # get areas where label values are CSF
+    # get areas where label values are CSF, but also consider areas closer
+    # to background
     label_csf_loose = (label < (tissue_labels["CSF"]+tissue_labels["GM"])/2)
     
+    # obtain a threshold based on median for GM and CSF
+    median_csf = np.median(np.array(volume[label_csf]))
+    median_gm  = np.median(np.array(volume[label_gm]))
+    th_csf = (median_csf + median_gm)/2
+    
+    # create mask where volume data are ~CSF
+    volume_gt_csf = volume > th_csf
+    
+    is_not_T1 = median_csf > median_gm
+    if is_not_T1:
+        print('Image contrast is not T1-weighted')
+        # we have to invert volume mask for low CSF values
+        volume_gt_csf = ~volume_gt_csf
+
     if ratio_high >= 10:
         if ratio_high < 15:
             print('Apply medium vessel-correction')
-
-        # obtain a threshold based on median for GM and CSF
-        median_csf = np.median(np.array(volume[label_csf]))
-        median_gm  = np.median(np.array(volume[label_gm]))
-        th_csf = (median_csf + median_gm)/2
-        volume_gt_csf = (volume > th_csf)
-        print(th_csf)
         
         # set high-intensity areas above threshold inside CSF to a CSF-like
         # intensity which works quite reasonable to remove large vessels
@@ -84,11 +92,16 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     # obtain some outer shell of the label map to remove areas where SynthSeg label is CSF, but
     # we have higher intensity (e.g. due to dura or meninges)
     mask = label > 0
-    # thickness of shell is reolution-dependent and will be controlled by a gaussian filter
+    
+    # thickness of shell is resolution-dependent and will be controlled by a gaussian filter
     thickness_shell = 1.0/res 
     eroded_mask = gaussian_filter(mask, sigma=thickness_shell) > 0.5
-    # only change values inside the shell where SynthSeg label is CSF
-    volume[mask & ~eroded_mask & label_csf_loose] = 0
+    
+    # only change values inside the shell where SynthSeg label is CSF and set values a bit
+    # smaller than CSF because it's the outer shell and brighter spots would be more
+    # difficult to deal with
+    volume[mask & ~eroded_mask & label_csf_loose] = 0.5*median_csf
+    label[ mask & ~eroded_mask & label_csf_loose] = 0.5*tissue_labels["CSF"]
     
     # remove remaining background
     volume[~mask] = 0
