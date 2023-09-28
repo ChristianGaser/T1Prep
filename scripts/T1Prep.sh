@@ -81,9 +81,6 @@ parse_args ()
             --outdir*  --out-dir)
                 exit_if_empty "$optname" "$optarg"
                 outdir=$optarg
-                if [ ! -d $outdir ]; then
-                    mkdir -p $outdir
-                fi
                 shift
                 ;;
             --target-res*)
@@ -91,12 +88,12 @@ parse_args ()
                 target_res=$optarg
                 shift
                 ;;
-            --nu-strength*)
+            --nu-str*)
                 exit_if_empty "$optname" "$optarg"
                 nu_strength=$optarg
                 shift
                 ;;
-            --vessel-strength*)
+            --vessel-str*)
                 exit_if_empty "$optname" "$optarg"
                 vessel_strength=$optarg
                 shift
@@ -316,8 +313,13 @@ process ()
         if [ ! -n "$outdir" ]; then
             outdir=${dn}
         fi
+        
+        # create outdir if not exists
+        if [ ! -d $outdir ]; then
+            mkdir -p $outdir
+        fi
 
-        # get names
+        # get output names
         resampled=$(echo $bn | sed -e "s/.nii/${res_str}_desc-corr.nii/g")
         sanlm=$(echo $bn     | sed -e "s/.nii/_desc-sanlm.nii/g")
         label=$(echo $bn     | sed -e "s/.nii/${res_str}_label.nii/g")
@@ -325,11 +327,12 @@ process ()
         hemi=$(echo $bn      | sed -e "s/.nii/${res_str}_hemi.nii/g") # -[L|R]_seg will be added internally
         seg=$(echo $bn       | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
         
+        # print progress and filename
         j=`expr $i + 1`
         echo -e "${BOLD}--------------------------------------------------------------${NC}"
         echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}Processing ${FILE} ${NC}"
         
-        # apply SANLM denoising filter
+        # call SANLM denoising filter
         if [ "${use_sanlm}" -eq 1 ]; then
             echo SANLM denoising
             CAT_VolSanlm ${FILE} ${outdir}/${sanlm}
@@ -390,9 +393,9 @@ USAGE:
                     [--no-sanlm] [--fast] [--robust] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
-  --outdir <DIR>             optional default file (default ${cat12_dir}/cat_defaults.m)
-  --target-res <NUMBER>      target voxel size in mm for resampled and hemispheric label data that will 
-                             be used for cortical surface extraction. Default is 0.5. Use a negative
+  --outdir <DIR>             output folder (default same folder)
+  --target-res <NUMBER>      target voxel size in mm for resampled and hemispheric label data  
+                             that will be used for cortical surface extraction. Use a negative
                              value to save outputs with original voxel size (default $target_res).
   --nu-strength <NUMBER>     strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong
                              4 - heavy). (default $nu_strength). 
