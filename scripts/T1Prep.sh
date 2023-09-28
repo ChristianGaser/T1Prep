@@ -317,14 +317,17 @@ process ()
         if [ ! -d $outdir ]; then
             mkdir -p $outdir
         fi
-
+        
         # get output names
         resampled=$(echo $bn | sed -e "s/.nii/${res_str}_desc-corr.nii/g")
         sanlm=$(echo $bn     | sed -e "s/.nii/_desc-sanlm.nii/g")
-        label=$(echo $bn     | sed -e "s/.nii/${res_str}_label.nii/g")
-        atlas=$(echo $bn     | sed -e "s/.nii/${res_str}_atlas.nii/g")
-        hemi=$(echo $bn      | sed -e "s/.nii/${res_str}_hemi.nii/g") # -[L|R]_seg will be added internally
-        seg=$(echo $bn       | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
+        
+        # remove T1w|T2w from basename
+        bn0=$(echo $bn       | sed -e "s/_T1w//g" -e "s/_T2w//g")        
+        label=$(echo $bn0    | sed -e "s/.nii/${res_str}_label.nii/g")
+        atlas=$(echo $bn0    | sed -e "s/.nii/${res_str}_atlas.nii/g")
+        hemi=$(echo $bn0     | sed -e "s/.nii/${res_str}_hemi.nii/g") # -[L|R]_seg will be added internally
+        seg=$(echo $bn0      | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
         
         # print progress and filename
         j=`expr $i + 1`

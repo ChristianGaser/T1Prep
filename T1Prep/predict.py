@@ -45,8 +45,6 @@ from ext.neuron import models as nrn_models
 
 from T1Prep import utils
 
-from numba import jit
-
 regions = {
     2:  "lCerebralWM",
     3:  "lCerebralCortex",
@@ -83,7 +81,6 @@ regions = {
 }
 
 
-@jit(nopython=True, parallel=True)
 def predict(path_images,
             path_segmentations,
             path_model_segmentation,
