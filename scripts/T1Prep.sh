@@ -60,6 +60,7 @@ main ()
 
 parse_args ()
 {
+    cmd_dir=`dirname $0`
     local optname optarg
 
     if [ $# -lt 1 ]; then
@@ -78,7 +79,7 @@ parse_args ()
                 python=$optarg
                 shift
                 ;;
-            --outdir*  --out-dir)
+            --outdir* | --out-dir)
                 exit_if_empty "$optname" "$optarg"
                 outdir=$optarg
                 shift
@@ -272,9 +273,7 @@ get_no_of_cpus () {
 
 process ()
 {
-    
-    cmd_dir=`dirname $0`
-    
+        
     # check that sub is large enough
     if [ $sub -lt 20 ]; then
         echo -e "${RED}ERROR: sub has to be >= 20${NC}"

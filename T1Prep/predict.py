@@ -45,6 +45,8 @@ from ext.neuron import models as nrn_models
 
 from T1Prep import utils
 
+from numba import jit
+
 regions = {
     2:  "lCerebralWM",
     3:  "lCerebralCortex",
@@ -81,6 +83,7 @@ regions = {
 }
 
 
+@jit(nopython=True, parallel=True)
 def predict(path_images,
             path_segmentations,
             path_model_segmentation,
@@ -111,6 +114,39 @@ def predict(path_images,
             vessel_strength = -1):
     '''
     Prediction pipeline.
+
+    Args:
+        path_images (str): Path to the input images.
+        path_segmentations (str): Path to the input segmentations.
+        path_model_segmentation (str): Path to the segmentation model.
+        labels_segmentation (list): List of labels for segmentation.
+        robust (bool): Whether to use robust segmentation.
+        fast (bool): Whether to use fast segmentation.
+        v1 (bool): Whether to use version 1 of the model.
+        n_neutral_labels (int): Number of neutral labels.
+        names_segmentation (str): Path to the segmentation names.
+        labels_denoiser (list): List of labels for denoising.
+        path_posteriors (str): Path to the output posteriors.
+        path_label (str): Path to the output label.
+        path_hemi (str): Path to the output hemispheric maps.
+        path_resampled (str): Path to the output resampled images.
+        path_volumes (str): Path to the output volumes.
+        do_parcellation (bool): Whether to perform parcellation.
+        path_model_parcellation (str): Path to the parcellation model.
+        labels_parcellation (list): List of labels for parcellation.
+        names_parcellation (str): Path to the parcellation names.
+        path_qc_scores (str): Path to the output QC scores.
+        path_model_qc (str): Path to the QC model.
+        labels_qc (list): List of labels for QC.
+        names_qc (str): Path to the QC names.
+        cropping (list): List of cropping values.
+        topology_classes (str): Path to the topology classes.
+        target_res (float): Target resolution.
+        nu_strength (int): Strength of the NU correction.
+        vessel_strength (int): Strength of the vessel correction.
+
+    Returns:
+        None
     '''
 
     # check whether volume and qc files should be saved
