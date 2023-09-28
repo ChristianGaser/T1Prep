@@ -25,31 +25,16 @@ GREEN=$(tput setaf 2)
 RED=$(tput setaf 1)
 NC=$(tput sgr0)
 
-
+# defaults
+vessel_strength=-1
 NUMBER_OF_JOBS=-1
 estimate_surf=1
 target_res=0.5
 nu_strength=2
-sub=64
 use_sanlm=1
 debug=0
-vessel_strength=-1
+sub=64
 
-# check whether python or python3 is in your path
-found=`which python 2>/dev/null`
-if [ ! -n "$found" ]; then
-    found=`which python3 2>/dev/null`
-    if [ ! -n "$found" ]; then
-        echo "python or python3 not found. Please use '--python' flag to define python command"
-        exit 1
-    else
-        python=python3
-    fi
-else
-    python=python
-fi
-
-echo $PYTHON
 
 ########################################################
 # run main
@@ -57,6 +42,7 @@ echo $PYTHON
 
 main ()
 {
+    check_python_cmd
     parse_args ${1+"$@"}
     
     check_python
@@ -92,7 +78,7 @@ parse_args ()
                 python=$optarg
                 shift
                 ;;
-            --outdir*)
+            --outdir*  --out-dir)
                 exit_if_empty "$optname" "$optarg"
                 outdir=$optarg
                 if [ ! -d $outdir ]; then
@@ -134,14 +120,11 @@ parse_args ()
             --fast)
                 fast=" --fast "
                 ;;
-            --debug)
-                debug=1
-                ;;
             --robust)
                 robust=" --robust "
                     ;;
-            --                 | -q)
-                GLOBAL_show_progress=0
+            --debug)
+                debug=1
                 ;;
             -h | --help | -v | --version | -V)
                 help
@@ -179,12 +162,31 @@ exit_if_empty ()
 }
 
 ########################################################
+# check for python version
+########################################################
+
+check_python_cmd ()
+{
+    found=`which python 2>/dev/null`
+    if [ ! -n "$found" ]; then
+        found=`which python3 2>/dev/null`
+        if [ ! -n "$found" ]; then
+            echo "python or python3 not found. Please use '--python' flag to define python command"
+            exit 1
+        else
+            python=python3
+        fi
+    else
+        python=python
+    fi
+}
+
+########################################################
 # check files
 ########################################################
 
 check_files ()
 {
-    
     SIZE_OF_ARRAY="${#ARRAY[@]}"
     if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
         echo "${RED}ERROR: No files given!${NC}" >&2
@@ -317,13 +319,15 @@ process ()
 
         # get names
         resampled=$(echo $bn | sed -e "s/.nii/${res_str}_desc-corr.nii/g")
-        sanlm=$(echo $bn         | sed -e "s/.nii/_desc-sanlm.nii/g")
-        label=$(echo $bn         | sed -e "s/.nii/${res_str}_label.nii/g")
-        atlas=$(echo $bn         | sed -e "s/.nii/${res_str}_atlas.nii/g")
-        hemi=$(echo $bn          | sed -e "s/.nii/${res_str}_hemi.nii/g") # -[L|R]_seg will be added internally
-        seg=$(echo $bn           | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
+        sanlm=$(echo $bn     | sed -e "s/.nii/_desc-sanlm.nii/g")
+        label=$(echo $bn     | sed -e "s/.nii/${res_str}_label.nii/g")
+        atlas=$(echo $bn     | sed -e "s/.nii/${res_str}_atlas.nii/g")
+        hemi=$(echo $bn      | sed -e "s/.nii/${res_str}_hemi.nii/g") # -[L|R]_seg will be added internally
+        seg=$(echo $bn       | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
         
-        echo -e "${BOLD}Processing ${FILE} ${NC}"
+        j=`expr $i + 1`
+        echo -e "${BOLD}--------------------------------------------------------------${NC}"
+        echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}Processing ${FILE} ${NC}"
         
         # apply SANLM denoising filter
         if [ "${use_sanlm}" -eq 1 ]; then
@@ -339,6 +343,7 @@ process ()
                 --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
                 --vessel-strength ${vessel_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}
         
+        # check for outputs
         if [ ! -f "${outdir}/${resampled}" ] ||  [ ! -f "${outdir}/${label}" ]; then
             echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed ${NC}"
         fi
@@ -352,7 +357,8 @@ process ()
                     ${python} ${cmd_dir}/partition_hemispheres.py \
                         --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
             fi          
-
+            
+            # remove temporary files if not debugging
             if [ "${debug}" -eq 0 ]; then
                 if [ "${use_sanlm}" -eq 1 ]; then
                     rm ${outdir}/${sanlm} 
@@ -378,15 +384,53 @@ help ()
 cat <<__EOM__
 
 USAGE:
-
+  T1Prep.sh [--python python_command] [--outdir out_folder] [--target-res voxel_size] 
+                    [--nu-strength nu_strength] [--vessel-strength vessel_strength]
+                    [--nproc number_of_processes] [--sub subsampling] [--no-surf]
+                    [--no-sanlm] [--fast] [--robust] [--debug] filenames 
+ 
+  --python <FILE>            python command (default $python)
+  --outdir <DIR>             optional default file (default ${cat12_dir}/cat_defaults.m)
+  --target-res <NUMBER>      target voxel size in mm for resampled and hemispheric label data that will 
+                             be used for cortical surface extraction. Default is 0.5. Use a negative
+                             value to save outputs with original voxel size (default $target_res).
+  --nu-strength <NUMBER>     strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong
+                             4 - heavy). (default $nu_strength). 
+  --vessel-strength <NUMBER> strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium
+                             2 - strong). (default $vessel_strength). 
+  --nproc <NUMBER>           number of parallel jobs (=number of processors)
+  --sub <NUMBER>             subsampling for Amap segmentation (default $sub)
+  --no-surf                  skip surface and thickness estimation
+  --no-sanlm                 skip denoising with SANLM-filter
+  --fast                     bypass some processing for faster prediction
+  --robust                   use robust predictions (slower)
+  --debug                    keep temporary files for debugging
+ 
 PURPOSE:
+  Computational Anatomy Pipeline for structural MRI data 
+
+EXAMPLE
+  T1Prep.sh --fast --outdir test_folder single_subj_T1.nii.
+  This command will extract segmentation and surface maps for single_subj_T1.nii
+  and bypasses some processing steps for faster (but less accurate) processing. 
+  Resuts will be saved in test_folder.
+
+  T1Prep.sh --target-res -1 --no-surf single_subj_T1.nii.
+  This command will extract segmentation maps for single_subj_T1.nii with
+  the original voxel size in the same folder.
 
 INPUT:
+  analyze or nifti files
 
 OUTPUT:
+  segmented images
+  surface extractions
 
 USED FUNCTIONS:
-
+  CAT_VolAmap
+  CAT_Sanlm
+  ${cmd_dir}/SynthSeg_predict.py
+  
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).
 
 __EOM__
