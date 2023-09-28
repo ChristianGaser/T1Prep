@@ -1,3 +1,15 @@
+# emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
+# vi: set ft=python sts=4 ts=4 sw=4 et:
+#
+# STATEMENT OF CHANGES: This file is derived from sources licensed under the Apache 2.0 license
+# terms, and this file has been changed.
+#
+# The original file this work derives from is found at:
+# https://github.com/BBillot/SynthSeg/blob/0369118b9a0dbd410b35d1abde2529f0f46f9341/ext/neuron/layers.py
+
+# [September 2023] CHANGES:
+#    * replaced deprecated dtype-field by fn_output_signature for map_fn
+
 """
 tensorflow/keras utilities for the neuron project
 
@@ -148,10 +160,10 @@ class SpatialTransformer(Layer):
         if len(trf) == 1:
             trf = trf[0]
             if self.is_affine[0]:
-                trf = tf.map_fn(lambda x: self._single_aff_to_shift(x, vol.shape[1:-1]), trf, dtype=tf.float32)
+                trf = tf.map_fn(lambda x: self._single_aff_to_shift(x, vol.shape[1:-1]), trf, fn_output_signature=tf.float32)
         # combine non-linear and affine to obtain a single deformation field
         elif len(trf) == 2:
-            trf = tf.map_fn(lambda x: self._non_linear_and_aff_to_shift(x, vol.shape[1:-1]), trf, dtype=tf.float32)
+            trf = tf.map_fn(lambda x: self._non_linear_and_aff_to_shift(x, vol.shape[1:-1]), trf, fn_output_signature=tf.float32)
 
         # prepare location shift
         if self.indexing == 'xy':  # shift the first two dimensions
@@ -161,9 +173,9 @@ class SpatialTransformer(Layer):
 
         # map transform across batch
         if self.single_transform:
-            return tf.map_fn(self._single_transform, [vol, trf[0, :]], dtype=tf.float32)
+            return tf.map_fn(self._single_transform, [vol, trf[0, :]], fn_output_signature=tf.float32)
         else:
-            return tf.map_fn(self._single_transform, [vol, trf], dtype=tf.float32)
+            return tf.map_fn(self._single_transform, [vol, trf], fn_output_signature=tf.float32)
 
     def _single_aff_to_shift(self, trf, volshape):
         if len(trf.shape) == 1:  # go from vector to matrix
@@ -256,7 +268,7 @@ class VecInt(Layer):
             assert self.out_time_pt is None, 'out_time_pt should be None if providing batch_based out_time_pt'
 
         # map transform across batch
-        out = tf.map_fn(self._single_int, [loc_shift] + inputs[1:], dtype=tf.float32)
+        out = tf.map_fn(self._single_int, [loc_shift] + inputs[1:], fn_output_signature=tf.float32)
         return out
 
     def _single_int(self, inputs):
@@ -381,7 +393,7 @@ class Resize(Layer):
             self.size0 = [int(self.inshape[f+1] * self.zoom_factor0[f]) for f in range(self.ndims)]
 
         # map transform across batch
-        return tf.map_fn(self._single_resize, vol, dtype=vol.dtype)
+        return tf.map_fn(self._single_resize, vol, fn_output_signature=vol.dtype)
 
     def compute_output_shape(self, input_shape):
 

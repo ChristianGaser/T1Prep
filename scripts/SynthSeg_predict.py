@@ -34,8 +34,6 @@ from T1Prep.predict import predict
 parser = ArgumentParser(description="SynthSeg_predict", epilog='\n')
 
 # input/outputs
-
-
 parser.add_argument("--i", metavar="file", required=True,
     help="Input image to segment.")
 parser.add_argument("--o", metavar="file", required=True,
@@ -55,11 +53,11 @@ parser.add_argument("--resample",
 parser.add_argument("--label", 
     help="(optional) Label output.")
 parser.add_argument("--target-res", type=float, default=0.5, 
-    help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5.")
+    help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.")
 parser.add_argument("--nu-strength", type=float, default=2, 
     help="(optional) Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.")
-parser.add_argument("--many-vessels", action="store_true", 
-    help="(optional) Apply stronger vessel correction.")
+parser.add_argument("--vessel-strength", type=float, default=-1, 
+    help="(optional) Strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium, 2 - strong). Default is -1.")
 parser.add_argument("--threads", type=int, default=1, 
     help="(optional) Number of cores to be used. Default is 1.")
 parser.add_argument("--cpu", action="store_true", 
@@ -81,6 +79,12 @@ if ((args['nu_strength']<0) | (args['nu_strength']>4)):
     parser.print_help()
     sys.exit(1)
 
+# check rage of vessel_strength
+if ((args['vessel_strength']<-1) | (args['vessel_strength']>2)):
+    print("\nParameter nvessel-strength must be in the range -1..2")
+    parser.print_help()
+    sys.exit(1)
+
 # print SynthSeg version and checks boolean params for SynthSeg-robust
 if args['robust']:
     args['fast'] = True
@@ -89,6 +93,12 @@ else:
     version = 'SynthSeg 2.0'
     if args['fast']:
         version += ' (fast)'
+        
+if args['threads'] == 1:
+    version += ' using 1 thread'
+else:
+    version += ' using %s threads' % args['threads']
+
 print(version)
 
 # enforce CPU processing if necessary
@@ -97,10 +107,6 @@ if args['cpu']:
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 # limit the number of threads to be used if running on CPU
-if args['threads'] == 1:
-    print('using 1 thread')
-else:
-    print('using %s threads' % args['threads'])
 tf.config.threading.set_inter_op_parallelism_threads(args['threads'])
 tf.config.threading.set_intra_op_parallelism_threads(args['threads'])
 
@@ -151,4 +157,4 @@ predict(path_images=args['i'],
         topology_classes=args['topology_classes'],
         target_res=args['target_res'],
         nu_strength=args['nu_strength'],
-        many_vessels=args['many_vessels'])
+        vessel_strength=args['vessel_strength'])

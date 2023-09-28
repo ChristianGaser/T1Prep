@@ -9,6 +9,7 @@
 
 # [September 2023] CHANGES:
 #    * modified RandomFlip function and save the original one
+#    * replaced deprecated dtype-field by fn_output_signature for map_fn
 
 
 """
@@ -268,13 +269,13 @@ class RandomCrop(Layer):
 
         # if one input only is provided, performs the cropping directly
         if not self.several_inputs:
-            return tf.map_fn(self._single_slice, inputs, dtype=inputs.dtype)
+            return tf.map_fn(self._single_slice, inputs, fn_output_signature=inputs.dtype)
 
         # otherwise we concatenate all inputs before cropping, so that they are all cropped at the same location
         else:
             types = [v.dtype for v in inputs]
             inputs = tf.concat([tf.cast(v, 'float32') for v in inputs], axis=-1)
-            inputs = tf.map_fn(self._single_slice, inputs, dtype=tf.float32)
+            inputs = tf.map_fn(self._single_slice, inputs, fn_output_signature=tf.float32)
             inputs = tf.split(inputs, self.list_n_channels, axis=-1)
             return [tf.cast(v, t) for (t, v) in zip(types, inputs)]
 
@@ -413,13 +414,13 @@ class RandomFlip(keras.layers.Layer):
         swapped_inputs = list()
         for i in range(len(inputs)):
             if self.swap_labels[i]:
-                swapped_inputs.append(tf.map_fn(self._single_swap, [inputs[i], rand_flip], dtype=types[i]))
+                swapped_inputs.append(tf.map_fn(self._single_swap, [inputs[i], rand_flip], fn_output_signature=types[i]))
             else:
                 swapped_inputs.append(inputs[i])
 
         # flip inputs and convert them back to their original type
         inputs = tf.concat([tf.cast(v, 'float32') for v in swapped_inputs], axis=-1)
-        inputs = tf.map_fn(self._single_flip, [inputs, rand_flip], dtype=tf.float32)
+        inputs = tf.map_fn(self._single_flip, [inputs, rand_flip], fn_output_signature=tf.float32)
         inputs = tf.split(inputs, self.list_n_channels, axis=-1)
 
         return [tf.cast(v, t) for (t, v) in zip(types, inputs)]
@@ -565,13 +566,13 @@ class RandomFlip_orig(Layer):
         swapped_inputs = list()
         for i in range(len(inputs)):
             if self.swap_labels[i]:
-                swapped_inputs.append(tf.map_fn(self._single_swap, [inputs[i], odd], dtype=types[i]))
+                swapped_inputs.append(tf.map_fn(self._single_swap, [inputs[i], odd], fn_output_signature=types[i]))
             else:
                 swapped_inputs.append(inputs[i])
 
         # flip inputs and convert them back to their original type
         inputs = tf.concat([tf.cast(v, 'float32') for v in swapped_inputs], axis=-1)
-        inputs = tf.map_fn(self._single_flip, [inputs, rand_flip], dtype=tf.float32)
+        inputs = tf.map_fn(self._single_flip, [inputs, rand_flip], fn_output_signature=tf.float32)
         inputs = tf.split(inputs, self.list_n_channels, axis=-1)
 
         return [tf.cast(v, t) for (t, v) in zip(types, inputs)]
@@ -646,12 +647,12 @@ class SampleConditionalGMM(Layer):
         means = tf.concat([inputs[1][..., i] for i in range(self.n_channels)], 1)
         tile_shape = tf.concat([batch, tf.convert_to_tensor([1, ], dtype='int32')], axis=0)
         means = tf.tile(tf.expand_dims(tf.scatter_nd(tmp_indices, means, self.shape), 0), tile_shape)
-        means_map = tf.map_fn(lambda x: tf.gather(x[0], x[1]), [means, labels], dtype=tf.float32)
+        means_map = tf.map_fn(lambda x: tf.gather(x[0], x[1]), [means, labels], fn_output_signature=tf.float32)
 
         # same for stds
         stds = tf.concat([inputs[2][..., i] for i in range(self.n_channels)], 1)
         stds = tf.tile(tf.expand_dims(tf.scatter_nd(tmp_indices, stds, self.shape), 0), tile_shape)
-        stds_map = tf.map_fn(lambda x: tf.gather(x[0], x[1]), [stds, labels], dtype=tf.float32)
+        stds_map = tf.map_fn(lambda x: tf.gather(x[0], x[1]), [stds, labels], fn_output_signature=tf.float32)
 
         return stds_map * tf.random.normal(tf.shape(labels)) + means_map
 
@@ -971,9 +972,9 @@ class DynamicGaussianBlur(Layer):
         kernels = l2i_et.gaussian_kernel(sigma, self.max_sigma, self.blur_range, self.separable)
         if self.separable:
             for kernel in kernels:
-                image = tf.map_fn(self._single_blur, [image, kernel], dtype=tf.float32)
+                image = tf.map_fn(self._single_blur, [image, kernel], fn_output_signature=tf.float32)
         else:
-            image = tf.map_fn(self._single_blur, [image, kernels], dtype=tf.float32)
+            image = tf.map_fn(self._single_blur, [image, kernels], fn_output_signature=tf.float32)
         return image
 
     def _single_blur(self, inputs):
@@ -1406,7 +1407,7 @@ class IntensityAugmentation(Layer):
             split_rand_invert = tf.split(rand_invert, [1] * self.n_channels, axis=-1)
             inverted_channel = list()
             for (channel, invert) in zip(split_channels, split_rand_invert):
-                inverted_channel.append(tf.map_fn(self._single_invert, [channel, invert], dtype=channel.dtype))
+                inverted_channel.append(tf.map_fn(self._single_invert, [channel, invert], fn_output_signature=channel.dtype))
             inputs = tf.concat(inverted_channel, -1)
 
         return inputs
@@ -2179,12 +2180,12 @@ class RandomDilationErosion(Layer):
             if (self.max_factor == self.max_factor_dilate) | (self.operation != 'random'):
                 dist_threshold = tf.random.uniform(shape, minval=self.min_factor, maxval=self.max_factor, dtype='int32')
             else:
-                dist_threshold = tf.cast(tf.map_fn(self._sample_factor, [prob], dtype=tf.float32), dtype='int32')
+                dist_threshold = tf.cast(tf.map_fn(self._sample_factor, [prob], fn_output_signature=tf.float32), dtype='int32')
         kernel = l2i_et.unit_kernel(dist_threshold, self.n_dims, max_dist_threshold=self.max_factor)
 
         # convolve input mask with kernel according to given probability
         mask = tf.cast(tf.cast(inputs, dtype='bool'), dtype='float32')
-        mask = tf.map_fn(self._single_blur, [mask, kernel, prob], dtype=tf.float32)
+        mask = tf.map_fn(self._single_blur, [mask, kernel, prob], fn_output_signature=tf.float32)
         mask = tf.cast(mask, 'bool')
 
         if self.return_mask:

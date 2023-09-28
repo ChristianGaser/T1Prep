@@ -6,7 +6,7 @@ import numpy as np
 
 from ext.lab2im import edit_volumes
 from ext.lab2im import utils as tools
-from scipy.ndimage import binary_dilation, binary_erosion, binary_closing, binary_opening, grey_opening, grey_closing, gaussian_filter, distance_transform_edt, binary_fill_holes
+from scipy.ndimage import binary_closing, binary_opening, grey_opening, grey_closing, gaussian_filter
 
 # globally define tissue labels or better understanding the applied thresholds 
 # inside functions
@@ -19,7 +19,7 @@ tissue_labels = {
   "WM":  3.0
 }
 
-def suppress_vessels_and_skull_strip(volume, label, vessel_mask=None, many_vessels=False):
+def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel_mask=None):
     """
     Use label image to correct vessels in input volume and skull-strip
     the image by removing non-brain parts of the brain.
@@ -29,26 +29,69 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_mask=None, many_vesse
     if vessel_mask is None:
         vessel_mask = np.ones(shape=np.shape(volume), dtype='int8') > 0
 
-    # obtain a threshold based on median for GM and CSF
-    median_csf = np.median(np.array(volume[np.round(label) == tissue_labels["CSF"]]))
-    median_gm  = np.median(np.array(volume[np.round(label) == tissue_labels["GM"]]))
-    th_csf = (median_csf + median_gm)/2
-        
-    # set high-intensity areas above threshold inside CSF to a CSF-like
-    # intensity which works quite reasonable to remove large vessels
-    mask_csf = (label < (tissue_labels["CSF"]+tissue_labels["GM"])/2) & (volume > th_csf) & vessel_mask
-    volume[mask_csf] = median_csf
+    label_csf = np.round(label) == tissue_labels["CSF"]
+    label_gm  = np.round(label) == tissue_labels["GM"]
+    
+    # for automatic estimation of vessel-strength we obtain the ratio between 99 and 
+    # 50 percentile inside CSF where large values indicate 
+    # the presence of high intensities in CSF areas (=vessels)
+    if vessel_strength < 0: 
+        # for automatic estimation of vessel-strength we use squared values to 
+        # emphasize higher intensities in the percentiles
+        values = volume*volume 
+        percentile = np.percentile(np.array(values[label_csf]),[50,99])
+        ratio_high = percentile[1] / percentile[0]
+    elif vessel_strength == 0: # no correction
+        ratio_high = 0
+    elif vessel_strength == 1: # medium correction
+        ratio_high = 10
+    elif vessel_strength == 2: # strong correction
+        ratio_high = 15
 
-    # additionally suppress structures with higher intensity in non-WM areas  
-    if many_vessels:
-        print('Apply stronger vessel-correction')
+    # get areas where label values are CSF
+    label_csf_loose = (label < (tissue_labels["CSF"]+tissue_labels["GM"])/2)
+    
+    if ratio_high >= 10:
+        if ratio_high < 15:
+            print('Apply medium vessel-correction')
+
+        # obtain a threshold based on median for GM and CSF
+        median_csf = np.median(np.array(volume[label_csf]))
+        median_gm  = np.median(np.array(volume[label_gm]))
+        th_csf = (median_csf + median_gm)/2
+        volume_gt_csf = (volume > th_csf)
+        print(th_csf)
+        
+        # set high-intensity areas above threshold inside CSF to a CSF-like
+        # intensity which works quite reasonable to remove large vessels
+        mask_csf = label_csf_loose & volume_gt_csf & vessel_mask
+        # initially replace mask with median CSF
+        volume[mask_csf] = 0.5*median_csf
+        # and again replace mask with smoothed values to obtain a smoother
+        # correction
+        volume_smoothed = gaussian_filter(volume, sigma=1.0)
+        volume[mask_csf] = volume_smoothed[mask_csf]
+
+
+    # additionally suppress structures with higher intensity in non-WM areas by replacing values
+    # inside mask with grey-opening filtered output
+    if ratio_high >= 15:
+        print('Apply strong vessel-correction')
         volume_open = grey_opening(volume, size=(3,3,3))
-        mask = (label < (tissue_labels["GM"])) & (volume > th_csf) & vessel_mask
+        mask = (label_gm | label_csf_loose) & volume_gt_csf & vessel_mask
         volume[mask] = volume_open[mask]
     
+    # obtain some outer shell of the label map to remove areas where SynthSeg label is CSF, but
+    # we have higher intensity (e.g. due to dura or meninges)
+    mask = label > 0
+    # thickness of shell is reolution-dependent and will be controlled by a gaussian filter
+    thickness_shell = 1.0/res 
+    eroded_mask = gaussian_filter(mask, sigma=thickness_shell) > 0.5
+    # only change values inside the shell where SynthSeg label is CSF
+    volume[mask & ~eroded_mask & label_csf_loose] = 0
     
     # remove remaining background
-    volume[label < 0.1] = 0
+    volume[~mask] = 0
 
     return volume
 
@@ -59,12 +102,11 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
     We estimate bias correction by smoothing the residuals that remain after
     using the mean vavlues inside the label values and repeat that with decreasing
     smoothing kernels.
-    
     """
 
     # size of smoothing kernel in sigma w.r.t. target size and weighting
     if (nu_strength == 0):
-        return np.zeros(shape=np.shape(corrected_volume), dtype='float32')
+        return np.zeros(shape=np.shape(volume), dtype='float32')
     elif (nu_strength == 1):
         sigma = [16, 12, 8, 6]
     elif (nu_strength == 2):

@@ -538,7 +538,6 @@ def resample_volume(volume, aff, new_vox_size, interpolation='linear', blur=True
 
     # skip resampling is factor close to 1
     if np.all((factor > 0.99) & (factor < 1.01)):
-        print('No resampling necessary')
         volume2 = volume
         aff2 = aff
         return volume2, aff2

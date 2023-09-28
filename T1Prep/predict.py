@@ -112,7 +112,7 @@ def predict(path_images,
             topology_classes,
             target_res = 0.5,
             nu_strength = 2,
-            many_vessels = False):
+            vessel_strength = -1):
     '''
     Prediction pipeline.
     '''
@@ -197,6 +197,12 @@ def predict(path_images,
         post_patch_segmentation = net.predict(image)
         post_patch_parcellation = qc_score = None
 
+
+    # check whether there are any NaNs that point to failed prediction
+    if np.any(np.isnan(np.array(post_patch_segmentation))):
+        print('ERROR: SynthSeg failed')
+        return
+        
     # postprocessing
     seg, posteriors, volumes = postprocess(post_patch_seg=post_patch_segmentation,
                                            post_patch_parc=post_patch_parcellation,
@@ -211,6 +217,7 @@ def predict(path_images,
                                            topology_classes=topology_classes,
                                            v1=v1)
                                            
+
     # use resolution of input image if target_res <= 0
     if (target_res <= 0):
         target_res = im_res_orig
@@ -256,7 +263,6 @@ def predict(path_images,
         # use fast nu-correction with lower resolution of original preprocessed images
         use_fast_nu_correction = True
         
-        print('Apply nu-correction and skull-stripping' )
         resamp, aff_resamp, h_resamp = tools.load_volume(path_images, im_only=False, dtype='float32')
 
         # resample original input to 1mm voxel size for fast nu-correction
@@ -280,10 +286,10 @@ def predict(path_images,
         
         # create mask for weighting nu-correction
         cortex_weight = np.ones(shape=np.shape(seg), dtype='float32')
-        # weight subcortical structures with 50%
-        cortex_weight[((seg > 9)  & (seg < 14)) | ((seg > 48) & (seg < 53))] = 0.5
-        # weight Amygdala + Hippocampus with 20%
-        cortex_weight[(seg == 17) | (seg == 18) | (seg == 53) | (seg == 54)] = 0.2
+        # weight subcortical structures and cerebellum with 50%
+        cortex_weight[((seg > 9)  & (seg < 14)) | ((seg > 48) & (seg < 53)) | (seg== 8) | (seg < 47)] = 0.5
+        # ignore Amygdala + Hippocampus 
+        cortex_weight[(seg == 17) | (seg == 18) | (seg == 53) | (seg == 54)] = 0.0
 
         # resample cortex_mask to target voxel size except for fast nu-correction
         if not use_fast_nu_correction:
@@ -291,7 +297,7 @@ def predict(path_images,
         
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
-        resamp = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_mask=cortex_mask, many_vessels=many_vessels)
+        resamp = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask)
         
         # nu-correction works better if it's called after vessel correction
         print('NU-correction')
@@ -593,6 +599,7 @@ def postprocess(post_patch_seg, post_patch_parc, shape, pad_idx, crop_idx,
 
     # get posteriors
     post_patch_seg = np.squeeze(post_patch_seg)
+    
     if fast | (topology_classes is None):
         post_patch_seg = edit_volumes.crop_volume_with_idx(post_patch_seg, pad_idx, n_dims=3, return_copy=False)
 
@@ -684,7 +691,7 @@ class MakeShape(KL.Layer):
         super(MakeShape, self).build(input_shape)
 
     def call(self, inputs, **kwargs):
-        return tf.map_fn(self._single_process, inputs, dtype=tf.int32)
+        return tf.map_fn(self._single_process, inputs, fn_output_signature=tf.int32)
 
     def _single_process(self, inputs):
 

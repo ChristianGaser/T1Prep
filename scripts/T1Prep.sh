@@ -1,4 +1,4 @@
-#! /bin/sh
+#! /bin/bash
 #
 # PURPOSE:
 #
@@ -15,6 +15,17 @@
 # global parameters
 ########################################################
 
+# output colors
+BOLD='\033[1;30m'
+CYAN=$(tput setaf 6)
+PINK=$(tput setaf 5)
+BLUE=$(tput setaf 4)
+YELLOW=$(tput setaf 3)
+GREEN=$(tput setaf 2)
+RED=$(tput setaf 1)
+NC=$(tput sgr0)
+
+
 NUMBER_OF_JOBS=-1
 estimate_surf=1
 target_res=0.5
@@ -22,7 +33,7 @@ nu_strength=2
 sub=64
 use_sanlm=1
 debug=0
-many_vessels=0
+vessel_strength=-1
 
 # check whether python or python3 is in your path
 found=`which python 2>/dev/null`
@@ -84,7 +95,7 @@ parse_args ()
       --outdir*)
         exit_if_empty "$optname" "$optarg"
         outdir=$optarg
-        if [ ! -d $LOGDIR ]; then
+        if [ ! -d $outdir ]; then
           mkdir -p $outdir
         fi
         shift
@@ -99,6 +110,11 @@ parse_args ()
         nu_strength=$optarg
         shift
         ;;
+      --vessel-strength*)
+        exit_if_empty "$optname" "$optarg"
+        vessel_strength=$optarg
+        shift
+        ;;
       --nproc*)
         exit_if_empty "$optname" "$optarg"
         NUMBER_OF_JOBS="$optarg"
@@ -109,9 +125,6 @@ parse_args ()
           ;;
       --no-sanlm)
           use_sanlm=0
-          ;;
-      --many-vessels)
-          vessels=" --many-vessels "
           ;;
       --fast)
           fast=" --fast "
@@ -155,7 +168,7 @@ exit_if_empty ()
   val="$*"
 
   if [ ! -n "$val" ]; then
-    echo ERROR: No argument given with \"$desc\" command line argument! >&2
+    echo "${RED}ERROR: No argument given with \"$desc\" command line argument!${NC}" >&2
     exit 1
   fi
 }
@@ -169,7 +182,7 @@ check_files ()
   
   SIZE_OF_ARRAY="${#ARRAY[@]}"
   if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
-    echo 'ERROR: No files given!' >&2
+    echo "${RED}ERROR: No files given!${NC}" >&2
     help
     exit 1
   fi
@@ -178,7 +191,7 @@ check_files ()
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
     if [ ! -f "${ARRAY[$i]}" ]; then
       if [ ! -L "${ARRAY[$i]}" ]; then
-      echo ERROR: File ${ARRAY[$i]} not found
+      echo "${RED}ERROR: File ${ARRAY[$i]} not found${NC}"
       help
       exit 1
       fi
@@ -196,7 +209,7 @@ check_python ()
 {
   found=`which "${python}" 2>/dev/null`
   if [ ! -n "$found" ]; then
-    echo $python not found.
+    echo "${RED}ERROR: $python not found${NC}"
     exit 1
   fi
 }
@@ -227,7 +240,7 @@ get_no_of_cpus () {
     fi
   
     if [ ! -n "$NUMBER_OF_PROC" ]; then
-      echo "$FUNCNAME ERROR - number of CPUs not obtained. Use --nproc to define number of processes."
+      echo "${RED}${FUNCNAME} ERROR - number of CPUs not obtained. Use --nproc to define number of processes.${NC}"
       exit 1
     fi
   
@@ -258,6 +271,13 @@ process ()
   
   cmd_dir=`dirname $0`
   
+  # if target-res is set add a field to the name
+  if [ "${target_res}" == "-1" ]; then
+    res_str=''
+  else
+    res_str='_res-high'
+  fi
+  
   SIZE_OF_ARRAY="${#ARRAY[@]}"
 
   i=0
@@ -273,11 +293,11 @@ process ()
     fi
 
     # replace white spaces
-    FILE=$(echo "$FILE" | sed -e 's/ /\\ /g')
+    FILE=$(echo "$FILE" | sed -e "s/ /\\ /g")
 
     # get directory and basename and also consider ancient Analyze img files
     dn=$(dirname "$FILE")
-    bn=$(basename "$FILE" | sed -e 's/.img/.nii/g')
+    bn=$(basename "$FILE" | sed -e "s/.img/.nii/g")
     
     # if defined use outputdir otherwise use the folder of input files
     if [ ! -n "$outdir" ]; then
@@ -285,19 +305,19 @@ process ()
     fi
 
     # get names
-    resampled=$(echo $bn | sed -e 's/.nii/_res-high_desc-corr.nii/g')
-    sanlm=$(echo $bn     | sed -e 's/.nii/_desc-sanlm.nii/g')
-    label=$(echo $bn     | sed -e 's/.nii/_res-low_label.nii/g')
-    atlas=$(echo $bn     | sed -e 's/.nii/_res-low_atlas.nii/g')
-    hemi=$(echo $bn      | sed -e 's/.nii/_res-high_hemi.nii/g') # -[L|R]_seg will be added internally
-    seg=$(echo $bn       | sed -e 's/.nii/_res-high_desc-corr_seg.nii/g')
+    resampled=$(echo $bn | sed -e "s/.nii/${res_str}_desc-corr.nii/g")
+    sanlm=$(echo $bn     | sed -e "s/.nii/_desc-sanlm.nii/g")
+    label=$(echo $bn     | sed -e "s/.nii/_res-low_label.nii/g")
+    atlas=$(echo $bn     | sed -e "s/.nii/_res-low_atlas.nii/g")
+    hemi=$(echo $bn      | sed -e "s/.nii/${res_str}_hemi.nii/g") # -[L|R]_seg will be added internally
+    seg=$(echo $bn       | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
     
     # size of sub is dependent on voxel size
     # supress floating number by using scale = 0
     sub=`echo "scale = 0; ${sub} / $target_res" | bc` 
     
     echo
-    echo Processing ${FILE}
+    echo -e "${BOLD}Processing ${FILE} ${NC}"
     
     # apply SANLM denoising filter
     if [ "${use_sanlm}" -eq 1 ]; then
@@ -309,30 +329,27 @@ process ()
     fi
     
     # call SynthSeg segmentation
-    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${vessels} ${fast} ${robust} \
+    ${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
         --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
-        --label ${outdir}/${label} --resamp ${outdir}/${resampled}
+        --vessel-strength ${vessel_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}
     
     if [ ! -f "${outdir}/${resampled}" ] ||  [ ! -f "${outdir}/${label}" ]; then
-      echo
-      echo ERROR: ${cmd_dir}/SynthSeg_predict.py failed
-      exit 1
+      echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed ${NC}"
     fi
     
     # use output from SynthSeg segmentation to estimate Amap segmentation
     CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}
     
-    if [ ! -f "${outdir}/${seg}" ]; then
-      echo
-      echo ERROR: CAT_VolAmap failed
-      exit 1
+    # create hemispheric label maps for cortical surface extraction
+    if [ -f "${outdir}/${seg}" ]; then
+      if [ "${estimate_surf}" -eq 1 ]; then
+          ${python} ${cmd_dir}/partition_hemispheres.py \
+              --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
+      fi      
+    else
+      echo -e "${RED}ERROR: CAT_VolAmap failed ${NC}"
     fi
 
-    # create hemispheric label maps for cortical surface extraction
-    if [ "${estimate_surf}" -eq 1 ]; then
-        ${python} ${cmd_dir}/partition_hemispheres.py \
-            --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
-    fi
     
     if [ "${debug}" -eq 0 ]; then
       if [ "${use_sanlm}" -eq 1 ]; then
