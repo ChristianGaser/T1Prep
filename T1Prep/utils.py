@@ -115,6 +115,16 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
     We estimate bias correction by smoothing the residuals that remain after
     using the mean vavlues inside the label values and repeat that with decreasing
     smoothing kernels.
+    
+    Args:
+        volume (numpy.ndarray): The input volume to be corrected for non-uniformities.
+        label (numpy.ndarray): The label image used to correct the input volume.
+        target_size (tuple): The target voxel size of the output.
+        nu_strength (int): The strength of the non-uniformity correction. Default is 2.
+        bias_weight (float): The weight of the bias field. Default is None.
+
+    Returns:
+        numpy.ndarray: The bias field used to correct the input volume for non-uniformities.
     """
 
     # size of smoothing kernel in sigma w.r.t. target size and weighting
@@ -144,8 +154,8 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
 
         for i in range(0, 3):
             tissue_idx = np.round(label) == i + 1
-            mean_tissue = np.mean(np.array(volume[tissue_idx]))
-            bias_step[tissue_idx]  += corrected_volume[tissue_idx] - mean_tissue;
+            mean_tissue = np.mean(np.array(corrected_volume[tissue_idx]))
+            bias_step[tissue_idx]  += (corrected_volume[tissue_idx] - mean_tissue);
         
         # weight bias field
         if bias_weight is not None:
@@ -154,7 +164,7 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
         bias_step = gaussian_filter(bias_step, sigma=sigma)
         corrected_volume -= bias_step;
         bias += bias_step
-
+        
     # we have to set bias field outside label mask to 0
     bias[label == 0] = 0.0
     
