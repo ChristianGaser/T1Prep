@@ -39,8 +39,8 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
         # for automatic estimation of vessel-strength we use squared values to 
         # emphasize higher intensities in the percentiles
         values = volume*volume 
-        percentile = np.percentile(np.array(values[label_csf]),[50,99])
-        ratio_high = percentile[1] / percentile[0]
+        percentile_csf2 = np.percentile(np.array(values[label_csf]),[50,99])
+        ratio_high = percentile_csf2[1] / percentile_csf2[0]
     elif vessel_strength == 0: # no correction
         ratio_high = 0
     elif vessel_strength == 1: # medium correction
@@ -52,16 +52,20 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     # to background
     label_csf_loose = (label < (tissue_labels["CSF"]+tissue_labels["GM"])/2)
     
+    # we need the 1% and 50% percentiles for CSF
+    percentile_csf = np.percentile(np.array(volume[label_csf]),[1,50])
+
     # obtain a threshold based on median for GM and CSF
-    median_csf = np.median(np.array(volume[label_csf]))
+    median_csf = percentile_csf[1] # percentile for 50%
     median_gm  = np.median(np.array(volume[label_gm]))
     th_csf = (median_csf + median_gm)/2
     
     # create mask where volume data are ~CSF
     volume_gt_csf = volume > th_csf
     
-    is_not_T1 = median_csf > median_gm
-    if is_not_T1:
+    # check for T2w-contrast and invert mask
+    is_T2w = median_csf > median_gm
+    if is_T2w:
         print('Image contrast is not T1-weighted')
         # we have to invert volume mask for low CSF values
         volume_gt_csf = ~volume_gt_csf
@@ -74,10 +78,10 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
         # intensity which works quite reasonable to remove large vessels
         mask_csf = label_csf_loose & volume_gt_csf & vessel_mask
         # initially replace mask with median CSF
-        volume[mask_csf] = 0.5*median_csf
+        volume[mask_csf] = percentile_csf[0]
         # and again replace mask with smoothed values to obtain a smoother
         # correction
-        volume_smoothed = gaussian_filter(volume, sigma=1.0)
+        volume_smoothed = gaussian_filter(volume, sigma=1.0/res)
         volume[mask_csf] = volume_smoothed[mask_csf]
 
 
@@ -94,13 +98,13 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     mask = label > 0
     
     # thickness of shell is resolution-dependent and will be controlled by a gaussian filter
-    thickness_shell = 1.0/res 
+    thickness_shell = 0.75/res 
     eroded_mask = gaussian_filter(mask, sigma=thickness_shell) > 0.5
     
     # only change values inside the shell where SynthSeg label is CSF and set values a bit
     # smaller than CSF because it's the outer shell and brighter spots would be more
     # difficult to deal with
-    volume[mask & ~eroded_mask & label_csf_loose] = 0.5*median_csf
+    volume[mask & ~eroded_mask & label_csf_loose] = percentile_csf[0]
     label[ mask & ~eroded_mask & label_csf_loose] = 0.5*tissue_labels["CSF"]
     
     # remove remaining background

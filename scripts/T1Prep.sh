@@ -16,14 +16,15 @@
 ########################################################
 
 # output colors
-BOLD='\033[1;30m'
 CYAN=$(tput setaf 6)
 PINK=$(tput setaf 5)
 BLUE=$(tput setaf 4)
 YELLOW=$(tput setaf 3)
 GREEN=$(tput setaf 2)
 RED=$(tput setaf 1)
+BLACK=$(tput setaf 0)
 NC=$(tput sgr0)
+BOLD=$(tput bold)
 
 # defaults
 vessel_strength=-1
@@ -289,8 +290,14 @@ process ()
     
     SIZE_OF_ARRAY="${#ARRAY[@]}"
 
+    # set overall starting time
+    start0=`date +%s`
+
     i=0
     while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
+      
+        # set starting time
+        start=`date +%s`
 
         # check whether absolute or relative names were given
         if [ ! -f "${ARRAY[$i]}" ]; then
@@ -331,52 +338,81 @@ process ()
         
         # print progress and filename
         j=`expr $i + 1`
-        echo -e "${BOLD}--------------------------------------------------------------${NC}"
-        echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}Processing ${FILE} ${NC}"
-        
+        echo -e "${BOLD}${BLACK}--------------------------------------------------------------${NC}"
+        echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE} ${NC}"
+
         # call SANLM denoising filter
         if [ "${use_sanlm}" -eq 1 ]; then
             echo SANLM denoising
-            CAT_VolSanlm ${FILE} ${outdir}/${sanlm}
+            cmd="CAT_VolSanlm ${FILE} ${outdir}/${sanlm}"
+            eval ${cmd}
             input=${outdir}/${sanlm}
         else
             input=${FILE}
         fi
         
-        # call SynthSeg segmentation
-        ${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
-                --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
-                --vessel-strength ${vessel_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}
-        
         # check for outputs
-        if [ ! -f "${outdir}/${resampled}" ] ||  [ ! -f "${outdir}/${label}" ]; then
-            echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed ${NC}"
+        if [ -f "${input}" ]; then
+            # call SynthSeg segmentation
+            cmd="${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
+                    --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
+                    --vessel-strength ${vessel_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}"
+            eval ${cmd}
+        else
+            echo -e "${RED}ERROR: CAT_VolSanlm failed ${NC}"
+            echo -e "${CYAN}${cmd}${NC}"
+            ((i++))
+            continue
         fi
         
-        # use output from SynthSeg segmentation to estimate Amap segmentation
-        CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}
+        # remove denoised image
+        if [ "${use_sanlm}" -eq 1 ]; then
+            rm ${outdir}/${sanlm} 
+        fi
         
+        # check for outputs
+        if [ -f "${outdir}/${resampled}" ] &&  [ -f "${outdir}/${label}" ]; then
+          # use output from SynthSeg segmentation to estimate Amap segmentation
+            CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}
+        else
+            echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed ${NC}"
+            echo -e "${CYAN}${cmd}${NC}"
+            ((i++))
+            continue
+        fi
+                
         # create hemispheric label maps for cortical surface extraction
         if [ -f "${outdir}/${seg}" ]; then
             if [ "${estimate_surf}" -eq 1 ]; then
-                    ${python} ${cmd_dir}/partition_hemispheres.py \
-                        --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
-            fi          
-            
-            # remove temporary files if not debugging
-            if [ "${debug}" -eq 0 ]; then
-                if [ "${use_sanlm}" -eq 1 ]; then
-                    rm ${outdir}/${sanlm} 
-                fi
-                rm ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
+                ${python} ${cmd_dir}/partition_hemispheres.py \
+                    --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
             fi
-
         else
             echo -e "${RED}ERROR: CAT_VolAmap failed ${NC}"
+            ((i++))
+            continue
         fi
+        
+        # remove temporary files if not debugging
+        if [ "${debug}" -eq 0 ]; then
+            rm ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
+        fi
+
+        # print execution time per data set
+        end=`date +%s`
+        runtime=$((end-start))
+        echo -e "${GREEN}Finished after ${runtime}s${NC}"
             
         ((i++))
     done
+    
+    # print overall execution time for more than one data set
+    if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
+        end0=`date +%s`
+        runtime=$((end0-start0))
+        runtime="T1Prep finished after: $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))sec"
+        echo -e "${GREEN}${runtime}${NC}"  
+    fi
 
 }
 
