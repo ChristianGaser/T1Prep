@@ -330,7 +330,7 @@ process ()
         sanlm=$(echo $bn     | sed -e "s/.nii/_desc-sanlm.nii/g")
         
         # remove T1w|T2w from basename
-        bn0=$(echo $bn     | sed -e "s/_T1w//g" -e "s/_T2w//g")        
+        bn0=$(echo $bn     | sed -e "s/_T1w.nii/.nii/g" -e "s/_T2w.nii/.nii/g")        
         label=$(echo $bn0  | sed -e "s/.nii/${res_str}_label.nii/g")
         atlas=$(echo $bn0  | sed -e "s/.nii/${res_str}_atlas.nii/g")
         seg=$(echo $bn0    | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
@@ -345,13 +345,14 @@ process ()
         
         # print progress and filename
         j=`expr $i + 1`
-        echo -e "${BOLD}${BLACK}--------------------------------------------------------------${NC}"
+        echo -e "${BOLD}${BLACK}######################################################${NC}"
         echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE} ${NC}"
 
         # 1. Call SANLM denoising filter
         # ----------------------------------------------------------------------
         if [ "${use_sanlm}" -eq 1 ]; then
             echo SANLM denoising
+            echo "---------------------------------------------"
             cmd="CAT_VolSanlm ${FILE} ${outdir}/${sanlm}"
             eval ${cmd}
             input=${outdir}/${sanlm}
@@ -363,6 +364,8 @@ process ()
         # ----------------------------------------------------------------------
         # check for outputs from previous step
         if [ -f "${input}" ]; then
+            echo SynthSeg segmentation
+            echo "---------------------------------------------"
             cmd="${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
                     --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
                     --vessel-strength ${vessel_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}"
@@ -383,7 +386,8 @@ process ()
         # ----------------------------------------------------------------------
         # check for outputs from previous step
         if [ -f "${outdir}/${resampled}" ] &&  [ -f "${outdir}/${label}" ]; then
-            echo AMAP segmentation
+            echo Amap segmentation
+            echo "---------------------------------------------"
             cmd="CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
             eval ${cmd}
         else
@@ -393,13 +397,15 @@ process ()
             continue
         fi
 
+        # optionally extract surface
         if [ "${estimate_surf}" -eq 1 ]; then
                 
             # 4. Create hemispheric label maps for cortical surface extraction
             # ----------------------------------------------------------------------
             # check for outputs from previous step
             if [ -f "${outdir}/${seg}" ]; then
-                echo Hemispheric pertitioning
+                echo Hemispheric partitioning
+                echo "---------------------------------------------"
                 cmd="${python} ${cmd_dir}/partition_hemispheres.py \
                     --label ${outdir}/${seg} --atlas ${outdir}/${atlas}"
                 eval ${cmd}
@@ -415,16 +421,18 @@ process ()
             # check for outputs from previous step
             if [ -f "${outdir}/${hemi_L}" ]; then
                 echo Extracting left hemisphere
+                echo "---------------------------------------------"
                 cmd="CAT_VolThicknessPbt ${outdir}/${hemi_L} ${outdir}/${gmt_L} ${outdir}/${ppm_L}"
                 eval ${cmd}
-                cmd="CAT_MarchingCubesGenus0 -thresh 0.5 ${outdir}/${ppm_L} ${outdir}/${mid_L}"
+                cmd="CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${ppm_L} ${outdir}/${mid_L}"
                 eval ${cmd}
             fi
             if [ -f "${outdir}/${hemi_R}" ]; then
                 echo Extracting right hemisphere
+                echo "---------------------------------------------"
                 cmd="CAT_VolThicknessPbt ${outdir}/${hemi_R} ${outdir}/${gmt_R} ${outdir}/${ppm_R}"
                 eval ${cmd}
-                cmd="CAT_MarchingCubesGenus0 -thresh 0.5 ${outdir}/${ppm_R} ${outdir}/${mid_R}"
+                cmd="CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${ppm_R} ${outdir}/${mid_R}"
                 eval ${cmd}
             fi
             if [ ! -f "${outdir}/${hemi_L}" ] && [ ! -f "${outdir}/${hemi_R}" ]; then

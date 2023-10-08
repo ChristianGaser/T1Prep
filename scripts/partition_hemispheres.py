@@ -35,7 +35,6 @@ if len(sys.argv) < 2:
 args = vars(parser.parse_args())
 
 amap, aff_amap, h_amap = tools.load_volume(args['label'], im_only=False, dtype='float32')
-#amap, _, aff_amap, n_dims, n_channels, h_amap, res_amap = tools.get_volume_info(args['label'], True)
 seg, aff_seg, h_seg = tools.load_volume(args['atlas'], im_only=False, dtype='float32')
 
 hemi_str  = ['hemi-L', 'hemi-R'] # name for output file
