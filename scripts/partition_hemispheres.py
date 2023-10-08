@@ -38,12 +38,12 @@ amap, aff_amap, h_amap = tools.load_volume(args['label'], im_only=False, dtype='
 #amap, _, aff_amap, n_dims, n_channels, h_amap, res_amap = tools.get_volume_info(args['label'], True)
 seg, aff_seg, h_seg = tools.load_volume(args['atlas'], im_only=False, dtype='float32')
 
-hemi_str  = ['-L_seg', '-R_seg'] # name for output file
+hemi_str  = ['hemi-L', 'hemi-R'] # name for output file
 hemi_str2 = ['left', 'right']     # name for print
 
 for j in [0, 1]:
     print('Estimate hemispheric amap label for %s hemisphere' % hemi_str2[j])
-    hemi_name = args['label'].replace('_seg.nii', '_%s_amap.nii' % hemi_str[j])
+    hemi_name = args['label'].replace('_seg.nii', '_%s_seg.nii' % hemi_str[j])
     hemi = utils.amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=j+1)
 
     # crop hemi image and add 5 voxels

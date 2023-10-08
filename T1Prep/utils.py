@@ -239,11 +239,11 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
     csf = edit_volumes.resample_volume_like(amap, aff_amap, csf, aff_seg, interpolation='linear')
     
     # finally round and convert wm and csf masks to boolean type because of interpolation during resampling
-    wm  = np.round(wm) > 0.5
+    wm  = np.round(wm)  > 0.5
     csf = np.round(csf) > 0.5
 
     # build hemispheric label with CSF=1, GM=2, and WM=3
-    # adding 0 is necessary to create a new variable otherwise amap is also modified
+    # adding 0 is neccessary to create a new variable otherwise amap is also modified
     label = amap + 0 
     label[csf] = tissue_labels["CSF"]
     label[wm]  = tissue_labels["WM"]
