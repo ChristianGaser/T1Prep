@@ -446,9 +446,13 @@ process ()
         # remove temporary files if not debugging
         if [ "${debug}" -eq 0 ]; then
             rm ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
-            rm ${outdir}/${hemi_L} ${outdir}/${hemi_R}
-            rm ${outdir}/${ppm_L} ${outdir}/${ppm_R}
-            #rm ${outdir}/${gmt_L} ${outdir}/${gmt_R} 
+            
+            # only remove temporary files if surfaces exist
+            if [ -f "${outdir}/${mid_L}" ] && [ -f "${outdir}/${mid_R}" ]; then
+                rm ${outdir}/${hemi_L} ${outdir}/${hemi_R}
+                rm ${outdir}/${ppm_L} ${outdir}/${ppm_R}
+                #rm ${outdir}/${gmt_L} ${outdir}/${gmt_R} 
+            fi
         fi
 
         # print execution time per data set
