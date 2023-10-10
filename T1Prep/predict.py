@@ -45,42 +45,6 @@ from ext.neuron import models as nrn_models
 
 from T1Prep import utils
 
-regions = {
-    2:  "lCerebralWM",
-    3:  "lCerebralCortex",
-    4:  "lLateralVentricle",
-    5:  "lInfLatVent",
-    7:  "lCerebellumWM",
-    8:  "lCerebellumCortex",
-    10: "lThalamus",
-    11: "lCaudate",
-    12: "lPutamen",
-    13: "lPallidum",
-    14: "3rdVentricle",
-    15: "4thVentricle",
-    16: "BrainStem",
-    17: "lHippocampus",
-    18: "lAmygdala",
-    24: "CSF",
-    26: "lAccumbensArea",
-    28: "lVentralDC",
-    41: "rCerebralWM",
-    42: "rCerebralCortex",
-    43: "rLateralVentricle",
-    44: "rInfLatVent",
-    46: "rCerebellumWM",
-    47: "rCerebellumCortex", 
-    49: "rThalamus",
-    50: "rCaudate",
-    51: "rPutamen",
-    52: "rPallidum",
-    53: "rHippocampus",
-    54: "rAmygdala",
-    58: "rAccumbensArea",
-    60: "rVentralDC"
-}
-
-
 def predict(path_images,
             path_segmentations,
             path_model_segmentation,

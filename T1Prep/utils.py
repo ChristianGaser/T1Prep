@@ -19,6 +19,80 @@ tissue_labels = {
   "WM":  3.0
 }
 
+# regions of SynthSeg segmentation
+regions = {
+  "Bkg":               0,
+  "lCerebralWM":       2,
+  "lCerebralCortex":   3,
+  "lLateralVentricle": 4,
+  "lInfLatVent":       5,
+  "lCerebellumWM":     7,
+  "lCerebellumCortex": 8,
+  "lThalamus":         10,
+  "lCaudate":          11,
+  "lPutamen":          12,
+  "lPallidum":         13,
+  "3rdVentricle":      14,
+  "4thVentricle":      15,
+  "BrainStem":         16,
+  "lHippocampus":      17,
+  "lAmygdala":         18,
+  "CSF":               24,
+  "lAccumbensArea":    26,
+  "lVentralDC":        28,
+  "rCerebralWM":       41,
+  "rCerebralCortex":   42,
+  "rLateralVentricle": 43,
+  "rInfLatVent":       44,
+  "rCerebellumWM":     46,
+  "rCerebellumCortex": 47,
+  "rThalamus":         49,
+  "rCaudate":          50,
+  "rPutamen":          51,
+  "rPallidum":         52,
+  "rHippocampus":      53,
+  "rAmygdala":         54,
+  "rAccumbensArea":    58,
+  "rVentralDC":        60
+}
+
+# numbered regions of SynthSeg segmentation as list for the posterior
+post_regions = {
+  "Bkg":               0,
+  "lCerebralWM":       1,
+  "lCerebralCortex":   2,
+  "lLateralVentricle": 3,
+  "lInfLatVent":       4,
+  "lCerebellumWM":     5,
+  "lCerebellumCortex": 6,
+  "lThalamus":         7,
+  "lCaudate":          8,
+  "lPutamen":          9,
+  "lPallidum":         10,
+  "3rdVentricle":      11,
+  "4thVentricle":      12,
+  "BrainStem":         13,
+  "lHippocampus":      14,
+  "lAmygdala":         15,
+  "CSF":               16,
+  "lAccumbensArea":    17,
+  "lVentralDC":        18,
+  "rCerebralWM":       19,
+  "rCerebralCortex":   20,
+  "rLateralVentricle": 21,
+  "rInfLatVent":       22,
+  "rCerebellumWM":     23,
+  "rCerebellumCortex": 24,
+  "rThalamus":         25,
+  "rCaudate":          26,
+  "rPutamen":          27,
+  "rPallidum":         28,
+  "rHippocampus":      29,
+  "rAmygdala":         30,
+  "rAccumbensArea":    31,
+  "rVentralDC":        32
+}
+
 def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel_mask=None):
     """
     Use label image to correct vessels in input volume and skull-strip
@@ -54,7 +128,9 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     
     # we need the 1% and 50% percentiles for CSF
     percentile_csf = np.percentile(np.array(volume[label_csf]),[1,50])
-
+        
+    correct_dura = 0
+    
     # obtain a threshold based on median for GM and CSF
     median_csf = percentile_csf[1] # percentile for 50%
     median_gm  = np.median(np.array(volume[label_gm]))
@@ -64,8 +140,8 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     volume_gt_csf = volume > th_csf
     
     # check for T2w-contrast and invert mask
-    is_T2w = median_csf > median_gm
-    if is_T2w:
+    is_T1w = median_csf < median_gm
+    if not is_T1w:
         print('Image contrast is not T1-weighted')
         # we have to invert volume mask for low CSF values
         volume_gt_csf = ~volume_gt_csf
@@ -95,17 +171,37 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     
     # obtain some outer shell of the label map to remove areas where SynthSeg label is CSF, but
     # we have higher intensity (e.g. due to dura or meninges)
-    mask = label > 0
+    mask = label > 0.5
+    
+    # only apply the dura-correction for T1w images, because surrounding CSF is quite sparse in
+    # T2 or Flair and no dura is usually visible
     
     # thickness of shell is resolution-dependent and will be controlled by a gaussian filter
     thickness_shell = 0.75/res 
     eroded_mask = gaussian_filter(mask, sigma=thickness_shell) > 0.5
     
+    # is the intensity closer to CSF or GM
+    deviation_mask = np.abs(volume - median_csf) > np.abs(volume - median_gm)
+
     # only change values inside the shell where SynthSeg label is CSF and set values a bit
     # smaller than CSF because it's the outer shell and brighter spots would be more
     # difficult to deal with
-    volume[mask & ~eroded_mask & label_csf_loose] = percentile_csf[0]
-    label[ mask & ~eroded_mask & label_csf_loose] = 0.5*tissue_labels["CSF"]
+    # use higher filling intensities for non-T1w images because CSF is much brighter
+    if is_T1w:
+        volume_fill_value = percentile_csf[0]
+        label_fill_value  = 0.5*tissue_labels["CSF"]
+    else:
+        volume_fill_value = percentile_csf[1]
+        label_fill_value  = tissue_labels["CSF"]
+    
+    volume[mask & ~eroded_mask & label_csf_loose & deviation_mask] = volume_fill_value
+
+    """
+    volume[mask & ~eroded_mask] += 400
+    volume[label_csf_loose] += 800
+    volume[deviation_mask] += 1600
+    """
+    label[ mask & ~eroded_mask & label_csf_loose & deviation_mask] = label_fill_value
     
     # remove remaining background
     volume[~mask] = 0
@@ -180,24 +276,48 @@ def posteriors2label(posterior):
     while smoothing non-cortical GM to obtain a smoother border
     
     """
-    
+
     # CSF
-    csf =  posterior[..., 3]  + posterior[..., 4]  + posterior[..., 11] + posterior[..., 12]
-    csf += posterior[..., 16] + posterior[..., 21] + posterior[..., 22]
+    csf =  posterior[..., post_regions["lLateralVentricle"]] + \
+           posterior[..., post_regions["lInfLatVent"]] + \
+           posterior[..., post_regions["3rdVentricle"]] + \
+           posterior[..., post_regions["4thVentricle"]] + \
+           posterior[..., post_regions["CSF"]] + \
+           posterior[..., post_regions["rLateralVentricle"]] + \
+           posterior[..., post_regions["rInfLatVent"]]
+    
     
     # non-cortical GM should be smoothed before adding to GM
-    im =  posterior[..., 7]  + posterior[..., 8]  + posterior[..., 9]  + posterior[..., 10]
-    im += posterior[..., 14] + posterior[..., 15] + posterior[..., 17] + posterior[..., 18]
-    im += posterior[..., 25] + posterior[..., 26] + posterior[..., 27] + posterior[..., 28]
-    im += posterior[..., 29] + posterior[..., 30] + posterior[..., 31] + posterior[..., 32]
+    im =  posterior[..., post_regions["lThalamus"]] + \
+          posterior[..., post_regions["lCaudate"]] + \
+          posterior[..., post_regions["lPutamen"]] + \
+          posterior[..., post_regions["lPallidum"]] + \
+          posterior[..., post_regions["lHippocampus"]] + \
+          posterior[..., post_regions["lAmygdala"]] + \
+          posterior[..., post_regions["lAccumbensArea"]] + \
+          posterior[..., post_regions["lVentralDC"]] + \
+          posterior[..., post_regions["rThalamus"]] + \
+          posterior[..., post_regions["rCaudate"]] + \
+          posterior[..., post_regions["rPutamen"]] + \
+          posterior[..., post_regions["rPallidum"]] + \
+          posterior[..., post_regions["rHippocampus"]] + \
+          posterior[..., post_regions["rAmygdala"]] + \
+          posterior[..., post_regions["rAccumbensArea"]] + \
+          posterior[..., post_regions["rVentralDC"]]
         
     # GM
-    gm =  posterior[..., 2] + posterior[..., 6] + posterior[..., 20] + posterior[..., 24] + im
+    gm =  posterior[..., post_regions["lCerebralCortex"]] + \
+          posterior[..., post_regions["lCerebellumCortex"]] + \
+          posterior[..., post_regions["rCerebralCortex"]] + \
+          posterior[..., post_regions["rCerebellumCortex"]] + im
 
     # WM
-    wm =  posterior[..., 1] + posterior[..., 5] + posterior[..., 13] + posterior[..., 19]
-    wm += posterior[..., 23]
-
+    wm =  posterior[..., post_regions["lCerebralWM"]] + \
+          posterior[..., post_regions["lCerebellumWM"]] + \
+          posterior[..., post_regions["BrainStem"]] + \
+          posterior[..., post_regions["rCerebralWM"]] + \
+          posterior[..., post_regions["rCerebellumWM"]]
+  
     label = tissue_labels["CSF"]*csf + tissue_labels["GM"]*gm + tissue_labels["WM"]*wm
 
     # we have to smooth the label in areas of non-cortical GM
@@ -224,15 +344,23 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
     
     # CSF + BKG
     if hemi==1:
-        csf = (seg == 0) | (seg == 7)  | (seg == 8)  | (seg == 14) | (seg == 15) | (seg == 16) | (seg > 40)
+        csf =  (seg == regions["Bkg"]) | (seg == regions["lCerebellumWM"]) | \
+               (seg == regions["lCerebellumCortex"]) | (seg == regions["3rdVentricle"]) | \
+               (seg == regions["4thVentricle"]) | (seg == regions["BrainStem"]) | \
+               (seg >= regions["rCerebralWM"])
     else:
-        csf = ((seg < 40) & ~(seg == 24)) | (seg == 46) | (seg == 47)
+        csf = ((seg <= regions["lVentralDC"]) & ~(seg == regions["CSF"])) | \
+               (seg == regions["rCerebellumWM"]) | (seg == regions["rCerebellumCortex"])
                 
     # WM
     if hemi==1:
-        wm = (seg == 4)  | (seg == 5)  | ((seg > 9) & (seg < 14))  | (seg == 26) | (seg == 28)
+        wm = (seg == regions["lLateralVentricle"]) | (seg == regions["lInfLatVent"]) | \
+            ((seg >= regions["lThalamus"]) & (seg < regions["3rdVentricle"])) | \
+             (seg == regions["lAccumbensArea"]) | (seg == regions["lVentralDC"])
     else:
-        wm = (seg == 43) | (seg == 44) | ((seg > 48) & (seg < 53)) | (seg == 58) | (seg == 60)
+        wm = (seg == regions["rLateralVentricle"]) | (seg == regions["rInfLatVent"]) | \
+            ((seg >= regions["rThalamus"]) & (seg <= regions["rPallidum"])) | \
+             (seg == regions["rAccumbensArea"]) | (seg == regions["rVentralDC"])
 
     # resample wm and csf to voxel size of Amap label 
     wm  = edit_volumes.resample_volume_like(amap, aff_amap, wm,  aff_seg, interpolation='linear')
@@ -281,23 +409,42 @@ def posteriors2hemiseg(posterior, hemi=1):
     """
     
     # CSF + BKG
-    csf =  posterior[..., 0]  + posterior[..., 16]
+    csf =  posterior[..., post_regions["Bkg"]] + \
+           posterior[..., post_regions["CSF"]]
             
     # GM
     if hemi==1:
-        gm =  posterior[..., 2]  + posterior[..., 14] + posterior[..., 15]
+        gm =  posterior[..., post_regions["lCerebralCortex"]] + \
+              posterior[..., post_regions["lHippocampus"]] + \
+              posterior[..., post_regions["lAmygdala"]]
     else:
-        gm =  posterior[..., 20] + posterior[..., 29] + posterior[..., 30]
+        gm =  posterior[..., post_regions["rCerebralCortex"]] + \
+              posterior[..., post_regions["rHippocampus"]] + \
+              posterior[..., post_regions["rAmygdala"]]
     
     # WM
     if hemi==1:
-        wm =  posterior[..., 1]  + posterior[..., 3]  + posterior[..., 4]  + posterior[..., 7]
-        wm += posterior[..., 8]  + posterior[..., 9]  + posterior[..., 10] + posterior[..., 11]
-        wm += posterior[..., 17] + posterior[..., 18]
+        wm =  posterior[..., post_regions["lCerebralWM"]] + \
+              posterior[..., post_regions["lLateralVentricle"]] + \
+              posterior[..., post_regions["lInfLatVent"]] + \
+              posterior[..., post_regions["lThalamus"]] + \
+              posterior[..., post_regions["lCaudate"]] + \
+              posterior[..., post_regions["lPutamen"]] + \
+              posterior[..., post_regions["lPallidum"]] + \
+              posterior[..., post_regions["3rdVentricle"]] + \
+              posterior[..., post_regions["lAccumbensArea"]] + \
+              posterior[..., post_regions["lVentralDC"]]
     else:
-        wm =  posterior[..., 19] + posterior[..., 21] + posterior[..., 22] + posterior[..., 25]
-        wm += posterior[..., 26] + posterior[..., 27] + posterior[..., 28] + posterior[..., 11]
-        wm += posterior[..., 31] + posterior[..., 32]
+        wm =  posterior[..., post_regions["rCerebralWM"]] + \
+              posterior[..., post_regions["rLateralVentricle"]] + \
+              posterior[..., post_regions["rInfLatVent"]] + \
+              posterior[..., post_regions["rThalamus"]] + \
+              posterior[..., post_regions["rCaudate"]] + \
+              posterior[..., post_regions["rPutamen"]] + \
+              posterior[..., post_regions["rPallidum"]] + \
+              posterior[..., post_regions["3rdVentricle"]] + \
+              posterior[..., post_regions["rAccumbensArea"]] + \
+              posterior[..., post_regions["rVentralDC"]]
 
     # build label with CSF=1, GM=2, and WM=3
     label = tissue_labels["CSF"]*csf + tissue_labels["GM"]*gm + tissue_labels["WM"]*wm

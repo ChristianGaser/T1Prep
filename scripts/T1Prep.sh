@@ -256,11 +256,7 @@ get_no_of_cpus () {
         fi
 
         if [ $NUMBER_OF_JOBS -le -1 ]; then
-            NUMBER_OF_JOBS=$(echo "$NUMBER_OF_PROC + $NUMBER_OF_JOBS" | bc)
-            
-            if [ "$NUMBER_OF_JOBS" -lt 1 ]; then
-                NUMBER_OF_JOBS=1
-            fi
+            NUMBER_OF_JOBS=$NUMBER_OF_PROC
         fi
         if [ "$NUMBER_OF_JOBS" -gt "$NUMBER_OF_PROC" ]; then
             NUMBER_OF_JOBS=$NUMBER_OF_PROC
