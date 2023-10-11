@@ -41,8 +41,8 @@ hemi_str  = ['hemi-L', 'hemi-R'] # name for output file
 hemi_str2 = ['left', 'right']     # name for print
 
 for j in [0, 1]:
-    print('Estimate hemispheric amap label for %s hemisphere' % hemi_str2[j])
-    hemi_name = args['label'].replace('_seg.nii', '_%s_seg.nii' % hemi_str[j])
+    print('Estimate surface label map for %s hemisphere' % hemi_str2[j])
+    hemi_name = args['label'].replace('.nii', '_%s.nii' % hemi_str[j])
     hemi = utils.amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=j+1)
 
     # crop hemi image and add 5 voxels

@@ -33,9 +33,9 @@ estimate_surf=1
 target_res=0.5
 nu_strength=2
 use_sanlm=1
+use_amap=1
 debug=0
 sub=64
-
 
 ########################################################
 # run main
@@ -80,7 +80,7 @@ parse_args ()
                 python=$optarg
                 shift
                 ;;
-            --outdir* | --out-dir)
+            --out* | --out-dir)
                 exit_if_empty "$optname" "$optarg"
                 outdir=$optarg
                 shift
@@ -115,6 +115,9 @@ parse_args ()
                 ;;
             --no-sanlm)
                 use_sanlm=0
+                ;;
+            --no-amap)
+                use_amap=0
                 ;;
             --fast)
                 fast=" --fast "
@@ -329,9 +332,16 @@ process ()
         bn0=$(echo $bn     | sed -e "s/_T1w.nii/.nii/g" -e "s/_T2w.nii/.nii/g")        
         label=$(echo $bn0  | sed -e "s/.nii/${res_str}_label.nii/g")
         atlas=$(echo $bn0  | sed -e "s/.nii/${res_str}_atlas.nii/g")
-        seg=$(echo $bn0    | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
-        hemi_L=$(echo $bn0 | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_seg.nii/g") 
-        hemi_R=$(echo $bn0 | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_seg.nii/g")
+        
+        # use label from Synthseg if we don't use Amap segmentation
+        if [ "${use_amap}" -eq 1 ]; then
+            seg=$(echo $bn0    | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
+        else
+            seg=${label}
+        fi
+        
+        hemi_L=$(echo $seg | sed -e "s/.nii/_hemi-L.nii/g") 
+        hemi_R=$(echo $seg | sed -e "s/.nii/_hemi-R.nii/g")
         gmt_L=$(echo $bn0  | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
         gmt_R=$(echo $bn0  | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
         ppm_L=$(echo $bn0  | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
@@ -382,10 +392,12 @@ process ()
         # ----------------------------------------------------------------------
         # check for outputs from previous step
         if [ -f "${outdir}/${resampled}" ] &&  [ -f "${outdir}/${label}" ]; then
-            echo Amap segmentation
-            echo "---------------------------------------------"
-            cmd="CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
-            eval ${cmd}
+            if [ "${use_amap}" -eq 1 ]; then
+              echo Amap segmentation
+              echo "---------------------------------------------"
+              cmd="CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
+              eval ${cmd}
+            fi
         else
             echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed ${NC}"
             echo -e "${CYAN}${cmd}${NC}"

@@ -6,7 +6,7 @@ import numpy as np
 
 from ext.lab2im import edit_volumes
 from ext.lab2im import utils as tools
-from scipy.ndimage import binary_closing, binary_opening, grey_opening, grey_closing, gaussian_filter
+from scipy.ndimage import binary_closing, binary_opening, binary_dilation, binary_erosion, grey_opening, grey_closing, gaussian_filter
 
 # globally define tissue labels or better understanding the applied thresholds 
 # inside functions
@@ -339,43 +339,91 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
     Use hemi=1 for estimating the left and hemi=2 for the right hemisphere.
     """
     
+    # just to ensure that some corrections are not made for the cerebellum in future
+    is_cerebellum = 0
+
+    # what to do with lesion
+    lesion_filling = 1
+    
     # we have to round seg because we need the integer labels
     seg = np.round(seg)
     
-    # CSF + BKG
     if hemi==1:
-        csf =  (seg == regions["Bkg"]) | (seg == regions["lCerebellumWM"]) | \
-               (seg == regions["lCerebellumCortex"]) | (seg == regions["3rdVentricle"]) | \
-               (seg == regions["4thVentricle"]) | (seg == regions["BrainStem"]) | \
-               (seg >= regions["rCerebralWM"])
-    else:
-        csf = ((seg <= regions["lVentralDC"]) & ~(seg == regions["CSF"])) | \
-               (seg == regions["rCerebellumWM"]) | (seg == regions["rCerebellumCortex"])
-                
-    # WM
-    if hemi==1:
-        wm = (seg == regions["lLateralVentricle"]) | (seg == regions["lInfLatVent"]) | \
-            ((seg >= regions["lThalamus"]) & (seg < regions["3rdVentricle"])) | \
-             (seg == regions["lAccumbensArea"]) | (seg == regions["lVentralDC"])
-    else:
-        wm = (seg == regions["rLateralVentricle"]) | (seg == regions["rInfLatVent"]) | \
-            ((seg >= regions["rThalamus"]) & (seg <= regions["rPallidum"])) | \
-             (seg == regions["rAccumbensArea"]) | (seg == regions["rVentralDC"])
+        # first we have to dilate the ventricles because otherwise after filling there remains
+        # a rim around it
+        LateralVentricle = (seg == regions["lLateralVentricle"]) | (seg == regions["lInfLatVent"])
+        LateralVentricle = binary_dilation(LateralVentricle, tools.build_binary_structure(3, 3))
+        # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
+        LateralVentricle = LateralVentricle & ~(seg == regions["rLateralVentricle"]) & \
+                           ~(seg == regions["rCerebralWM"]) & ~(seg == regions["CSF"]) & \
+                           ~(seg == regions["lAmygdala"]) & ~(seg == regions["lHippocampus"])
+        #WM             
+        wm0 = ((seg >= regions["lThalamus"])         &  (seg < regions["3rdVentricle"])) | \
+               (seg == regions["lAccumbensArea"])    |  (seg == regions["lVentralDC"])
+        # we also have to dilate whole WM to close the remaining rims
+        wm0 = binary_dilation(wm0, tools.build_binary_structure(2, 3)) | LateralVentricle
 
-    # resample wm and csf to voxel size of Amap label 
-    wm  = edit_volumes.resample_volume_like(amap, aff_amap, wm,  aff_seg, interpolation='linear')
-    csf = edit_volumes.resample_volume_like(amap, aff_amap, csf, aff_seg, interpolation='linear')
+        # CSF + BKG
+        csf0 = (seg == regions["Bkg"])               |  (seg == regions["lCerebellumWM"]) | \
+               (seg == regions["lCerebellumCortex"]) |  (seg == regions["3rdVentricle"]) | \
+               (seg == regions["4thVentricle"])      |  (seg == regions["BrainStem"]) | \
+               (seg >= regions["rCerebralWM"])
+        
+        lesion_mask0 = seg == regions["lCerebralWM"]
+        
+    else:
+        # first we have to dilate the ventricles because otherwise after filling there remains
+        # a rim around it
+        LateralVentricle = (seg == regions["rLateralVentricle"]) | (seg == regions["rInfLatVent"])
+        LateralVentricle = binary_dilation(LateralVentricle, tools.build_binary_structure(3, 3))
+        # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
+        LateralVentricle = LateralVentricle & ~(seg == regions["lLateralVentricle"]) & \
+                           ~(seg == regions["lCerebralWM"]) & ~(seg == regions["CSF"]) & \
+                           ~(seg == regions["rAmygdala"]) & ~(seg == regions["rHippocampus"])
+        # WM         
+        wm0 =  ((seg >= regions["rThalamus"])         &  (seg <= regions["rPallidum"])) | \
+                (seg == regions["rAccumbensArea"])    |  (seg == regions["rVentralDC"])
+        # we also have to dilate whole WM to close the remaining rims
+        wm0 = binary_dilation(wm0, tools.build_binary_structure(2, 3)) | LateralVentricle
+
+        # CSF + BKG
+        csf0 = ((seg <= regions["lVentralDC"])        & ~(seg == regions["CSF"])) | \
+                (seg == regions["rCerebellumWM"])     |  (seg == regions["rCerebellumCortex"])
+
+        lesion_mask0 = seg == regions["rCerebralWM"]
+    
+    wm  = edit_volumes.resample_volume_like(amap, aff_amap, wm0,  aff_seg, interpolation='nearest')
+    csf = edit_volumes.resample_volume_like(amap, aff_amap, csf0, aff_seg, interpolation='nearest')
     
     # finally round and convert wm and csf masks to boolean type because of interpolation during resampling
     wm  = np.round(wm)  > 0.5
     csf = np.round(csf) > 0.5
+
+    if lesion_filling:
+        lesion_mask = edit_volumes.resample_volume_like(amap, aff_amap, lesion_mask0, aff_seg, interpolation='nearest')
+        lesion_mask = np.round(lesion_mask) > 0.5
+    
 
     # build hemispheric label with CSF=1, GM=2, and WM=3
     # adding 0 is neccessary to create a new variable otherwise amap is also modified
     label = amap + 0 
     label[csf] = tissue_labels["CSF"]
     label[wm]  = tissue_labels["WM"]
+
+    # fill remaining holes in WM (e.g. due to WMHs)
+    if not is_cerebellum & lesion_filling:
+        # lesions are always inside deeper WM, thus we erode first
+        lesion_mask = binary_erosion(lesion_mask, tools.build_binary_structure(2, 3))
+        lesion_mask = binary_closing(lesion_mask, tools.build_binary_structure(2, 3))
     
+        # set areas inside lesion_mask to WM if not yet WM
+        label[lesion_mask & (label < tissue_labels["WM"])] = tissue_labels["WM"]
+    else:
+        label_mask = label > tissue_labels["GWM"]
+        label_mask = binary_erosion(label_mask, tools.build_binary_structure(5, 3))
+        label_mask = binary_closing(label_mask, tools.build_binary_structure(5, 3))
+        label[label_mask] = tissue_labels["WM"]
+        
     # grey opening is applied to non-WM areas only, because in WM it could lead to decreased 
     # values close to the GM border
     label_open = grey_opening(label, size=(3,3,3))
@@ -386,18 +434,19 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
     label_closing = grey_closing(label, size=(3,3,3))
     label_mask = label > tissue_labels["GM"] # limit to WM
     label[label_mask] = label_closing[label_mask]
-
+    
     # remove non-connected structures and keep largest component that is finally dilated
     # to ensure that no brain is removed in the final step where areas outside label_mask
     # are set to CSF
-    label_mask = label > tissue_labels["CSF"]
-    label_mask = binary_opening(label_mask, tools.build_binary_structure(1, 3))
-    label_mask = edit_volumes.get_largest_connected_component(label_mask)
-    label_mask = binary_closing(label_mask, tools.build_binary_structure(5, 3))
-    
-    # set areas outside label_mask to CSF
-    label[~label_mask | (label == tissue_labels["BKG"])] = tissue_labels["CSF"]
+    if not is_cerebellum:    
+        label_mask = label > tissue_labels["CSF"]
+        label_mask = binary_opening(label_mask, tools.build_binary_structure(3, 3))        
+        label_mask = edit_volumes.get_largest_connected_component(label_mask)
+        label_mask = binary_closing(label_mask, tools.build_binary_structure(3, 3))
         
+        # set areas outside label_mask to CSF
+        label[~label_mask | (label == tissue_labels["BKG"])] = tissue_labels["CSF"]
+
     return label
 
 def posteriors2hemiseg(posterior, hemi=1):
@@ -455,8 +504,12 @@ def posteriors2hemiseg(posterior, hemi=1):
     label[~label_mask] = tissue_labels["CSF"]
 
     return label
-    
+
+
 def bbox_volume(volume, pad=0):
+    """
+    Obtain bounding box for values > 0 and optionally add some padding
+    """
 
     r = np.any(volume, axis=(1, 2))
     c = np.any(volume, axis=(0, 2))
