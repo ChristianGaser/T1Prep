@@ -329,25 +329,26 @@ process ()
         sanlm=$(echo $bn     | sed -e "s/.nii/_desc-sanlm.nii/g")
         
         # remove T1w|T2w from basename
-        bn0=$(echo $bn     | sed -e "s/_T1w.nii/.nii/g" -e "s/_T2w.nii/.nii/g")        
-        label=$(echo $bn0  | sed -e "s/.nii/${res_str}_label.nii/g")
-        atlas=$(echo $bn0  | sed -e "s/.nii/${res_str}_atlas.nii/g")
+        label=$(echo $bn  | sed -e "s/.nii/${res_str}_label.nii/g")
+        atlas=$(echo $bn  | sed -e "s/.nii/${res_str}_atlas.nii/g")
         
         # use label from Synthseg if we don't use Amap segmentation
         if [ "${use_amap}" -eq 1 ]; then
-            seg=$(echo $bn0    | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
+            seg=$(echo $bn    | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
         else
             seg=${label}
         fi
         
         hemi_L=$(echo $seg | sed -e "s/.nii/_hemi-L.nii/g") 
         hemi_R=$(echo $seg | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_L=$(echo $bn0  | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
-        gmt_R=$(echo $bn0  | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
-        ppm_L=$(echo $bn0  | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
-        ppm_R=$(echo $bn0  | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
-        mid_L=$(echo $bn0  | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
-        mid_R=$(echo $bn0  | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+        gmt_L=$(echo $bn  | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
+        gmt_R=$(echo $bn  | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
+        ppm_L=$(echo $bn  | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
+        ppm_R=$(echo $bn  | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
+        mid_L=$(echo $bn  | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
+        mid_R=$(echo $bn  | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+        thick_L=$(echo $bn  | sed -e "s/.nii/_hemi-L_thickness.txt/g") 
+        thick_R=$(echo $bn  | sed -e "s/.nii/_hemi-R_thickness.txt/g")
         
         # print progress and filename
         j=`expr $i + 1`
@@ -434,6 +435,8 @@ process ()
                 eval ${cmd}
                 cmd="CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${ppm_L} ${outdir}/${mid_L}"
                 eval ${cmd}
+                cmd="CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${mid_L} ${outdir}/${gmt_L} ${outdir}/${thick_L}"
+                eval ${cmd}
             fi
             if [ -f "${outdir}/${hemi_R}" ]; then
                 echo Extracting right hemisphere
@@ -441,6 +444,8 @@ process ()
                 cmd="CAT_VolThicknessPbt ${outdir}/${hemi_R} ${outdir}/${gmt_R} ${outdir}/${ppm_R}"
                 eval ${cmd}
                 cmd="CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${ppm_R} ${outdir}/${mid_R}"
+                eval ${cmd}
+                cmd="CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${mid_R} ${outdir}/${gmt_L} ${outdir}/${thick_R}"
                 eval ${cmd}
             fi
             if [ ! -f "${outdir}/${hemi_L}" ] && [ ! -f "${outdir}/${hemi_R}" ]; then
@@ -453,7 +458,7 @@ process ()
 
         # remove temporary files if not debugging
         if [ "${debug}" -eq 0 ]; then
-            rm ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
+            #rm ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
             
             # only remove temporary files if surfaces exist
             if [ -f "${outdir}/${mid_L}" ] && [ -f "${outdir}/${mid_R}" ]; then
