@@ -110,7 +110,7 @@ parse_args ()
                 sub="$optarg"
                 shift
                 ;; 
-            --no-surf)
+            --no-surf*)
                 estimate_surf=0
                 ;;
             --no-sanlm)
@@ -341,14 +341,14 @@ process ()
         
         hemi_L=$(echo $seg | sed -e "s/.nii/_hemi-L.nii/g") 
         hemi_R=$(echo $seg | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_L=$(echo $bn  | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
-        gmt_R=$(echo $bn  | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
-        ppm_L=$(echo $bn  | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
-        ppm_R=$(echo $bn  | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
-        mid_L=$(echo $bn  | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
-        mid_R=$(echo $bn  | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-        thick_L=$(echo $bn  | sed -e "s/.nii/_hemi-L_thickness.txt/g") 
-        thick_R=$(echo $bn  | sed -e "s/.nii/_hemi-R_thickness.txt/g")
+        gmt_L=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
+        gmt_R=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
+        ppm_L=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
+        ppm_R=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
+        mid_L=$(echo $bn   | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
+        mid_R=$(echo $bn   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+        thick_L=$(echo $bn | sed -e "s/.nii/_hemi-L_thickness.txt/g") 
+        thick_R=$(echo $bn | sed -e "s/.nii/_hemi-R_thickness.txt/g")
         
         # print progress and filename
         j=`expr $i + 1`
@@ -396,7 +396,7 @@ process ()
             if [ "${use_amap}" -eq 1 ]; then
               echo Amap segmentation
               echo "---------------------------------------------"
-              cmd="CAT_VolAmap -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
+              cmd="CAT_VolAmap -bias_fwhm 0 -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
               eval ${cmd}
             fi
         else
@@ -445,7 +445,7 @@ process ()
                 eval ${cmd}
                 cmd="CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${ppm_R} ${outdir}/${mid_R}"
                 eval ${cmd}
-                cmd="CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${mid_R} ${outdir}/${gmt_L} ${outdir}/${thick_R}"
+                cmd="CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${mid_R} ${outdir}/${gmt_R} ${outdir}/${thick_R}"
                 eval ${cmd}
             fi
             if [ ! -f "${outdir}/${hemi_L}" ] && [ ! -f "${outdir}/${hemi_R}" ]; then
@@ -498,7 +498,7 @@ USAGE:
   T1Prep.sh [--python python_command] [--outdir out_folder] [--target-res voxel_size] 
                     [--nu-strength nu_strength] [--vessel-strength vessel_strength]
                     [--nproc number_of_processes] [--sub subsampling] [--no-surf]
-                    [--no-sanlm] [--fast] [--robust] [--debug] filenames 
+                    [--no-sanlm] [--no-amap] [--fast] [--robust] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
   --outdir <DIR>             output folder (default same folder)
@@ -513,6 +513,7 @@ USAGE:
   --sub <NUMBER>             subsampling for Amap segmentation (default $sub)
   --no-surf                  skip surface and thickness estimation
   --no-sanlm                 skip denoising with SANLM-filter
+  --no-amap                  use segmentation from mri_synthseg instead of Amap
   --fast                     bypass some processing for faster prediction
   --robust                   use robust predictions (slower)
   --debug                    keep temporary files for debugging

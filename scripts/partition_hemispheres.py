@@ -49,5 +49,5 @@ for j in [0, 1]:
     crop_idx = utils.bbox_volume(hemi > 1, pad=5)
     hemi, aff_hemi = edit_volumes.crop_volume_with_idx(hemi, crop_idx, aff=aff_amap, n_dims=3, return_copy=False)
 
-    tools.save_volume(hemi, aff_hemi, h_amap, hemi_name, dtype='uint8')
+    tools.save_volume(hemi, aff_hemi, h_amap, hemi_name, dtype='float32')
             

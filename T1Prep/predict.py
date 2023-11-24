@@ -290,10 +290,11 @@ def predict(path_images,
         
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
-        resamp = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask)
+        resamp, mask = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask)
         
         # nu-correction works better if it's called after vessel correction
-        print('NU-correction')
+        if (nu_strength):
+            print('NU-correction')
 
         # Using the 1mm data from SynthSeg is a bit faster
         if use_fast_nu_correction:
@@ -312,9 +313,9 @@ def predict(path_images,
         min_resamp = np.min(np.array(resamp))
         if (min_resamp < 0):
             resamp -= min_resamp
-        resamp[label < 0.1] = 0
-
-        tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='int16')
+        resamp[~mask] = 0
+        
+        tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='float32')
                                           
     # write volumes to disc if necessary
     if path_volumes is not None:

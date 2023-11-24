@@ -128,9 +128,7 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     
     # we need the 1% and 50% percentiles for CSF
     percentile_csf = np.percentile(np.array(volume[label_csf]),[1,50])
-        
-    correct_dura = 0
-    
+            
     # obtain a threshold based on median for GM and CSF
     median_csf = percentile_csf[1] # percentile for 50%
     median_gm  = np.median(np.array(volume[label_gm]))
@@ -172,7 +170,13 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     # obtain some outer shell of the label map to remove areas where SynthSeg label is CSF, but
     # we have higher intensity (e.g. due to dura or meninges)
     mask = label > 0.5
+    bkg  = binary_opening(~mask, tools.build_binary_structure(1, 3))        
+    bkg  = edit_volumes.get_largest_connected_component(bkg)
     
+    # fill isolated holes (estimated from background) in mask and finally apply closing 
+    mask[~bkg] = 1
+    mask = binary_closing(mask, tools.build_binary_structure(3, 3))        
+
     # only apply the dura-correction for T1w images, because surrounding CSF is quite sparse in
     # T2 or Flair and no dura is usually visible
     
@@ -194,19 +198,13 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
         volume_fill_value = percentile_csf[1]
         label_fill_value  = tissue_labels["CSF"]
     
-    volume[mask & ~eroded_mask & label_csf_loose & deviation_mask] = volume_fill_value
-
-    """
-    volume[mask & ~eroded_mask] += 400
-    volume[label_csf_loose] += 800
-    volume[deviation_mask] += 1600
-    """
-    label[ mask & ~eroded_mask & label_csf_loose & deviation_mask] = label_fill_value
+    #volume[mask & ~eroded_mask & label_csf_loose & deviation_mask] = volume_fill_value
+    label[mask & ~eroded_mask & label_csf_loose & deviation_mask] = label_fill_value    
     
     # remove remaining background
     volume[~mask] = 0
 
-    return volume
+    return volume, mask
 
 
 def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
@@ -231,13 +229,13 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
     if (nu_strength == 0):
         return np.zeros(shape=np.shape(volume), dtype='float32')
     elif (nu_strength == 1):
-        sigma = [16, 12, 8, 6]
+        sigma = [16, 12]
     elif (nu_strength == 2):
-        sigma = [12, 9, 6, 3]
+        sigma = [12, 9]
     elif (nu_strength == 3):
-        sigma = [11, 8, 4, 2]
+        sigma = [11, 8]
     elif (nu_strength == 4):
-        sigma = [9, 6, 3, 1]
+        sigma = [9, 6]
       
     # correct for target size
     sigma = sigma/np.array([np.mean(target_size)]*len(sigma))
@@ -248,11 +246,21 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
     # we need the final bias field later to apply it to the resampled data
     bias = np.zeros(shape=np.shape(corrected_volume), dtype='float32')
 
+    bias_CSF_GM_WM = [0, 1, 2]
+    bias_WM = [2]
+    bias_WM = [0, 1, 2]
+    count = 0
     # we use decreasing smoothing sizes
     for sigma in sigma:
         bias_step = np.zeros(shape=np.shape(volume), dtype='float32')
 
-        for i in range(0, 3):
+        # start with bias correction in WM
+        if (count < 4):
+            bias_tissue = bias_WM
+        else:
+            bias_tissue = bias_CSF_GM_WM
+            
+        for i in bias_tissue:
             tissue_idx = np.round(label) == i + 1
             mean_tissue = np.mean(np.array(corrected_volume[tissue_idx]))
             bias_step[tissue_idx]  += (corrected_volume[tissue_idx] - mean_tissue);
@@ -264,6 +272,7 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
         bias_step = gaussian_filter(bias_step, sigma=sigma)
         corrected_volume -= bias_step;
         bias += bias_step
+        count += 1
         
     # we have to set bias field outside label mask to 0
     bias[label == 0] = 0.0
