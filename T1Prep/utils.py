@@ -220,7 +220,7 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
         target_size (tuple): The target voxel size of the output.
         nu_strength (int): The strength of the non-uniformity correction. Default is 2.
         bias_weight (float): The weight of the bias field. Default is None.
-
+        
     Returns:
         numpy.ndarray: The bias field used to correct the input volume for non-uniformities.
     """
@@ -246,33 +246,33 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
     # we need the final bias field later to apply it to the resampled data
     bias = np.zeros(shape=np.shape(corrected_volume), dtype='float32')
 
+    brain_idx = np.round(label) > 0
+
     bias_CSF_GM_WM = [0, 1, 2]
-    bias_WM = [2]
-    bias_WM = [0, 1, 2]
-    count = 0
     # we use decreasing smoothing sizes
     for sigma in sigma:
-        bias_step = np.zeros(shape=np.shape(volume), dtype='float32')
-
-        # start with bias correction in WM
-        if (count < 4):
-            bias_tissue = bias_WM
-        else:
-            bias_tissue = bias_CSF_GM_WM
+        meaninvcov   = np.zeros(shape=np.shape(volume), dtype='float32')
+        meanresidual = np.zeros(shape=np.shape(volume), dtype='float32')
             
-        for i in bias_tissue:
+        for i in bias_CSF_GM_WM:
             tissue_idx = np.round(label) == i + 1
             mean_tissue = np.mean(np.array(corrected_volume[tissue_idx]))
-            bias_step[tissue_idx]  += (corrected_volume[tissue_idx] - mean_tissue);
+            var_tissue = np.var(np.array(corrected_volume[tissue_idx]))
+            
+            tempf = mean_tissue/var_tissue
+            meaninvcov[brain_idx]   += tempf
+            meanresidual[brain_idx] += tempf*(corrected_volume[brain_idx] - mean_tissue)
+        
+        meanresidual[brain_idx] /= meaninvcov[brain_idx];
+        meanresidual[~brain_idx] = 0
         
         # weight bias field
         if bias_weight is not None:
-            bias_step *= bias_weight
-             
-        bias_step = gaussian_filter(bias_step, sigma=sigma)
-        corrected_volume -= bias_step;
-        bias += bias_step
-        count += 1
+            meanresidual *= bias_weight
+        
+        meanresidual = gaussian_filter(meanresidual, sigma=sigma)
+        corrected_volume -= meanresidual;
+        bias += meanresidual
         
     # we have to set bias field outside label mask to 0
     bias[label == 0] = 0.0

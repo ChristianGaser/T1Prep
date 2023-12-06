@@ -49,7 +49,7 @@ parser.add_argument("--qc",
 parser.add_argument("--hemi", 
     help="(optional) Hemispheric label output in target voxel size.")
 parser.add_argument("--resample", 
-    help="(optional) Image resampled to target voxl size.")
+    help="(optional) Image resampled to target voxel size.")
 parser.add_argument("--label", 
     help="(optional) Label output.")
 parser.add_argument("--target-res", type=float, default=0.5, 

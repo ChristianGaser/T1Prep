@@ -32,6 +32,7 @@ NUMBER_OF_JOBS=-1
 estimate_surf=1
 target_res=0.5
 nu_strength=2
+bias_fwhm=0
 use_sanlm=1
 use_amap=1
 debug=0
@@ -75,17 +76,17 @@ parse_args ()
         paras="$paras $optname $optarg"
 
         case "$1" in
-            --python*)
+            --python)
                 exit_if_empty "$optname" "$optarg"
                 python=$optarg
                 shift
                 ;;
-            --out* | --out-dir)
+            --outdir | --out-dir)
                 exit_if_empty "$optname" "$optarg"
                 outdir=$optarg
                 shift
                 ;;
-            --target-res*)
+            --target-res)
                 exit_if_empty "$optname" "$optarg"
                 target_res=$optarg
                 shift
@@ -95,22 +96,27 @@ parse_args ()
                 nu_strength=$optarg
                 shift
                 ;;
+            --bias-fwhm)
+                exit_if_empty "$optname" "$optarg"
+                bias_fwhm=$optarg
+                shift
+                ;;
             --vessel-str*)
                 exit_if_empty "$optname" "$optarg"
                 vessel_strength=$optarg
                 shift
                 ;;
-            --nproc*)
+            --nproc)
                 exit_if_empty "$optname" "$optarg"
                 NUMBER_OF_JOBS="$optarg"
                 shift
                 ;; 
-            --sub*)
+            --sub)
                 exit_if_empty "$optname" "$optarg"
                 sub="$optarg"
                 shift
                 ;; 
-            --no-surf*)
+            --no-surf)
                 estimate_surf=0
                 ;;
             --no-sanlm)
@@ -124,7 +130,7 @@ parse_args ()
                 ;;
             --robust)
                 robust=" --robust "
-                    ;;
+                ;;
             --debug)
                 debug=1
                 ;;
@@ -396,7 +402,7 @@ process ()
             if [ "${use_amap}" -eq 1 ]; then
               echo Amap segmentation
               echo "---------------------------------------------"
-              cmd="CAT_VolAmap -bias_fwhm 0 -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
+              cmd="CAT_VolAmap -bias_fwhm ${bias_fwhm} -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
               eval ${cmd}
             fi
         else
@@ -411,6 +417,15 @@ process ()
                 
             # 4. Create hemispheric label maps for cortical surface extraction
             # ----------------------------------------------------------------------
+
+            # Call Amap segmentation a 2nd time if it fails due to memory issues
+            if [ ! -f "${outdir}/${seg}" ] && [ "${use_amap}" -eq 1 ]; then
+                echo Amap segmentation 2nd trial due to previous errors
+                echo "---------------------------------------------"
+                cmd="CAT_VolAmap -bias_fwhm ${bias_fwhm} -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
+                eval ${cmd}
+            fi
+            
             # check for outputs from previous step
             if [ -f "${outdir}/${seg}" ]; then
                 echo Hemispheric partitioning
@@ -437,6 +452,7 @@ process ()
                 eval ${cmd}
                 cmd="CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${mid_L} ${outdir}/${gmt_L} ${outdir}/${thick_L}"
                 eval ${cmd}
+                echo Save cortical thickness in ${outdir}/${thick_L}
             fi
             if [ -f "${outdir}/${hemi_R}" ]; then
                 echo Extracting right hemisphere
@@ -447,6 +463,7 @@ process ()
                 eval ${cmd}
                 cmd="CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${mid_R} ${outdir}/${gmt_R} ${outdir}/${thick_R}"
                 eval ${cmd}
+                echo Save cortical thickness in ${outdir}/${thick_R}
             fi
             if [ ! -f "${outdir}/${hemi_L}" ] && [ ! -f "${outdir}/${hemi_R}" ]; then
                 echo -e "${RED}ERROR: partition_hemispheres.py failed ${NC}"
@@ -507,6 +524,7 @@ USAGE:
                              value to save outputs with original voxel size (default $target_res).
   --nu-strength <NUMBER>     strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong
                              4 - heavy). (default $nu_strength). 
+  --bias-fwhm <NUMBER>       FWHM size of nu-correction in CAT__VolAmap (default $bias_fwhm). 
   --vessel-strength <NUMBER> strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium
                              2 - strong). (default $vessel_strength). 
   --nproc <NUMBER>           number of parallel jobs (=number of processors)
@@ -532,7 +550,7 @@ EXAMPLE
   the original voxel size in the same folder.
 
 INPUT:
-  analyze or nifti files
+  nifti files
 
 OUTPUT:
   segmented images
