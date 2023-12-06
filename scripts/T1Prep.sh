@@ -349,12 +349,14 @@ process ()
         hemi_R=$(echo $seg | sed -e "s/.nii/_hemi-R.nii/g")
         gmt_L=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
         gmt_R=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
-        ppm_L=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
-        ppm_R=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
-        mid_L=$(echo $bn   | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
-        mid_R=$(echo $bn   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-        thick_L=$(echo $bn | sed -e "s/.nii/_hemi-L_thickness.txt/g") 
-        thick_R=$(echo $bn | sed -e "s/.nii/_hemi-R_thickness.txt/g")
+        
+        # for the following filenames we have to remove the potential .gz from name
+        ppm_L=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
+        ppm_R=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
+        mid_L=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
+        mid_R=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+        thick_L=$(echo $bn | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_thickness.txt/g") 
+        thick_R=$(echo $bn | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_thickness.txt/g")
         
         # print progress and filename
         j=`expr $i + 1`
