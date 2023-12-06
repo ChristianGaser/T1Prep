@@ -111,9 +111,9 @@ def predict(path_images,
     '''
 
     # check whether volume and qc files should be saved
-    unique_vol_file = True if path_volumes is not None else False
-    unique_qc_file  = True if path_qc_scores is not None else False
-    
+    unique_vol_file = path_volumes is not None
+    unique_qc_file  = path_qc_scores is not None
+
     # get label lists
     labels_segmentation, _ = tools.get_list_labels(label_list=labels_segmentation)
     if (n_neutral_labels is not None) & (not fast) & (not robust):
@@ -137,7 +137,7 @@ def predict(path_images,
     if not v1:
         labels_volumes = np.concatenate([labels_volumes, np.array([np.max(labels_volumes + 1)])])
         names_volumes = np.concatenate([names_volumes, np.array(['total intracranial'])])
-    do_qc = True if path_qc_scores is not None else False
+    do_qc = path_qc_scores is not None
     if do_qc:
         labels_qc = tools.get_list_labels(labels_qc)[0][unique_idx]
         names_qc = tools.load_array_if_path(names_qc)[unique_idx]
@@ -151,7 +151,7 @@ def predict(path_images,
 
     # prepare volume/QC files if necessary
     if unique_vol_file & (path_volumes is not None):
-        write_csv(path_volumes, None, True, labels_volumes, names_volumes, last_first=(not v1))
+        write_csv(path_volumes, None, True, labels_volumes, names_volumes, last_first=not v1)
     if unique_qc_file & do_qc:
         write_csv(path_qc_scores, None, True, labels_qc, names_qc)
 
@@ -175,7 +175,7 @@ def predict(path_images,
                                                                  crop=cropping,
                                                                  min_pad=min_pad,
                                                                  path_resample=path_resampled)
-                                                                 
+
     # prediction
     shape_input = tools.add_axis(np.array(image.shape[1:-1]))
     if do_parcellation & do_qc:
@@ -195,7 +195,7 @@ def predict(path_images,
     if np.any(np.isnan(np.array(post_patch_segmentation))):
         print('ERROR: SynthSeg failed')
         return
-        
+
     # postprocessing
     seg, posteriors, volumes = postprocess(post_patch_seg=post_patch_segmentation,
                                            post_patch_parc=post_patch_parcellation,
@@ -209,10 +209,10 @@ def predict(path_images,
                                            fast=fast,
                                            topology_classes=topology_classes,
                                            v1=v1)
-                                           
+
 
     # use resolution of input image if target_res <= 0
-    if (target_res <= 0):
+    if target_res <= 0:
         target_res = im_res_orig
         print('Use original image resolution for resampling: %g %g %g mm' % (target_res[0],target_res[1],target_res[2]))
     else: # otherwise extend to array
@@ -222,49 +222,49 @@ def predict(path_images,
     tools.save_volume(seg, aff, h, path_segmentations, dtype='int32')
     if path_posteriors is not None:
         tools.save_volume(posteriors, aff, h, path_posteriors, dtype='float32')
-    
+
     # obtain and save label image
     if path_label is not None or path_resampled is not None:
         print('Estimate label')
         label_orig = utils.posteriors2label(posteriors)
-        
+
         # resample to target voxel size
         label, aff_label = edit_volumes.resample_volume(label_orig, aff, target_res)
         tools.save_volume(label, aff_label, h, path_label, dtype='uint8')
 
     # write hemi images
     if path_hemi is not None:
-        
+
         hemi_str  = ['-L_seg', '-R_seg'] # name for output file
         hemi_str2 = ['left', 'right']     # name for print
-        
+
         for j in [0, 1]:
             print('Estimate hemispheric label for %s hemisphere' % hemi_str2[j])
             hemi_name = path_hemi.replace('.nii', '_%s.nii' % hemi_str[j])
             hemi = utils.posteriors2hemiseg(posteriors, hemi=j+1)
-            
+
             # resample to target voxel size
             hemi, aff_hemi = edit_volumes.resample_volume(hemi, aff, target_res)
 
             # crop hemi image and add 5 voxels
             crop_idx = utils.bbox_volume(hemi > 1, pad=5)
             hemi, aff_hemi = edit_volumes.crop_volume_with_idx(hemi, crop_idx, aff=aff_hemi, n_dims=3, return_copy=False)
-            
+
             tools.save_volume(hemi, aff_hemi, h, hemi_name, dtype='uint8')
 
     if path_resampled is not None:
         # use fast nu-correction with lower resolution of original preprocessed images
         use_fast_nu_correction = True
         
-        resamp, aff_resamp, h_resamp = tools.load_volume(path_images, im_only=False, dtype='float32')
+        resamp, aff_resamp, _ = tools.load_volume(path_images, im_only=False, dtype='float32')
 
         # resample original input to 1mm voxel size for fast nu-correction
         if use_fast_nu_correction:
-            im, aff_im = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
+            im, _ = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
 
         # resample original input to target voxel size
         resamp = edit_volumes.resample_volume_like(label, aff_label, resamp, aff_resamp, interpolation='linear')
-        aff_resamp = aff_label   
+        aff_resamp = aff_label
         resamp, aff_resamp = edit_volumes.resample_volume(resamp, aff_resamp, target_res)
         
         # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
@@ -272,7 +272,7 @@ def predict(path_images,
                       (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54) | (seg == 0)
 
         # resample cortex_mask to target voxel size
-        cortex_mask, aff_cortex = edit_volumes.resample_volume(cortex_mask, aff, target_res)
+        cortex_mask, _ = edit_volumes.resample_volume(cortex_mask, aff, target_res)
         
         # finally convert to boolean type for the mask and round because of resampling
         cortex_mask = np.round(cortex_mask) > 0.5
@@ -286,22 +286,22 @@ def predict(path_images,
 
         # resample cortex_mask to target voxel size except for fast nu-correction
         if not use_fast_nu_correction:
-            cortex_weight, aff_cortex = edit_volumes.resample_volume(cortex_weight, aff, target_res)
+            cortex_weight, _ = edit_volumes.resample_volume(cortex_weight, aff, target_res)
         
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
         resamp, mask = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask)
         
         # nu-correction works better if it's called after vessel correction
-        if (nu_strength):
+        if nu_strength:
             print('NU-correction')
 
         # Using the 1mm data from SynthSeg is a bit faster
         if use_fast_nu_correction:
             bias = utils.get_bias_field(im, label_orig, im_res, nu_strength, bias_weight=cortex_weight)
-            
+
             # resample bias field to the target voxel size of the resampled input volume
-            bias, aff_bias = edit_volumes.resample_volume(bias, aff, target_res)
+            bias, _ = edit_volumes.resample_volume(bias, aff, target_res)
         else:
             im_res_resampled = target_res
             bias = utils.get_bias_field(resamp, label, im_res_resampled, nu_strength, bias_weight=cortex_weight)
@@ -311,16 +311,16 @@ def predict(path_images,
         
         # after nu-correction we might have negative values that should be prevented
         min_resamp = np.min(np.array(resamp))
-        if (min_resamp < 0):
+        if min_resamp < 0:
             resamp -= min_resamp
         resamp[~mask] = 0
         
         tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='float32')
-                                          
+      
     # write volumes to disc if necessary
     if path_volumes is not None:
         row = [os.path.basename(path_images).replace('.nii.gz', '')] + [str(vol) for vol in volumes]
-        write_csv(path_volumes, row, unique_vol_file, labels_volumes, names_volumes, last_first=(not v1))
+        write_csv(path_volumes, row, unique_vol_file, labels_volumes, names_volumes, last_first=not v1)
 
     # write QC scores to disc if necessary
     if path_qc_scores is not None:
