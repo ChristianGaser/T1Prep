@@ -4,9 +4,9 @@ import sys
 import traceback
 import numpy as np
 
+from scipy.ndimage import binary_closing, binary_opening, binary_dilation, binary_erosion, grey_opening, grey_closing, gaussian_filter
 from ext.lab2im import edit_volumes
 from ext.lab2im import utils as tools
-from scipy.ndimage import binary_closing, binary_opening, binary_dilation, binary_erosion, grey_opening, grey_closing, gaussian_filter
 
 # globally define tissue labels or better understanding the applied thresholds 
 # inside functions
@@ -98,14 +98,14 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     Use label image to correct vessels in input volume and skull-strip
     the image by removing non-brain parts of the brain.
     """
-    
+
     # create a mask with ones everywhere to not limit vessel correction spatially
     if vessel_mask is None:
         vessel_mask = np.ones(shape=np.shape(volume), dtype='int8') > 0
 
     label_csf = np.round(label) == tissue_labels["CSF"]
     label_gm  = np.round(label) == tissue_labels["GM"]
-    
+
     # for automatic estimation of vessel-strength we obtain the ratio between 99 and 
     # 50 percentile inside CSF where large values indicate 
     # the presence of high intensities in CSF areas (=vessels)
@@ -125,21 +125,21 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     # get areas where label values are CSF, but also consider areas closer
     # to background
     label_csf_loose = (label < (tissue_labels["CSF"]+tissue_labels["GM"])/2)
-    
+
     # we need the 1% and 50% percentiles for CSF
     percentile_csf = np.percentile(np.array(volume[label_csf]),[1,50])
-            
+
     # obtain a threshold based on median for GM and CSF
     median_csf = percentile_csf[1] # percentile for 50%
     median_gm  = np.median(np.array(volume[label_gm]))
     th_csf = (median_csf + median_gm)/2
-    
+
     # create mask where volume data are ~CSF
     volume_gt_csf = volume > th_csf
-    
+
     # check for T2w-contrast and invert mask
-    is_T1w = median_csf < median_gm
-    if not is_T1w:
+    is_t1w = median_csf < median_gm
+    if not is_t1w:
         print('Image contrast is not T1-weighted')
         # we have to invert volume mask for low CSF values
         volume_gt_csf = ~volume_gt_csf
@@ -147,7 +147,7 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     if ratio_high >= 10:
         if ratio_high < 15:
             print('Apply medium vessel-correction')
-        
+
         # set high-intensity areas above threshold inside CSF to a CSF-like
         # intensity which works quite reasonable to remove large vessels
         mask_csf = label_csf_loose & volume_gt_csf & vessel_mask
@@ -166,24 +166,24 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
         volume_open = grey_opening(volume, size=(3,3,3))
         mask = (label_gm | label_csf_loose) & volume_gt_csf & vessel_mask
         volume[mask] = volume_open[mask]
-    
+
     # obtain some outer shell of the label map to remove areas where SynthSeg label is CSF, but
     # we have higher intensity (e.g. due to dura or meninges)
     mask = label > 0.5
-    bkg  = binary_opening(~mask, tools.build_binary_structure(1, 3))        
+    bkg  = binary_opening(~mask, tools.build_binary_structure(1, 3))
     bkg  = edit_volumes.get_largest_connected_component(bkg)
-    
+
     # fill isolated holes (estimated from background) in mask and finally apply closing 
     mask[~bkg] = 1
-    mask = binary_closing(mask, tools.build_binary_structure(3, 3))        
+    mask = binary_closing(mask, tools.build_binary_structure(3, 3))
 
     # only apply the dura-correction for T1w images, because surrounding CSF is quite sparse in
     # T2 or Flair and no dura is usually visible
-    
+
     # thickness of shell is resolution-dependent and will be controlled by a gaussian filter
     thickness_shell = 0.75/res 
     eroded_mask = gaussian_filter(mask, sigma=thickness_shell) > 0.5
-    
+
     # is the intensity closer to CSF or GM
     deviation_mask = np.abs(volume - median_csf) > np.abs(volume - median_gm)
 
@@ -191,16 +191,16 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     # smaller than CSF because it's the outer shell and brighter spots would be more
     # difficult to deal with
     # use higher filling intensities for non-T1w images because CSF is much brighter
-    if is_T1w:
+    if is_t1w:
         volume_fill_value = percentile_csf[0]
         label_fill_value  = 0.5*tissue_labels["CSF"]
     else:
         volume_fill_value = percentile_csf[1]
         label_fill_value  = tissue_labels["CSF"]
-    
+
     #volume[mask & ~eroded_mask & label_csf_loose & deviation_mask] = volume_fill_value
-    label[mask & ~eroded_mask & label_csf_loose & deviation_mask] = label_fill_value    
-    
+    label[mask & ~eroded_mask & label_csf_loose & deviation_mask] = label_fill_value
+
     # remove remaining background
     volume[~mask] = 0
 
@@ -213,14 +213,14 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
     We estimate bias correction by smoothing the residuals that remain after
     using the mean vavlues inside the label values and repeat that with decreasing
     smoothing kernels.
-    
+
     Args:
         volume (numpy.ndarray): The input volume to be corrected for non-uniformities.
         label (numpy.ndarray): The label image used to correct the input volume.
         target_size (tuple): The target voxel size of the output.
         nu_strength (int): The strength of the non-uniformity correction. Default is 2.
         bias_weight (float): The weight of the bias field. Default is None.
-        
+
     Returns:
         numpy.ndarray: The bias field used to correct the input volume for non-uniformities.
     """
@@ -236,54 +236,54 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
         sigma = [11, 8]
     elif (nu_strength == 4):
         sigma = [9, 6]
-      
+  
     # correct for target size
     sigma = sigma/np.array([np.mean(target_size)]*len(sigma))
-    
+
     # we have to create a new volume to not overwrite the original one
     corrected_volume = volume + 0
-    
+
     # we need the final bias field later to apply it to the resampled data
     bias = np.zeros(shape=np.shape(corrected_volume), dtype='float32')
 
     brain_idx = np.round(label) > 0
 
-    bias_CSF_GM_WM = [0, 1, 2]
+    bias_csf_gm_wm = [0, 1, 2]
     # we use decreasing smoothing sizes
     for sigma in sigma:
         meaninvcov   = np.zeros(shape=np.shape(volume), dtype='float32')
         meanresidual = np.zeros(shape=np.shape(volume), dtype='float32')
-            
-        for i in bias_CSF_GM_WM:
+
+        for i in bias_csf_gm_wm:
             tissue_idx = np.round(label) == i + 1
             mean_tissue = np.mean(np.array(corrected_volume[tissue_idx]))
             var_tissue = np.var(np.array(corrected_volume[tissue_idx]))
-            
+
             tempf = mean_tissue/var_tissue
             meaninvcov[brain_idx]   += tempf
             meanresidual[brain_idx] += tempf*(corrected_volume[brain_idx] - mean_tissue)
-        
+
         meanresidual[brain_idx] /= meaninvcov[brain_idx];
         meanresidual[~brain_idx] = 0
-        
+
         # weight bias field
         if bias_weight is not None:
             meanresidual *= bias_weight
-        
+
         meanresidual = gaussian_filter(meanresidual, sigma=sigma)
         corrected_volume -= meanresidual;
         bias += meanresidual
-        
+
     # we have to set bias field outside label mask to 0
     bias[label == 0] = 0.0
-    
+
     return bias
 
 def posteriors2label(posterior):
     """
     Use posteriors with 33 classes to create a label image with CSF=1, GM=2, and WM=3
     while smoothing non-cortical GM to obtain a smoother border
-    
+
     """
 
     # CSF
@@ -294,8 +294,8 @@ def posteriors2label(posterior):
            posterior[..., post_regions["CSF"]] + \
            posterior[..., post_regions["rLateralVentricle"]] + \
            posterior[..., post_regions["rInfLatVent"]]
-    
-    
+
+
     # non-cortical GM should be smoothed before adding to GM
     im =  posterior[..., post_regions["lThalamus"]] + \
           posterior[..., post_regions["lCaudate"]] + \
@@ -313,7 +313,7 @@ def posteriors2label(posterior):
           posterior[..., post_regions["rAmygdala"]] + \
           posterior[..., post_regions["rAccumbensArea"]] + \
           posterior[..., post_regions["rVentralDC"]]
-        
+
     # GM
     gm =  posterior[..., post_regions["lCerebralCortex"]] + \
           posterior[..., post_regions["lCerebellumCortex"]] + \
@@ -346,6 +346,16 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
     filled with WM.
     Information about which regions should be filled is used from SynthSeg segmentation.
     Use hemi=1 for estimating the left and hemi=2 for the right hemisphere.
+    
+    Parameters:
+    - amap (ndarray): The Amap label segmentation.
+    - aff_amap (ndarray): The affine transformation matrix for amap.
+    - seg (ndarray): The SynthSeg segmentation.
+    - aff_seg (ndarray): The affine transformation matrix for seg.
+    - hemi (int): The hemisphere to estimate. 1 for left hemisphere, 2 for right hemisphere.
+    
+    Returns:
+    - label (ndarray): The hemispheric label image.
     """
     
     # just to ensure that some corrections are not made for the cerebellum in future
@@ -353,57 +363,57 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
 
     # what to do with lesion
     lesion_filling = 1
-    
+
     # we have to round seg because we need the integer labels
     seg = np.round(seg)
-    
+
     if hemi==1:
         # first we have to dilate the ventricles because otherwise after filling there remains
         # a rim around it
-        LateralVentricle = (seg == regions["lLateralVentricle"]) | (seg == regions["lInfLatVent"])
-        LateralVentricle = binary_dilation(LateralVentricle, tools.build_binary_structure(3, 3))
+        lateral_ventricle = (seg == regions["lLateralVentricle"]) | (seg == regions["lInfLatVent"])
+        lateral_ventricle = binary_dilation(lateral_ventricle, tools.build_binary_structure(3, 3))
         # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
-        LateralVentricle = LateralVentricle & ~(seg == regions["rLateralVentricle"]) & \
+        lateral_ventricle = lateral_ventricle & ~(seg == regions["rLateralVentricle"]) & \
                            ~(seg == regions["rCerebralWM"]) & ~(seg == regions["CSF"]) & \
                            ~(seg == regions["lAmygdala"]) & ~(seg == regions["lHippocampus"])
-        #WM             
+        #WM 
         wm0 = ((seg >= regions["lThalamus"])         &  (seg < regions["3rdVentricle"])) | \
                (seg == regions["lAccumbensArea"])    |  (seg == regions["lVentralDC"])
         # we also have to dilate whole WM to close the remaining rims
-        wm0 = binary_dilation(wm0, tools.build_binary_structure(2, 3)) | LateralVentricle
+        wm0 = binary_dilation(wm0, tools.build_binary_structure(2, 3)) | lateral_ventricle
 
         # CSF + BKG
         csf0 = (seg == regions["Bkg"])               |  (seg == regions["lCerebellumWM"]) | \
                (seg == regions["lCerebellumCortex"]) |  (seg == regions["3rdVentricle"]) | \
                (seg == regions["4thVentricle"])      |  (seg == regions["BrainStem"]) | \
                (seg >= regions["rCerebralWM"])
-        
+
         lesion_mask0 = seg == regions["lCerebralWM"]
-        
+
     else:
         # first we have to dilate the ventricles because otherwise after filling there remains
         # a rim around it
-        LateralVentricle = (seg == regions["rLateralVentricle"]) | (seg == regions["rInfLatVent"])
-        LateralVentricle = binary_dilation(LateralVentricle, tools.build_binary_structure(3, 3))
+        lateral_ventricle = (seg == regions["rLateralVentricle"]) | (seg == regions["rInfLatVent"])
+        lateral_ventricle = binary_dilation(lateral_ventricle, tools.build_binary_structure(3, 3))
         # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
-        LateralVentricle = LateralVentricle & ~(seg == regions["lLateralVentricle"]) & \
+        lateral_ventricle = lateral_ventricle & ~(seg == regions["lLateralVentricle"]) & \
                            ~(seg == regions["lCerebralWM"]) & ~(seg == regions["CSF"]) & \
                            ~(seg == regions["rAmygdala"]) & ~(seg == regions["rHippocampus"])
-        # WM         
+        # WM 
         wm0 =  ((seg >= regions["rThalamus"])         &  (seg <= regions["rPallidum"])) | \
                 (seg == regions["rAccumbensArea"])    |  (seg == regions["rVentralDC"])
         # we also have to dilate whole WM to close the remaining rims
-        wm0 = binary_dilation(wm0, tools.build_binary_structure(2, 3)) | LateralVentricle
+        wm0 = binary_dilation(wm0, tools.build_binary_structure(2, 3)) | lateral_ventricle
 
         # CSF + BKG
         csf0 = ((seg <= regions["lVentralDC"])        & ~(seg == regions["CSF"])) | \
                 (seg == regions["rCerebellumWM"])     |  (seg == regions["rCerebellumCortex"])
 
         lesion_mask0 = seg == regions["rCerebralWM"]
-    
+
     wm  = edit_volumes.resample_volume_like(amap, aff_amap, wm0,  aff_seg, interpolation='nearest')
     csf = edit_volumes.resample_volume_like(amap, aff_amap, csf0, aff_seg, interpolation='nearest')
-    
+
     # finally round and convert wm and csf masks to boolean type because of interpolation during resampling
     wm  = np.round(wm)  > 0.5
     csf = np.round(csf) > 0.5
@@ -411,7 +421,7 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
     if lesion_filling:
         lesion_mask = edit_volumes.resample_volume_like(amap, aff_amap, lesion_mask0, aff_seg, interpolation='nearest')
         lesion_mask = np.round(lesion_mask) > 0.5
-    
+
 
     # build hemispheric label with CSF=1, GM=2, and WM=3
     # adding 0 is neccessary to create a new variable otherwise amap is also modified
@@ -424,7 +434,7 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
         # lesions are always inside deeper WM, thus we erode first
         lesion_mask = binary_erosion(lesion_mask, tools.build_binary_structure(2, 3))
         lesion_mask = binary_closing(lesion_mask, tools.build_binary_structure(2, 3))
-    
+
         # set areas inside lesion_mask to WM if not yet WM
         label[lesion_mask & (label < tissue_labels["WM"])] = tissue_labels["WM"]
     else:
@@ -432,27 +442,27 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
         label_mask = binary_erosion(label_mask, tools.build_binary_structure(5, 3))
         label_mask = binary_closing(label_mask, tools.build_binary_structure(5, 3))
         label[label_mask] = tissue_labels["WM"]
-        
+
     # grey opening is applied to non-WM areas only, because in WM it could lead to decreased 
     # values close to the GM border
     label_open = grey_opening(label, size=(3,3,3))
     label_mask = label < tissue_labels["GWM"] # limit to non-WM areas
     label[label_mask] = label_open[label_mask]
-    
+
     # grey closing fills remaining thin lines and spots in WM
     label_closing = grey_closing(label, size=(3,3,3))
     label_mask = label > tissue_labels["GM"] # limit to WM
     label[label_mask] = label_closing[label_mask]
-    
+
     # remove non-connected structures and keep largest component that is finally dilated
     # to ensure that no brain is removed in the final step where areas outside label_mask
     # are set to CSF
-    if not is_cerebellum:    
+    if not is_cerebellum:
         label_mask = label > tissue_labels["CSF"]
-        label_mask = binary_opening(label_mask, tools.build_binary_structure(3, 3))        
+        label_mask = binary_opening(label_mask, tools.build_binary_structure(3, 3))
         label_mask = edit_volumes.get_largest_connected_component(label_mask)
         label_mask = binary_closing(label_mask, tools.build_binary_structure(3, 3))
-        
+
         # set areas outside label_mask to CSF
         label[~label_mask | (label == tissue_labels["BKG"])] = tissue_labels["CSF"]
 
@@ -465,11 +475,11 @@ def posteriors2hemiseg(posterior, hemi=1):
     filled with WM.
     Use hemi=1 for left and hemi=2 for the right hemisphere.
     """
-    
+
     # CSF + BKG
     csf =  posterior[..., post_regions["Bkg"]] + \
            posterior[..., post_regions["CSF"]]
-            
+
     # GM
     if hemi==1:
         gm =  posterior[..., post_regions["lCerebralCortex"]] + \
@@ -479,7 +489,7 @@ def posteriors2hemiseg(posterior, hemi=1):
         gm =  posterior[..., post_regions["rCerebralCortex"]] + \
               posterior[..., post_regions["rHippocampus"]] + \
               posterior[..., post_regions["rAmygdala"]]
-    
+
     # WM
     if hemi==1:
         wm =  posterior[..., post_regions["lCerebralWM"]] + \
@@ -523,11 +533,11 @@ def bbox_volume(volume, pad=0):
     r = np.any(volume, axis=(1, 2))
     c = np.any(volume, axis=(0, 2))
     z = np.any(volume, axis=(0, 1))
-        
+
     rmin, rmax = np.where(r)[0][[0, -1]]
     cmin, cmax = np.where(c)[0][[0, -1]]
     zmin, zmax = np.where(z)[0][[0, -1]]
-    
+
     # pad defined voxel around bounding box
     if pad > 0:
       rmin -= pad
