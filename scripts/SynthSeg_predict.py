@@ -10,6 +10,28 @@
 # [September 2023] CHANGES:
 #    * added a few new options
 
+"""
+This script is used for predicting segmentations using the SynthSeg model.
+
+Usage:
+    python SynthSeg_predict.py --i <input_image> --o <output_segmentation> [options]
+
+Options:
+    --i <file>              Input image to segment.
+    --o <file>              Segmentation output.
+    --robust                Whether to use robust predictions (slower).
+    --fast                  Bypass some processing for faster prediction.
+    --vol <file>            Output CSV file with volumes for all structures and subjects.
+    --qc <file>             Output CSV file with qc scores for all subjects.
+    --hemi <file>           Hemispheric label output in target voxel size.
+    --resample <file>       Image resampled to target voxel size.
+    --label <file>          Label output.
+    --target-res <float>    Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.
+    --nu-strength <float>   Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.
+    --vessel-strength <float>   Strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium, 2 - strong). Default is -1.
+    --threads <int>         Number of cores to be used. Default is 1.
+    --cpu                   Enforce running with CPU rather than GPU.
+"""
 
 # python imports
 import os
@@ -25,7 +47,7 @@ home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
 sys.path.append(home)
 sys.path.append(os.path.join(home, 'ext'))
 
-model_dir  = os.path.join(home, 'models')
+model_dir = os.path.join(home, 'models')
 labels_dir = os.path.join(home, 'data/labels_classes_priors')
 
 from T1Prep.predict import predict
@@ -35,34 +57,33 @@ parser = ArgumentParser(description="SynthSeg_predict", epilog='\n')
 
 # input/outputs
 parser.add_argument("--i", metavar="file", required=True,
-    help="Input image to segment.")
+                    help="Input image to segment.")
 parser.add_argument("--o", metavar="file", required=True,
-    help="Segmentation output.")
-parser.add_argument("--robust", action="store_true", 
-    help="(optional) Whether to use robust predictions (slower).")
-parser.add_argument("--fast", action="store_true", 
-    help="(optional) Bypass some processing for faster prediction.")
-parser.add_argument("--vol", 
-    help="(optional) Output CSV file with volumes for all structures and subjects.")
-parser.add_argument("--qc", 
-    help="(optional) Output CSV file with qc scores for all subjects.")
-parser.add_argument("--hemi", 
-    help="(optional) Hemispheric label output in target voxel size.")
-parser.add_argument("--resample", 
-    help="(optional) Image resampled to target voxel size.")
-parser.add_argument("--label", 
-    help="(optional) Label output.")
-parser.add_argument("--target-res", type=float, default=0.5, 
-    help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.")
-parser.add_argument("--nu-strength", type=float, default=2, 
-    help="(optional) Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.")
-parser.add_argument("--vessel-strength", type=float, default=-1, 
-    help="(optional) Strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium, 2 - strong). Default is -1.")
-parser.add_argument("--threads", type=int, default=1, 
-    help="(optional) Number of cores to be used. Default is 1.")
-parser.add_argument("--cpu", action="store_true", 
-    help="(optional) Enforce running with CPU rather than GPU.")
-
+                    help="Segmentation output.")
+parser.add_argument("--robust", action="store_true",
+                    help="(optional) Whether to use robust predictions (slower).")
+parser.add_argument("--fast", action="store_true",
+                    help="(optional) Bypass some processing for faster prediction.")
+parser.add_argument("--vol",
+                    help="(optional) Output CSV file with volumes for all structures and subjects.")
+parser.add_argument("--qc",
+                    help="(optional) Output CSV file with qc scores for all subjects.")
+parser.add_argument("--hemi",
+                    help="(optional) Hemispheric label output in target voxel size.")
+parser.add_argument("--resample",
+                    help="(optional) Image resampled to target voxel size.")
+parser.add_argument("--label",
+                    help="(optional) Label output.")
+parser.add_argument("--target-res", type=float, default=0.5,
+                    help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.")
+parser.add_argument("--nu-strength", type=float, default=2,
+                    help="(optional) Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.")
+parser.add_argument("--vessel-strength", type=float, default=-1,
+                    help="(optional) Strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium, 2 - strong). Default is -1.")
+parser.add_argument("--threads", type=int, default=1,
+                    help="(optional) Number of cores to be used. Default is 1.")
+parser.add_argument("--cpu", action="store_true",
+                    help="(optional) Enforce running with CPU rather than GPU.")
 
 # check for no arguments
 if len(sys.argv) < 2:
@@ -73,33 +94,33 @@ if len(sys.argv) < 2:
 # parse commandline
 args = vars(parser.parse_args())
 
-# check rage of nu_strength
-if ((args['nu_strength']<0) | (args['nu_strength']>4)):
+# check range of nu_strength
+if args['nu_strength'] < 0 or args['nu_strength'] > 4:
     print("\nParameter nu-strength must be in the range 0..4")
     parser.print_help()
     sys.exit(1)
 
-# check rage of vessel_strength
-if ((args['vessel_strength']<-1) | (args['vessel_strength']>2)):
-    print("\nParameter nvessel-strength must be in the range -1..2")
+# check range of vessel_strength
+if args['vessel_strength'] < -1 or args['vessel_strength'] > 2:
+    print("\nParameter vessel-strength must be in the range -1..2")
     parser.print_help()
     sys.exit(1)
 
 # print SynthSeg version and checks boolean params for SynthSeg-robust
 if args['robust']:
     args['fast'] = True
-    version = 'SynthSeg-robust 2.0'
+    VERSION = 'SynthSeg-robust 2.0'
 else:
-    version = 'SynthSeg 2.0'
+    VERSION = 'SynthSeg 2.0'
     if args['fast']:
-        version += ' (fast)'
-        
-if args['threads'] == 1:
-    version += ' using 1 thread'
-else:
-    version += ' using %s threads' % args['threads']
+        VERSION += ' (fast)'
 
-print(version)
+if args['threads'] == 1:
+    VERSION += ' using 1 thread'
+else:
+    VERSION += f' using {args["threads"]} threads'
+
+print(VERSION)
 
 # enforce CPU processing if necessary
 if args['cpu']:
