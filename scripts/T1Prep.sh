@@ -1,15 +1,23 @@
 #! /bin/bash
 #
-# PURPOSE:
+# PURPOSE: This script performs preprocessing steps on T1-weighted MRI images
+#          to create segmentations and extract cortical surface. 
 #
-# USAGE:
+# USAGE: T1Prep.sh [options] file1.nii file2.nii ...
 #
-# INPUT:
+# INPUT: T1-weighted MRI images in NIfTI format (.nii or .nii.gz).
 #
-# OUTPUT:
+# OUTPUT: Processed images and segmentation results in the specified output directory.
 #
-# FUNCTIONS:
-#
+# FUNCTIONS: 
+# - main: The main function that executes the preprocessing steps.
+# - parse_args: Parses the command line arguments.
+# - exit_if_empty: Checks if a command line argument is empty and exits with an error message if it is.
+# - check_python_cmd: Checks if the Python command is available.
+# - check_files: Checks if the input files exist.
+# - check_python: Checks if the specified Python command is available.
+# - get_no_of_cpus: Determines the number of available CPUs.
+# - process: Performs the preprocessing steps on each input file.
 
 ########################################################
 # global parameters
@@ -62,7 +70,7 @@ main ()
 
 parse_args ()
 {
-    cmd_dir=`dirname $0`
+    cmd_dir=$(dirname "$0")
     local optname optarg
 
     if [ $# -lt 1 ]; then
@@ -71,8 +79,8 @@ parse_args ()
     fi
 
     while [ $# -gt 0 ]; do
-        optname="`echo $1 | sed 's,=.*,,'`"
-        optarg="`echo $2`"
+        optname=$(echo "$1" | sed 's,=.*,,' )
+        optarg=$(echo "$2")
         paras="$paras $optname $optarg"
 
         case "$1" in
@@ -290,13 +298,13 @@ process ()
     SIZE_OF_ARRAY="${#ARRAY[@]}"
 
     # set overall starting time
-    start0=`date +%s`
+    start0=$(date +%s)
 
     i=0
     while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
       
         # set starting time
-        start=`date +%s`
+        start=$(date +%s)
 
         # check whether absolute or relative names were given
         if [ ! -f "${ARRAY[$i]}" ]; then
@@ -320,40 +328,40 @@ process ()
         fi
         
         # create outdir if not exists
-        if [ ! -d $outdir ]; then
-            mkdir -p $outdir
+        if [ ! -d "$outdir" ]; then
+            mkdir -p "$outdir"
         fi
         
         # get output names
-        resampled=$(echo $bn | sed -e "s/.nii/${res_str}_desc-corr.nii/g")
-        sanlm=$(echo $bn     | sed -e "s/.nii/_desc-sanlm.nii/g")
+        resampled=$(echo "$bn" | sed -e "s/.nii/${res_str}_desc-corr.nii/g")
+        sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
         
         # remove T1w|T2w from basename
-        label=$(echo $bn  | sed -e "s/.nii/${res_str}_label.nii/g")
-        atlas=$(echo $bn  | sed -e "s/.nii/${res_str}_atlas.nii/g")
+        label=$(echo "$bn"  | sed -e "s/.nii/${res_str}_label.nii/g")
+        atlas=$(echo "$bn"  | sed -e "s/.nii/${res_str}_atlas.nii/g")
         
         # use label from Synthseg if we don't use Amap segmentation
         if [ "${use_amap}" -eq 1 ]; then
-            seg=$(echo $bn    | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
+            seg=$(echo "$bn"    | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
         else
             seg=${label}
         fi
         
-        hemi_left=$(echo $seg  | sed -e "s/.nii/_hemi-L.nii/g") 
-        hemi_right=$(echo $seg | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_left=$(echo $bn    | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
-        gmt_right=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
+        hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g") 
+        hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
+        gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
+        gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
         
         # for the following filenames we have to remove the potential .gz from name
-        ppm_left=$(echo $bn    | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
-        ppm_right=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
-        mid_left=$(echo $bn    | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
-        mid_right=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-        thick_left=$(echo $bn  | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_thickness.txt/g") 
-        thick_right=$(echo $bn | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_thickness.txt/g")
+        ppm_left=$(echo "$bn"    | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
+        ppm_right=$(echo "$bn"   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
+        mid_left=$(echo "$bn"    | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
+        mid_right=$(echo "$bn"   | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+        thick_left=$(echo "$bn"  | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_thickness.txt/g") 
+        thick_right=$(echo "$bn" | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_thickness.txt/g")
         
         # print progress and filename
-        j=`expr $i + 1`
+        j=$(expr $i + 1)
         echo -e "${BOLD}${BLACK}######################################################${NC}"
         echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE}${NC}"
 
@@ -362,10 +370,10 @@ process ()
         if [ "${use_sanlm}" -eq 1 ]; then
             echo -e "${BLUE}SANLM denoising${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
-            CAT_VolSanlm ${FILE} ${outdir}/${sanlm}
-            input=${outdir}/${sanlm}
+            CAT_VolSanlm "${FILE}" "${outdir}/${sanlm}"
+            input="${outdir}/${sanlm}"
         else
-            input=${FILE}
+            input="${FILE}"
         fi
         
         # 2. Call SynthSeg segmentation 
@@ -374,9 +382,9 @@ process ()
         if [ -f "${input}" ]; then
             echo -e "${BLUE}SynthSeg segmentation${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
-            ${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
-                    --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
-                    --vessel-strength ${vessel_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}
+                "${python}" "${cmd_dir}/SynthSeg_predict.py" --i "${input}" --o "${outdir}/${atlas}" ${fast} ${robust} \
+                    --target-res "${target_res}" --threads "$NUMBER_OF_JOBS" --nu-strength "${nu_strength}" \
+                    --vessel-strength "${vessel_strength}" --label "${outdir}/${label}" --resamp "${outdir}/${resampled}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -385,17 +393,17 @@ process ()
         
         # remove denoised image
         if [ "${use_sanlm}" -eq 1 ]; then
-            rm ${outdir}/${sanlm} 
+            rm "${outdir}/${sanlm}"
         fi
         
         # 3. Amap segmentation using output from SynthSeg label segmentation
         # ----------------------------------------------------------------------
         # check for outputs from previous step
-        if [ -f "${outdir}/${resampled}" ] &&  [ -f "${outdir}/${label}" ]; then
+        if [ -f "${outdir}/${resampled}" ] && [ -f "${outdir}/${label}" ]; then
             if [ "${use_amap}" -eq 1 ]; then
               echo -e "${BLUE}Amap segmentation${NC}"
               echo -e "${BLUE}---------------------------------------------${NC}"
-              CAT_VolAmap -bias_fwhm ${bias_fwhm} -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}
+              CAT_VolAmap -bias_fwhm "${bias_fwhm}" -write_seg 1 1 1 -mrf 0 -sub "${sub}" -label "${outdir}/${label}" "${outdir}/${resampled}"
             fi
         else
             echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed${NC}"
@@ -412,8 +420,8 @@ process ()
             if [ -f "${outdir}/${seg}" ]; then
                 echo -e "${BLUE}Hemispheric partitioning${NC}"
                 echo -e "${BLUE}---------------------------------------------${NC}"
-                ${python} ${cmd_dir}/partition_hemispheres.py \
-                    --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
+                    "${python}" "${cmd_dir}/partition_hemispheres.py" \
+                        --label "${outdir}/${seg}" --atlas "${outdir}/${atlas}"
             else
                 echo -e "${RED}ERROR: CAT_VolAmap failed${NC}"
                 ((i++))
@@ -433,7 +441,7 @@ process ()
                 gmt=gmt_$side
                 mid=mid_$side
                 
-                if [ -f ${outdir}/${!hemi} ]; then
+                if [ -f "${outdir}/${!hemi}" ]; then
                     echo -e "${BLUE}Extracting $side hemisphere${NC}"
                     echo -e "${BLUE}---------------------------------------------${NC}"
                     CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
@@ -455,15 +463,15 @@ process ()
             
             # only remove temporary files if surfaces exist
             if [ -f "${outdir}/${mid_left}" ] && [ -f "${outdir}/${mid_right}" ]; then
-                rm ${outdir}/${hemi_left} ${outdir}/${hemi_right}
-                rm ${outdir}/${ppm_left} ${outdir}/${ppm_right}
+                rm "${outdir}/${hemi_left}" "${outdir}/${hemi_right}"
+                rm "${outdir}/${ppm_left}" "${outdir}/${ppm_right}"
                 #rm ${outdir}/${gmt_left} ${outdir}/${gmt_right} 
             fi
         fi
 
         # print execution time per data set
-        end=`date +%s`
-        runtime=$((end-start))
+        end=$(date +%s)
+        runtime=$((end - start))
         echo -e "${GREEN}Finished after ${runtime}s${NC}"
             
         ((i++))
@@ -546,4 +554,5 @@ __EOM__
 # call main program
 ########################################################
 
-main ${1+"$@"}
+main "${@}"
+    
