@@ -31,7 +31,7 @@ vessel_strength=-1
 NUMBER_OF_JOBS=-1
 estimate_surf=1
 target_res=0.5
-nu_strength=2
+nu_strength=0
 bias_fwhm=0
 use_sanlm=1
 use_amap=1
@@ -280,12 +280,6 @@ get_no_of_cpus () {
 process ()
 {
         
-    # check that sub is large enough
-    if [ $sub -lt 20 ]; then
-        echo -e "${RED}ERROR: sub has to be >= 20${NC}"
-        exit 1
-    fi
-
     # if target-res is set add a field to the name
     if [ "${target_res}" == "-1" ]; then
         res_str=''
@@ -345,31 +339,30 @@ process ()
             seg=${label}
         fi
         
-        hemi_L=$(echo $seg | sed -e "s/.nii/_hemi-L.nii/g") 
-        hemi_R=$(echo $seg | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_L=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
-        gmt_R=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
+        hemi_left=$(echo $seg  | sed -e "s/.nii/_hemi-L.nii/g") 
+        hemi_right=$(echo $seg | sed -e "s/.nii/_hemi-R.nii/g")
+        gmt_left=$(echo $bn    | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
+        gmt_right=$(echo $bn   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
         
         # for the following filenames we have to remove the potential .gz from name
-        ppm_L=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
-        ppm_R=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
-        mid_L=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
-        mid_R=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-        thick_L=$(echo $bn | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_thickness.txt/g") 
-        thick_R=$(echo $bn | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_thickness.txt/g")
+        ppm_left=$(echo $bn    | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
+        ppm_right=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
+        mid_left=$(echo $bn    | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
+        mid_right=$(echo $bn   | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+        thick_left=$(echo $bn  | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_thickness.txt/g") 
+        thick_right=$(echo $bn | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_thickness.txt/g")
         
         # print progress and filename
         j=`expr $i + 1`
         echo -e "${BOLD}${BLACK}######################################################${NC}"
-        echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE} ${NC}"
+        echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE}${NC}"
 
         # 1. Call SANLM denoising filter
         # ----------------------------------------------------------------------
         if [ "${use_sanlm}" -eq 1 ]; then
-            echo SANLM denoising
-            echo "---------------------------------------------"
-            cmd="CAT_VolSanlm ${FILE} ${outdir}/${sanlm}"
-            eval ${cmd}
+            echo -e "${BLUE}SANLM denoising${NC}"
+            echo -e "${BLUE}---------------------------------------------${NC}"
+            CAT_VolSanlm ${FILE} ${outdir}/${sanlm}
             input=${outdir}/${sanlm}
         else
             input=${FILE}
@@ -379,15 +372,13 @@ process ()
         # ----------------------------------------------------------------------
         # check for outputs from previous step
         if [ -f "${input}" ]; then
-            echo SynthSeg segmentation
-            echo "---------------------------------------------"
-            cmd="${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
+            echo -e "${BLUE}SynthSeg segmentation${NC}"
+            echo -e "${BLUE}---------------------------------------------${NC}"
+            ${python} ${cmd_dir}/SynthSeg_predict.py --i ${input} --o ${outdir}/${atlas} ${fast} ${robust} \
                     --target-res ${target_res} --threads $NUMBER_OF_JOBS --nu-strength ${nu_strength}\
-                    --vessel-strength ${vessel_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}"
-            eval ${cmd}
+                    --vessel-strength ${vessel_strength} --label ${outdir}/${label} --resamp ${outdir}/${resampled}
         else
-            echo -e "${RED}ERROR: CAT_VolSanlm failed ${NC}"
-            echo -e "${CYAN}${cmd}${NC}"
+            echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
             continue
         fi
@@ -402,14 +393,12 @@ process ()
         # check for outputs from previous step
         if [ -f "${outdir}/${resampled}" ] &&  [ -f "${outdir}/${label}" ]; then
             if [ "${use_amap}" -eq 1 ]; then
-              echo Amap segmentation
-              echo "---------------------------------------------"
-              cmd="CAT_VolAmap -bias_fwhm ${bias_fwhm} -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
-              eval ${cmd}
+              echo -e "${BLUE}Amap segmentation${NC}"
+              echo -e "${BLUE}---------------------------------------------${NC}"
+              CAT_VolAmap -bias_fwhm ${bias_fwhm} -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}
             fi
         else
-            echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed ${NC}"
-            echo -e "${CYAN}${cmd}${NC}"
+            echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed${NC}"
             ((i++))
             continue
         fi
@@ -419,24 +408,14 @@ process ()
                 
             # 4. Create hemispheric label maps for cortical surface extraction
             # ----------------------------------------------------------------------
-
-            # Call Amap segmentation a 2nd time if it fails due to memory issues
-            if [ ! -f "${outdir}/${seg}" ] && [ "${use_amap}" -eq 1 ]; then
-                echo Amap segmentation 2nd trial due to previous errors
-                echo "---------------------------------------------"
-                cmd="CAT_VolAmap -bias_fwhm ${bias_fwhm} -write_seg 1 1 1 -mrf 0 -sub ${sub} -label ${outdir}/${label} ${outdir}/${resampled}"
-                eval ${cmd}
-            fi
-            
             # check for outputs from previous step
             if [ -f "${outdir}/${seg}" ]; then
-                echo Hemispheric partitioning
-                echo "---------------------------------------------"
-                cmd="${python} ${cmd_dir}/partition_hemispheres.py \
-                    --label ${outdir}/${seg} --atlas ${outdir}/${atlas}"
-                eval ${cmd}
+                echo -e "${BLUE}Hemispheric partitioning${NC}"
+                echo -e "${BLUE}---------------------------------------------${NC}"
+                ${python} ${cmd_dir}/partition_hemispheres.py \
+                    --label ${outdir}/${seg} --atlas ${outdir}/${atlas}
             else
-                echo -e "${RED}ERROR: CAT_VolAmap failed ${NC}"
+                echo -e "${RED}ERROR: CAT_VolAmap failed${NC}"
                 ((i++))
                 continue
             fi
@@ -445,33 +424,28 @@ process ()
             #    and extract cortical surface
             # ----------------------------------------------------------------------
             # check for outputs from previous step
-            if [ -f "${outdir}/${hemi_L}" ]; then
-                echo Extracting left hemisphere
-                echo "---------------------------------------------"
-                cmd="CAT_VolThicknessPbt ${outdir}/${hemi_L} ${outdir}/${gmt_L} ${outdir}/${ppm_L}"
-                eval ${cmd}
-                cmd="CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${ppm_L} ${outdir}/${mid_L}"
-                eval ${cmd}
-                cmd="CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${mid_L} ${outdir}/${gmt_L} ${outdir}/${thick_L}"
-                eval ${cmd}
-                echo Save cortical thickness in ${outdir}/${thick_L}
-            fi
-            if [ -f "${outdir}/${hemi_R}" ]; then
-                echo Extracting right hemisphere
-                echo "---------------------------------------------"
-                cmd="CAT_VolThicknessPbt ${outdir}/${hemi_R} ${outdir}/${gmt_R} ${outdir}/${ppm_R}"
-                eval ${cmd}
-                cmd="CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${ppm_R} ${outdir}/${mid_R}"
-                eval ${cmd}
-                cmd="CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${mid_R} ${outdir}/${gmt_R} ${outdir}/${thick_R}"
-                eval ${cmd}
-                echo Save cortical thickness in ${outdir}/${thick_R}
-            fi
-            if [ ! -f "${outdir}/${hemi_L}" ] && [ ! -f "${outdir}/${hemi_R}" ]; then
-                echo -e "${RED}ERROR: partition_hemispheres.py failed ${NC}"
-                ((i++))
-                continue
-            fi
+            for side in left right; do
+              
+                # create dynamic variables
+                thick=thick_$side
+                hemi=hemi_$side
+                ppm=ppm_$side
+                gmt=gmt_$side
+                mid=mid_$side
+                
+                if [ -f ${outdir}/${!hemi} ]; then
+                    echo -e "${BLUE}Extracting $side hemisphere${NC}"
+                    echo -e "${BLUE}---------------------------------------------${NC}"
+                    CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
+                    CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
+                    CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!thick}
+                    echo Save cortical thickness in ${outdir}/${!thick}
+                else
+                    echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
+                    ((i++))
+                    continue
+                fi
+            done
             
         fi # estimate_surf
 
@@ -480,10 +454,10 @@ process ()
             #rm ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
             
             # only remove temporary files if surfaces exist
-            if [ -f "${outdir}/${mid_L}" ] && [ -f "${outdir}/${mid_R}" ]; then
-                rm ${outdir}/${hemi_L} ${outdir}/${hemi_R}
-                rm ${outdir}/${ppm_L} ${outdir}/${ppm_R}
-                #rm ${outdir}/${gmt_L} ${outdir}/${gmt_R} 
+            if [ -f "${outdir}/${mid_left}" ] && [ -f "${outdir}/${mid_right}" ]; then
+                rm ${outdir}/${hemi_left} ${outdir}/${hemi_right}
+                rm ${outdir}/${ppm_left} ${outdir}/${ppm_right}
+                #rm ${outdir}/${gmt_left} ${outdir}/${gmt_right} 
             fi
         fi
 
