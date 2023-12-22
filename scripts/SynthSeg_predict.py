@@ -150,6 +150,7 @@ args['names_qc_labels'] = os.path.join(labels_dir, 'synthseg_qc_names_2.0.npy')
 args['topology_classes'] = os.path.join(labels_dir, 'synthseg_topological_classes_2.0.npy')
 args['n_neutral_labels'] = 19
 
+
 # run prediction
 predict(path_images=args['i'],
         path_segmentations=args['o'],
@@ -158,7 +159,7 @@ predict(path_images=args['i'],
         robust=args['robust'],
         fast=args['fast'],
         v1=False, # we cannot use this option because we need the 33-class label
-        do_parcellation=False, # we cannot use this option because we need the 33-calss label
+        do_parcellation=False, # we cannot use this option because we need the 33-class label
         n_neutral_labels=args['n_neutral_labels'],
         names_segmentation=args['names_segmentation_labels'],
         labels_denoiser=args['labels_denoiser'],

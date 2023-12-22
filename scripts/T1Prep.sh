@@ -333,7 +333,7 @@ process ()
         fi
         
         # get output names
-        resampled=$(echo "$bn" | sed -e "s/.nii/${res_str}_desc-corr.nii/g")
+        resampled=$(echo "$bn" | sed -e "s/.nii/${res_str}.nii/g")
         sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
         
         # remove T1w|T2w from basename
@@ -342,19 +342,19 @@ process ()
         
         # use label from Synthseg if we don't use Amap segmentation
         if [ "${use_amap}" -eq 1 ]; then
-            seg=$(echo "$bn"    | sed -e "s/.nii/${res_str}_desc-corr_seg.nii/g")
+            seg=$(echo "$bn"    | sed -e "s/.nii/${res_str}_seg.nii/g")
         else
             seg=${label}
         fi
         
         hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g") 
         hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_desc-corr_hemi-L_thickness.nii/g") 
-        gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_desc-corr_hemi-R_thickness.nii/g")
+        gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_hemi-L_thickness.nii/g") 
+        gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_hemi-R_thickness.nii/g")
         
         # for the following filenames we have to remove the potential .gz from name
-        ppm_left=$(echo "$bn"    | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-L_ppm.nii/g") 
-        ppm_right=$(echo "$bn"   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_desc-corr_hemi-R_ppm.nii/g")
+        ppm_left=$(echo "$bn"    | sed -e "s/.gz//g" -e "s/.nii/${res_str}_hemi-L_ppm.nii/g") 
+        ppm_right=$(echo "$bn"   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_hemi-R_ppm.nii/g")
         mid_left=$(echo "$bn"    | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
         mid_right=$(echo "$bn"   | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
         thick_left=$(echo "$bn"  | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_thickness.txt/g") 
@@ -445,7 +445,7 @@ process ()
                     echo -e "${BLUE}Extracting $side hemisphere${NC}"
                     echo -e "${BLUE}---------------------------------------------${NC}"
                     CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
-                    CAT_MarchingCubesGenus0 -thresh 0.5 -dist 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
+                    CAT_MarchingCubesGenus0 -pre-fwhm 2 -thresh 0.5 -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
                     CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!thick}
                     echo Save cortical thickness in ${outdir}/${!thick}
                 else
