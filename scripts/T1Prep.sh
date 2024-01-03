@@ -37,12 +37,14 @@ BOLD=$(tput bold)
 # defaults
 vessel_strength=-1
 NUMBER_OF_JOBS=-1
+use_bids_naming=1
 estimate_surf=1
 target_res=0.5
 nu_strength=0
-bias_fwhm=0
+bias_fwhm=10
 use_sanlm=1
 use_amap=1
+bin_dir="/usr/local/bin"
 debug=0
 sub=64
 
@@ -114,6 +116,11 @@ parse_args ()
                 vessel_strength=$optarg
                 shift
                 ;;
+            --bin-dir)
+                exit_if_empty "$optname" "$optarg"
+                bin_dir=$optarg
+                shift
+                ;;
             --nproc)
                 exit_if_empty "$optname" "$optarg"
                 NUMBER_OF_JOBS="$optarg"
@@ -132,6 +139,9 @@ parse_args ()
                 ;;
             --no-amap)
                 use_amap=0
+                ;;
+            --no-bids)
+                use_bids_naming=0
                 ;;
             --fast)
                 fast=" --fast "
@@ -302,7 +312,7 @@ process ()
 
     i=0
     while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
-      
+
         # set starting time
         start=$(date +%s)
 
@@ -321,6 +331,7 @@ process ()
         # get directory and basename and also consider ancient Analyze img files
         dn=$(dirname "$FILE")
         bn=$(basename "$FILE" | sed -e "s/.img/.nii/g")
+        bn_gz=$(basename "$FILE" | sed -e "s/.img/.nii/g" -e "s/.gz//g")
         
         # if defined use outputdir otherwise use the folder of input files
         if [ ! -n "$outdir" ]; then
@@ -332,33 +343,39 @@ process ()
             mkdir -p "$outdir"
         fi
         
-        # get output names
-        resampled=$(echo "$bn" | sed -e "s/.nii/${res_str}.nii/g")
-        sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
+        if [ "${use_bids_naming}" -eq 1 ]; then
         
-        # remove T1w|T2w from basename
-        label=$(echo "$bn"  | sed -e "s/.nii/${res_str}_label.nii/g")
-        atlas=$(echo "$bn"  | sed -e "s/.nii/${res_str}_atlas.nii/g")
-        
-        # use label from Synthseg if we don't use Amap segmentation
-        if [ "${use_amap}" -eq 1 ]; then
-            seg=$(echo "$bn"    | sed -e "s/.nii/${res_str}_seg.nii/g")
+            # get output names
+            resampled=$(echo "$bn" | sed -e "s/.nii/${res_str}.nii/g")
+            sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
+            
+            # remove T1w|T2w from basename
+            label=$(echo "$bn"  | sed -e "s/.nii/${res_str}_label.nii/g")
+            atlas=$(echo "$bn"  | sed -e "s/.nii/${res_str}_atlas.nii/g")
+            
+            # use label from Synthseg if we don't use Amap segmentation
+            if [ "${use_amap}" -eq 1 ]; then
+                seg=$(echo "$bn"    | sed -e "s/.nii/${res_str}_seg.nii/g")
+            else
+                seg=${label}
+            fi
+            
+            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g") 
+            hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
+            gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_hemi-L_thickness.nii/g") 
+            gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_hemi-R_thickness.nii/g")
+            
+            # for the following filenames we have to remove the potential .gz from name
+            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/${res_str}_hemi-L_ppm.nii/g") 
+            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/${res_str}_hemi-R_ppm.nii/g")
+            mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
+            mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+            thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g") 
+            thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
         else
-            seg=${label}
+            echo "Not yet prepared for other naming scheme"
+            exit
         fi
-        
-        hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g") 
-        hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_hemi-L_thickness.nii/g") 
-        gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_hemi-R_thickness.nii/g")
-        
-        # for the following filenames we have to remove the potential .gz from name
-        ppm_left=$(echo "$bn"    | sed -e "s/.gz//g" -e "s/.nii/${res_str}_hemi-L_ppm.nii/g") 
-        ppm_right=$(echo "$bn"   | sed -e "s/.gz//g" -e "s/.nii/${res_str}_hemi-R_ppm.nii/g")
-        mid_left=$(echo "$bn"    | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
-        mid_right=$(echo "$bn"   | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-        thick_left=$(echo "$bn"  | sed -e "s/.gz//g" -e "s/.nii/_hemi-L_thickness.txt/g") 
-        thick_right=$(echo "$bn" | sed -e "s/.gz//g" -e "s/.nii/_hemi-R_thickness.txt/g")
         
         # print progress and filename
         j=$(expr $i + 1)
@@ -370,7 +387,7 @@ process ()
         if [ "${use_sanlm}" -eq 1 ]; then
             echo -e "${BLUE}SANLM denoising${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
-            CAT_VolSanlm "${FILE}" "${outdir}/${sanlm}"
+            ${bin_dir}/CAT_VolSanlm "${FILE}" "${outdir}/${sanlm}"
             input="${outdir}/${sanlm}"
         else
             input="${FILE}"
@@ -401,9 +418,9 @@ process ()
         # check for outputs from previous step
         if [ -f "${outdir}/${resampled}" ] && [ -f "${outdir}/${label}" ]; then
             if [ "${use_amap}" -eq 1 ]; then
-              echo -e "${BLUE}Amap segmentation${NC}"
-              echo -e "${BLUE}---------------------------------------------${NC}"
-              CAT_VolAmap -bias_fwhm "${bias_fwhm}" -write_seg 1 1 1 -mrf 0 -sub "${sub}" -label "${outdir}/${label}" "${outdir}/${resampled}"
+                echo -e "${BLUE}Amap segmentation${NC}"
+                echo -e "${BLUE}---------------------------------------------${NC}"
+                ${bin_dir}/CAT_VolAmap --bias-fwhm "${bias_fwhm}" --write-seg 1 1 1 --mrf 0 --sub "${sub}" --label "${outdir}/${label}" "${outdir}/${resampled}"
             fi
         else
             echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed${NC}"
@@ -444,9 +461,9 @@ process ()
                 if [ -f "${outdir}/${!hemi}" ]; then
                     echo -e "${BLUE}Extracting $side hemisphere${NC}"
                     echo -e "${BLUE}---------------------------------------------${NC}"
-                    CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
-                    CAT_MarchingCubesGenus0 -pre-fwhm 2 -thresh 0.5 -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
-                    CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!thick}
+                    ${bin_dir}/CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
+                    ${bin_dir}/CAT_MarchingCubesGenus0 -pre-fwhm 2 -thresh 0.5 -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
+                    ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!thick}
                     echo Save cortical thickness in ${outdir}/${!thick}
                 else
                     echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
@@ -508,7 +525,7 @@ USAGE:
                              value to save outputs with original voxel size (default $target_res).
   --nu-strength <NUMBER>     strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong
                              4 - heavy). (default $nu_strength). 
-  --bias-fwhm <NUMBER>       FWHM size of nu-correction in CAT__VolAmap (default $bias_fwhm). 
+  --bias-fwhm <NUMBER>       FWHM size of nu-correction in CAT_VolAmap (default $bias_fwhm). 
   --vessel-strength <NUMBER> strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium
                              2 - strong). (default $vessel_strength). 
   --nproc <NUMBER>           number of parallel jobs (=number of processors)
@@ -543,6 +560,9 @@ OUTPUT:
 USED FUNCTIONS:
   CAT_VolAmap
   CAT_Sanlm
+  CAT_VolThicknessPbt
+  CAT_MarchingCubesGenus0
+  CAT_3dVol2Surf
   ${cmd_dir}/SynthSeg_predict.py
   
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).

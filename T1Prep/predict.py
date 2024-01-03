@@ -254,7 +254,7 @@ def predict(path_images,
 
     if path_resampled is not None:
         # use fast nu-correction with lower resolution of original preprocessed images
-        use_fast_nu_correction = True
+        use_fast_nu_correction = False # not working yet?!
         
         resamp, aff_resamp, _ = tools.load_volume(path_images, im_only=False, dtype='float32')
 
@@ -277,17 +277,6 @@ def predict(path_images,
         # finally convert to boolean type for the mask and round because of resampling
         cortex_mask = np.round(cortex_mask) > 0.5
         
-        # create mask for weighting nu-correction
-        cortex_weight = np.ones(shape=np.shape(seg), dtype='float32')
-        # weight subcortical structures and cerebellum with 50%
-        cortex_weight[((seg > 9)  & (seg < 14)) | ((seg > 48) & (seg < 53)) | (seg== 8) | (seg < 47)] = 0.5
-        # ignore Amygdala + Hippocampus 
-        cortex_weight[(seg == 17) | (seg == 18) | (seg == 53) | (seg == 54)] = 0.0
-
-        # resample cortex_mask to target voxel size except for fast nu-correction
-        if not use_fast_nu_correction:
-            cortex_weight, _ = edit_volumes.resample_volume(cortex_weight, aff, target_res)
-        
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
         resamp, mask = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask)
@@ -298,16 +287,17 @@ def predict(path_images,
 
         # Using the 1mm data from SynthSeg is a bit faster
         if use_fast_nu_correction:
-            bias = utils.get_bias_field(im, label_orig, im_res, nu_strength, bias_weight=cortex_weight)
+            bias = utils.get_bias_field(im, label_orig, im_res, nu_strength)
 
             # resample bias field to the target voxel size of the resampled input volume
             bias, _ = edit_volumes.resample_volume(bias, aff, target_res)
         else:
             im_res_resampled = target_res
-            bias = utils.get_bias_field(resamp, label, im_res_resampled, nu_strength, bias_weight=cortex_weight)
+            bias = utils.get_bias_field(resamp, label, im_res_resampled, nu_strength)
         
         # apply nu-correction
-        resamp -= bias
+        tissue_idx = bias != 0 
+        resamp[tissue_idx] /= bias[tissue_idx]
         
         # after nu-correction we might have negative values that should be prevented
         min_resamp = np.min(np.array(resamp))
@@ -316,6 +306,8 @@ def predict(path_images,
         resamp[~mask] = 0
         
         tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='float32')
+        name = os.path.basename(path_images).replace('.nii', '_bias.nii')
+        tools.save_volume(bias, aff_resamp, h, name, dtype='float32')
       
     # write volumes to disc if necessary
     if path_volumes is not None:

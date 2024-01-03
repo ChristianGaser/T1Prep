@@ -4,7 +4,7 @@ import sys
 import traceback
 import numpy as np
 
-from scipy.ndimage import binary_closing, binary_opening, binary_dilation, binary_erosion, grey_opening, grey_closing, gaussian_filter
+from scipy.ndimage import distance_transform_edt, binary_closing, binary_opening, binary_dilation, binary_erosion, grey_opening, grey_closing, gaussian_filter
 from ext.lab2im import edit_volumes
 from ext.lab2im import utils as tools
 
@@ -207,7 +207,7 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     return volume, mask
 
 
-def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
+def get_bias_field(volume, label, target_size, nu_strength=2):
     """
     Use label image to correct input volume for non-uniformities
     We estimate bias correction by smoothing the residuals that remain after
@@ -219,7 +219,6 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
         label (numpy.ndarray): The label image used to correct the input volume.
         target_size (tuple): The target voxel size of the output.
         nu_strength (int): The strength of the non-uniformity correction. Default is 2.
-        bias_weight (float): The weight of the bias field. Default is None.
 
     Returns:
         numpy.ndarray: The bias field used to correct the input volume for non-uniformities.
@@ -227,16 +226,16 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
 
     # size of smoothing kernel in sigma w.r.t. target size and weighting
     if (nu_strength == 0):
-        return np.zeros(shape=np.shape(volume), dtype='float32')
+        return np.ones(shape=np.shape(volume), dtype='float32')
     elif (nu_strength == 1):
-        sigma = [16, 12]
+        sigma = [14]
     elif (nu_strength == 2):
-        sigma = [12, 9]
+        sigma = [12]
     elif (nu_strength == 3):
-        sigma = [11, 8]
+        sigma = [10]
     elif (nu_strength == 4):
-        sigma = [9, 6]
-  
+        sigma = [8]
+
     # correct for target size
     sigma = sigma/np.array([np.mean(target_size)]*len(sigma))
 
@@ -246,36 +245,33 @@ def get_bias_field(volume, label, target_size, nu_strength=2, bias_weight=None):
     # we need the final bias field later to apply it to the resampled data
     bias = np.zeros(shape=np.shape(corrected_volume), dtype='float32')
 
-    brain_idx = np.round(label) > 0
+    # we need a tight brainmask without CSF and remaining small parts that are 
+    # only connected by a few voxels
+    brain_idx = label > 1.5
+    brain_idx = binary_opening(brain_idx, tools.build_binary_structure(3, 3))
+    brain_idx = binary_erosion(brain_idx, tools.build_binary_structure(3, 3))
 
-    bias_csf_gm_wm = [0, 1, 2]
-    # we use decreasing smoothing sizes
+    # use GM and WM only to estimate bias
+    used_labels = [1, 2]
+    
+    # we use decreasing smoothing sizes if defined
     for sigma in sigma:
-        meaninvcov   = np.zeros(shape=np.shape(volume), dtype='float32')
-        meanresidual = np.zeros(shape=np.shape(volume), dtype='float32')
 
-        for i in bias_csf_gm_wm:
+        bias_tissue = np.zeros(shape=np.shape(volume), dtype='float32')
+
+        for i in used_labels:
             tissue_idx = np.round(label) == i + 1
             mean_tissue = np.mean(np.array(corrected_volume[tissue_idx]))
-            var_tissue = np.var(np.array(corrected_volume[tissue_idx]))
 
-            tempf = mean_tissue/var_tissue
-            meaninvcov[brain_idx]   += tempf
-            meanresidual[brain_idx] += tempf*(corrected_volume[brain_idx] - mean_tissue)
+            bias_tissue[tissue_idx] += (corrected_volume[tissue_idx] / mean_tissue)
 
-        meanresidual[brain_idx] /= meaninvcov[brain_idx];
-        meanresidual[~brain_idx] = 0
+        _, dist_idx = distance_transform_edt(~brain_idx, return_indices=True)
+        bias_tissue = bias_tissue[dist_idx[0], dist_idx[1], dist_idx[2]]
 
-        # weight bias field
-        if bias_weight is not None:
-            meanresidual *= bias_weight
+        bias_tissue = gaussian_filter(bias_tissue, sigma=sigma)
 
-        meanresidual = gaussian_filter(meanresidual, sigma=sigma)
-        corrected_volume -= meanresidual;
-        bias += meanresidual
-
-    # we have to set bias field outside label mask to 0
-    bias[label == 0] = 0.0
+        corrected_volume[brain_idx] /= bias_tissue[brain_idx];
+        bias += bias_tissue
 
     return bias
 
