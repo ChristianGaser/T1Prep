@@ -195,7 +195,7 @@ def predict(path_images,
     if np.any(np.isnan(np.array(post_patch_segmentation))):
         print('ERROR: SynthSeg failed')
         return
-
+    
     # postprocessing
     seg, posteriors, volumes = postprocess(post_patch_seg=post_patch_segmentation,
                                            post_patch_parc=post_patch_parcellation,
@@ -210,6 +210,9 @@ def predict(path_images,
                                            topology_classes=topology_classes,
                                            v1=v1)
 
+    if np.all(seg == 0):
+        print('ERROR: SynthSeg failed')
+        return
 
     # use resolution of input image if target_res <= 0
     if target_res <= 0:
@@ -303,7 +306,7 @@ def predict(path_images,
         min_resamp = np.min(np.array(resamp))
         if min_resamp < 0:
             resamp -= min_resamp
-        resamp[~mask] = 0
+        #resamp[~mask] = 0
         
         tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='float32')
         name = os.path.basename(path_images).replace('.nii', '_bias.nii')

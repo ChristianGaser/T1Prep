@@ -420,7 +420,7 @@ process ()
             if [ "${use_amap}" -eq 1 ]; then
                 echo -e "${BLUE}Amap segmentation${NC}"
                 echo -e "${BLUE}---------------------------------------------${NC}"
-                ${bin_dir}/CAT_VolAmap --bias-fwhm "${bias_fwhm}" --write-seg 1 1 1 --mrf 0 --sub "${sub}" --label "${outdir}/${label}" "${outdir}/${resampled}"
+                ${bin_dir}/CAT_VolAmap -bias-fwhm "${bias_fwhm}" -write-seg 1 1 1 -mrf 0 -sub "${sub}" -label "${outdir}/${label}" "${outdir}/${resampled}"
             fi
         else
             echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed${NC}"

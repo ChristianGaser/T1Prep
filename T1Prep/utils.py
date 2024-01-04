@@ -112,7 +112,7 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     if vessel_strength < 0: 
         # for automatic estimation of vessel-strength we use squared values to 
         # emphasize higher intensities in the percentiles
-        values = volume*volume 
+        values = volume*volume
         percentile_csf2 = np.percentile(np.array(values[label_csf]),[50,99])
         ratio_high = percentile_csf2[1] / percentile_csf2[0]
     elif vessel_strength == 0: # no correction
