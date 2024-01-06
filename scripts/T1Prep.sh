@@ -40,7 +40,6 @@ NUMBER_OF_JOBS=-1
 use_bids_naming=1
 estimate_surf=1
 target_res=0.5
-nu_strength=0
 bias_fwhm=10
 use_sanlm=1
 use_amap=1
@@ -99,11 +98,6 @@ parse_args ()
             --target-res)
                 exit_if_empty "$optname" "$optarg"
                 target_res=$optarg
-                shift
-                ;;
-            --nu-str*)
-                exit_if_empty "$optname" "$optarg"
-                nu_strength=$optarg
                 shift
                 ;;
             --bias-fwhm)
@@ -360,18 +354,20 @@ process ()
                 seg=${label}
             fi
             
-            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g") 
+            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
             hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-            gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_hemi-L_thickness.nii/g") 
+            gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_hemi-L_thickness.nii/g")
             gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_hemi-R_thickness.nii/g")
             
             # for the following filenames we have to remove the potential .gz from name
-            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/${res_str}_hemi-L_ppm.nii/g") 
+            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/${res_str}_hemi-L_ppm.nii/g")
             ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/${res_str}_hemi-R_ppm.nii/g")
-            mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g") 
+            mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
             mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-            thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g") 
+            thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g")
             thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
+            pbt_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pbt.txt/g")
+            pbt_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pbt.txt/g")
         else
             echo "Not yet prepared for other naming scheme"
             exit
@@ -400,8 +396,8 @@ process ()
             echo -e "${BLUE}SynthSeg segmentation${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
                 "${python}" "${cmd_dir}/SynthSeg_predict.py" --i "${input}" --o "${outdir}/${atlas}" ${fast} ${robust} \
-                    --target-res "${target_res}" --threads "$NUMBER_OF_JOBS" --nu-strength "${nu_strength}" \
-                    --vessel-strength "${vessel_strength}" --label "${outdir}/${label}" --resamp "${outdir}/${resampled}"
+                    --target-res "${target_res}" --threads "$NUMBER_OF_JOBS" --vessel-strength "${vessel_strength}" \
+                    --label "${outdir}/${label}" --resamp "${outdir}/${resampled}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -452,6 +448,7 @@ process ()
             for side in left right; do
               
                 # create dynamic variables
+                pbt=pbt_$side
                 thick=thick_$side
                 hemi=hemi_$side
                 ppm=ppm_$side
@@ -463,7 +460,8 @@ process ()
                     echo -e "${BLUE}---------------------------------------------${NC}"
                     ${bin_dir}/CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
                     ${bin_dir}/CAT_MarchingCubesGenus0 -pre-fwhm 2 -thresh 0.5 -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
-                    ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!thick}
+                    ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!pbt}
+                    ${bin_dir}/CAT_SurfDistance -mean -thickness ${outdir}/${!pbt} ${outdir}/${!mid} ${outdir}/${!thick}
                     echo Save cortical thickness in ${outdir}/${!thick}
                 else
                     echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
@@ -514,17 +512,15 @@ cat <<__EOM__
 
 USAGE:
   T1Prep.sh [--python python_command] [--outdir out_folder] [--target-res voxel_size] 
-                    [--nu-strength nu_strength] [--vessel-strength vessel_strength]
+                    [--vessel-strength vessel_strength] [--no-sanlm] [--no-amap]
                     [--nproc number_of_processes] [--sub subsampling] [--no-surf]
-                    [--no-sanlm] [--no-amap] [--fast] [--robust] [--debug] filenames 
+                    [--fast] [--robust] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
   --outdir <DIR>             output folder (default same folder)
   --target-res <NUMBER>      target voxel size in mm for resampled and hemispheric label data  
                              that will be used for cortical surface extraction. Use a negative
                              value to save outputs with original voxel size (default $target_res).
-  --nu-strength <NUMBER>     strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong
-                             4 - heavy). (default $nu_strength). 
   --bias-fwhm <NUMBER>       FWHM size of nu-correction in CAT_VolAmap (default $bias_fwhm). 
   --vessel-strength <NUMBER> strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium
                              2 - strong). (default $vessel_strength). 
@@ -563,6 +559,7 @@ USED FUNCTIONS:
   CAT_VolThicknessPbt
   CAT_MarchingCubesGenus0
   CAT_3dVol2Surf
+  CAT_SurfDistance
   ${cmd_dir}/SynthSeg_predict.py
   
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).
