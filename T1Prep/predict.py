@@ -71,7 +71,6 @@ def predict(path_images,
             cropping,
             topology_classes,
             target_res = 0.5,
-            nu_strength = 2,
             vessel_strength = -1):
     '''
     Prediction pipeline.
@@ -103,7 +102,6 @@ def predict(path_images,
         cropping (list): List of cropping values.
         topology_classes (str): Path to the topology classes.
         target_res (float): Target resolution.
-        nu_strength (int): Strength of the NU correction.
         vessel_strength (int): Strength of the vessel correction.
 
     Returns:
@@ -256,14 +254,7 @@ def predict(path_images,
             tools.save_volume(hemi, aff_hemi, h, hemi_name, dtype='uint8')
 
     if path_resampled is not None:
-        # use fast nu-correction with lower resolution of original preprocessed images
-        use_fast_nu_correction = False # not working yet?!
-        
         resamp, aff_resamp, _ = tools.load_volume(path_images, im_only=False, dtype='float32')
-
-        # resample original input to 1mm voxel size for fast nu-correction
-        if use_fast_nu_correction:
-            im, _ = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
 
         # resample original input to target voxel size
         resamp = edit_volumes.resample_volume_like(label, aff_label, resamp, aff_resamp, interpolation='linear')
@@ -284,33 +275,7 @@ def predict(path_images,
         print('Vessel-correction and skull-stripping')
         resamp, mask = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask)
         
-        # nu-correction works better if it's called after vessel correction
-        if nu_strength:
-            print('NU-correction')
-
-        # Using the 1mm data from SynthSeg is a bit faster
-        if use_fast_nu_correction:
-            bias = utils.get_bias_field(im, label_orig, im_res, nu_strength)
-
-            # resample bias field to the target voxel size of the resampled input volume
-            bias, _ = edit_volumes.resample_volume(bias, aff, target_res)
-        else:
-            im_res_resampled = target_res
-            bias = utils.get_bias_field(resamp, label, im_res_resampled, nu_strength)
-        
-        # apply nu-correction
-        tissue_idx = bias != 0 
-        resamp[tissue_idx] /= bias[tissue_idx]
-        
-        # after nu-correction we might have negative values that should be prevented
-        min_resamp = np.min(np.array(resamp))
-        if min_resamp < 0:
-            resamp -= min_resamp
-        #resamp[~mask] = 0
-        
         tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='float32')
-        name = os.path.basename(path_images).replace('.nii', '_bias.nii')
-        tools.save_volume(bias, aff_resamp, h, name, dtype='float32')
       
     # write volumes to disc if necessary
     if path_volumes is not None:

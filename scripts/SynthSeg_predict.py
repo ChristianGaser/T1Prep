@@ -27,7 +27,6 @@ Options:
     --resample <file>       Image resampled to target voxel size.
     --label <file>          Label output.
     --target-res <float>    Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.
-    --nu-strength <float>   Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.
     --vessel-strength <float>   Strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium, 2 - strong). Default is -1.
     --threads <int>         Number of cores to be used. Default is 1.
     --cpu                   Enforce running with CPU rather than GPU.
@@ -76,8 +75,6 @@ parser.add_argument("--label",
                     help="(optional) Label output.")
 parser.add_argument("--target-res", type=float, default=0.5,
                     help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.")
-parser.add_argument("--nu-strength", type=float, default=2,
-                    help="(optional) Strength of nu-correction (0 - none, 1 - light, 2 - medium, 3 - strong, 4 - heavy). Default is 2.")
 parser.add_argument("--vessel-strength", type=float, default=-1,
                     help="(optional) Strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium, 2 - strong). Default is -1.")
 parser.add_argument("--threads", type=int, default=1,
@@ -93,12 +90,6 @@ if len(sys.argv) < 2:
 
 # parse commandline
 args = vars(parser.parse_args())
-
-# check range of nu_strength
-if args['nu_strength'] < 0 or args['nu_strength'] > 4:
-    print("\nParameter nu-strength must be in the range 0..4")
-    parser.print_help()
-    sys.exit(1)
 
 # check range of vessel_strength
 if args['vessel_strength'] < -1 or args['vessel_strength'] > 2:
@@ -178,5 +169,4 @@ predict(path_images=args['i'],
         cropping=None, # not necessary
         topology_classes=args['topology_classes'],
         target_res=args['target_res'],
-        nu_strength=args['nu_strength'],
         vessel_strength=args['vessel_strength'])
