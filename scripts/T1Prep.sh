@@ -491,7 +491,7 @@ process ()
                     # -post-fwhm 1 -thresh 0.495
                     # -post-fwhm 2 -thresh 0.490
                     # -post-fwhm 3 -thresh 0.475
-                    ${bin_dir}/CAT_MarchingCubesGenus0 -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
+                    ${bin_dir}/CAT_VolMarchingCubes -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
                     ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!pbt}
                     ${bin_dir}/CAT_SurfDistance -mean -thickness ${outdir}/${!pbt} ${outdir}/${!mid} ${outdir}/${!thick}
                     echo Save cortical thickness in ${outdir}/${!thick}
@@ -554,9 +554,9 @@ USAGE:
                              that will be used for cortical surface extraction. Use a negative
                              value to save outputs with original voxel size (default $target_res).
   --bias-fwhm <NUMBER>       FWHM size of nu-correction in CAT_VolAmap (default $bias_fwhm). 
-  --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_MarchingCubesGenus0 (default $pre_fwhm). 
-  --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_MarchingCubesGenus0 (default $post_fwhm). 
-  --thresh    <NUMBER>       Threshold (isovalue) for creating surface in CAT_MarchingCubesGenus0 (default $thresh). 
+  --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes (default $pre_fwhm). 
+  --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes (default $post_fwhm). 
+  --thresh    <NUMBER>       Threshold (isovalue) for creating surface in CAT_VolMarchingCubes (default $thresh). 
   --vessel-strength <NUMBER> strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium
                              2 - strong). (default $vessel_strength). 
   --nproc <NUMBER>           number of parallel jobs (=number of processors)
@@ -592,7 +592,7 @@ USED FUNCTIONS:
   CAT_VolAmap
   CAT_Sanlm
   CAT_VolThicknessPbt
-  CAT_MarchingCubesGenus0
+  CAT_VolMarchingCubes
   CAT_3dVol2Surf
   CAT_SurfDistance
   ${cmd_dir}/SynthSeg_predict.py
