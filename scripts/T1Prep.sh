@@ -41,11 +41,19 @@ use_bids_naming=1
 estimate_surf=1
 target_res=0.5
 bias_fwhm=10
+pre_fwhm=-1
 use_sanlm=1
 use_amap=1
 bin_dir="/usr/local/bin"
 debug=0
 sub=64
+
+post_fwhm=2
+# if we use post-smoothing we have to correct the isovalue/threshold:
+# post_fwhm=1 thresh=0.495
+# post_fwhm=2 thresh=0.490
+# post_fwhm=3 thresh=0.475
+thresh=0.490
 
 ########################################################
 # run main
@@ -98,6 +106,21 @@ parse_args ()
             --target-res)
                 exit_if_empty "$optname" "$optarg"
                 target_res=$optarg
+                shift
+                ;;
+            --pre-fwhm)
+                exit_if_empty "$optname" "$optarg"
+                pre_fwhm=$optarg
+                shift
+                ;;
+            --post-fwhm)
+                exit_if_empty "$optname" "$optarg"
+                post_fwhm=$optarg
+                shift
+                ;;
+            --thresh*)
+                exit_if_empty "$optname" "$optarg"
+                thresh=$optarg
                 shift
                 ;;
             --bias-fwhm)
@@ -459,7 +482,16 @@ process ()
                     echo -e "${BLUE}Extracting $side hemisphere${NC}"
                     echo -e "${BLUE}---------------------------------------------${NC}"
                     ${bin_dir}/CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
-                    ${bin_dir}/CAT_MarchingCubesGenus0 -pre-fwhm 2 -thresh 0.5 -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
+                    
+                    # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
+                    # average between original and smoothed images based on their distance to 
+                    # the threshold (isovalue). A negative value will force masked smoothing, which may preserves gyri and sulci even better.
+                    # In contrast, post-smoothing aids in correcting the mesh in folded areas like gyri and sulci and removes the voxel-steps
+                    # that are visible after marching cubes. However, this also slightly changes the curve in we have to correct the isovalue:
+                    # -post-fwhm 1 -thresh 0.495
+                    # -post-fwhm 2 -thresh 0.490
+                    # -post-fwhm 3 -thresh 0.475
+                    ${bin_dir}/CAT_MarchingCubesGenus0 -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
                     ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!pbt}
                     ${bin_dir}/CAT_SurfDistance -mean -thickness ${outdir}/${!pbt} ${outdir}/${!mid} ${outdir}/${!thick}
                     echo Save cortical thickness in ${outdir}/${!thick}
@@ -522,6 +554,9 @@ USAGE:
                              that will be used for cortical surface extraction. Use a negative
                              value to save outputs with original voxel size (default $target_res).
   --bias-fwhm <NUMBER>       FWHM size of nu-correction in CAT_VolAmap (default $bias_fwhm). 
+  --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_MarchingCubesGenus0 (default $pre_fwhm). 
+  --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_MarchingCubesGenus0 (default $post_fwhm). 
+  --thresh    <NUMBER>       Threshold (isovalue) for creating surface in CAT_MarchingCubesGenus0 (default $thresh). 
   --vessel-strength <NUMBER> strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium
                              2 - strong). (default $vessel_strength). 
   --nproc <NUMBER>           number of parallel jobs (=number of processors)
