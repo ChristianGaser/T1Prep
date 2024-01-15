@@ -98,7 +98,7 @@ parse_args ()
                 python=$optarg
                 shift
                 ;;
-            --outdir | --out-dir)
+            --out-dir | --outdir)
                 exit_if_empty "$optname" "$optarg"
                 outdir=$optarg
                 shift
@@ -133,7 +133,7 @@ parse_args ()
                 vessel_strength=$optarg
                 shift
                 ;;
-            --bin-dir)
+            --bin-dir| --bindir)
                 exit_if_empty "$optname" "$optarg"
                 bin_dir=$optarg
                 shift
@@ -543,13 +543,14 @@ help ()
 cat <<__EOM__
 
 USAGE:
-  T1Prep.sh [--python python_command] [--outdir out_folder] [--target-res voxel_size] 
-                    [--vessel-strength vessel_strength] [--no-sanlm] [--no-amap]
-                    [--nproc number_of_processes] [--sub subsampling] [--no-surf]
-                    [--fast] [--robust] [--debug] filenames 
+  T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder]
+                    [--target-res voxel_size] [--vessel-strength vessel_strength] 
+                    [--no-sanlm] [--no-amap] [--no-surf] [--nproc number_of_processes] 
+                    [--sub subsampling] [--fast] [--robust] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
-  --outdir <DIR>             output folder (default same folder)
+  --out-dir <DIR>            output folder (default same folder)
+  --bin-dir <DIR>            folder of CAT binaries (default $bin_dir)
   --target-res <NUMBER>      target voxel size in mm for resampled and hemispheric label data  
                              that will be used for cortical surface extraction. Use a negative
                              value to save outputs with original voxel size (default $target_res).

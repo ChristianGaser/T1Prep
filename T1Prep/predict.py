@@ -195,6 +195,7 @@ def predict(path_images,
         return
     
     # postprocessing
+    print('Post-processing')
     seg, posteriors, volumes = postprocess(post_patch_seg=post_patch_segmentation,
                                            post_patch_parc=post_patch_parcellation,
                                            shape=shape,
@@ -229,6 +230,7 @@ def predict(path_images,
         print('Estimate label')
         label_orig = utils.posteriors2label(posteriors)
 
+        print('Resample label')
         # resample to target voxel size
         label, aff_label = edit_volumes.resample_volume(label_orig, aff, target_res)
         tools.save_volume(label, aff_label, h, path_label, dtype='uint8')
@@ -263,7 +265,7 @@ def predict(path_images,
         
         # limit vessel correction to cerebral cortex (+hippocampus+amygdala+CSF) only
         cortex_mask = (seg == 2)  | (seg == 3)  | (seg == 41) | (seg == 42) | (seg == 24) | \
-                      (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54) | (seg == 0)
+                      (seg == 17) | (seg == 18) | (seg == 53) | (seg == 54)
 
         # resample cortex_mask to target voxel size
         cortex_mask, _ = edit_volumes.resample_volume(cortex_mask, aff, target_res)
@@ -273,7 +275,7 @@ def predict(path_images,
         
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
-        resamp, mask = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask)
+        resamp, _ = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask, debug=1)
         
         tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='float32')
       

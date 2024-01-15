@@ -93,7 +93,280 @@ post_regions = {
   "rVentralDC":        32
 }
 
-def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel_mask=None):
+def gradient3(F, axis):
+    """
+    Compute the gradient of a 3D array along a specified axis.
+
+    This function calculates the gradient of a three-dimensional array `F` along
+    one of the axes ('x', 'y', 'z', or 'xyz'). The gradient is computed using central
+    differences in the interior points and first differences at the boundaries.
+    This approach is similar to MATLAB's gradient function but is optimized to
+    operate optionally along a single direction at a time, which can be more efficient
+    in terms of time and memory usage.
+
+    Parameters:
+    F (numpy.ndarray): A 3D array of numerical values. The gradient will be
+                       computed on this array.
+    axis (str): The axis along which to compute the gradient. Valid options are
+                'x', 'y', 'z', or 'xyz'. These correspond to the first, second, and
+                third dimensions of the array, respectively or all dimensions.
+
+    Returns:
+    numpy.ndarray: A 3D array of the same shape as `F`. Each element of the
+                   array represents the gradient of `F` at that point along the
+                   specified axis.
+
+    Example:
+    >>> import numpy as np
+    >>> F = np.array([[[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                      [[10, 11, 12], [13, 14, 15], [16, 17, 18]],
+                      [[19, 20, 21], [22, 23, 24], [25, 26, 27]]])
+    >>> gradient_x = gradient3(F, 'x')
+    >>> gradient_y = gradient3(F, 'y')
+    >>> gradient_z = gradient3(F, 'z')
+
+    """
+
+    D = np.zeros_like(F)
+
+    if axis == 'x':
+        D[0,:,:]    =  F[1,:,:]  - F[0,:,:]
+        D[-1,:,:]   =  F[-1,:,:] - F[-2,:,:]
+        D[1:-1,:,:] = (F[2:,:,:] - F[:-2,:,:]) / 2
+        return D
+    elif axis == 'y':
+        D[:,0,:]    =  F[:,1,:]  - F[:,0,:]
+        D[:,-1,:]   =  F[:,-1,:] - F[:,-2,:]
+        D[:,1:-1,:] = (F[:,2:,:] - F[:,:-2,:]) / 2
+        return D
+    elif axis == 'z':
+        D[:,:,0]    =  F[:,:,1]  - F[:,:,0]
+        D[:,:,-1]   =  F[:,:,-1] - F[:,:,-2]
+        D[:,:,1:-1] = (F[:,:,2:] - F[:,:,:-2]) / 2
+        return D
+    elif axis == 'xyz':
+        return gradient3(F,'x'),gradient3(F,'y'),gradient3(F,'z')
+
+def divergence3(F):
+    """
+    Calculate the divergence of a 3D vector field.
+
+    This function computes the divergence of a three-dimensional vector field `F`.
+    The divergence is a scalar field representing the volume density of the outward
+    flux of a vector field from an infinitesimal volume around a given point. In
+    this case, `F` is interpreted as a vector field, and its divergence is computed
+    as the sum of the second-order gradients along each axis (x, y, z).
+
+    The computation involves calculating the gradient of the input array along each
+    axis twice (second-order gradient) and summing these gradients to obtain the
+    divergence. This approach provides an insight into the rate at which the quantity
+    represented by `F` spreads out or converges at each point in space.
+
+    Parameters:
+    F (numpy.ndarray): A 3D array representing a vector field. The divergence will
+                       be computed for this field.
+
+    Returns:
+    numpy.ndarray: A 3D array of the same shape as `F`. Each element of the array
+                   represents the divergence of `F` at that point.
+
+    Example:
+    >>> import numpy as np
+    >>> F = np.array([[[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                      [[10, 11, 12], [13, 14, 15], [16, 17, 18]],
+                      [[19, 20, 21], [22, 23, 24], [25, 26, 27]]])
+    >>> div_F = divergence(F)
+    """
+
+
+    Dz  = gradient3(F,  'z')
+    Dzz = gradient3(Dz, 'z')
+
+    Dy  = gradient3(F,  'y')
+    Dyy = gradient3(Dy, 'y')
+
+    Dx  = gradient3(F,  'x')
+    Dxx = gradient3(Dx, 'x')
+
+    Div  = Dxx + Dyy + Dzz
+
+    return Div
+
+def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel_mask=None, debug=None):
+    """
+    Use label image to correct vessels in input volume and skull-strip
+    the image by removing non-brain parts of the brain.
+    """
+    print('round')
+    # we need 3 labels without partial volume effects
+    label_csf = np.round(label) == tissue_labels["CSF"]
+    label_gm  = np.round(label) == tissue_labels["GM"]
+    label_wm  = np.round(label) == tissue_labels["WM"]    
+    
+    # for automatic estimation of vessel-strength we obtain the ratio between 99 and 
+    # 50 percentile inside CSF where large values indicate 
+    # the presence of high intensities in CSF areas (=vessels)
+    if vessel_strength < 0: 
+        # for automatic estimation of vessel-strength we use squared values to 
+        # emphasize higher intensities in the percentiles
+        values = volume*volume
+        percentile_csf2 = np.percentile(np.array(values[label_csf]),[50,99])
+        ratio_high = percentile_csf2[1] / percentile_csf2[0]
+        
+        # check wehther we have to perform strong correction or not
+        if ratio_high >= 15:
+            vessel_strength = 2
+        else:
+            vessel_strength = 1
+
+    # create a mask with ones everywhere to not limit vessel correction spatially if 
+    # vessel_mask is not defined
+    if vessel_mask is None:
+        vessel_mask = np.ones(shape=np.shape(volume), dtype='int8') > 0
+
+    print('percentile')
+    # we need the 1% and 50% percentiles for CSF
+    percentile_csf = np.percentile(np.array(volume[label_csf]),[1,50])    
+
+    # medians for CSF and GM
+    median_csf = percentile_csf[1] # percentile for 50%
+    median_gm  = np.median(np.array(volume[label_gm]))
+    
+    # obtain a threshold between median for GM and CSF
+    th_csf = (median_csf + median_gm)/2
+
+    # use maximum WM value to detect high-intensity areas that have larger intensities than WM
+    max_wm = np.max(np.array(volume[label_wm]))    
+    
+    if debug is not None:
+        values = volume*volume
+        percentile_csf2 = np.percentile(np.array(values[label_csf]),[50,99])
+        ratio_high = percentile_csf2[1] / percentile_csf2[0]
+        print('Estimated CSF ratio is %g' % ratio_high)
+        
+    del label_wm, label_csf
+    
+    # get areas where label values are CSF, but also consider areas closer
+    # to background
+    label_csf_loose = (label < (tissue_labels["CSF"] + tissue_labels["GM"])/2)
+
+    # check for T2w-contrast and invert mask in that case
+    is_t1w = median_csf < median_gm
+    if not is_t1w:
+        print('Image contrast is not T1-weighted')
+        # we have to invert volume mask for low CSF values
+        volume_gt_csf = ~volume_gt_csf
+        
+    print('dive')
+    # we can use divergence which is a quite sensitive for finding vessels but also
+    # meninges and other non-brain parts that are characterized by small structures
+    # that only have small connections to the brain or have different intensity
+    div_mask = divergence3(volume)
+    
+    #invert map
+    div_mask = -div_mask
+
+    # ignore negative values in the inverted map because we are now only interested 
+    # in the pos. divergence
+    div_mask[div_mask<0] = 0
+    div_mask0 = div_mask + 0
+
+    # obtain divergence mask using 99.9% percentile threshold and slightly
+    # dilate mask
+    percentile_div_mask = np.percentile(np.array(div_mask),[99,99.9])
+    div_mask = (div_mask > percentile_div_mask[1])
+    div_mask = binary_dilation(div_mask, tools.build_binary_structure(1, 3))
+        
+    
+    # apply medium vessel correction either if automatical vessel correction is enabled
+    # or if vessel correction is set to > 0
+    if vessel_strength > 0:
+        if vessel_strength < 2:
+            print('Apply vessel-correction')
+
+        volume_gt_wm = (volume > max_wm)
+    
+        # create mask where volume data are ~CSF
+        volume_gt_csf = volume > th_csf
+
+        # limit correction to areas inside CSF with high divergence values abobe threshold
+        # and inside vessel mask
+        mask_vessels = label_csf_loose & div_mask & vessel_mask
+
+        # set high-intensity areas above threshold inside CSF to a CSF-like
+        # intensity which works quite reasonable to remove large vessels
+        volume[mask_vessels] = percentile_csf[0]
+
+        print('dilate')
+        # use a dilated mask which is smoothed to allow a weighted average
+        mask_vessels = binary_dilation(mask_vessels, tools.build_binary_structure(4, 3))
+        mask_vessels = gaussian_filter(1000*mask_vessels, sigma=0.1/res)/1000
+
+        print('smooth')
+        # smooth original data and use a weighted average to smoothly fill these
+        # smoothed values inside the mask
+        volume_smoothed = gaussian_filter(volume, sigma=1/res)
+        volume = mask_vessels*volume_smoothed + (1-mask_vessels)*volume
+
+    # optionally suppress structures with higher intensity in non-WM areas by replacing values
+    # inside mask with grey-opening filtered output
+    if vessel_strength == 2:
+        print('Apply strong vessel-correction')
+        volume_open = grey_opening(volume, size=(3,3,3))
+        mask = (label_gm | label_csf_loose | volume_gt_wm) & volume_gt_csf & vessel_mask
+        volume[mask] = volume_open[mask]
+
+    del label_gm, vessel_mask, volume_gt_csf, volume_gt_wm, div_mask
+    
+    print('opening')
+    # obtain some outer shell of the label map to remove areas where SynthSeg label is CSF, but
+    # we have higher intensity (e.g. due to dura or meninges)
+    mask = label > 0.5
+    bkg  = binary_opening(~mask, tools.build_binary_structure(1, 3))
+    bkg  = edit_volumes.get_largest_connected_component(bkg)
+
+    # fill isolated holes (estimated from background) in mask and finally apply closing 
+    mask[~bkg] = 1
+    mask = binary_closing(mask, tools.build_binary_structure(3, 3))
+    
+    del bkg
+
+    print('gauss')
+    # thickness of shell is resolution-dependent and will be controlled by a gaussian filter
+    thickness_shell = 0.75/res 
+    eroded_mask = gaussian_filter(mask, sigma=thickness_shell) > 0.5
+
+    div_mask = (div_mask0 > percentile_div_mask[0])
+    #div_mask = binary_dilation(div_mask, tools.build_binary_structure(1, 3))
+
+    # only change values inside the shell where SynthSeg label is CSF and set values a bit
+    # smaller than CSF because it's the outer shell and brighter spots would be more
+    # difficult to deal with
+    # use higher filling intensities for non-T1w images because CSF is much brighter
+    if is_t1w:
+        volume_fill_value = percentile_csf[0]
+        label_fill_value  = 0.5*tissue_labels["CSF"]
+    else:
+        volume_fill_value = percentile_csf[1]
+        label_fill_value  = tissue_labels["CSF"]
+
+    div_mask = mask & ~eroded_mask & label_csf_loose
+    volume[div_mask] = volume_fill_value
+
+    div_mask = binary_dilation(div_mask, tools.build_binary_structure(1, 3))
+    div_mask = gaussian_filter(1000*div_mask, sigma=2/res)/1000
+
+    volume_smoothed = gaussian_filter(volume, sigma=1/res)
+    volume = div_mask*volume_smoothed + (1-div_mask)*volume
+    
+    #label[div_mask>0.75 & mask] = label_fill_value
+
+    # remove remaining background
+    volume[~mask] = 0
+
+    return volume, div_mask
+
+def suppress_vessels_and_skull_strip_old(volume, label, vessel_strength, res, vessel_mask=None):
     """
     Use label image to correct vessels in input volume and skull-strip
     the image by removing non-brain parts of the brain.
