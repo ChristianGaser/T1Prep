@@ -40,19 +40,20 @@ NUMBER_OF_JOBS=-1
 use_bids_naming=1
 estimate_surf=1
 target_res=0.5
-bias_fwhm=10
+bias_fwhm=15
 pre_fwhm=-1
 use_sanlm=1
 use_amap=1
 bin_dir="/usr/local/bin"
 debug=0
 sub=64
+las=0.5
 
-post_fwhm=2
 # if we use post-smoothing we have to correct the isovalue/threshold:
 # post_fwhm=1 thresh=0.495
 # post_fwhm=2 thresh=0.490
 # post_fwhm=3 thresh=0.475
+post_fwhm=2
 thresh=0.490
 
 ########################################################
@@ -439,7 +440,7 @@ process ()
             if [ "${use_amap}" -eq 1 ]; then
                 echo -e "${BLUE}Amap segmentation${NC}"
                 echo -e "${BLUE}---------------------------------------------${NC}"
-                ${bin_dir}/CAT_VolAmap -bias-fwhm "${bias_fwhm}" -write-seg 1 1 1 -mrf 0 -sub "${sub}" -label "${outdir}/${label}" "${outdir}/${resampled}"
+                ${bin_dir}/CAT_VolAmap -cleanup 2 -las ${las} -mrf 0 -bias-fwhm "${bias_fwhm}" -write-seg 1 1 1 -sub "${sub}" -label "${outdir}/${label}" "${outdir}/${resampled}"
             fi
         else
             echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed${NC}"

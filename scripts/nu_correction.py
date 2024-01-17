@@ -4,7 +4,6 @@ import sys
 import numpy as np
 from argparse import ArgumentParser
 import tensorflow as tf
-from tensorflow_graphics.math.interpolation import bspline
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
