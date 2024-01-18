@@ -35,7 +35,8 @@ NC=$(tput sgr0)
 BOLD=$(tput bold)
 
 # defaults
-T1prep_dir=$(dirname "$0")
+T1prep_dir=$(dirname $(dirname "$0"))
+surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
 vessel_strength=-1
 NUMBER_OF_JOBS=-1
 use_bids_naming=1
@@ -352,7 +353,7 @@ process ()
         bn=$(basename "$FILE" | sed -e "s/.img/.nii/g")
         bn_gz=$(basename "$FILE" | sed -e "s/.img/.nii/g" -e "s/.gz//g")
         
-        # if defined use outputdir otherwise use the folder of input files
+        # if defined use output dir otherwise use the folder of input files
         if [ ! -n "$outdir" ]; then
             outdir=${dn}
         fi
@@ -396,7 +397,9 @@ process ()
             sphere_left=$(echo "$bn_gz"     | sed -e "s/.nii/_hemi-L_sphere.surf.gii/g")
             sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
             spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
-            spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.surf.reg.gii/g")
+            spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
+            resamp_thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.resampled_32k.12mm.gii/g")
+            resamp_thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.resampled_32k.12mm.gii/g")
         else
             echo "Not yet prepared for other naming scheme"
             exit
@@ -469,7 +472,7 @@ process ()
                 ((i++))
                 continue
             fi
-            
+            echo ${T1prep_dir}
             # 5. Estimate thickness and percentage position maps for each hemisphere
             #    and extract cortical surface
             # ----------------------------------------------------------------------
@@ -485,15 +488,15 @@ process ()
                 mid=mid_$side
                 sphere=sphere_$side
                 spherereg=spherereg_$side
-                hemi=$(echo ${side} | sed -e "s/left/lh/g" -e "s/right/rh/g")
-                Fsavg=${T1prep_dir}/${hemi}.central.freesurfer.gii
-                Fsavgsphere=${T1prep_dir}/${hemi}.sphere.freesurfer.gii
-                echo $Fsavg
-                echo $Fsavgsphere
+                fshemi=$(echo "$side" | sed -e "s/left/lh/g" -e "s/right/rh/g")
+                Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
+                Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
+                resamp_thick=resamp_thick_$side
                 
                 if [ -f "${outdir}/${!hemi}" ]; then
                     echo -e "${BLUE}Extracting $side hemisphere${NC}"
                     echo -e "${BLUE}---------------------------------------------${NC}"
+                    echo Calculate thickness
                     ${bin_dir}/CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
                     
                     # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
@@ -504,15 +507,17 @@ process ()
                     # -post-fwhm 1 -thresh 0.495
                     # -post-fwhm 2 -thresh 0.490
                     # -post-fwhm 3 -thresh 0.475
+                    echo Extract surface
                     ${bin_dir}/CAT_VolMarchingCubes -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
+                    echo Map thickness values
                     ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!pbt}
                     ${bin_dir}/CAT_SurfDistance -mean -thickness ${outdir}/${!pbt} ${outdir}/${!mid} ${outdir}/${!thick}
-                    echo Save cortical thickness in ${outdir}/${!thick}
-                    echo Spherical registration
-                    echo ${bin_dir}/CAT_Surf2Sphere ${outdir}/${!mid} ${outdir}/${!sphere} 6
-                    echo ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outdir}/${!mid} -is ${outdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outdir}/${!sphere}
+                    echo Spherical inflation
                     ${bin_dir}/CAT_Surf2Sphere ${outdir}/${!mid} ${outdir}/${!sphere} 6
-                    ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outdir}/${!mid} -is ${outdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outdir}/${!sphere}
+                    echo Spherical registration
+                    ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outdir}/${!mid} -is ${outdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outdir}/${!spherereg}
+                    echo Resample and smooth
+                    ${bin_dir}CAT_ResampleSurf ${outdir}/${!mid} ${outdir}/${!spherereg} ${Fsavgsphere} ${outdir}/${!resamp_thick} ${outdir}/${!thick}
                 else
                     echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
                     ((i++))

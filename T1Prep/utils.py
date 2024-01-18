@@ -197,7 +197,6 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     Use label image to correct vessels in input volume and skull-strip
     the image by removing non-brain parts of the brain.
     """
-    print('round')
     # we need 3 labels without partial volume effects
     label_csf = np.round(label) == tissue_labels["CSF"]
     label_gm  = np.round(label) == tissue_labels["GM"]
@@ -224,7 +223,6 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     if vessel_mask is None:
         vessel_mask = np.ones(shape=np.shape(volume), dtype='int8') > 0
 
-    print('percentile')
     # we need the 1% and 50% percentiles for CSF
     percentile_csf = np.percentile(np.array(volume[label_csf]),[1,50])    
 
@@ -257,7 +255,6 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
         # we have to invert volume mask for low CSF values
         volume_gt_csf = ~volume_gt_csf
         
-    print('dive')
     # we can use divergence which is a quite sensitive for finding vessels but also
     # meninges and other non-brain parts that are characterized by small structures
     # that only have small connections to the brain or have different intensity
@@ -297,12 +294,10 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
         # intensity which works quite reasonable to remove large vessels
         volume[mask_vessels] = percentile_csf[0]
 
-        print('dilate')
         # use a dilated mask which is smoothed to allow a weighted average
         mask_vessels = binary_dilation(mask_vessels, tools.build_binary_structure(4, 3))
         mask_vessels = gaussian_filter(1000*mask_vessels, sigma=0.1/res)/1000
 
-        print('smooth')
         # smooth original data and use a weighted average to smoothly fill these
         # smoothed values inside the mask
         volume_smoothed = gaussian_filter(volume, sigma=1/res)
@@ -318,7 +313,6 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
 
     del label_gm, vessel_mask, volume_gt_csf, volume_gt_wm, div_mask
     
-    print('opening')
     # obtain some outer shell of the label map to remove areas where SynthSeg label is CSF, but
     # we have higher intensity (e.g. due to dura or meninges)
     mask = label > 0.5
@@ -331,7 +325,6 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
     
     del bkg
 
-    print('gauss')
     # thickness of shell is resolution-dependent and will be controlled by a gaussian filter
     thickness_shell = 0.75/res 
     eroded_mask = gaussian_filter(mask, sigma=thickness_shell) > 0.5
