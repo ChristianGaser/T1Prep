@@ -35,6 +35,7 @@ NC=$(tput sgr0)
 BOLD=$(tput bold)
 
 # defaults
+T1prep_dir=$(dirname "$0")
 vessel_strength=-1
 NUMBER_OF_JOBS=-1
 use_bids_naming=1
@@ -392,6 +393,10 @@ process ()
             thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
             pbt_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pbt.txt/g")
             pbt_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pbt.txt/g")
+            sphere_left=$(echo "$bn_gz"     | sed -e "s/.nii/_hemi-L_sphere.surf.gii/g")
+            sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
+            spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
+            spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.surf.reg.gii/g")
         else
             echo "Not yet prepared for other naming scheme"
             exit
@@ -478,6 +483,13 @@ process ()
                 ppm=ppm_$side
                 gmt=gmt_$side
                 mid=mid_$side
+                sphere=sphere_$side
+                spherereg=spherereg_$side
+                hemi=$(echo ${side} | sed -e "s/left/lh/g" -e "s/right/rh/g")
+                Fsavg=${T1prep_dir}/${hemi}.central.freesurfer.gii
+                Fsavgsphere=${T1prep_dir}/${hemi}.sphere.freesurfer.gii
+                echo $Fsavg
+                echo $Fsavgsphere
                 
                 if [ -f "${outdir}/${!hemi}" ]; then
                     echo -e "${BLUE}Extracting $side hemisphere${NC}"
@@ -496,6 +508,11 @@ process ()
                     ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!pbt}
                     ${bin_dir}/CAT_SurfDistance -mean -thickness ${outdir}/${!pbt} ${outdir}/${!mid} ${outdir}/${!thick}
                     echo Save cortical thickness in ${outdir}/${!thick}
+                    echo Spherical registration
+                    echo ${bin_dir}/CAT_Surf2Sphere ${outdir}/${!mid} ${outdir}/${!sphere} 6
+                    echo ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outdir}/${!mid} -is ${outdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outdir}/${!sphere}
+                    ${bin_dir}/CAT_Surf2Sphere ${outdir}/${!mid} ${outdir}/${!sphere} 6
+                    ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outdir}/${!mid} -is ${outdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outdir}/${!sphere}
                 else
                     echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
                     ((i++))
