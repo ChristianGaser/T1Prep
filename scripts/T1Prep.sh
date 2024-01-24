@@ -33,6 +33,7 @@ RED=$(tput setaf 1)
 BLACK=$(tput setaf 0)
 NC=$(tput sgr0)
 BOLD=$(tput bold)
+UNDERLINE=$(tput smul)
 
 # defaults
 T1prep_dir=$(dirname $(dirname "$0"))
@@ -398,11 +399,51 @@ process ()
             sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
             spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
             spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
-            resamp_thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.resampled_32k.12mm.gii/g")
-            resamp_thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.resampled_32k.12mm.gii/g")
+            outmridir=${outdir}
+            outsurfdir=${outdir}
         else
-            echo "Not yet prepared for other naming scheme"
-            exit
+            # get output names
+            resampled=$(echo "$bn" | sed -e "s/.nii/${res_str}.nii/g")
+            sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
+            
+            # remove T1w|T2w from basename
+            label=$(echo "$bn"  | sed -e "s/.nii/${res_str}_label.nii/g")
+            atlas=$(echo "$bn"  | sed -e "s/.nii/${res_str}_atlas.nii/g")
+            
+            # use label from Synthseg if we don't use Amap segmentation
+            if [ "${use_amap}" -eq 1 ]; then
+                seg=$(echo "$bn"    | sed -e "s/.nii/${res_str}_seg.nii/g")
+            else
+                seg=${label}
+            fi
+            
+            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
+            hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
+            gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_hemi-L_thickness.nii/g")
+            gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_hemi-R_thickness.nii/g")
+            
+            # for the following filenames we have to remove the potential .gz from name
+            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/${res_str}_hemi-L_ppm.nii/g")
+            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/${res_str}_hemi-R_ppm.nii/g")
+            
+            mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            thick_left=$(echo "lh.thickness.${bn_gz}" | sed -e "s/.nii//g")
+            thick_right=$(echo "rh.thickness.${bn_gz}" | sed -e "s/.nii//g")
+            pbt_left=$(echo "lh.pbt.${bn_gz}" | sed -e "s/.nii//g")
+            pbt_right=$(echo "rh.pbt.${bn_gz}" | sed -e "s/.nii//g")
+            sphere_left=$(echo "lh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            sphere_right=$(echo "rh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            spherereg_left=$(echo "lh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            spherereg_right=$(echo "rh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            outmridir=${outdir}/mri
+            outsurfdir=${outdir}/surf
+            if [ ! -d "$outmridir" ]; then
+                mkdir -p "$outmridir"
+            fi
+            if [ ! -d "$outsurfdir" ]; then
+                mkdir -p "$outsurfdir"
+            fi
         fi
         
         # print progress and filename
@@ -415,8 +456,8 @@ process ()
         if [ "${use_sanlm}" -eq 1 ]; then
             echo -e "${BLUE}SANLM denoising${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
-            ${bin_dir}/CAT_VolSanlm "${FILE}" "${outdir}/${sanlm}"
-            input="${outdir}/${sanlm}"
+            ${bin_dir}/CAT_VolSanlm "${FILE}" "${outmridir}/${sanlm}"
+            input="${outmridir}/${sanlm}"
         else
             input="${FILE}"
         fi
@@ -427,9 +468,9 @@ process ()
         if [ -f "${input}" ]; then
             echo -e "${BLUE}SynthSeg segmentation${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
-                "${python}" "${cmd_dir}/SynthSeg_predict.py" --i "${input}" --o "${outdir}/${atlas}" ${fast} ${robust} \
+                "${python}" "${cmd_dir}/SynthSeg_predict.py" --i "${input}" --o "${outmridir}/${atlas}" ${fast} ${robust} \
                     --target-res "${target_res}" --threads "$NUMBER_OF_JOBS" --vessel-strength "${vessel_strength}" \
-                    --label "${outdir}/${label}" --resamp "${outdir}/${resampled}"
+                    --label "${outmridir}/${label}" --resamp "${outmridir}/${resampled}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -438,17 +479,17 @@ process ()
         
         # remove denoised image
         if [ "${use_sanlm}" -eq 1 ]; then
-            rm "${outdir}/${sanlm}"
+            rm "${outmridir}/${sanlm}"
         fi
         
         # 3. Amap segmentation using output from SynthSeg label segmentation
         # ----------------------------------------------------------------------
         # check for outputs from previous step
-        if [ -f "${outdir}/${resampled}" ] && [ -f "${outdir}/${label}" ]; then
+        if [ -f "${outmridir}/${resampled}" ] && [ -f "${outmridir}/${label}" ]; then
             if [ "${use_amap}" -eq 1 ]; then
                 echo -e "${BLUE}Amap segmentation${NC}"
                 echo -e "${BLUE}---------------------------------------------${NC}"
-                ${bin_dir}/CAT_VolAmap -cleanup 2 -las ${las} -mrf 0 -bias-fwhm "${bias_fwhm}" -write-seg 1 1 1 -sub "${sub}" -label "${outdir}/${label}" "${outdir}/${resampled}"
+                ${bin_dir}/CAT_VolAmap -cleanup 2 -las ${las} -mrf 0 -bias-fwhm "${bias_fwhm}" -write-seg 0 1 1 -sub "${sub}" -label "${outmridir}/${label}" "${outmridir}/${resampled}"
             fi
         else
             echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed${NC}"
@@ -462,17 +503,17 @@ process ()
             # 4. Create hemispheric label maps for cortical surface extraction
             # ----------------------------------------------------------------------
             # check for outputs from previous step
-            if [ -f "${outdir}/${seg}" ]; then
+            if [ -f "${outmridir}/${seg}" ]; then
                 echo -e "${BLUE}Hemispheric partitioning${NC}"
                 echo -e "${BLUE}---------------------------------------------${NC}"
                     "${python}" "${cmd_dir}/partition_hemispheres.py" \
-                        --label "${outdir}/${seg}" --atlas "${outdir}/${atlas}"
+                        --label "${outmridir}/${seg}" --atlas "${outmridir}/${atlas}"
             else
                 echo -e "${RED}ERROR: CAT_VolAmap failed${NC}"
                 ((i++))
                 continue
             fi
-            echo ${T1prep_dir}
+            
             # 5. Estimate thickness and percentage position maps for each hemisphere
             #    and extract cortical surface
             # ----------------------------------------------------------------------
@@ -491,13 +532,12 @@ process ()
                 fshemi=$(echo "$side" | sed -e "s/left/lh/g" -e "s/right/rh/g")
                 Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
                 Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
-                resamp_thick=resamp_thick_$side
                 
-                if [ -f "${outdir}/${!hemi}" ]; then
+                if [ -f "${outmridir}/${!hemi}" ]; then
                     echo -e "${BLUE}Extracting $side hemisphere${NC}"
                     echo -e "${BLUE}---------------------------------------------${NC}"
                     echo Calculate thickness
-                    ${bin_dir}/CAT_VolThicknessPbt ${outdir}/${!hemi} ${outdir}/${!gmt} ${outdir}/${!ppm}
+                    ${bin_dir}/CAT_VolThicknessPbt ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
                     
                     # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
                     # average between original and smoothed images based on their distance to 
@@ -508,16 +548,14 @@ process ()
                     # -post-fwhm 2 -thresh 0.490
                     # -post-fwhm 3 -thresh 0.475
                     echo Extract surface
-                    ${bin_dir}/CAT_VolMarchingCubes -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 ${outdir}/${!ppm} ${outdir}/${!mid}
+                    ${bin_dir}/CAT_VolMarchingCubes -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
                     echo Map thickness values
-                    ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outdir}/${!mid} ${outdir}/${!gmt} ${outdir}/${!pbt}
-                    ${bin_dir}/CAT_SurfDistance -mean -thickness ${outdir}/${!pbt} ${outdir}/${!mid} ${outdir}/${!thick}
+                    ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
+                    ${bin_dir}/CAT_SurfDistance -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
                     echo Spherical inflation
-                    ${bin_dir}/CAT_Surf2Sphere ${outdir}/${!mid} ${outdir}/${!sphere} 6
+                    ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
                     echo Spherical registration
-                    ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outdir}/${!mid} -is ${outdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outdir}/${!spherereg}
-                    echo Resample and smooth
-                    ${bin_dir}CAT_ResampleSurf ${outdir}/${!mid} ${outdir}/${!spherereg} ${Fsavgsphere} ${outdir}/${!resamp_thick} ${outdir}/${!thick}
+                    ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
                 else
                     echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
                     ((i++))
@@ -529,13 +567,14 @@ process ()
 
         # remove temporary files if not debugging
         if [ "${debug}" -eq 0 ]; then
-            #rm ${outdir}/${atlas} ${outdir}/${seg} ${outdir}/${label}
+            rm ${outmridir}/${atlas} ${outmridir}/${seg} ${outmridir}/${label}
             
             # only remove temporary files if surfaces exist
-            if [ -f "${outdir}/${mid_left}" ] && [ -f "${outdir}/${mid_right}" ]; then
-                rm "${outdir}/${hemi_left}" "${outdir}/${hemi_right}"
-                rm "${outdir}/${ppm_left}" "${outdir}/${ppm_right}"
-                #rm ${outdir}/${gmt_left} ${outdir}/${gmt_right} 
+            if [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
+                rm "${outsurfdir}/${pbt_left}" "${outsurfdir}/${pbt_right}"
+                rm "${outmridir}/${hemi_left}" "${outmridir}/${hemi_right}"
+                rm "${outmridir}/${ppm_left}" "${outmridir}/${ppm_right}"
+                rm ${outmridir}/${gmt_left} ${outmridir}/${gmt_right} 
             fi
         fi
 

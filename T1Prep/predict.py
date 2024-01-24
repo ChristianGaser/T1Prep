@@ -230,7 +230,6 @@ def predict(path_images,
         print('Estimate label')
         label_orig = utils.posteriors2label(posteriors)
 
-        print('Resample label')
         # resample to target voxel size
         label, aff_label = edit_volumes.resample_volume(label_orig, aff, target_res)
         tools.save_volume(label, aff_label, h, path_label, dtype='uint8')
