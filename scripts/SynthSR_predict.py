@@ -36,19 +36,21 @@ parser.add_argument("--i", metavar="file", required=True,
     help="Input image for bias correction.")
 parser.add_argument("--o", metavar="file", required=True,
     help="Bias corrected output.")
-parser.add_argument("--target-res", type=float, default=0.5, 
+parser.add_argument("--target-res", type=float, default=-1, 
     help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.")
+parser.add_argument("--bias-sigma", type=float, default=3, 
+    help="(optional) Kernel size (in sigma) for gaussian filtering of resulting bias field.")
 parser.add_argument("--cpu", action="store_true", help="enforce running with CPU rather than GPU.")
-parser.add_argument("--threads", type=int, default=1, dest="threads",
+parser.add_argument("--threads", type=int, default=-1, dest="threads",
     help="number of threads to be used by tensorflow when running on CPU.")
 parser.add_argument("--model", default=None, 
     help="(optional) Use a different model file.")
-parser.add_argument("--disable_flipping", action="store_true", 
-    help="(optional) Use this flag to disable flipping augmentation at test time.")
+parser.add_argument("--enable_flipping", action="store_true", 
+    help="(optional) Use this flag to enable flipping augmentation at test time.")
 
 # check for no arguments
 if len(sys.argv) < 2:
-    print("\nMust provide at least -i or -o output flags.")
+    print("\nMust provide at least -i and -o output flags.")
     parser.print_help()
     sys.exit(1)
 
@@ -59,7 +61,9 @@ if args['cpu']:
     print('using CPU, hiding all CUDA_VISIBLE_DEVICES')
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-tf.config.threading.set_intra_op_parallelism_threads(args['threads'])
+
+if (args['threads'] > 0):
+    tf.config.threading.set_intra_op_parallelism_threads(args['threads'])
 
 # Build Unet and load weights
 unet_model = nrn_models.unet(nb_features=24,
@@ -97,34 +101,42 @@ for idx, (path_image, path_prediction) in enumerate(zip(images_to_segment, path_
     print('  Bias correction of ' + path_image)
 
     im, aff, hdr = utils.load_volume(path_image, im_only=False, dtype='float')
-    #im, aff = edit_volumes.resample_volume(im, aff, [1.0, 1.0, 1.0])
 
     im, aff2 = edit_volumes.align_volume_to_ref(im, aff, aff_ref=np.eye(4), return_aff=True, n_dims=3)
-    im = im - np.min(im)
-    im = im / np.max(im)
+    mn = np.min(im)
+    im = im - mn
+    mx = np.max(im)
+    im = im / mx
     I = im[np.newaxis, ..., np.newaxis]
     W = (np.ceil(np.array(I.shape[1:-1]) / 32.0) * 32).astype('int')
     idx = np.floor((W - I.shape[1:-1]) / 2).astype('int')
     S = np.zeros([1, *W, 1])
     S[0, idx[0]:idx[0] + I.shape[1], idx[1]:idx[1] + I.shape[2], idx[2]:idx[2] + I.shape[3], :] = I
     
-    if args['disable_flipping']:
-        output = unet_model.predict(S)
-    else:
+    if args['enable_flipping']:
         output = 0.5 * unet_model.predict(S) + 0.5 * np.flip(unet_model.predict(np.flip(S, axis=1)), axis=1)
+    else:
+        output = unet_model.predict(S)
           
     pred = np.squeeze(output)
-    pred = 255 * pred
-    pred[pred < 0] = 0
-    pred[pred > 255] = 255
+    pred = mx * pred
+    pred[pred < 1] = 1
+    pred[pred > mx] = mx
     pred = pred[idx[0]:idx[0] + I.shape[1], idx[1]:idx[1] + I.shape[2], idx[2]:idx[2] + I.shape[3]]
     
-    resamp, aff_resamp = edit_volumes.resample_volume(255*im, aff2, target_res)
-    im = 255 * im - pred
-
-    #im = gaussian_filter(im, sigma=2)
-    bias, aff_resamp = edit_volumes.resample_volume(im, aff2, target_res)
-    resamp = resamp - bias
+    bias = np.ones(np.shape(im))
+    idx = (im > 0)
+    bias[idx] = im[idx] / (pred[idx]/mx)
     
-    utils.save_volume(resamp, aff_resamp, None, path_prediction)
+    bias = gaussian_filter(bias, sigma=args['bias_sigma'])
+    im = im / bias
+    
+    if (target_res > 0):
+        bias, aff_resamp = edit_volumes.resample_volume(bias, aff2, target_res)
+        im, aff_resamp = edit_volumes.resample_volume(im, aff2, target_res)
+    else:
+        aff_resamp = aff2
+    
+    utils.save_volume(im, aff_resamp, None, path_prediction)
     utils.save_volume(bias, aff_resamp, None, 'bias.nii')
+    utils.save_volume(pred, aff_resamp, None, 'pred.nii')
