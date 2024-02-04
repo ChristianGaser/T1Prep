@@ -4,7 +4,7 @@
 # STATEMENT OF CHANGES: This file is derived from sources licensed under the Apache 2.0 license
 # terms, and this file has been changed.
 #
-# The original file this work derives from is found at:
+# The original SynthSR prediction where some ideas are based on is found at:
 # https://github.com/BBillot/SynthSR/blob/7fc9cf7afb8875f3e21dfb0ff09bcbaf88c7cc99/scripts/predict_command_line.py
 #
 # [November 2023] CHANGES:
@@ -78,6 +78,8 @@ unet_model = nrn_models.unet(nb_features=24,
                              batch_norm=-1,
                              activation='elu',
                              input_model=None)
+                             
+# load model file
 if args['model'] is None:
     unet_model.load_weights(os.path.join(synthSR_home, 'models/SynthSR_v10_210712.h5'), by_name=True)
 else:
@@ -88,61 +90,74 @@ else:
 name_input = os.path.abspath(args['i'])
 basename = os.path.basename(name_input)
 
+# output name
 if args['o'] is not None:
     name_corrected = os.path.abspath(args['o'])
 else:
     name_corrected = name_input.replace('.nii', '_nu-corrected.nii')
 
+# get target resolution
 target_res = args['target_res']
 
 assert os.path.isfile(name_input), "file does not exist: %s " \
                                     "\nplease make sure the path and the extension is correct" % name_input
 
-# Do the actual work
+# Do the actual bias correction
 print('  Bias correction of ' + name_input)
 
+# load input image and reorient it
 im, aff, hdr = utils.load_volume(name_input, im_only=False, dtype='float')
-
 im, aff2 = edit_volumes.align_volume_to_ref(im, aff, aff_ref=np.eye(4), return_aff=True, n_dims=3)
+
+# normalize it to a range 0..1
 mn = np.min(im)
 im = im - mn
 mx = np.max(im)
 im = im / mx
+
+# prepare input for unet
 I = im[np.newaxis, ..., np.newaxis]
 
 if args['enable_flipping']:
     output = 0.5 * unet_model.predict(I) + 0.5 * np.flip(unet_model.predict(np.flip(I, axis=1)), axis=1)
 else:
     output = unet_model.predict(I)
-      
+
+# remove not needed (empty) dimensions and rescue old max value
 pred = np.squeeze(output)
 pred = mx * pred
 
+# ensue that no zeros are present and clip max
 pred[pred < 1] = 1
 pred[pred > mx] = mx
 
+# get bias field
 bias = np.zeros(np.shape(im))
 ind = (im > 0)
 bias[ind] = im[ind] / (pred[ind]/mx)
 
+# only keep percentiles 15..85
 percentile_bias = np.percentile(np.array(bias),[15,85])
 bias[bias < percentile_bias[0]] = 0
 bias[bias > percentile_bias[1]] = 0
 
+# fill the wholes using distance function
 bias_idx = bias > 0
 _, dist_idx = distance_transform_edt(~bias_idx, return_indices=True)
 bias = bias[dist_idx[0], dist_idx[1], dist_idx[2]]
 
+# finally apply Gaussian smoothing
 bias = gaussian_filter(bias, sigma=args['bias_sigma'])
 im = im / bias
 
+# resample if necessary
 if (target_res > 0):
     bias, aff_resamp = edit_volumes.resample_volume(bias, aff2, target_res)
     im, aff_resamp = edit_volumes.resample_volume(im, aff2, target_res)
 else:
     aff_resamp = aff2
 
+# save output
 bias_name = name_input.replace('.nii', '_nu.nii')
 utils.save_volume(im, aff_resamp, None, name_corrected)
 utils.save_volume(bias, aff_resamp, None, bias_name)
-#utils.save_volume(pred, aff_resamp, None, 'pred.nii')
