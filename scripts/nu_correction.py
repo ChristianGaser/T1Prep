@@ -28,7 +28,18 @@ sys.path.append(synthSR_home)
 from ext.neuron import models as nrn_models
 from ext.lab2im import utils
 from ext.lab2im import edit_volumes
-from scipy.ndimage import gaussian_filter, distance_transform_edt
+from scipy.ndimage import gaussian_filter, distance_transform_edt, binary_erosion
+
+# globally define tissue labels or better understanding the applied thresholds 
+# inside functions
+tissue_labels = {
+  "BKG": 0.0,
+  "CSF": 1.0,
+  "CGM": 1.5,
+  "GM":  2.0,
+  "GWM": 2.5,
+  "WM":  3.0
+}
 
 # parse arguments
 parser = ArgumentParser()
@@ -36,6 +47,8 @@ parser.add_argument("--i", metavar="file", required=True,
     help="Input image for bias correction.")
 parser.add_argument("--o", metavar="file", required=False,
     help="Bias corrected output.")
+parser.add_argument("--label", metavar="file", required=False,
+    help="Optional label image to handle WMHs and vessels.")
 parser.add_argument("--target-res", type=float, default=-1, 
     help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.")
 parser.add_argument("--bias-sigma", type=float, default=3, 
@@ -106,16 +119,22 @@ assert os.path.isfile(name_input), "file does not exist: %s " \
 print('  Bias correction of ' + name_input)
 
 # load input image and reorient it
-im, aff, hdr = utils.load_volume(name_input, im_only=False, dtype='float')
-im, aff2 = edit_volumes.align_volume_to_ref(im, aff, aff_ref=np.eye(4), return_aff=True, n_dims=3)
+im0, aff, hdr = utils.load_volume(name_input, im_only=False, dtype='float')
+im0, aff = edit_volumes.align_volume_to_ref(im0, aff, aff_ref=np.eye(4), return_aff=True, n_dims=3)
+im0, aff2 = edit_volumes.resample_volume(im0, aff, [1.0, 1.0, 1.0])
 
-# normalize it to a range 0..1
+# pad image to shape dividible by 32
+n_levels = 5
+padding_shape = (np.ceil(np.array(im0.shape[:3]) / 2**n_levels) * 2**n_levels).astype('int')
+im, pad_idx = edit_volumes.pad_volume(im0, padding_shape, return_pad_idx=True)
+
+# normalize input image to a range 0..1
 mn = np.min(im)
 im = im - mn
 mx = np.max(im)
 im = im / mx
 
-# prepare input for unet
+# add batch and channel axes
 I = im[np.newaxis, ..., np.newaxis]
 
 if args['enable_flipping']:
@@ -127,37 +146,90 @@ else:
 pred = np.squeeze(output)
 pred = mx * pred
 
+# get image without padding
+pred = edit_volumes.crop_volume_with_idx(pred, pad_idx, n_dims=3)
+
 # ensue that no zeros are present and clip max
 pred[pred < 1] = 1
 pred[pred > mx] = mx
 
 # get bias field
-bias = np.zeros(np.shape(im))
-ind = (im > 0)
-bias[ind] = im[ind] / (pred[ind]/mx)
+bias = np.zeros(np.shape(im0))
+ind = (im0 > 0)
+bias[ind] = im0[ind] / (pred[ind])
+
+# we can use the label image to identify WMHs and vessels
+if args['label'] is not None:
+    label, aff_label, hdr_label = utils.load_volume(os.path.abspath(args['label']), im_only=False, dtype='float')
+    label, aff_label = edit_volumes.align_volume_to_ref(label, aff_label, aff_ref=np.eye(4), return_aff=True, n_dims=3)
+    label, aff_label = edit_volumes.resample_volume(label, aff_label, [1.0, 1.0, 1.0])
+    
+    # we need 3 labels without partial volume effects
+    label_csf = np.round(label) == tissue_labels["CSF"]
+    label_gm  = np.round(label) == tissue_labels["GM"]
+    label_wm  = np.round(label) == tissue_labels["WM"]
+
+    # we need some percentiles for tissues
+    percentile_wm  = np.percentile(np.array(bias[label_wm]), [10,50,90])    
+    
+    # medians for tissues
+    median_csf = np.median(np.array(im0[label_csf]))
+    median_gm  = np.median(np.array(im0[label_gm]))
+
+    # check for T1w-contrast
+    is_t1w = median_csf < median_gm
+    
+    WMHs = np.zeros(np.shape(label))
+    if is_t1w:
+        WMHs[label_wm] = bias[label_wm] < percentile_wm[0]
+    else:
+        WMHs[label_wm] = bias[label_wm] > percentile_wm[0]
+    
+    # create mask where volume data are ~CSF
+    label_gt_csf = label_csf
+    vessels = np.zeros(np.shape(label))
+
+    if is_t1w:
+        vessels[label_gt_csf] = bias[label_gt_csf] > percentile_wm[2]
+    else:
+        # we have to invert volume mask for low CSF values
+        vessels[label_gt_csf] = bias[volume_gt_csf] > percentile_wm[2]
+
+    CSF0 = np.zeros(np.shape(label))
+    if is_t1w:
+        CSF0[label_csf] = (bias[label_csf] < percentile_wm[0]) | (bias[label_csf] > percentile_wm[2])
+    else:
+        CSF0[label_csf] = (bias[label_csf] < percentile_wm[0]) | (bias[label_csf] > percentile_wm[2])
+    
+    bias[CSF0 > 0] = 0
+    bias[vessels > 0] = 0
+    bias[WMHs > 0] = 0
+    #bias[label == 0] = 0
 
 # only keep percentiles 15..85
 percentile_bias = np.percentile(np.array(bias),[15,85])
+percentile_bias = np.percentile(np.array(bias),[5,95])
 bias[bias < percentile_bias[0]] = 0
 bias[bias > percentile_bias[1]] = 0
 
-# fill the wholes using distance function
+# fill the holes using distance function
 bias_idx = bias > 0
 _, dist_idx = distance_transform_edt(~bias_idx, return_indices=True)
 bias = bias[dist_idx[0], dist_idx[1], dist_idx[2]]
 
 # finally apply Gaussian smoothing
 bias = gaussian_filter(bias, sigma=args['bias_sigma'])
-im = im / bias
+im0 = im0 / bias
+
+# get original resolution
+if (target_res < 0):
+    target_res = np.array(hdr['pixdim'][1:4])
 
 # resample if necessary
-if (target_res > 0):
-    bias, aff_resamp = edit_volumes.resample_volume(bias, aff2, target_res)
-    im, aff_resamp = edit_volumes.resample_volume(im, aff2, target_res)
-else:
-    aff_resamp = aff2
+bias, aff_resamp = edit_volumes.resample_volume(bias, aff2, target_res)
+im0, aff_resamp  = edit_volumes.resample_volume(im0, aff2, target_res)
 
 # save output
 bias_name = name_input.replace('.nii', '_nu.nii')
-utils.save_volume(im, aff_resamp, None, name_corrected)
+utils.save_volume(im0, aff_resamp, None, name_corrected)
 utils.save_volume(bias, aff_resamp, None, bias_name)
