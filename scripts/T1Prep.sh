@@ -40,7 +40,7 @@ T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
 vessel_strength=-1
 NUMBER_OF_JOBS=-1
-use_bids_naming=1
+use_bids_naming=0
 estimate_surf=1
 target_res=0.5
 bias_fwhm=15
@@ -162,8 +162,8 @@ parse_args ()
             --no-amap)
                 use_amap=0
                 ;;
-            --no-bids)
-                use_bids_naming=0
+            --bids)
+                use_bids_naming=1
                 ;;
             --fast)
                 fast=" --fast "
@@ -420,6 +420,7 @@ process ()
             sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
             spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
             spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
+            
             outmridir=${outdir}
             outsurfdir=${outdir}
         else
@@ -457,16 +458,20 @@ process ()
             sphere_right=$(echo "rh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
             spherereg_left=$(echo "lh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
             spherereg_right=$(echo "rh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            
             outmridir=${outdir}/mri
             outsurfdir=${outdir}/surf
-            if [ ! -d "$outmridir" ]; then
-                mkdir -p "$outmridir"
-            fi
-            if [ ! -d "$outsurfdir" ]; then
-                mkdir -p "$outsurfdir"
-            fi
+            
         fi
         
+        # create output folders if needed
+        if [ ! -d "$outmridir" ]; then
+            mkdir -p "$outmridir"
+        fi
+        if [ ! -d "$outsurfdir" ]; then
+            mkdir -p "$outsurfdir"
+        fi
+
         # print progress and filename
         j=$(expr $i + 1)
         echo -e "${BOLD}${BLACK}######################################################${NC}"
@@ -629,7 +634,7 @@ USAGE:
   T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder]
                     [--target-res voxel_size] [--vessel-strength vessel_strength] 
                     [--no-sanlm] [--no-amap] [--no-surf] [--nproc number_of_processes] 
-                    [--sub subsampling] [--fast] [--robust] [--debug] filenames 
+                    [--bids] [--sub subsampling] [--fast] [--robust] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
   --out-dir <DIR>            output folder (default same folder)
@@ -648,6 +653,7 @@ USAGE:
   --no-surf                  skip surface and thickness estimation
   --no-sanlm                 skip denoising with SANLM-filter
   --no-amap                  use segmentation from mri_synthseg instead of Amap
+  --bids                     use BIDS naming of output files
   --fast                     bypass some processing for faster prediction
   --robust                   use robust predictions (slower)
   --debug                    keep temporary files for debugging
