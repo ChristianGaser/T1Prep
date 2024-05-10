@@ -26,9 +26,14 @@ synthSR_home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
 sys.path.append(synthSR_home)
 
 from ext.neuron import models as nrn_models
-from ext.lab2im import utils
+from ext.lab2im import utils as tools
 from ext.lab2im import edit_volumes
-from scipy.ndimage import gaussian_filter, distance_transform_edt, binary_erosion
+from scipy.ndimage import gaussian_filter, distance_transform_edt, grey_opening, binary_opening
+from T1Prep import utils
+
+# only for debugging
+import ipdb
+from matplotlib import pyplot as plt
 
 # globally define tissue labels or better understanding the applied thresholds 
 # inside functions
@@ -74,7 +79,6 @@ if args['cpu']:
     print('using CPU, hiding all CUDA_VISIBLE_DEVICES')
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-
 if (args['threads'] > 0):
     tf.config.threading.set_intra_op_parallelism_threads(args['threads'])
 
@@ -116,12 +120,16 @@ assert os.path.isfile(name_input), "file does not exist: %s " \
                                     "\nplease make sure the path and the extension is correct" % name_input
 
 # Do the actual bias correction
-print('  Bias correction of ' + name_input)
+print('Bias correction of ' + name_input)
 
 # load input image and reorient it
-im0, aff, hdr = utils.load_volume(name_input, im_only=False, dtype='float')
+im0, aff, hdr = tools.load_volume(name_input, im_only=False, dtype='float')
 im0, aff = edit_volumes.align_volume_to_ref(im0, aff, aff_ref=np.eye(4), return_aff=True, n_dims=3)
 im0, aff2 = edit_volumes.resample_volume(im0, aff, [1.0, 1.0, 1.0])
+
+# get original resolution
+if (target_res < 0):
+    target_res = np.array(hdr['pixdim'][1:4])
 
 # pad image to shape dividible by 32
 n_levels = 5
@@ -157,10 +165,11 @@ pred[pred > mx] = mx
 bias = np.zeros(np.shape(im0))
 ind = (im0 > 0)
 bias[ind] = im0[ind] / (pred[ind])
+bias0 = bias + 0
 
 # we can use the label image to identify WMHs and vessels
 if args['label'] is not None:
-    label, aff_label, hdr_label = utils.load_volume(os.path.abspath(args['label']), im_only=False, dtype='float')
+    label, aff_label, hdr_label = tools.load_volume(os.path.abspath(args['label']), im_only=False, dtype='float')
     label, aff_label = edit_volumes.align_volume_to_ref(label, aff_label, aff_ref=np.eye(4), return_aff=True, n_dims=3)
     label, aff_label = edit_volumes.resample_volume(label, aff_label, [1.0, 1.0, 1.0])
     
@@ -168,9 +177,10 @@ if args['label'] is not None:
     label_csf = np.round(label) == tissue_labels["CSF"]
     label_gm  = np.round(label) == tissue_labels["GM"]
     label_wm  = np.round(label) == tissue_labels["WM"]
-
+    label_mask = label > 0
+    
     # we need some percentiles for tissues
-    percentile_wm  = np.percentile(np.array(bias[label_wm]), [10,50,90])    
+    percentile_wm  = np.percentile(np.array(bias[label_wm]), [10,90])    
     
     # medians for tissues
     median_csf = np.median(np.array(im0[label_csf]))
@@ -179,35 +189,85 @@ if args['label'] is not None:
     # check for T1w-contrast
     is_t1w = median_csf < median_gm
     
-    WMHs = np.zeros(np.shape(label))
+    WMHs = np.zeros(np.shape(label),dtype=bool)
     if is_t1w:
         WMHs[label_wm] = bias[label_wm] < percentile_wm[0]
     else:
         WMHs[label_wm] = bias[label_wm] > percentile_wm[0]
     
     # create mask where volume data are ~CSF
-    label_gt_csf = label_csf
-    vessels = np.zeros(np.shape(label))
+    vessels = np.zeros(np.shape(label),dtype=bool)
 
     if is_t1w:
-        vessels[label_gt_csf] = bias[label_gt_csf] > percentile_wm[2]
+        vessels[label_csf] = bias[label_csf] > percentile_wm[1]
     else:
         # we have to invert volume mask for low CSF values
-        vessels[label_gt_csf] = bias[volume_gt_csf] > percentile_wm[2]
+        vessels[label_csf] = bias[label_csf] > percentile_wm[1]
 
-    CSF0 = np.zeros(np.shape(label))
-    if is_t1w:
-        CSF0[label_csf] = (bias[label_csf] < percentile_wm[0]) | (bias[label_csf] > percentile_wm[2])
-    else:
-        CSF0[label_csf] = (bias[label_csf] < percentile_wm[0]) | (bias[label_csf] > percentile_wm[2])
+    # obtain a mask of areas where percentile of bias values inside WM is outside 10..90
+    mask_percentile = np.zeros(np.shape(label),dtype=bool)
+    mask_percentile[label_wm] = (bias[label_wm] < percentile_wm[0]) | (bias[label_wm] > percentile_wm[1])
     
-    bias[CSF0 > 0] = 0
-    bias[vessels > 0] = 0
-    bias[WMHs > 0] = 0
-    #bias[label == 0] = 0
+    bias[mask_percentile] = 0
+    bias[vessels] = 0
+    bias[WMHs] = 0
 
-# only keep percentiles 15..85
-percentile_bias = np.percentile(np.array(bias),[15,85])
+    # only keep percentiles 5..95
+    percentile_bias = np.percentile(np.array(bias),[5,95])
+    bias[bias < percentile_bias[0]] = 0
+    bias[bias > percentile_bias[1]] = 0
+    
+    """
+    # fill the holes using distance function
+    bias_idx = bias > 0
+    _, dist_idx = distance_transform_edt(~bias_idx, return_indices=True)
+    bias = bias[dist_idx[0], dist_idx[1], dist_idx[2]]
+    
+    # initially apply Gaussian smoothing with doubled sigma
+    bias_filtered = gaussian_filter(bias, sigma=2*args['bias_sigma'])
+    im_corrected = im0 / bias_filtered
+    # get residual bias field
+    bias_residual = im_corrected - im0
+
+    # median of residual bias for each tissue
+    median_csf = np.median(np.array(bias_residual[label_csf]))
+    median_gm  = np.median(np.array(bias_residual[label_gm]))
+    median_wm  = np.median(np.array(bias_residual[label_wm]))
+    
+    # normalize the residual bias
+    bias_residual[label_gm]  = bias_residual[label_gm] *median_wm/median_gm
+    bias_residual[label_csf] = bias_residual[label_csf]*median_wm/median_csf
+
+    percentile_brain  = np.percentile(np.array(bias_residual[label > 0]), [10,90])    
+    
+    # obtain a mask of areas where percentile of bias values inside brain is not in 5..95%
+    mask_percentile = np.zeros(np.shape(label),dtype=bool)
+    mask_percentile[label_mask] = (bias_residual[label_mask] < percentile_brain[0]) | (bias_residual[label_mask] > percentile_brain[1])
+
+    bias = bias0
+    bias = grey_opening(bias, size=(2,2,2))
+    bias[mask_percentile] = 0
+    bias[label < 0.1] = 0
+    #ipdb.set_trace()
+
+
+    # fill the holes using distance function
+    bias_idx = bias > 0
+    _, dist_idx = distance_transform_edt(~bias_idx, return_indices=True)
+    bias = bias[dist_idx[0], dist_idx[1], dist_idx[2]]
+    
+    # finally apply Gaussian smoothing with defined sigma
+    bias_filtered = gaussian_filter(bias, sigma=args['bias_sigma'])
+    im_corrected = im0 / bias_filtered
+        
+    bias_residual_res, aff_resamp = edit_volumes.resample_volume(bias_residual, aff2, target_res)
+    bias_name = name_input.replace('.nii', '_nu_residual.nii')
+    tools.save_volume(bias_residual_res, aff_resamp, None, bias_name)
+    """
+
+#ipdb.set_trace()
+
+# only keep percentiles 5..95
 percentile_bias = np.percentile(np.array(bias),[5,95])
 bias[bias < percentile_bias[0]] = 0
 bias[bias > percentile_bias[1]] = 0
@@ -221,15 +281,11 @@ bias = bias[dist_idx[0], dist_idx[1], dist_idx[2]]
 bias = gaussian_filter(bias, sigma=args['bias_sigma'])
 im0 = im0 / bias
 
-# get original resolution
-if (target_res < 0):
-    target_res = np.array(hdr['pixdim'][1:4])
-
 # resample if necessary
 bias, aff_resamp = edit_volumes.resample_volume(bias, aff2, target_res)
 im0, aff_resamp  = edit_volumes.resample_volume(im0, aff2, target_res)
 
 # save output
 bias_name = name_input.replace('.nii', '_nu.nii')
-utils.save_volume(im0, aff_resamp, None, name_corrected)
-utils.save_volume(bias, aff_resamp, None, bias_name)
+tools.save_volume(im0, aff_resamp, None, name_corrected)
+tools.save_volume(bias, aff_resamp, None, bias_name)

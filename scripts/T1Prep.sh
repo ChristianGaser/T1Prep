@@ -686,6 +686,7 @@ USED FUNCTIONS:
   CAT_3dVol2Surf
   CAT_SurfDistance
   ${cmd_dir}/SynthSeg_predict.py
+  ${cmd_dir}/partition_hemispheres.py
   
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).
 
