@@ -42,8 +42,8 @@ vessel_strength=-1
 NUMBER_OF_JOBS=-1
 use_bids_naming=0
 estimate_surf=1
-target_res=0.5
-bias_fwhm=15
+target_res=0.8
+bias_fwhm=0
 pre_fwhm=-1
 use_sanlm=1
 use_amap=1
@@ -334,6 +334,22 @@ get_no_of_cpus () {
 }
 
 ########################################################
+# progress bar
+########################################################
+bar() {
+    # Usage: bar 1 100
+    #            ^----- Elapsed Percentage (0-100).
+    #               ^-- Total length in chars.
+    ((elapsed=$1*$2/100))
+
+    # Create the bar with spaces.
+    printf -v prog  "%${elapsed}s"
+    printf -v total "%$(($2-elapsed))s"
+
+    printf '%s\r' "${prog// /■}${total} ${elapsed}%"
+}
+
+########################################################
 # process data
 ########################################################
 
@@ -581,7 +597,7 @@ process ()
                     echo Spherical inflation
                     ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
                     echo Spherical registration
-                    ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
+#                    ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
                 else
                     echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
                     ((i++))

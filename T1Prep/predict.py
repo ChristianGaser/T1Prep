@@ -42,8 +42,9 @@ from ext.lab2im import utils as tools
 from ext.lab2im import layers
 from ext.lab2im import edit_volumes
 from ext.neuron import models as nrn_models
-
 from T1Prep import utils
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 def predict(path_images,
             path_segmentations,
@@ -257,6 +258,13 @@ def predict(path_images,
     if path_resampled is not None:
         resamp, aff_resamp, _ = tools.load_volume(path_images, im_only=False, dtype='float32')
 
+       # use fast nu-correction with lower resolution of original preprocessed images
+        use_fast_nu_correction = False # not working yet?!
+        
+        # resample original input to 1mm voxel size for fast nu-correction
+        if use_fast_nu_correction:
+            im, _ = edit_volumes.resample_volume(resamp, aff_resamp, im_res)
+
         # resample original input to target voxel size
         resamp = edit_volumes.resample_volume_like(label, aff_label, resamp, aff_resamp, interpolation='linear')
         aff_resamp = aff_label
@@ -272,12 +280,35 @@ def predict(path_images,
         # finally convert to boolean type for the mask and round because of resampling
         cortex_mask = np.round(cortex_mask) > 0.5
         
+        # Using the 1mm data from SynthSeg is a bit faster
+        if use_fast_nu_correction:
+            mask = (label_orig > 2.5) & (im != 0)
+            bias = utils.get_bias_field(im, mask, im_res, aff)
+
+            # resample bias field to the target voxel size of the resampled input volume
+            bias, _ = edit_volumes.resample_volume(bias, aff, target_res)
+        else:
+            im_res_resampled = target_res
+            mask = (label > 2.5) & (resamp != 0)
+            bias = utils.get_bias_field(resamp, mask, im_res_resampled, aff_resamp)
+
+       # apply nu-correction
+        tissue_idx = bias != 0 
+        resamp[tissue_idx] /= bias[tissue_idx]
+
+        # after nu-correction we might have negative values that should be prevented
+        min_resamp = np.min(np.array(resamp))
+        if min_resamp < 0:
+            resamp -= min_resamp
+                
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
         resamp, _ = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask, debug=1)
         
         tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='float32')
-      
+        name = os.path.basename(path_images).replace('.nii', '_bias.nii')
+        tools.save_volume(bias, aff_resamp, h, name, dtype='float32')
+       
     # write volumes to disc if necessary
     if path_volumes is not None:
         row = [os.path.basename(path_images).replace('.nii.gz', '')] + [str(vol) for vol in volumes]
