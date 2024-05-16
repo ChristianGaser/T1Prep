@@ -42,8 +42,9 @@ vessel_strength=-1
 NUMBER_OF_JOBS=-1
 use_bids_naming=0
 estimate_surf=1
+registration=0 # currently skip spherical registration to save time
 target_res=0.8
-bias_fwhm=0
+bias_fwhm=15
 pre_fwhm=-1
 use_sanlm=1
 use_amap=1
@@ -594,10 +595,12 @@ process ()
                     echo Map thickness values
                     ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
                     ${bin_dir}/CAT_SurfDistance -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
-                    echo Spherical inflation
-                    ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
-                    echo Spherical registration
-#                    ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
+                    if [ "${registration}" -eq 1 ]; then
+                        echo Spherical inflation
+                        ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
+                        echo Spherical registration
+                        ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
+                    fi
                 else
                     echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
                     ((i++))

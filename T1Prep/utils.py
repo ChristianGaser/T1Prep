@@ -251,11 +251,9 @@ def get_bias_field(im, mask, im_res, aff):
     datalog[mask] = np.log(datalog[mask])
     datalog[np.logical_not(mask)] = 0
     datalogmasked = datalog[mask]
-    datafill = np.zeros_like(datalog)
-    
+    datafill = np.zeros_like(datalog)    
     datalogmaskedcur = np.copy(datalogmasked)
-    eps=0.01
-    min_fill=0.5
+
     # Descending FWHM scheme
     levels=[ lvl for lvl in range(maxlevel) for _ in range(steps) ]
     # At some point will have to generalise into fwhm and subdivision
