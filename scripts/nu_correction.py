@@ -32,6 +32,148 @@ from scipy.ndimage import gaussian_filter, distance_transform_edt, grey_opening,
 from T1Prep import utils
 from skimage import filters
 
+def get_bias(im, mask, im_res, aff):
+
+    # Defaults
+    subdivide = True
+    unregularized = True
+    accumulate = True
+    bcl = True
+    withotsu = False
+    Z = 0.01
+    Nbins = 256
+    maxlevel = 4
+    fwhm = 0.05
+    steps = 100
+    subsamp = 3
+    stopthr = 1e-4
+    spacing = 1
+  
+    dataSub = im
+    dataVoxSize = im_res
+    affineSub = np.copy(aff)
+    dataSubVoxSize = dataVoxSize
+    
+    if (mask is None) :
+        withotsu = True
+        mask = np.ones(im.shape) > 0
+    
+    if subsamp :
+        # Can't use offset != 0 yet, as the spline smoother takes voxel positions
+        # to start from 0, meaning some small interface changes to:
+        # 1. control initial voxel offsets
+        # 2. keep domain consistent allowing same parameters to be used to
+        #    supersample from the spline model.
+        offset = 0 # subsamp // 2
+        dataSub = dataSub[offset::subsamp,offset::subsamp,offset::subsamp]
+        mask = mask[offset::subsamp,offset::subsamp,offset::subsamp]
+        affineSub[0:3,3] = affineSub[0:3,0:3].sum(1) * offset + affineSub[0:3,3]
+        affineSub[0:3,0:3] *= subsamp
+        dataSubVoxSize = dataVoxSize * subsamp
+    
+    dataSubVoxSize = 1 / (np.array(dataSub.shape) -1)
+    dataVoxSize = dataSubVoxSize / subsamp
+    
+    if withotsu :
+        _thresh = filters.threshold_otsu(dataSub[mask])
+        mask = np.logical_and(dataSub > _thresh, mask)
+    
+    datamasked = dataSub[mask]
+    # Since assigning into it we need to make sure float
+    # beforehand, otherwise assigning into int array will
+    # cause a cast
+    datalog = dataSub.astype(np.float32)
+    datalog[mask] = np.log(datalog[mask])
+    datalog[np.logical_not(mask)] = 0
+    datalogmasked = datalog[mask]
+    datafill = np.zeros_like(datalog)
+    
+    datalogmaskedcur = np.copy(datalogmasked)
+    # Descending FWHM scheme
+    levels=[ lvl for lvl in range(maxlevel) for _ in range(steps) ]
+    # At some point will have to generalise into fwhm and subdivision
+    # level scheme, at the moment it's either or:
+    if not subdivide:
+        levelfwhm = fwhm / (np.arange(maxlevel) + 1)
+    else:
+        levelfwhm = fwhm * np.ones(maxlevel)
+    
+    splsm3d = SplineSmooth3DUnregularized(datalog, dataSubVoxSize,
+                                            spacing, domainMethod="minc",
+                                            mask=mask)
+    
+    # Prediction interpolator
+    predictor = SplineSmooth3D(im, dataVoxSize,
+                               spacing, knts=splsm3d.kntsArr, dofit=False)
+    lastinterpbc = np.zeros(datalogmasked.shape[0])
+    datalogcur = np.copy(datalog)
+    nextlevel = 0
+    
+    controlField=None
+    chosenkernelfn = kernelfntri
+    
+    for N in range(len(levels)):
+        if N%100 == 0 :
+            print("{}/{}".format(N,len(levels)))
+        if levels[N] < nextlevel:
+          continue
+        nextlevel = levels[N]
+ 
+        # Need masking!
+        datafill[mask] = datamasked
+        #datafill[mask] = datalogmasked
+        
+        splsm3d.fit(datafill, reportingLevel=0)
+        logbcsmfull = splsm3d.predict()
+        logbcsm = logbcsmfull[mask]
+    
+        if accumulate:
+            logbcratio = logbcsm
+        else:
+            logbcratio = logbcsm - lastinterpbc
+            lastinterpbc = logbcsm
+            
+        bcratio = np.exp(logbcratio)
+        ratiomean = bcratio.mean()
+        ratiosd = bcratio.std()
+        conv = ratiosd / ratiomean
+
+        if accumulate:
+            datalogmaskedcur = datalogmaskedcur - logbcsm
+            if controlField is None:
+                controlField  = splsm3d.P.copy()
+            else:
+                controlField += splsm3d.P
+        else:
+            datalogmaskedcur = datalogmasked - logbcsm
+            
+        datalogcur[mask] = datalogmaskedcur
+        if (conv < stopthr):
+            nextlevel = levels[N] + 1
+        
+        if subdivide and (N+1)<len(levels) and N%steps == 0:
+            print ("subdividing")
+            # Applies to both cumulative and normal iterative
+            # mode, in normal iterative mode we're just upgrading
+            # to a finer mesh for the following updates.
+            # In cumulative mode we first get the current cumulative
+            # estimate before refining.
+            if accumulate:
+                splsm3d.P = controlField
+            splsm3d = splsm3d.promote()
+            predictor = predictor.promote()
+            controlField = splsm3d.P
+    
+    if accumulate:
+        splsm3d.P = controlField
+    # Back from subsampled space to full size:
+    
+    predictor.P = splsm3d.P
+    bfieldlog = predictor.predict()
+    
+    #bias = np.exp(bfieldlog)
+    return bfieldlog
+
 def get_bias_nx(im, mask, im_res, aff):
 
     # Defaults
@@ -196,6 +338,7 @@ def get_bias_nx(im, mask, im_res, aff):
     return bias
 
 
+
 # parse arguments
 parser = ArgumentParser()
 parser.add_argument("--i", metavar="file", required=True,
@@ -251,15 +394,9 @@ if args['label'] is not None:
 else:
     mask = None
 
-bias = get_bias_nx(im, mask, im_res, aff)
-
-print(im.shape)
-# resample if necessary
-#bias, aff = edit_volumes.align_volume_to_ref(bias, aff, aff_ref=np.eye(4), return_aff=True, n_dims=3)
-#bias, aff_resamp = edit_volumes.resample_volume(bias, aff, target_res)
-#im, aff_resamp  = edit_volumes.resample_volume(im, aff, target_res)
-print(bias.shape)
-im = im / bias
+bias = get_bias(im, mask, im_res, aff)
+#im = im / bias
+im = bias
 
 # save output
 tools.save_volume(im, aff, None, name_corrected)
