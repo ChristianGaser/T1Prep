@@ -283,6 +283,7 @@ def get_bias_field(im, mask, im_res, aff):
         if levels[N] < nextlevel:
           continue
         nextlevel = levels[N]
+        
         hist,histvaledge,histval,histbinwidth = \
           distrib_kde(datalogmaskedcur, Nbins, kernfn=chosenkernelfn,
                       binCentreLimits=bcl)
@@ -324,6 +325,7 @@ def get_bias_field(im, mask, im_res, aff):
         ratiosd = bcratio.std()
         conv = ratiosd / ratiomean
     #    print(conv,ratiosd,ratiomean)
+    
         if accumulate:
             datalogmaskedcur = datalogmaskedcur - logbcsm
             if controlField is None:
@@ -332,9 +334,11 @@ def get_bias_field(im, mask, im_res, aff):
                 controlField += splsm3d.P
         else:
             datalogmaskedcur = datalogmasked - logbcsm
+            
         datalogcur[mask] = datalogmaskedcur
         if (conv < stopthr):
             nextlevel = levels[N] + 1
+            
         if subdivide and (N+1)<len(levels) and N%steps == 0:
             print ("subdividing")
             # Applies to both cumulative and normal iterative

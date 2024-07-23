@@ -100,7 +100,7 @@ unet_model = nrn_models.unet(nb_features=24,
                              
 # load model file
 if args['model'] is None:
-    unet_model.load_weights(os.path.join(synthSR_home, 'models/SynthSR_v10_210712.h5'), by_name=True)
+    unet_model.load_weights(os.path.join(synthSR_home, 'models/synthsr_v20_230130.h5'), by_name=True)
 else:
     print('Using user-specified model: ' + args['model'])
     unet_model.load_weights(args['model'], by_name=True)

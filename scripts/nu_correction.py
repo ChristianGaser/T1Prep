@@ -231,8 +231,7 @@ def get_bias_nx(im, mask, im_res, aff):
     datafill = np.zeros_like(datalog)
     
     datalogmaskedcur = np.copy(datalogmasked)
-    eps=0.01
-    min_fill=0.5
+
     # Descending FWHM scheme
     levels=[ lvl for lvl in range(maxlevel) for _ in range(steps) ]
     # At some point will have to generalise into fwhm and subdivision
@@ -395,8 +394,8 @@ else:
     mask = None
 
 bias = get_bias(im, mask, im_res, aff)
-#im = im / bias
-im = bias
+im = im / bias
+#im = bias
 
 # save output
 tools.save_volume(im, aff, None, name_corrected)
