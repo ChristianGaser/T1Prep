@@ -52,6 +52,8 @@ parser.add_argument("--i", metavar="file", required=True,
     help="Input image for bias correction.")
 parser.add_argument("--o", metavar="file", required=False,
     help="Bias corrected output.")
+parser.add_argument("--s", metavar="file", required=False,
+    help="SynthSR output.")
 parser.add_argument("--label", metavar="file", required=False,
     help="Optional label image to handle WMHs and vessels.")
 parser.add_argument("--target-res", type=float, default=-1, 
@@ -100,8 +102,8 @@ unet_model = nrn_models.unet(nb_features=24,
 if args['model'] is None:
     unet_model.load_weights(os.path.join(synthSR_home, 'models/SynthSR_v10_210712.h5'), by_name=True)
 else:
-    print('Using user-specified model: ' + args)
-    unet_model.load_weights(args, by_name=True)
+    print('Using user-specified model: ' + args['model'])
+    unet_model.load_weights(args['model'], by_name=True)
 
 # Prepare list of images to process
 name_input = os.path.abspath(args['i'])
@@ -289,3 +291,9 @@ im0, aff_resamp  = edit_volumes.resample_volume(im0, aff2, target_res)
 bias_name = name_input.replace('.nii', '_nu.nii')
 tools.save_volume(im0, aff_resamp, None, name_corrected)
 tools.save_volume(bias, aff_resamp, None, bias_name)
+
+# SynthSR name
+if args['s'] is not None:
+    name_synthsr = os.path.abspath(args['s'])
+    tools.save_volume(pred, aff_resamp, None, name_synthsr)
+
