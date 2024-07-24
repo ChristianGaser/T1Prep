@@ -282,7 +282,6 @@ def get_bias_field(im, mask, im_res, aff):
             print("{}/{}".format(N,len(levels)))
         if levels[N] < nextlevel:
           continue
-        nextlevel = levels[N]
         
         hist,histvaledge,histval,histbinwidth = \
           distrib_kde(datalogmaskedcur, Nbins, kernfn=chosenkernelfn,
@@ -309,6 +308,7 @@ def get_bias_field(im, mask, im_res, aff):
         usegausspde=True
     
         # Need masking!
+        #datafill[mask] = datamasked
         datafill[mask] = logbc
         splsm3d.fit(datafill, reportingLevel=0)
         logbcsmfull = splsm3d.predict()
@@ -339,7 +339,7 @@ def get_bias_field(im, mask, im_res, aff):
         if (conv < stopthr):
             nextlevel = levels[N] + 1
             
-        if subdivide and (N+1)<len(levels) and N%steps == 0:
+        if subdivide and (N+1)<len(levels) and (nextlevel>levels[N] or levels[N+1] != levels[N]):
             print ("subdividing")
             # Applies to both cumulative and normal iterative
             # mode, in normal iterative mode we're just upgrading

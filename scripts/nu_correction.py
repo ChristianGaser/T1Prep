@@ -348,6 +348,8 @@ parser.add_argument("--label", metavar="file", required=False,
     help="Optional label image.")
 parser.add_argument("--target-res", type=float, default=-1, 
     help="(optional) Target voxel size in mm for resampled and hemispheric label data that will be used for cortical surface extraction. Default is 0.5. Use a negative value to save outputs with original voxel size.")
+parser.add_argument("--nx", action="store_true",
+    help="Use nx-model.")
 
 # check for no arguments
 if len(sys.argv) < 1:
@@ -393,7 +395,11 @@ if args['label'] is not None:
 else:
     mask = None
 
-bias = get_bias(im, mask, im_res, aff)
+if args['nx']:
+    bias = get_bias_nx(im, mask, im_res, aff)
+else:
+    bias = get_bias(im, mask, im_res, aff)
+
 im = im / bias
 #im = bias
 

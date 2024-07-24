@@ -141,6 +141,7 @@ class SplineSmooth3D(object):
     self.P=None
     self.Jsub=dict()
     self.J=dict()
+    self.promotion = 0 # Tracker for spline promotion
 
     if ( np.min(self.shape) < 2 or len(self.shape) !=3 or
          voxsizes.size != 3 ):
@@ -894,6 +895,7 @@ class SplineSmooth3D(object):
       Lambda = None, # No point calculating yet
       dofit = False
     )
+    newSpline.promotion = self.promotion + 1
     newSpline.spacing = self.spacing / 2.0
     newSpline.Lambda= self.Lambda
     newSpline.mincLambda = self.mincLambda
@@ -920,7 +922,7 @@ class SplineSmooth3D(object):
       # q+2=5 is correct for q=3, think it's also correct for
       # q!=3 cases, corresponds to polynomials +1 for overlap
       # to next basis.
-      coefConv = np.full(self.q+2,np.NaN)
+      coefConv = np.full(self.q+2,np.nan)
       coefConv[0::2] = np.array([1.0,6.0,1.0])/8
       coefConv[1::2] = np.array([1.0,1.0])/2
       coefConv3D = np.einsum("i,j,k->ijk",
@@ -939,7 +941,7 @@ class SplineSmooth3D(object):
       # origin=0. We use a NaN filled padding to make any
       # errors obvious.
       Pexpand = ndimage.convolve(Pexpand,coefConv3D,
-                                 mode="constant",cval=np.NaN)
+                                 mode="constant",cval=np.nan)
       Pexpand = Pexpand[dropEnds:-dropEnds,
                         dropEnds:-dropEnds,
                         dropEnds:-dropEnds]
@@ -1135,3 +1137,23 @@ class SplineSmooth3DUnregularized(SplineSmooth3D):
     P[nonzero] = Atx[nonzero] / AtA[nonzero]
     self.P=P
     return self.P
+
+  def solveMultiLevel(self,data=None, reportingLevel=0, levels=1):
+    smoother = self
+    if (data is None):
+      data = self.data
+    resid = data
+    Plast = None
+    for level in range(levels):
+      if level != 0:
+        # Promote at start of subsequent levels
+        resid = data - smoother.predict()
+        smoother = smoother.promote()
+        # Save the promoted state
+        Plast = np.copy(smoother.P)
+      smoother.fit(resid)
+      smoother.solve()
+      if Plast is not None:
+        smoother.P += Plast
+    return smoother
+

@@ -1,8 +1,6 @@
 import numpy as np
 import math
 import scipy.stats as stats
-import statsmodels.nonparametric.smoothers_lowess as ls
-import statsmodels.nonparametric.kernel_regression as kreg
 import multiprocessing as mp
 
 def symGaussFiltFWHM (filtFWHM, filtbinwidth):
@@ -327,6 +325,8 @@ def pargetblockstats(data, mask, blocksize=7, sampsize=100):
 
  
 def picksdremmeanvar(data, mask, sampsize=100, bw=4):
+  import statsmodels.nonparametric.smoothers_lowess as ls
+  import statsmodels.nonparametric.kernel_regression as kreg
   bsrange = np.arange(3,51,2)
   pool = mp.Pool(processes=mp.cpu_count()*2)
   try:
@@ -364,6 +364,8 @@ def picksdremmeanvar(data, mask, sampsize=100, bw=4):
 
 
 def singlepicksdremmeanvar(data, mask, sampsize=100, bw=4):
+  import statsmodels.nonparametric.smoothers_lowess as ls
+  import statsmodels.nonparametric.kernel_regression as kreg
   bsrange = np.arange(3,51,2)
   stats=[]
   for bs in bsrange:
@@ -396,6 +398,8 @@ def singlepicksdremmeanvar(data, mask, sampsize=100, bw=4):
 
 
 def picksdexcessvar(data, mask, sampsize=100):
+  import statsmodels.nonparametric.smoothers_lowess as ls
+  import statsmodels.nonparametric.kernel_regression as kreg
   while True:
     bsrange = np.arange(3,51,2)
     stats=[]
