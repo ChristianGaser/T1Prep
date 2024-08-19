@@ -303,11 +303,12 @@ def predict(path_images,
                 
         # correct vessels and skull-strip image
         print('Vessel-correction and skull-stripping')
-        resamp, _ = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask, debug=1)
+        #resamp, _ = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask, debug=1)
+        resamp, div_mask = utils.suppress_vessels_and_skull_strip(resamp, label, vessel_strength, target_res, vessel_mask=cortex_mask, debug=1)
         
         tools.save_volume(resamp, aff_resamp, h, path_resampled, dtype='float32')
         name = os.path.basename(path_images).replace('.nii', '_bias.nii')
-        tools.save_volume(bias, aff_resamp, h, name, dtype='float32')
+        #tools.save_volume(bias, aff_resamp, h, name, dtype='float32')
        
     # write volumes to disc if necessary
     if path_volumes is not None:

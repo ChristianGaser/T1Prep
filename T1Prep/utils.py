@@ -286,8 +286,6 @@ def get_bias_field(im, mask, im_res, aff):
         hist,histvaledge,histval,histbinwidth = \
           distrib_kde(datalogmaskedcur, Nbins, kernfn=chosenkernelfn,
                       binCentreLimits=bcl)
-        #thisFWHM = optFWHM(hist,histbinwidth)
-        #thisFWHM = optEntropyFWHM(hist, histbinwidth, histval, datalogmaskedcur, distrib="kde")
         thisFWHM = levelfwhm[levels[N]] # * math.sqrt(8*math.log(2))
         thisSD = thisFWHM /  math.sqrt(8*math.log(2))
     #    print ("reduced sigma {} fwhm {}".format(thisSD, thisFWHM))
@@ -308,7 +306,6 @@ def get_bias_field(im, mask, im_res, aff):
         usegausspde=True
     
         # Need masking!
-        #datafill[mask] = datamasked
         datafill[mask] = logbc
         splsm3d.fit(datafill, reportingLevel=0)
         logbcsmfull = splsm3d.predict()
@@ -361,7 +358,6 @@ def get_bias_field(im, mask, im_res, aff):
     
     bias = np.exp(bfieldlog)
     return bias
-
 
 def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel_mask=None, debug=None):
     """

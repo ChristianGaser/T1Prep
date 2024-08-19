@@ -41,24 +41,22 @@ surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
 vessel_strength=-1
 NUMBER_OF_JOBS=-1
 use_bids_naming=0
+median_filter=4
 estimate_surf=1
+min_thickness=1
 registration=0 # currently skip spherical registration to save time
-target_res=0.8
+target_res=0.5
 bias_fwhm=15
-pre_fwhm=-1
+post_fwhm=1
+pre_fwhm=2
 use_sanlm=1
 use_amap=1
 bin_dir="/usr/local/bin"
+thresh=0.5
 debug=0
 sub=64
 las=0.5
 
-# if we use post-smoothing we have to correct the isovalue/threshold:
-# post_fwhm=1 thresh=0.495
-# post_fwhm=2 thresh=0.490
-# post_fwhm=3 thresh=0.475
-post_fwhm=2
-thresh=0.490
 
 ########################################################
 # run main
@@ -122,6 +120,16 @@ parse_args ()
             --post-fwhm)
                 exit_if_empty "$optname" "$optarg"
                 post_fwhm=$optarg
+                shift
+                ;;
+            --min-thickness)
+                exit_if_empty "$optname" "$optarg"
+                min_thickness=$optarg
+                shift
+                ;;
+            --median-filter)
+                exit_if_empty "$optname" "$optarg"
+                median_filter=$optarg
                 shift
                 ;;
             --thresh*)
@@ -580,7 +588,7 @@ process ()
                     echo -e "${BLUE}Extracting $side hemisphere${NC}"
                     echo -e "${BLUE}---------------------------------------------${NC}"
                     echo Calculate thickness
-                    ${bin_dir}/CAT_VolThicknessPbt ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+                    ${bin_dir}/CAT_VolThicknessPbt -no-thin-cortex -min-thickness ${min_thickness} -fwhm 4 ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
                     
                     # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
                     # average between original and smoothed images based on their distance to 
@@ -591,9 +599,9 @@ process ()
                     # -post-fwhm 2 -thresh 0.490
                     # -post-fwhm 3 -thresh 0.475
                     echo Extract surface
-                    ${bin_dir}/CAT_VolMarchingCubes -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
+                    ${bin_dir}/CAT_VolMarchingCubes -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
                     echo Map thickness values
-                    ${bin_dir}/CAT_3dVol2Surf -start -0.5 -steps 7 -end 0.5 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
+                    ${bin_dir}/CAT_3dVol2Surf -weighted_avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
                     ${bin_dir}/CAT_SurfDistance -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
                     if [ "${registration}" -eq 1 ]; then
                         echo Spherical inflation
@@ -665,6 +673,10 @@ USAGE:
   --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes (default $pre_fwhm). 
   --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes (default $post_fwhm). 
   --thresh    <NUMBER>       Threshold (isovalue) for creating surface in CAT_VolMarchingCubes (default $thresh). 
+  --min-thickness <NUMBER>   Values below minimum thickness are set to zero and will be approximated
+                             using the replace option in the vbdist method (default $min_thickness). 
+  --median-filter <NUMBER>   Specify how many times to apply a median filter to areas with
+                             topology artifacts to reduce these artifacts.
   --vessel-strength <NUMBER> strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium
                              2 - strong). (default $vessel_strength). 
   --nproc <NUMBER>           number of parallel jobs (=number of processors)
