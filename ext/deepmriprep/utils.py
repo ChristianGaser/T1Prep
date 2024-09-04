@@ -7,7 +7,6 @@ import nibabel as nib
 from pathlib import Path
 from torchreg.utils import smooth_kernel
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'
 DATA_PATH = f'{Path(__file__).parent.resolve()}/data'
 MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 'segmentation_nogm_model.pt'] +
                [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 'warp_model.pt'])

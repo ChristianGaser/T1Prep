@@ -16,7 +16,7 @@ class BrainSegmentation:
         model_path = f'{DATA_PATH}/models/segmentation_model.pt' or model_path
         patch_model_path = f'{DATA_PATH}/models/segmentation_patch_model.pt' or patch_model_path
         self.model = load_model(model_path, no_gpu)
-        self.patch_models = [load_model(patch_model_path.replace('patch', f'patch_{i}'), no_gpu) for i in range(7)]
+        self.patch_models = [load_model(patch_model_path.replace('patch', f'patch_{i}'), no_gpu) for i in range(18)]
         bounds = pd.read_csv(f'{DATA_PATH}/patches.csv')
         self.patch_slices = get_patch_slices(bounds.values, patch_shape)
         self.patch_weights = get_patch_weights(self.patch_slices, shape, patch_shape, sigma * torch.ones(3))
@@ -38,10 +38,10 @@ class BrainSegmentation:
         patch_p0 = torch.zeros(x.shape, dtype=x.dtype)
         for i, (patch, weight) in enumerate(zip(self.patch_slices, self.patch_weights)):
             patch_inp = torch.cat([x[patch].to(self.device), p0[patch]], dim=1)
-            patch_inp = patch_inp.flip(2) if i >= 7 else patch_inp
+            patch_inp = patch_inp.flip(2) if i >= 18 else patch_inp
             with torch.no_grad():
-                p0_patch = self.patch_models[i % 7](patch_inp).cpu()
-            p0_patch = p0_patch.flip(2) if i >= 7 else p0_patch
+                p0_patch = self.patch_models[i % 18](patch_inp).cpu()
+            p0_patch = p0_patch.flip(2) if i >= 18 else p0_patch
             patch_p0[patch] += p0_patch * weight
         return patch_p0
 
