@@ -24,6 +24,80 @@ tissue_labels = {
   "WM":  3.0
 }
 
+# regions of SynthSeg segmentation
+regions = {
+  "Bkg":               0,
+  "lCerebralWM":       2,
+  "lCerebralCortex":   3,
+  "lLateralVentricle": 4,
+  "lInfLatVent":       5,
+  "lCerebellumWM":     7,
+  "lCerebellumCortex": 8,
+  "lThalamus":         10,
+  "lCaudate":          11,
+  "lPutamen":          12,
+  "lPallidum":         13,
+  "3rdVentricle":      14,
+  "4thVentricle":      15,
+  "BrainStem":         16,
+  "lHippocampus":      17,
+  "lAmygdala":         18,
+  "CSF":               24,
+  "lAccumbensArea":    26,
+  "lVentralDC":        28,
+  "rCerebralWM":       41,
+  "rCerebralCortex":   42,
+  "rLateralVentricle": 43,
+  "rInfLatVent":       44,
+  "rCerebellumWM":     46,
+  "rCerebellumCortex": 47,
+  "rThalamus":         49,
+  "rCaudate":          50,
+  "rPutamen":          51,
+  "rPallidum":         52,
+  "rHippocampus":      53,
+  "rAmygdala":         54,
+  "rAccumbensArea":    58,
+  "rVentralDC":        60
+}
+
+# numbered regions of SynthSeg segmentation as list for the posterior
+post_regions = {
+  "Bkg":               0,
+  "lCerebralWM":       1,
+  "lCerebralCortex":   2,
+  "lLateralVentricle": 3,
+  "lInfLatVent":       4,
+  "lCerebellumWM":     5,
+  "lCerebellumCortex": 6,
+  "lThalamus":         7,
+  "lCaudate":          8,
+  "lPutamen":          9,
+  "lPallidum":         10,
+  "3rdVentricle":      11,
+  "4thVentricle":      12,
+  "BrainStem":         13,
+  "lHippocampus":      14,
+  "lAmygdala":         15,
+  "CSF":               16,
+  "lAccumbensArea":    17,
+  "lVentralDC":        18,
+  "rCerebralWM":       19,
+  "rCerebralCortex":   20,
+  "rLateralVentricle": 21,
+  "rInfLatVent":       22,
+  "rCerebellumWM":     23,
+  "rCerebellumCortex": 24,
+  "rThalamus":         25,
+  "rCaudate":          26,
+  "rPutamen":          27,
+  "rPallidum":         28,
+  "rHippocampus":      29,
+  "rAmygdala":         30,
+  "rAccumbensArea":    31,
+  "rVentralDC":        32
+}
+
 def gradient3(F, axis):
     """
     Compute the gradient of a 3D array along a specified axis.
@@ -404,7 +478,10 @@ def suppress_vessels_and_skull_strip(volume, label, vessel_strength, res, vessel
         mask = (label_gm | label_csf_loose | volume_gt_wm) & volume_gt_csf & vessel_mask
         volume[mask] = volume_open[mask]
 
-    del label_gm, vessel_mask, volume_gt_csf, volume_gt_wm, div_mask
+    del label_gm, vessel_mask, div_mask
+    if vessel_strength > 0:
+        del volume_gt_csf, volume_gt_wm
+    
     
     # obtain some outer shell of the label map to remove areas where SynthSeg label is CSF, but
     # we have higher intensity (e.g. due to dura or meninges)
@@ -754,6 +831,63 @@ def amap2hemiseg(amap, aff_amap, seg, aff_seg, hemi=1):
 
     return label
 
+def posteriors2hemiseg(posterior, hemi=1):
+    """
+    Use posteriors with 33 classes to create a hemispheric label image with CSF=1, GM=2, 
+    and WM=3 where any subcortical structures or ventricles close to the midline are 
+    filled with WM.
+    Use hemi=1 for left and hemi=2 for the right hemisphere.
+    """
+
+    # CSF + BKG
+    csf =  posterior[..., post_regions["Bkg"]] + \
+           posterior[..., post_regions["CSF"]]
+
+    # GM
+    if hemi==1:
+        gm =  posterior[..., post_regions["lCerebralCortex"]] + \
+              posterior[..., post_regions["lHippocampus"]] + \
+              posterior[..., post_regions["lAmygdala"]]
+    else:
+        gm =  posterior[..., post_regions["rCerebralCortex"]] + \
+              posterior[..., post_regions["rHippocampus"]] + \
+              posterior[..., post_regions["rAmygdala"]]
+
+    # WM
+    if hemi==1:
+        wm =  posterior[..., post_regions["lCerebralWM"]] + \
+              posterior[..., post_regions["lLateralVentricle"]] + \
+              posterior[..., post_regions["lInfLatVent"]] + \
+              posterior[..., post_regions["lThalamus"]] + \
+              posterior[..., post_regions["lCaudate"]] + \
+              posterior[..., post_regions["lPutamen"]] + \
+              posterior[..., post_regions["lPallidum"]] + \
+              posterior[..., post_regions["3rdVentricle"]] + \
+              posterior[..., post_regions["lAccumbensArea"]] + \
+              posterior[..., post_regions["lVentralDC"]]
+    else:
+        wm =  posterior[..., post_regions["rCerebralWM"]] + \
+              posterior[..., post_regions["rLateralVentricle"]] + \
+              posterior[..., post_regions["rInfLatVent"]] + \
+              posterior[..., post_regions["rThalamus"]] + \
+              posterior[..., post_regions["rCaudate"]] + \
+              posterior[..., post_regions["rPutamen"]] + \
+              posterior[..., post_regions["rPallidum"]] + \
+              posterior[..., post_regions["3rdVentricle"]] + \
+              posterior[..., post_regions["rAccumbensArea"]] + \
+              posterior[..., post_regions["rVentralDC"]]
+
+    # build label with CSF=1, GM=2, and WM=3
+    label = tissue_labels["CSF"]*csf + tissue_labels["GM"]*gm + tissue_labels["WM"]*wm
+
+    # remove remaining small parts after thresholding
+    label_mask = label > tissue_labels["CSF"]
+    label_mask = edit_volumes.get_largest_connected_component(label_mask)
+    label[~label_mask] = tissue_labels["CSF"]
+
+    return label
+
+
 def bbox_volume(volume, pad=0):
     """
     Obtain bounding box for values > 0 and optionally add some padding
@@ -777,6 +911,42 @@ def bbox_volume(volume, pad=0):
       zmax += pad
 
     return rmin, cmin, zmin, rmax, cmax, zmax
+
+def get_flip_indices(labels_segmentation, n_neutral_labels):
+
+    # get position labels
+    n_sided_labels = int((len(labels_segmentation) - n_neutral_labels) / 2)
+    neutral_labels = labels_segmentation[:n_neutral_labels]
+    left = labels_segmentation[n_neutral_labels:n_neutral_labels + n_sided_labels]
+
+    # get correspondence between labels
+    lr_corresp = np.stack([labels_segmentation[n_neutral_labels:n_neutral_labels + n_sided_labels],
+                           labels_segmentation[n_neutral_labels + n_sided_labels:]])
+    lr_corresp_unique, lr_corresp_indices = np.unique(lr_corresp[0, :], return_index=True)
+    lr_corresp_unique = np.stack([lr_corresp_unique, lr_corresp[1, lr_corresp_indices]])
+    lr_corresp_unique = lr_corresp_unique[:, 1:] if not np.all(lr_corresp_unique[:, 0]) else lr_corresp_unique
+
+    # get unique labels
+    labels_segmentation, unique_idx = np.unique(labels_segmentation, return_index=True)
+
+    # get indices of corresponding labels
+    lr_indices = np.zeros_like(lr_corresp_unique)
+    for i in range(lr_corresp_unique.shape[0]):
+        for j, lab in enumerate(lr_corresp_unique[i]):
+            lr_indices[i, j] = np.where(labels_segmentation == lab)[0]
+
+    # build 1d vector to swap LR corresponding labels taking into account neutral labels
+    flip_indices = np.zeros_like(labels_segmentation)
+    for i in range(len(flip_indices)):
+        if labels_segmentation[i] in neutral_labels:
+            flip_indices[i] = i
+        elif labels_segmentation[i] in left:
+            flip_indices[i] = lr_indices[1, np.where(lr_corresp_unique[0, :] == labels_segmentation[i])]
+        else:
+            flip_indices[i] = lr_indices[0, np.where(lr_corresp_unique[1, :] == labels_segmentation[i])]
+
+    return labels_segmentation, flip_indices, unique_idx
+
 
 def write_csv(path_csv, data, unique_file, labels, names, skip_first=True, last_first=False):
 
