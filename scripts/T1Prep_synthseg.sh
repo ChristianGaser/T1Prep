@@ -38,20 +38,24 @@ UNDERLINE=$(tput smul)
 # defaults
 T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
+vessel_strength=-1
 NUMBER_OF_JOBS=-1
 use_bids_naming=0
-median_filter=2
+median_filter=4
 estimate_surf=1
 min_thickness=1
 registration=0 # currently skip spherical registration to save time
-post_fwhm=2
+target_res=0.5
+bias_fwhm=15
+post_fwhm=1
 pre_fwhm=2
-use_sanlm=0
+use_sanlm=1
+use_amap=1
 bin_dir="/usr/local/bin"
 thresh=0.5
 debug=0
 sub=64
-las=0
+las=0.5
 
 
 ########################################################
@@ -103,6 +107,11 @@ parse_args ()
                 outdir=$optarg
                 shift
                 ;;
+            --target-res)
+                exit_if_empty "$optname" "$optarg"
+                target_res=$optarg
+                shift
+                ;;
             --pre-fwhm)
                 exit_if_empty "$optname" "$optarg"
                 pre_fwhm=$optarg
@@ -128,6 +137,16 @@ parse_args ()
                 thresh=$optarg
                 shift
                 ;;
+            --bias-fwhm)
+                exit_if_empty "$optname" "$optarg"
+                bias_fwhm=$optarg
+                shift
+                ;;
+            --vessel-str*)
+                exit_if_empty "$optname" "$optarg"
+                vessel_strength=$optarg
+                shift
+                ;;
             --bin-dir| --bindir)
                 exit_if_empty "$optname" "$optarg"
                 bin_dir=$optarg
@@ -149,8 +168,17 @@ parse_args ()
             --no-sanlm)
                 use_sanlm=0
                 ;;
+            --no-amap)
+                use_amap=0
+                ;;
             --bids)
                 use_bids_naming=1
+                ;;
+            --fast)
+                fast=" --fast "
+                ;;
+            --robust)
+                robust=" --robust "
                 ;;
             --debug)
                 debug=1
@@ -331,61 +359,6 @@ bar() {
 }
 
 ########################################################
-# surface estimation
-########################################################
-surface_estimation() {
-  
-    side=$1
-    outmridir=$2
-    outsurfdir=$3
-    registration=$4
-
-    # create dynamic variables
-    pbt=pbt_$side
-    thick=thick_$side
-    hemi=hemi_$side
-    ppm=ppm_$side
-    gmt=gmt_$side
-    mid=mid_$side
-    sphere=sphere_$side
-    spherereg=spherereg_$side
-    fshemi=$(echo "$side" | sed -e "s/left/lh/g" -e "s/right/rh/g")
-    Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
-    Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
-    
-    if [ -f "${outmridir}/${!hemi}" ]; then
-        echo Calculate $side thickness
-        #${bin_dir}/CAT_VolThicknessPbt -weight-thickness -no-thin-cortex -min-thickness ${min_thickness} -fwhm 4 ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
-        ${bin_dir}/CAT_VolThicknessPbt -min-thickness ${min_thickness} -fwhm 4 ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
-        
-        # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
-        # average between original and smoothed images based on their distance to 
-        # the threshold (isovalue). A negative value will force masked smoothing, which may preserves gyri and sulci even better.
-        # In contrast, post-smoothing aids in correcting the mesh in folded areas like gyri and sulci and removes the voxel-steps
-        # that are visible after marching cubes. However, this also slightly changes the curve in we have to correct the isovalue:
-        # -post-fwhm 1 -thresh 0.495
-        # -post-fwhm 2 -thresh 0.490
-        # -post-fwhm 3 -thresh 0.475
-        echo Extract $side surface
-        ${bin_dir}/CAT_VolMarchingCubes -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
-        echo Map $side thickness values
-        ${bin_dir}/CAT_3dVol2Surf -weighted_avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
-        ${bin_dir}/CAT_SurfDistance -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
-        if [ "${registration}" -eq 1 ]; then
-            echo Spherical inflation $side hemisphere
-            ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
-            echo Spherical registration $side hemisphere
-            ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
-        fi
-    else
-        echo -e "${RED}ERROR: ${python} ${cmd_dir}/deepmriprep_predict.py failed${NC}"
-        ((i++))
-        continue
-    fi
-
-}
-
-########################################################
 # process data
 ########################################################
 
@@ -393,7 +366,11 @@ process ()
 {
         
     # if target-res is set add a field to the name
-    res_str='_res-high'
+    if [ "${target_res}" == "-1" ]; then
+        res_str=''
+    else
+        res_str='_res-high'
+    fi
     
     SIZE_OF_ARRAY="${#ARRAY[@]}"
 
@@ -436,19 +413,28 @@ process ()
         if [ "${use_bids_naming}" -eq 1 ]; then
         
             # get output names
+            resampled=$(echo "$bn" | sed -e "s/.nii/${res_str}.nii/g")
             sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
             
             # remove T1w|T2w from basename
-            seg=$(echo "$bn"  | sed -e "s/.nii/_seg.nii/g")            
+            label=$(echo "$bn"  | sed -e "s/.nii/${res_str}_label.nii/g")
+            atlas=$(echo "$bn"  | sed -e "s/.nii/${res_str}_atlas.nii/g")
+            
+            # use label from Synthseg if we don't use Amap segmentation
+            if [ "${use_amap}" -eq 1 ]; then
+                seg=$(echo "$bn"    | sed -e "s/.nii/${res_str}_seg.nii/g")
+            else
+                seg=${label}
+            fi
             
             hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
             hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-            gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-            gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
+            gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_hemi-L_thickness.nii/g")
+            gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_hemi-R_thickness.nii/g")
             
             # for the following filenames we have to remove the potential .gz from name
-            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
+            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/${res_str}_hemi-L_ppm.nii/g")
+            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/${res_str}_hemi-R_ppm.nii/g")
             mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
             mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
             thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g")
@@ -464,19 +450,28 @@ process ()
             outsurfdir=${outdir}
         else
             # get output names
+            resampled=$(echo "$bn" | sed -e "s/.nii/${res_str}.nii/g")
             sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
             
             # remove T1w|T2w from basename
-            seg=$(echo "$bn"  | sed -e "s/.nii/_seg.nii/g")
-                        
+            label=$(echo "$bn"  | sed -e "s/.nii/${res_str}_label.nii/g")
+            atlas=$(echo "$bn"  | sed -e "s/.nii/${res_str}_atlas.nii/g")
+            
+            # use label from Synthseg if we don't use Amap segmentation
+            if [ "${use_amap}" -eq 1 ]; then
+                seg=$(echo "$bn"    | sed -e "s/.nii/${res_str}_seg.nii/g")
+            else
+                seg=${label}
+            fi
+            
             hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
             hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-            gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-            gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
+            gmt_left=$(echo "$bn"    | sed -e "s/.nii/${res_str}_hemi-L_thickness.nii/g")
+            gmt_right=$(echo "$bn"   | sed -e "s/.nii/${res_str}_hemi-R_thickness.nii/g")
             
             # for the following filenames we have to remove the potential .gz from name
-            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
+            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/${res_str}_hemi-L_ppm.nii/g")
+            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/${res_str}_hemi-R_ppm.nii/g")
             
             mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
             mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
@@ -510,7 +505,6 @@ process ()
         # 1. Call SANLM denoising filter
         # ----------------------------------------------------------------------
         if [ "${use_sanlm}" -eq 1 ]; then
-            echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}SANLM denoising${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
             ${bin_dir}/CAT_VolSanlm "${FILE}" "${outmridir}/${sanlm}"
@@ -519,15 +513,15 @@ process ()
             input="${FILE}"
         fi
         
-        # 2. Call deepmriprep segmentation 
+        # 2. Call SynthSeg segmentation 
         # ----------------------------------------------------------------------
         # check for outputs from previous step
         if [ -f "${input}" ]; then
+            echo -e "${BLUE}SynthSeg segmentation${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
-            echo -e "${BLUE}Deepmriprep segmentation${NC}"
-            echo -e "${BLUE}---------------------------------------------${NC}"
-                "${python}" "${cmd_dir}/deepmriprep_predict.py" --input "${input}" \
-                    --outdir "${outmridir}"
+                "${python}" "${cmd_dir}/SynthSeg_predict.py" --i "${input}" --o "${outmridir}/${atlas}" ${fast} ${robust} \
+                    --target-res "${target_res}" --threads "$NUMBER_OF_JOBS" --vessel-strength "${vessel_strength}" \
+                    --label "${outmridir}/${label}" --resamp "${outmridir}/${resampled}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -539,38 +533,94 @@ process ()
             rm "${outmridir}/${sanlm}"
         fi
         
+        # 3. Amap segmentation using output from SynthSeg label segmentation
+        # ----------------------------------------------------------------------
+        # check for outputs from previous step
+        if [ -f "${outmridir}/${resampled}" ] && [ -f "${outmridir}/${label}" ]; then
+            if [ "${use_amap}" -eq 1 ]; then
+                echo -e "${BLUE}Amap segmentation${NC}"
+                echo -e "${BLUE}---------------------------------------------${NC}"
+                ${bin_dir}/CAT_VolAmap -cleanup 2 -las ${las} -mrf 0 -bias-fwhm "${bias_fwhm}" -write-seg 0 1 1 -sub "${sub}" -label "${outmridir}/${label}" "${outmridir}/${resampled}"
+            fi
+        else
+            echo -e "${RED}ERROR: ${cmd_dir}/SynthSeg_predict.py failed${NC}"
+            ((i++))
+            continue
+        fi
+
         # optionally extract surface
         if [ "${estimate_surf}" -eq 1 ]; then
                 
-            # 3. Create hemispheric label maps for cortical surface extraction
+            # 4. Create hemispheric label maps for cortical surface extraction
             # ----------------------------------------------------------------------
             # check for outputs from previous step
-            if [ ! -f "${outmridir}/${seg}" ]; then
-                echo -e "${RED}ERROR: ${cmd_dir}/deepmriprep_predict.py failed${NC}"
+            if [ -f "${outmridir}/${seg}" ]; then
+                echo -e "${BLUE}Hemispheric partitioning${NC}"
+                echo -e "${BLUE}---------------------------------------------${NC}"
+                    "${python}" "${cmd_dir}/partition_hemispheres.py" \
+                        --label "${outmridir}/${seg}" --atlas "${outmridir}/${atlas}"
+            else
+                echo -e "${RED}ERROR: CAT_VolAmap failed${NC}"
                 ((i++))
                 continue
             fi
             
-            # 4. Estimate thickness and percentage position maps for each hemisphere
-            #    and extract cortical surface and call it as background process to
-            # allow parallelization
+            # 5. Estimate thickness and percentage position maps for each hemisphere
+            #    and extract cortical surface
             # ----------------------------------------------------------------------
             # check for outputs from previous step
-            echo -e "${BLUE}---------------------------------------------${NC}"
-            echo -e "${BLUE}Extracting surfaces${NC}"
-            echo -e "${BLUE}---------------------------------------------${NC}"
             for side in left right; do
-                surface_estimation $side $outmridir $outsurfdir $registration &
+              
+                # create dynamic variables
+                pbt=pbt_$side
+                thick=thick_$side
+                hemi=hemi_$side
+                ppm=ppm_$side
+                gmt=gmt_$side
+                mid=mid_$side
+                sphere=sphere_$side
+                spherereg=spherereg_$side
+                fshemi=$(echo "$side" | sed -e "s/left/lh/g" -e "s/right/rh/g")
+                Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
+                Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
+                
+                if [ -f "${outmridir}/${!hemi}" ]; then
+                    echo -e "${BLUE}Extracting $side hemisphere${NC}"
+                    echo -e "${BLUE}---------------------------------------------${NC}"
+                    echo Calculate thickness
+                    ${bin_dir}/CAT_VolThicknessPbt -no-thin-cortex -min-thickness ${min_thickness} -fwhm 4 ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+                    
+                    # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
+                    # average between original and smoothed images based on their distance to 
+                    # the threshold (isovalue). A negative value will force masked smoothing, which may preserves gyri and sulci even better.
+                    # In contrast, post-smoothing aids in correcting the mesh in folded areas like gyri and sulci and removes the voxel-steps
+                    # that are visible after marching cubes. However, this also slightly changes the curve in we have to correct the isovalue:
+                    # -post-fwhm 1 -thresh 0.495
+                    # -post-fwhm 2 -thresh 0.490
+                    # -post-fwhm 3 -thresh 0.475
+                    echo Extract surface
+                    ${bin_dir}/CAT_VolMarchingCubes -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
+                    echo Map thickness values
+                    ${bin_dir}/CAT_3dVol2Surf -weighted_avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
+                    ${bin_dir}/CAT_SurfDistance -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+                    if [ "${registration}" -eq 1 ]; then
+                        echo Spherical inflation
+                        ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
+                        echo Spherical registration
+                        ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
+                    fi
+                else
+                    echo -e "${RED}ERROR: ${python} ${cmd_dir}/partition_hemispheres.py failed${NC}"
+                    ((i++))
+                    continue
+                fi
             done
-            
-            # use wait to check finishing the background processes
-            wait
             
         fi # estimate_surf
 
         # remove temporary files if not debugging
         if [ "${debug}" -eq 0 ]; then
-            rm ${outmridir}/${seg}
+            rm ${outmridir}/${atlas} ${outmridir}/${seg} ${outmridir}/${label}
             
             # only remove temporary files if surfaces exist
             if [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
@@ -584,7 +634,6 @@ process ()
         # print execution time per data set
         end=$(date +%s)
         runtime=$((end - start))
-        echo -e "${GREEN}---------------------------------------------${NC}"
         echo -e "${GREEN}Finished after ${runtime}s${NC}"
             
         ((i++))
@@ -610,12 +659,17 @@ cat <<__EOM__
 
 USAGE:
   T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder]
-                    [--no-sanlm] [--no-surf] [--nproc number_of_processes] 
-                    [--bids] [--sub subsampling] [--debug] filenames 
+                    [--target-res voxel_size] [--vessel-strength vessel_strength] 
+                    [--no-sanlm] [--no-amap] [--no-surf] [--nproc number_of_processes] 
+                    [--bids] [--sub subsampling] [--fast] [--robust] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
   --out-dir <DIR>            output folder (default same folder)
   --bin-dir <DIR>            folder of CAT binaries (default $bin_dir)
+  --target-res <NUMBER>      target voxel size in mm for resampled and hemispheric label data  
+                             that will be used for cortical surface extraction. Use a negative
+                             value to save outputs with original voxel size (default $target_res).
+  --bias-fwhm <NUMBER>       FWHM size of nu-correction in CAT_VolAmap (default $bias_fwhm). 
   --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes (default $pre_fwhm). 
   --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes (default $post_fwhm). 
   --thresh    <NUMBER>       Threshold (isovalue) for creating surface in CAT_VolMarchingCubes (default $thresh). 
@@ -623,19 +677,25 @@ USAGE:
                              using the replace option in the vbdist method (default $min_thickness). 
   --median-filter <NUMBER>   Specify how many times to apply a median filter to areas with
                              topology artifacts to reduce these artifacts.
+  --vessel-strength <NUMBER> strength of vessel-correction (-1 - automatic, 0 - none, 1 - medium
+                             2 - strong). (default $vessel_strength). 
   --nproc <NUMBER>           number of parallel jobs (=number of processors)
   --sub <NUMBER>             subsampling for Amap segmentation (default $sub)
   --no-surf                  skip surface and thickness estimation
   --no-sanlm                 skip denoising with SANLM-filter
+  --no-amap                  use segmentation from mri_synthseg instead of Amap
   --bids                     use BIDS naming of output files
+  --fast                     bypass some processing for faster prediction
+  --robust                   use robust predictions (slower)
   --debug                    keep temporary files for debugging
  
 PURPOSE:
   Computational Anatomy Pipeline for structural MRI data 
 
 EXAMPLE
-  T1Prep.sh --outdir test_folder single_subj_T1.nii.
-  This command will extract segmentation and surface maps for single_subj_T1.nii. 
+  T1Prep.sh --fast --outdir test_folder single_subj_T1.nii.
+  This command will extract segmentation and surface maps for single_subj_T1.nii
+  and bypasses some processing steps for faster (but less accurate) processing. 
   Resuts will be saved in test_folder.
 
   T1Prep.sh --target-res -1 --no-surf single_subj_T1.nii.
@@ -656,7 +716,8 @@ USED FUNCTIONS:
   CAT_VolMarchingCubes
   CAT_3dVol2Surf
   CAT_SurfDistance
-  ${cmd_dir}/deepmriprep_predict.py
+  ${cmd_dir}/SynthSeg_predict.py
+  ${cmd_dir}/partition_hemispheres.py
   
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).
 
