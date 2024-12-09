@@ -536,7 +536,7 @@ process ()
         
         # remove denoised image
         if [ "${use_sanlm}" -eq 1 ]; then
-            rm "${outmridir}/${sanlm}"
+            [ -f "${outmridir}/${sanlm}" ] && rm "${outmridir}/${sanlm}"
         fi
         
         # optionally extract surface
@@ -570,14 +570,14 @@ process ()
 
         # remove temporary files if not debugging
         if [ "${debug}" -eq 0 ]; then
-            rm ${outmridir}/${seg}
+            [ -f "${outmridir}/${seg}" ] && rm "${outmridir}/${seg}"
             
             # only remove temporary files if surfaces exist
             if [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
-                rm "${outsurfdir}/${pbt_left}" "${outsurfdir}/${pbt_right}"
-                rm "${outmridir}/${hemi_left}" "${outmridir}/${hemi_right}"
-                rm "${outmridir}/${ppm_left}" "${outmridir}/${ppm_right}"
-                rm ${outmridir}/${gmt_left} ${outmridir}/${gmt_right} 
+                [ -f "${outsurfdir}/${pbt_left}" ] && rm "${outsurfdir}/${pbt_left}"
+                [ -f "${outmridir}/${hemi_left}" ] && rm "${outmridir}/${hemi_left}"
+                [ -f "${outmridir}/${ppm_left}" ] && rm "${outmridir}/${ppm_left}"
+                [ -f "${outmridir}/${gmt_left}" ] && rm "${outmridir}/${gmt_left}"
             fi
         fi
 
