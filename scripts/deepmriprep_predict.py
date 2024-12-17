@@ -201,7 +201,6 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
     yx = nifti_to_tensor(warp_yx)[None].to(device)
     atlas = nib.as_closest_canonical(nib.load(f'{DATA_PATH}/templates/{atlas_name}.nii.gz'))
     shape = tuple(shape_from_to(atlas, warp_yx))
-    print(shape)
     scaled_yx = F.interpolate(yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
     warps = {}
     warps.update({shape: scaled_yx.permute(0, 2, 3, 4, 1)})
@@ -278,6 +277,11 @@ def run_segment_resample():
     t1_name = f'{out_dir}/{out_name}_resampled.nii'
     tools.save_volume(t1_large, aff_t1, header, t1_name, dtype='float32')
     t1 = nib.load(t1_name)
+    
+    print(t1.header)
+    print(t1.affine)
+    
+    return
 
     no_gpu = True
     
@@ -350,7 +354,8 @@ def run_segment_resample():
     nib.save(nib.Nifti1Image(lh,  p1.affine, p1.header), f'{out_dir}/{out_name}_seg_hemi-L.nii')
     nib.save(nib.Nifti1Image(rh,  p1.affine, p1.header), f'{out_dir}/{out_name}_seg_hemi-R.nii')
 
-def run_segment_orig():
+def run_segment():
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', help='Input file or folder', required=True, type=str, default=None)
     parser.add_argument('-o', '--outdir', help='Output folder', required=True, type=str, default=None)
@@ -360,11 +365,15 @@ def run_segment_orig():
     out_name = os.path.basename(t1_name).replace('.nii', '')
     t1 = nib.load(t1_name)
     no_gpu = True
-    print(t1.header)
+    target_res = np.array([0.5]*3)
+    
+    vol = t1.get_fdata()
+    vol, affine2, header2 = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
+    t1 = nib.Nifti1Image(vol, affine2, header2)
     
     print('Skull-stripping')
     prep = Preprocess(no_gpu)
-    output_bet = prep.run_bet(t1_name)
+    output_bet = prep.run_bet(t1)
     brain = output_bet['brain']
     mask = output_bet['mask']
     
@@ -373,72 +382,22 @@ def run_segment_orig():
     affine = output_aff['affine']
     brain_large = output_aff['brain_large']
     mask_large = output_aff['mask_large']
-    nib.save(brain_large, f'{out_dir}/{out_name}_resampled.nii')
     
-    
-    
-    print('Resampling')
-    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
-
-    #print(np.matmul(inv_affine, matrix).float())
-        
-        
-    target_res = np.array([0.5]*3)
-    t1_data = t1.get_fdata()
-    aff = t1.affine
-    header = t1.header
-    t1_large, aff_t1 = edit_volumes.resample_volume(t1_data, aff, target_res)
-    t1_name = f'{out_dir}/{out_name}_resampled.nii'
-    tools.save_volume(t1_large, aff_t1, header, t1_name, dtype='float32')
-    t1_large = nib.load(t1_name)
-
-    #print(brain_large.affine)
-    #print(brain_large.header)
-    pixdim0 = t1.header['pixdim']
-    pixdim = pixdim0 + 0;
-    pixdim[1:4] = target_res
-    t1.header['pixdim'] = pixdim
-    print(pixdim)
-    
-    dim = t1.header['dim']
-    print(dim)
-    print(pixdim)
-    print(pixdim0)
-    dim[1:4] = np.round(dim[1:4]*(pixdim[1:4]/pixdim0[1:4]))
-    print(dim)
-    t1.header['dim'] = dim
-    
-    srow_x = t1.header['srow_x']
-    print(srow_x[0])
-    srow_y = t1.header['srow_y']
-    print(srow_y[1])
-    srow_z = t1.header['srow_z']
-    print(srow_z[2])
-    qoffset_x = t1.header['qoffset_x']
-    qoffset_y = t1.header['qoffset_y']
-    qoffset_z = t1.header['qoffset_z']
-
-    print(brain_large.header['quatern_c'])
-    
-    return
-    print(t1_large.affine)
-    print(t1_large.header)
-
-    shape = nib.as_closest_canonical(t1_large).shape
-    grid = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
-    p0 = F.grid_sample(nifti_to_tensor(brain_large)[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]    
-    nib.save(nib.Nifti1Image(p0, t1_large.affine, t1_large.header), 'test.nii')
-    test = nib.load('test.nii')
-    print(test.affine)
-    print(test.header)
-    
-    return
-    
-    print('Segmentation')
+    print('Segmentation')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
-    nib.save(p0_large, f'{out_dir}/{out_name}_seg.nii')
+
+    print('Resampling')
+    header2, affine2 = get_resampled_header(brain.header, brain.affine, target_res)
+    dim = header2['dim']
+    shape = dim[1:4]
+    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())        
+    grid = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
     
+    vol = F.grid_sample(nifti_to_tensor(p0_large)[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
+    nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg.nii')
+
     print('Fine segmentation')
     output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
     p1_large = output_nogm['p1_large']
@@ -447,9 +406,8 @@ def run_segment_orig():
     p1_affine = output_nogm['p1_affine']
     p2_affine = output_nogm['p2_affine']
     wj_affine = output_nogm['wj_affine']
-    nib.save(p1_large, f'{out_dir}/{out_name}_GM.nii')
-    nib.save(p2_large, f'{out_dir}/{out_name}_WM.nii')
-
+    #nib.save(p1_large, f'{out_dir}/{out_name}_GM.nii')
+    #nib.save(p2_large, f'{out_dir}/{out_name}_WM.nii')
 
     print('Warping')
     output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
@@ -457,12 +415,55 @@ def run_segment_orig():
     mwp1 = output_reg['mwp1']
     mwp2 = output_reg['mwp2']
 
-
+    print('Atlas creation')
     atlas = get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large,'ibsr')
     lh, rh = get_partition(p0_large, atlas, 'ibsr')
+
+    print('Resampling')
     
-    nib.save(nib.Nifti1Image(lh,  p1_large.affine, p1_large.header), f'{out_dir}/{out_name}_seg_hemi-L.nii')
-    nib.save(nib.Nifti1Image(rh,  p1_large.affine, p1_large.header), f'{out_dir}/{out_name}_seg_hemi-R.nii')
+    vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
+    nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-L.nii')
+
+    vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(rh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
+    nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-R.nii')
+
+def get_resampled_header(header, aff, new_vox_size):
+    """
+    This function changes nifti-header and affine matrix to the new voxelsize
+    :param header: a nifti structure with the header info
+    :param aff: affine matrix of the input volume
+    :param new_vox_size: new voxel size (3 - element numpy vector) in mm
+    :return: new header and affine matrix
+    """
+
+    header2 = header.copy()
+    
+    dim = header2['dim']
+    pixdim = header2['pixdim']
+
+    factor = pixdim[1:4] / new_vox_size
+    dim[1:4] = np.round(dim[1:4]*factor)
+    
+    header2['dim'] = dim
+
+    pixdim[1:4] = new_vox_size
+    header2['pixdim'] = pixdim
+    
+    aff2 = aff.copy()
+    for c in range(3):
+        aff2[:-1, c] = aff2[:-1, c] / factor[c]
+    aff2[:-1, -1] = aff2[:-1, -1] - np.matmul(aff2[:-1, :-1], 0.5 * (factor - 1))
+    
+    header2['srow_x'] = aff2[0,:]
+    header2['srow_y'] = aff2[1,:]
+    header2['srow_z'] = aff2[2,:]
+    header2['qoffset_x'] = aff2[0,3]
+    header2['qoffset_y'] = aff2[1,3]
+    header2['qoffset_z'] = aff2[2,3]
+
+    return header2, aff2
     
 def get_partition(p0_large, atlas, atlas_name):
     rois = pd.read_csv(f'{DATA_PATH}/templates/{atlas_name}.csv', sep=';')[['ROIid', 'ROIabbr']]
@@ -474,21 +475,21 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, tools.build_binary_structure(3, 3))
+    lateral_ventricle = binary_dilation(lateral_ventricle, tools.build_binary_structure(4, 3))
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["rLatVen"]) & \
                        ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) & \
                        ~(atlas == regions["lAmy"]) & ~(atlas == regions["lHip"])
     #WM 
-    wm = ((atlas >= regions["lThaPro"])         &  (atlas <= regions["lPal"])) | \
+    wm = ((atlas >= regions["lThaPro"])  &  (atlas <= regions["lPal"])) | \
            (atlas == regions["lAcc"])    |  (atlas == regions["lVenDC"])
     # we also have to dilate whole WM to close the remaining rims
     wm = binary_dilation(wm, tools.build_binary_structure(4, 3)) | lateral_ventricle
 
     # CSF + BKG
-    csf = (atlas == 0)               |  (atlas == regions["lCbeWM"]) | \
-           (atlas == regions["lCbeGM"]) |  (atlas == regions["b3thVen"]) | \
-           (atlas == regions["b4thVen"])      |  (atlas == regions["bBst"]) | \
+    csf = (atlas == 0)                   |  (atlas == regions["lCbeWM"]) | \
+           (atlas == regions["lCbeGM"])  |  (atlas == regions["b3thVen"]) | \
+           (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) | \
            (atlas >= regions["rCbrWM"])
 
     lesion_mask = atlas == regions["lCbrWM"]
@@ -504,25 +505,25 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, tools.build_binary_structure(3, 3))
+    lateral_ventricle = binary_dilation(lateral_ventricle, tools.build_binary_structure(4, 3))
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["lLatVen"]) & \
                        ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) & \
                        ~(atlas == regions["rAmy"]) & ~(atlas == regions["rHip"])
     # WM 
-    wm =  ((atlas >= regions["rThaPro"])         &  (atlas <= regions["rPal"])) | \
-            (atlas == regions["rAcc"])    |  (atlas == regions["rVenDC"])
+    wm =  ((atlas >= regions["rThaPro"]) &  (atlas <= regions["rPal"])) | \
+            (atlas == regions["rAcc"])   |  (atlas == regions["rVenDC"])
     # we also have to dilate whole WM to close the remaining rims
     wm = binary_dilation(wm, tools.build_binary_structure(4, 3)) | lateral_ventricle
 
     # CSF + BKG
-    csf = ((atlas <= regions["lVenDC"])        & ~(atlas == regions["bCSF"])) | \
-            (atlas == regions["rCbeWM"])     |  (atlas == regions["rCbeGM"])
+    csf = ((atlas <= regions["lVenDC"])  & ~(atlas == regions["bCSF"])) | \
+            (atlas == regions["rCbeWM"]) |  (atlas == regions["rCbeGM"])
 
-    csf = (atlas == 0)               |  (atlas == regions["rCbeWM"]) | \
-           (atlas == regions["rCbeGM"]) |  (atlas == regions["b3thVen"]) | \
-           (atlas == regions["b4thVen"])      |  (atlas == regions["bBst"]) | \
-           (atlas <= regions["lAmy"]) | (atlas == regions["lVenDC"]) | (atlas == regions["lAcc"]) 
+    csf = (atlas == 0)                   |  (atlas == regions["rCbeWM"]) | \
+           (atlas == regions["rCbeGM"])  |  (atlas == regions["b3thVen"]) | \
+           (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) | \
+           (atlas <= regions["lAmy"])    | (atlas == regions["lVenDC"]) | (atlas == regions["lAcc"]) 
 
     lesion_mask = atlas == regions["rCbrWM"]
 
@@ -534,7 +535,62 @@ def get_partition(p0_large, atlas, atlas_name):
     rh[wm]  = 3
     
     return lh, rh
-    
+
+def align_brain(data, aff, header, aff_ref, do_flip):
+    """
+    Aligns a volume to a reference orientation (axis and direction) specified by an affine matrix.
+
+    Parameters:
+        dim (ndarray): dimension of input data.
+        aff (ndarray): Affine matrix of the volume.
+        aff_ref (ndarray): Reference affine matrix.
+
+    Returns:
+        ndarray: Aligned image data.
+        ndarray: Aligned affine matrix.
+        ndarray: Aligned nifti header.
+    """
+    def get_ras(aff, dim):
+        """
+        Determines the RAS axes order for an affine matrix.
+        """
+        aff_inv = np.linalg.inv(aff)
+        aff_ras = np.argmax(np.abs(aff_inv[:dim, :dim]), axis=1)
+        return aff_ras
+
+    dim = 3  # Assume 3D volume
+    ras_aff = get_ras(aff, dim)
+    ras_ref = get_ras(aff_ref, dim)
+
+    # Step 1: Reorder the rotation-scaling part (3x3) to match reference axes
+    reordered_aff = np.zeros_like(aff)
+    for i, axis in enumerate(ras_ref):
+        reordered_aff[:dim, i] = aff[:dim, np.where(ras_aff == axis)[0][0]]
+    reordered_aff[:dim, 3] = aff[:dim, 3]  # Copy the translation vector
+    reordered_aff[3, :] = [0, 0, 0, 1]     # Ensure the bottom row remains [0, 0, 0, 1]
+
+    header['srow_x'] = reordered_aff[0,:]
+    header['srow_y'] = reordered_aff[1,:]
+    header['srow_z'] = reordered_aff[2,:]
+    header['qoffset_x'] = reordered_aff[0,3]
+    header['qoffset_y'] = reordered_aff[1,3]
+    header['qoffset_z'] = reordered_aff[2,3]
+
+    # Update the affine matrix after reordering
+    aff = reordered_aff
+
+    # Step 2: Transpose the data axes to match the reference
+    align_ax = [np.where(ras_aff == axis)[0][0] for axis in ras_ref]
+    aligned_data = np.transpose(data, axes=align_ax)
+
+    # Step 5: Flip image axes if necessary
+    if do_flip:
+        dot_products = np.sum(aff[:dim, :dim] * aff_ref[:dim, :dim], axis=0)
+        for i in range(dim):
+            if dot_products[i] < 0:
+                aligned_data = np.flip(aligned_data, axis=i) 
+                                                              
+    return aligned_data, aff, header
 
 if __name__ == '__main__':
-    run_segment_orig()
+    run_segment()
