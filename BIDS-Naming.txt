@@ -1,0 +1,27 @@
+space-orig_res-high_label-BG_probseg
+
+space-orig.json
+{
+  "SkullStripped": true,
+  "Resolution": {
+    "hi": "Matched with high-resolution T1w (0.5mm, isotropic)",
+    "lo": "Matched with low-resolution T1w (1mm isotropic)"
+  }
+}
+
+space-orig_res-high_seg
+space-orig_seg.json
+
+{
+    "LabelMap": [
+        "BG",
+        "CSF",
+        "GM",
+        "WM"
+        ]
+}
+
+    sub-<subject_label>_hemi-[LR]_smoothwm.surf.gii
+    sub-<subject_label>_hemi-[LR]_pial.surf.gii
+    sub-<subject_label>_hemi-[LR]_midthickness.surf.gii
+    sub-<subject_label>_hemi-[LR]_inflated.surf.gii

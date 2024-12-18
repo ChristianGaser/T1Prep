@@ -1,0 +1,4 @@
+vessels = TFCE(div(image_bc_corrected/mx)*(image_bc_corrected/mc)/synthseg_label)
+WMH = TFCE(dilated(synthseg_label == 3)/(image_bc_corrected/mc))
+
+correct underestimation of thickness in sulci
