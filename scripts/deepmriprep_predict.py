@@ -177,22 +177,6 @@ def get_bias_field(brain, mask):
 
     return bias, brain
 
-def segment_brain(no_gpu, brain, brain_large, affine, device='cpu'):
-    segment = BrainSegmentation(no_gpu)
-    x = nifti_to_tensor(brain_large)[None, None]
-    x = x[:, :, 1:-2, 15:-12, :-3]
-    x = scale_intensity(x)
-    p0_large = segment.run_model(x)
-    p0_large = F.pad(p0_large, (0, 3, 15, 12, 1, 2))[0, 0]
-    
-    p0_kernel = unsmooth_kernel(device=device)[None, None]
-    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float().to(device))
-    p0 = F.conv3d(p0_large[None, None].to(device), p0_kernel, padding=1)
-    shape = nib.as_closest_canonical(brain).shape
-    grid = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
-    p0 = F.grid_sample(p0, grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
-    return reoriented_nifti(p0.cpu().numpy(), brain.affine, brain.header), reoriented_nifti(p0_large.cpu().numpy(), brain_large.affine, brain_large.header)
-
 def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, device='cpu'):
     header = p1_large.header
     transform = p1_large.affine
@@ -211,54 +195,6 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
     atlas = atlas.type(torch.uint8 if atlas.max() < 256 else torch.int16)
     return nib.Nifti1Image(atlas, transform, header)
     
-def run_segment_fast():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--t1', help='Input file or folder', required=True, type=str, default=None)
-    parser.add_argument('-b', '--biascorr', help='Output bias corrected file', required=False, type=str, default=None)
-    parser.add_argument('-l', '--label', help='Output label file', required=True, type=str, default=None)
-    args = parser.parse_args()
-    t1 = args.t1
-    no_gpu = True
-    
-    prep = Preprocess(no_gpu)
-    output_bet = prep.run_bet(t1)
-    brain = output_bet['brain']
-    mask = output_bet['mask']
-    
-    output_aff = prep.run_affine_register(brain, mask)
-    affine = output_aff['affine']
-    brain_large = output_aff['brain_large']
-    mask_large = output_aff['brain_large']
-
-    zoom = output_aff['zoom']
-    matrix = np.zeros((4, 4))
-
-    # Fill the diagonal with the first 3 entries of the vector
-    matrix[0, 0] = zoom[0]
-    matrix[1, 1] = zoom[1]
-    matrix[2, 2] = zoom[2]
-    matrix[3, 3] = 1
-    
-    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
-    print(np.matmul(inv_affine, matrix).float())
-
-    shape = nib.as_closest_canonical(brain).shape
-    grid = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
-    p0 = F.grid_sample(nifti_to_tensor(brain_large)[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
-    
-    nib.save(nib.Nifti1Image(p0, brain.affine, brain.header), 'test.nii')
-    
-    """
-    p0, p0_large = segment_brain(no_gpu, brain, brain_large, affine)
-    nib.save(p0_large, args.label)
-    
-    wm = (p0_large.get_fdata() > 2.5)
-    bias, brain_large = get_bias_field(brain_large, wm)
-    
-    if args.biascorr is not None:
-        nib.save(nib.Nifti1Image(brain_large,  mask_large.affine, mask_large.header), args.biascorr)
-    """
-
 def run_segment():
 
     parser = argparse.ArgumentParser()
