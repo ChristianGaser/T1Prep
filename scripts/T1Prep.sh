@@ -47,6 +47,7 @@ registration=0 # currently skip spherical registration to save time
 post_fwhm=2
 pre_fwhm=2
 use_sanlm=0
+use_amap=0
 bin_dir="/usr/local/bin"
 thresh=0.5
 debug=0
@@ -145,6 +146,9 @@ parse_args ()
                 ;; 
             --no-surf)
                 estimate_surf=0
+                ;;
+            --amap)
+                use_amap=1
                 ;;
             --no-sanlm)
                 use_sanlm=0
@@ -526,7 +530,11 @@ process ()
             echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Deepmriprep segmentation${NC}"
             echo -e "${BLUE}---------------------------------------------${NC}"
-                "${python}" "${cmd_dir}/deepmriprep_predict.py" --input "${input}" \
+                if [ "${use_amap}" -eq 1 ]; then
+                    amap=' --amap '
+                else amap=''
+                fi
+                "${python}" "${cmd_dir}/deepmriprep_predict.py" --amapdir ${bin_dir} ${amap} --input "${input}" \
                     --outdir "${outmridir}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"

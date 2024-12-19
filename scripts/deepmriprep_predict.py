@@ -12,7 +12,6 @@ warnings.filterwarnings("ignore")
 
 from tqdm import tqdm
 from deepbet import BrainExtraction
-from deepbet.utils import reoriented_nifti
 from deepmriprep.preprocess import Preprocess
 from deepmriprep.segment import BrainSegmentation, scale_intensity
 from deepmriprep.utils import (DEVICE, DATA_PATH, nifti_to_tensor, unsmooth_kernel, nifti_volume)
@@ -46,7 +45,7 @@ def get_bias_field(brain, mask):
     spacing = 1
 
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
-    brain = brain.get_fdata()
+    brain0 = brain.get_fdata()
       
     if subsamp :
         # Can't use offset != 0 yet, as the spline smoother takes voxel positions
@@ -55,7 +54,7 @@ def get_bias_field(brain, mask):
         # 2. keep domain consistent allowing same parameters to be used to
         #    supersample from the spline model.
         offset = 0 # subsamp // 2
-        dataSub = brain[offset::subsamp,offset::subsamp,offset::subsamp]
+        dataSub = brain0[offset::subsamp,offset::subsamp,offset::subsamp]
         mask = mask[offset::subsamp,offset::subsamp,offset::subsamp]
         dataSubVoxSize = dataVoxSize * subsamp
     
@@ -86,7 +85,7 @@ def get_bias_field(brain, mask):
                                             mask=mask)
     
     # Prediction interpolator
-    predictor = SplineSmooth3D(brain, dataVoxSize,
+    predictor = SplineSmooth3D(brain0, dataVoxSize,
                                spacing, knts=splsm3d.kntsArr, dofit=False)
     lastinterpbc = np.zeros(datalogmasked.shape[0])
     datalogcur = np.copy(datalog)
@@ -173,8 +172,9 @@ def get_bias_field(brain, mask):
 
     # apply nu-correction
     tissue_idx = bias != 0 
-    brain[tissue_idx] /= bias[tissue_idx]
-
+    brain0[tissue_idx] /= bias[tissue_idx]
+    brain = nib.Nifti1Image(brain0, brain.affine, brain.header)
+    
     return bias, brain
 
 def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, device='cpu'):
@@ -200,9 +200,14 @@ def run_segment():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', help='Input file or folder', required=True, type=str, default=None)
     parser.add_argument('-o', '--outdir', help='Output folder', required=True, type=str, default=None)
+    parser.add_argument("-a", '--amap', action="store_true", help="(optional) Use AMAP segmentation.")
+    parser.add_argument('-d', '--amapdir', help='Amap binary folder', required=True, type=str, default=None)
     args = parser.parse_args()
     t1_name = args.input
     out_dir = args.outdir
+    use_amap = args.amap
+    amapdir = args.amapdir
+
     out_name = os.path.basename(t1_name).replace('.nii', '')
     t1 = nib.load(t1_name)
     no_gpu = True
@@ -238,17 +243,38 @@ def run_segment():
     vol = F.grid_sample(nifti_to_tensor(p0_large)[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
     vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
     nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg.nii')
+    
+    if (use_amap):
+        print('Fine Amap segmentation')
+        wm_large = (p0_large.get_fdata() > 2.5)
+        bias, brain_large = get_bias_field(brain_large, wm_large)
+        nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
+        nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
+        cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
+        os.system(cmd)
+        p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
+        p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
+        p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
+        p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        p3_affine = F.interpolate(nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
 
-    print('Fine segmentation')
-    output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
-    p1_large = output_nogm['p1_large']
-    p2_large = output_nogm['p2_large']
-    p3_large = output_nogm['p3_large']
-    p1_affine = output_nogm['p1_affine']
-    p2_affine = output_nogm['p2_affine']
-    wj_affine = output_nogm['wj_affine']
-    #nib.save(p1_large, f'{out_dir}/{out_name}_GM.nii')
-    #nib.save(p2_large, f'{out_dir}/{out_name}_WM.nii')
+        p1_affine = nib.Nifti1Image(p1_affine, warp_template.affine, warp_template.header)
+        p2_affine = nib.Nifti1Image(p2_affine, warp_template.affine, warp_template.header)
+        p3_affine = nib.Nifti1Image(p3_affine, warp_template.affine, warp_template.header)
+
+        wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
+        wj_affine = pd.Series([wj_affine])
+    else:
+        print('Fine Deepmriprep segmentation')
+        output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
+        p1_large = output_nogm['p1_large']
+        p2_large = output_nogm['p2_large']
+        p3_large = output_nogm['p3_large']
+        p1_affine = output_nogm['p1_affine']
+        p2_affine = output_nogm['p2_affine']
+        wj_affine = output_nogm['wj_affine']
 
     print('Warping')
     output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
@@ -261,7 +287,6 @@ def run_segment():
     lh, rh = get_partition(p0_large, atlas, 'ibsr')
 
     print('Resampling')
-    
     vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
     vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
     nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-L.nii')

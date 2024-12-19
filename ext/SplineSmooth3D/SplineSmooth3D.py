@@ -362,7 +362,7 @@ class SplineSmooth3D(object):
     
   def solve(self,Lambda=None, mincLambda=None, voxelsLambda=None,
             reportingLevel=0):
-    """determine paramters for current data fit
+    """determine parameters for current data fit
 
     solve will update the currently fitted parameters, if necessary
     running `fit()` first. It can be re-run with different Lambda
@@ -1112,7 +1112,7 @@ class SplineSmooth3DUnregularized(SplineSmooth3D):
 
   def solve(self, reportingLevel=0,
             Lambda=None, mincLambda=None, voxelsLambda=None):
-    """determine paramters for current data fit
+    """determine parameters for current data fit
 
     solve will update the currently fitted parameters, if necessary
     running `fit()` first. Lambda only accepted for compatibility with
