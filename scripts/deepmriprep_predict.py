@@ -12,6 +12,7 @@ warnings.filterwarnings("ignore")
 
 from tqdm import tqdm
 from deepbet import BrainExtraction
+from deepbet.utils import reoriented_nifti
 from deepmriprep.preprocess import Preprocess
 from deepmriprep.segment import BrainSegmentation, scale_intensity
 from deepmriprep.utils import (DEVICE, DATA_PATH, nifti_to_tensor, unsmooth_kernel, nifti_volume)
@@ -28,8 +29,8 @@ from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
 from lab2im import utils as tools
 from lab2im import edit_volumes
-
-def get_bias_field(brain, mask):
+    
+def correct_bias_field(brain, seg):
 
     # Defaults
     subdivide = True
@@ -46,6 +47,12 @@ def get_bias_field(brain, mask):
 
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
     brain0 = brain.get_fdata()
+    
+    # either use defined mask or use values > 0 of brain data
+    if seg is not None:
+        mask = (seg.get_fdata() > 2.5)
+    else:
+        mask = (brain0 > 0.0)
       
     if subsamp :
         # Can't use offset != 0 yet, as the spline smoother takes voxel positions
@@ -168,12 +175,14 @@ def get_bias_field(brain, mask):
     predictor.P = splsm3d.P
     bfieldlog = predictor.predict()
     
-    bias = np.exp(bfieldlog)
+    bias0 = np.exp(bfieldlog)
 
     # apply nu-correction
-    tissue_idx = bias != 0 
-    brain0[tissue_idx] /= bias[tissue_idx]
+    tissue_idx = bias0 != 0
+    brain0[tissue_idx] /= bias0[tissue_idx]
+
     brain = nib.Nifti1Image(brain0, brain.affine, brain.header)
+    bias  = nib.Nifti1Image(bias0,  brain.affine, brain.header)
     
     return bias, brain
 
@@ -208,7 +217,7 @@ def run_segment():
     use_amap = args.amap
     amapdir = args.amapdir
 
-    out_name = os.path.basename(t1_name).replace('.nii', '')
+    out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '')
     t1 = nib.load(t1_name)
     no_gpu = True
     target_res = np.array([0.5]*3)
@@ -246,24 +255,21 @@ def run_segment():
     
     if (use_amap):
         print('Fine Amap segmentation')
-        wm_large = (p0_large.get_fdata() > 2.5)
-        bias, brain_large = get_bias_field(brain_large, wm_large)
+        bias, brain_large = correct_bias_field(brain_large, p0_large)
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
-        cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
+        cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
         os.system(cmd)
         p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
         p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
         p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
+
+        warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
         p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-        p3_affine = F.interpolate(nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-        warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
-
-        p1_affine = nib.Nifti1Image(p1_affine, warp_template.affine, warp_template.header)
-        p2_affine = nib.Nifti1Image(p2_affine, warp_template.affine, warp_template.header)
-        p3_affine = nib.Nifti1Image(p3_affine, warp_template.affine, warp_template.header)
-
+        p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
+        p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
+        
         wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
         wj_affine = pd.Series([wj_affine])
     else:
@@ -275,6 +281,11 @@ def run_segment():
         p1_affine = output_nogm['p1_affine']
         p2_affine = output_nogm['p2_affine']
         wj_affine = output_nogm['wj_affine']
+
+        nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
+        nib.save(p1_large, f'{out_dir}/{out_name}_label-GM_probseg.nii')
+        nib.save(p2_large, f'{out_dir}/{out_name}_label-WM_probseg.nii')
+        nib.save(p3_large, f'{out_dir}/{out_name}_label-CSF_probseg.nii')
 
     print('Warping')
     output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)

@@ -24,35 +24,34 @@
 ########################################################
 
 # output colors
+UNDERLINE=$(tput smul)
+YELLOW=$(tput setaf 3)
+GREEN=$(tput setaf 2)
+BLACK=$(tput setaf 0)
 CYAN=$(tput setaf 6)
 PINK=$(tput setaf 5)
 BLUE=$(tput setaf 4)
-YELLOW=$(tput setaf 3)
-GREEN=$(tput setaf 2)
 RED=$(tput setaf 1)
-BLACK=$(tput setaf 0)
-NC=$(tput sgr0)
 BOLD=$(tput bold)
-UNDERLINE=$(tput smul)
+NC=$(tput sgr0)
 
 # defaults
-T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
+T1prep_dir=$(dirname $(dirname "$0"))
+bin_dir="/usr/local/bin"
 NUMBER_OF_JOBS=-1
 use_bids_naming=0
-median_filter=2
+thickness_fwhm=8
+median_filter=4
 estimate_surf=1
 min_thickness=1
 registration=0 # currently skip spherical registration to save time
-post_fwhm=2
-pre_fwhm=2
+post_fwhm=1
+pre_fwhm=4
 use_sanlm=0
 use_amap=0
-bin_dir="/usr/local/bin"
 thresh=0.5
 debug=0
-sub=64
-las=0
 
 
 ########################################################
@@ -114,6 +113,11 @@ parse_args ()
                 post_fwhm=$optarg
                 shift
                 ;;
+            --thickness-fwhm)
+                exit_if_empty "$optname" "$optarg"
+                thickness_fwhm=$optarg
+                shift
+                ;;
             --min-thickness)
                 exit_if_empty "$optname" "$optarg"
                 min_thickness=$optarg
@@ -139,19 +143,14 @@ parse_args ()
                 NUMBER_OF_JOBS="$optarg"
                 shift
                 ;; 
-            --sub)
-                exit_if_empty "$optname" "$optarg"
-                sub="$optarg"
-                shift
-                ;; 
             --no-surf)
                 estimate_surf=0
                 ;;
             --amap)
                 use_amap=1
                 ;;
-            --no-sanlm)
-                use_sanlm=0
+            --sanlm)
+                use_sanlm=1
                 ;;
             --bids)
                 use_bids_naming=1
@@ -359,8 +358,7 @@ surface_estimation() {
     
     if [ -f "${outmridir}/${!hemi}" ]; then
         echo Calculate $side thickness
-        #${bin_dir}/CAT_VolThicknessPbt -weight-thickness -no-thin-cortex -min-thickness ${min_thickness} -fwhm 4 ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
-        ${bin_dir}/CAT_VolThicknessPbt -min-thickness ${min_thickness} -fwhm 4 ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+        ${bin_dir}/CAT_VolThicknessPbt -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
         # average between original and smoothed images based on their distance to 
@@ -581,11 +579,13 @@ process ()
             [ -f "${outmridir}/${seg}" ] && rm "${outmridir}/${seg}"
             
             # only remove temporary files if surfaces exist
-            if [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
-                [ -f "${outsurfdir}/${pbt_left}" ] && rm "${outsurfdir}/${pbt_left}"
+            if  [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
                 [ -f "${outmridir}/${hemi_left}" ] && rm "${outmridir}/${hemi_left}"
-                [ -f "${outmridir}/${ppm_left}" ] && rm "${outmridir}/${ppm_left}"
-                [ -f "${outmridir}/${gmt_left}" ] && rm "${outmridir}/${gmt_left}"
+                [ -f "${outmridir}/${ppm_left}" ]  && rm "${outmridir}/${ppm_left}"
+                [ -f "${outmridir}/${gmt_left}" ]  && rm "${outmridir}/${gmt_left}"
+                [ -f "${outmridir}/${hemi_right}" ] && rm "${outmridir}/${hemi_right}"
+                [ -f "${outmridir}/${ppm_right}" ]  && rm "${outmridir}/${ppm_right}"
+                [ -f "${outmridir}/${gmt_right}" ]  && rm "${outmridir}/${gmt_right}"
             fi
         fi
 
@@ -618,23 +618,24 @@ cat <<__EOM__
 
 USAGE:
   T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder]
-                    [--no-sanlm] [--no-surf] [--nproc number_of_processes] 
-                    [--bids] [--sub subsampling] [--debug] filenames 
+                    [--pre-fwhm pre_fwhm] [--post-fwhm post_fwhm] [--thickness-fwhm thickness_fwm]
+                    [--sanlm] [--no-surf] [--nproc number_of_processes]  
+                    [--bids] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
   --out-dir <DIR>            output folder (default same folder)
   --bin-dir <DIR>            folder of CAT binaries (default $bin_dir)
   --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes (default $pre_fwhm). 
   --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes (default $post_fwhm). 
-  --thresh    <NUMBER>       Threshold (isovalue) for creating surface in CAT_VolMarchingCubes (default $thresh). 
-  --min-thickness <NUMBER>   Values below minimum thickness are set to zero and will be approximated
+  --thickness-fwhm <NUMBER>  FWHM size of volumetric thickness smoothing in CAT_VolThicknessPbt (default $thickness_fwhm). 
+  --thresh    <NUMBER>       threshold (isovalue) for creating surface in CAT_VolMarchingCubes (default $thresh). 
+  --min-thickness <NUMBER>   values below minimum thickness are set to zero and will be approximated
                              using the replace option in the vbdist method (default $min_thickness). 
-  --median-filter <NUMBER>   Specify how many times to apply a median filter to areas with
+  --median-filter <NUMBER>   specify how many times to apply a median filter to areas with
                              topology artifacts to reduce these artifacts.
   --nproc <NUMBER>           number of parallel jobs (=number of processors)
-  --sub <NUMBER>             subsampling for Amap segmentation (default $sub)
   --no-surf                  skip surface and thickness estimation
-  --no-sanlm                 skip denoising with SANLM-filter
+  --sanlm                    apply denoising with SANLM-filter
   --bids                     use BIDS naming of output files
   --debug                    keep temporary files for debugging
  
@@ -642,13 +643,13 @@ PURPOSE:
   Computational Anatomy Pipeline for structural MRI data 
 
 EXAMPLE
-  T1Prep.sh --outdir test_folder single_subj_T1.nii.
+  T1Prep.sh --out-dir test_folder single_subj_T1.nii.
   This command will extract segmentation and surface maps for single_subj_T1.nii. 
   Resuts will be saved in test_folder.
 
-  T1Prep.sh --target-res -1 --no-surf single_subj_T1.nii.
-  This command will extract segmentation maps for single_subj_T1.nii with
-  the original voxel size in the same folder.
+  T1Prep.sh --no-surf single_subj_T1.nii.
+  This command will extract segmentation maps for single_subj_T1.nii in the same 
+  folder.
 
 INPUT:
   nifti files
