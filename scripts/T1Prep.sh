@@ -321,16 +321,18 @@ get_no_of_cpus () {
 # progress bar
 ########################################################
 bar() {
-    # Usage: bar 1 100
-    #            ^----- Elapsed Percentage (0-100).
-    #               ^-- Total length in chars.
-    ((elapsed=$1*$2/100))
+    # Usage: bar 1 100 Name
+    #            ^--------- Elapsed Percentage (0-100).
+    #               ^------ Total length in chars.
+    #                   ^-- Name of process.
+    ((it=$1*100/$2))
+    ((elapsed=$1))
 
     # Create the bar with spaces.
     printf -v prog  "%${elapsed}s"
     printf -v total "%$(($2-elapsed))s"
-
-    printf '%s\r' "${prog// /■}${total} ${elapsed}%"
+    #printf '%s %s\r' "${prog// /■}${total} ${it}%" "${3}"
+    printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${3}"
 }
 
 ########################################################
@@ -342,6 +344,12 @@ surface_estimation() {
     outmridir=$2
     outsurfdir=$3
     registration=$4
+    ((side_count=$side))
+    if [ "${registration}" -eq 1 ]; then
+        ((end_count=10))
+    else
+        ((end_count=6))
+    fi
 
     # create dynamic variables
     pbt=pbt_$side
@@ -350,6 +358,8 @@ surface_estimation() {
     ppm=ppm_$side
     gmt=gmt_$side
     mid=mid_$side
+    pial=pial_$side
+    wm=wm_$side
     sphere=sphere_$side
     spherereg=spherereg_$side
     fshemi=$(echo "$side" | sed -e "s/left/lh/g" -e "s/right/rh/g")
@@ -357,7 +367,7 @@ surface_estimation() {
     Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
     
     if [ -f "${outmridir}/${!hemi}" ]; then
-        echo Calculate $side thickness
+        bar 2 $end_count "Calculate $side thickness         "
         ${bin_dir}/CAT_VolThicknessPbt -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
@@ -368,15 +378,25 @@ surface_estimation() {
         # -post-fwhm 1 -thresh 0.495
         # -post-fwhm 2 -thresh 0.490
         # -post-fwhm 3 -thresh 0.475
-        echo Extract $side surface
-        ${bin_dir}/CAT_VolMarchingCubes -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
-        echo Map $side thickness values
+        bar 4 $end_count "Extract $side surface             "
+        if [ "${debug}" -eq 0 ]; then
+            verbose=''
+        else 
+            verbose=' -verbose '
+        fi
+        ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
+
+        bar 6 $end_count "Map $side thickness values         "
         ${bin_dir}/CAT_3dVol2Surf -weighted_avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
-        ${bin_dir}/CAT_SurfDistance -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+        ${bin_dir}/CAT_SurfDistance -mean -position ${outmridir}/${!ppm} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+        
+        ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.5 &
+        ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5 &
+        wait
         if [ "${registration}" -eq 1 ]; then
-            echo Spherical inflation $side hemisphere
+            bar 8 $end_count "Spherical inflation $side hemisphere         "
             ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
-            echo Spherical registration $side hemisphere
+            bar 10 $end_count "Spherical registration $side hemisphere       "
             ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
         fi
     else
@@ -453,6 +473,10 @@ process ()
             ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
             mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
             mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+            pial_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pial.surf.gii/g")
+            pial_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pial.surf.gii/g")
+            wm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_wm.surf.gii/g")
+            wm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_wm.surf.gii/g")
             thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g")
             thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
             pbt_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pbt.txt/g")
@@ -482,6 +506,10 @@ process ()
             
             mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
             mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            pial_left=$(echo "lh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            pial_right=$(echo "rh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            wm_left=$(echo "lh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            wm_right=$(echo "rh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
             thick_left=$(echo "lh.thickness.${bn_gz}" | sed -e "s/.nii//g")
             thick_right=$(echo "rh.thickness.${bn_gz}" | sed -e "s/.nii//g")
             pbt_left=$(echo "lh.pbt.${bn_gz}" | sed -e "s/.nii//g")
@@ -514,7 +542,6 @@ process ()
         if [ "${use_sanlm}" -eq 1 ]; then
             echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}SANLM denoising${NC}"
-            echo -e "${BLUE}---------------------------------------------${NC}"
             ${bin_dir}/CAT_VolSanlm "${FILE}" "${outmridir}/${sanlm}"
             input="${outmridir}/${sanlm}"
         else
@@ -527,7 +554,6 @@ process ()
         if [ -f "${input}" ]; then
             echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Deepmriprep segmentation${NC}"
-            echo -e "${BLUE}---------------------------------------------${NC}"
                 if [ "${use_amap}" -eq 1 ]; then
                     amap=' --amap '
                 else amap=''
@@ -564,7 +590,6 @@ process ()
             # check for outputs from previous step
             echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Extracting surfaces${NC}"
-            echo -e "${BLUE}---------------------------------------------${NC}"
             for side in left right; do
                 surface_estimation $side $outmridir $outsurfdir $registration &
             done
@@ -580,12 +605,12 @@ process ()
             
             # only remove temporary files if surfaces exist
             if  [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
-                [ -f "${outmridir}/${hemi_left}" ] && rm "${outmridir}/${hemi_left}"
-                [ -f "${outmridir}/${ppm_left}" ]  && rm "${outmridir}/${ppm_left}"
-                [ -f "${outmridir}/${gmt_left}" ]  && rm "${outmridir}/${gmt_left}"
-                [ -f "${outmridir}/${hemi_right}" ] && rm "${outmridir}/${hemi_right}"
-                [ -f "${outmridir}/${ppm_right}" ]  && rm "${outmridir}/${ppm_right}"
-                [ -f "${outmridir}/${gmt_right}" ]  && rm "${outmridir}/${gmt_right}"
+                for files in hemi ppm gmt; do
+                    for side in left right; do
+                        rm_file=$files_$side
+                        [ -f "${!rm_file}" ] && rm "${!rm_file}"
+                    done
+                done
             fi
         fi
 
@@ -665,6 +690,7 @@ USED FUNCTIONS:
   CAT_VolMarchingCubes
   CAT_3dVol2Surf
   CAT_SurfDistance
+  CAT_Central2Pial
   ${cmd_dir}/deepmriprep_predict.py
   
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).
