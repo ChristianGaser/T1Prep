@@ -30,6 +30,29 @@ from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregula
 from lab2im import utils as tools
 from lab2im import edit_volumes
     
+def bar(elapsed, total, name):
+    """
+    Displays a progress bar.
+
+    Args:
+        elapsed (int): Elapsed progress count.
+        total (int): Total count.
+        name (str): Name of the process.
+
+    Usage:
+        bar(1, 100, "Name")
+    """
+    # Calculate percentage completion
+    it = elapsed * 100 // total
+
+    # Create the progress bar
+    prog = '■' * elapsed
+    remaining = ' ' * (total - elapsed)
+
+    # Print the progress bar with percentage and name
+    #print(f'{prog}{remaining} {it}% {name}\r', end='')
+    print(f'{prog}{remaining} {elapsed}/{total} {name}\r', end='')
+
 def correct_bias_field(brain, seg):
 
     # Defaults
@@ -226,23 +249,23 @@ def run_segment():
     vol, affine2, header2 = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
     t1 = nib.Nifti1Image(vol, affine2, header2)
     
-    print('Skull-stripping')
+    bar(1, 8, 'Skull-stripping               ')
     prep = Preprocess(no_gpu)
     output_bet = prep.run_bet(t1)
     brain = output_bet['brain']
     mask = output_bet['mask']
     
-    print('Affine registration')
+    bar(2, 8, 'Affine registration           ')
     output_aff = prep.run_affine_register(brain, mask)
     affine = output_aff['affine']
     brain_large = output_aff['brain_large']
     mask_large = output_aff['mask_large']
     
-    print('Segmentation')    
+    bar(3, 8, 'Segmentation                  ')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
 
-    print('Resampling')
+    bar(4, 8, 'Resampling                    ')
     header2, affine2 = get_resampled_header(brain.header, brain.affine, target_res)
     dim = header2['dim']
     shape = dim[1:4]
@@ -254,7 +277,7 @@ def run_segment():
     nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg.nii')
     
     if (use_amap):
-        print('Fine Amap segmentation')
+        bar(5, 8, 'Fine Amap segmentation')
         bias, brain_large = correct_bias_field(brain_large, p0_large)
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
@@ -273,7 +296,7 @@ def run_segment():
         wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
         wj_affine = pd.Series([wj_affine])
     else:
-        print('Fine Deepmriprep segmentation')
+        bar(5, 8, 'Fine Deepmriprep segmentation')
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
         p1_large = output_nogm['p1_large']
         p2_large = output_nogm['p2_large']
@@ -282,22 +305,17 @@ def run_segment():
         p2_affine = output_nogm['p2_affine']
         wj_affine = output_nogm['wj_affine']
 
-        nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
-        nib.save(p1_large, f'{out_dir}/{out_name}_label-GM_probseg.nii')
-        nib.save(p2_large, f'{out_dir}/{out_name}_label-WM_probseg.nii')
-        nib.save(p3_large, f'{out_dir}/{out_name}_label-CSF_probseg.nii')
-
-    print('Warping')
+    bar(6, 8, 'Warping                          ')
     output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
     warp_yx = output_reg['warp_yx']
     mwp1 = output_reg['mwp1']
     mwp2 = output_reg['mwp2']
 
-    print('Atlas creation')
+    bar(7, 8, 'Atlas creation                 ')
     atlas = get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large,'ibsr')
     lh, rh = get_partition(p0_large, atlas, 'ibsr')
 
-    print('Resampling')
+    bar(8, 8, 'Resampling                     ')
     vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
     vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
     nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-L.nii')
