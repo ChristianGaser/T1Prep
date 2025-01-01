@@ -18,7 +18,7 @@ from deepmriprep.segment import BrainSegmentation, scale_intensity
 from deepmriprep.utils import (DEVICE, DATA_PATH, nifti_to_tensor, unsmooth_kernel, nifti_volume)
 from deepmriprep.atlas import ATLASES, get_volumes, shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
-from scipy.ndimage import distance_transform_edt, binary_closing, binary_opening, binary_dilation, binary_erosion, grey_opening, grey_closing, gaussian_filter
+from scipy.ndimage import binary_dilation, generate_binary_structure
 
 # add main folder to python path and import ./ext/SynthSeg/predict_synthseg.py
 home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
@@ -27,8 +27,6 @@ sys.path.append(os.path.join(home, 'ext'))
 
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
-from lab2im import utils as tools
-from lab2im import edit_volumes
     
 def bar(elapsed, total, name):
     """
@@ -233,12 +231,11 @@ def run_segment():
     parser.add_argument('-i', '--input', help='Input file or folder', required=True, type=str, default=None)
     parser.add_argument('-o', '--outdir', help='Output folder', required=True, type=str, default=None)
     parser.add_argument("-a", '--amap', action="store_true", help="(optional) Use AMAP segmentation.")
-    parser.add_argument('-d', '--amapdir', help='Amap binary folder', required=True, type=str, default=None)
+    parser.add_argument('-d', '--amapdir', help='Amap binary folder', type=str, default=None)
     args = parser.parse_args()
     t1_name = args.input
     out_dir = args.outdir
     use_amap = args.amap
-    amapdir = args.amapdir
 
     out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '')
     t1 = nib.load(t1_name)
@@ -277,6 +274,7 @@ def run_segment():
     nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg.nii')
     
     if (use_amap):
+        amapdir = args.amapdir
         bar(5, 8, 'Fine Amap segmentation')
         bias, brain_large = correct_bias_field(brain_large, p0_large)
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
@@ -370,7 +368,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, tools.build_binary_structure(4, 3))
+    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(4, 3))
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["rLatVen"]) & \
                        ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -379,7 +377,7 @@ def get_partition(p0_large, atlas, atlas_name):
     wm = ((atlas >= regions["lThaPro"])  &  (atlas <= regions["lPal"])) | \
            (atlas == regions["lAcc"])    |  (atlas == regions["lVenDC"])
     # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, tools.build_binary_structure(4, 3)) | lateral_ventricle
+    wm = binary_dilation(wm, generate_binary_structure(4, 3)) | lateral_ventricle
 
     # CSF + BKG
     csf = (atlas == 0)                   |  (atlas == regions["lCbeWM"]) | \
@@ -400,7 +398,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, tools.build_binary_structure(4, 3))
+    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(4, 3))
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["lLatVen"]) & \
                        ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -409,7 +407,7 @@ def get_partition(p0_large, atlas, atlas_name):
     wm =  ((atlas >= regions["rThaPro"]) &  (atlas <= regions["rPal"])) | \
             (atlas == regions["rAcc"])   |  (atlas == regions["rVenDC"])
     # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, tools.build_binary_structure(4, 3)) | lateral_ventricle
+    wm = binary_dilation(wm, generate_binary_structure(4, 3)) | lateral_ventricle
 
     # CSF + BKG
     csf = ((atlas <= regions["lVenDC"])  & ~(atlas == regions["bCSF"])) | \
