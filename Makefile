@@ -30,6 +30,6 @@ zip: update clean
 cp_binaries: 
 	-@echo copy binaries
 	-@test ! -f ~/Dropbox/GitHub/CAT-Surface/build-*/Progs/*.o || rm ~/Dropbox/GitHub/CAT-Surface/build-*/Progs/*.o
-	-@for i in MacOS/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` MacOS/ ; done
+	-@for i in Linux/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` Linux/ ; done
 	-@for i in Windows/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-i586-mingw32/Progs/`basename $${i}` Windows/ ; done
-	-@for i in Linux/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` Linux/ ; done
+	-@for i in MacOS/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` MacOS/ ; done
