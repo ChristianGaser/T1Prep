@@ -278,21 +278,37 @@ check_python ()
 
 check_install ()
 {
-    $python -c "import deepmriprep" &>/dev/null
-        
-    if [ $? -ne 0 ]; then
-        echo "deepmriprep is NOT installed"
+    if [ -d ${T1prep_dir}/T1prep-env ]; then
         $python -m venv ${T1prep_dir}/T1prep-env
         source ${T1prep_dir}/T1prep-env/bin/activate
         $python -m pip install -U pip
-        $python -m pip install scipy torch deepbet torchreg requests deepmriprep
         
         $python -c "import deepmriprep" &>/dev/null
         if [ $? -gt 0 ]; then
-            echo "${RED}ERROR: Installation of deepmriprep not successful. 
-                Please install it manually${NC}"
-            exit 1
+            install_deepmriprep
         fi
+    else
+        install_deepmriprep
+    fi        
+}
+
+########################################################
+# install deepmriprep
+########################################################
+
+install_deepmriprep ()
+{
+    echo "Install deepmriprep"
+    $python -m venv ${T1prep_dir}/T1prep-env
+    source ${T1prep_dir}/T1prep-env/bin/activate
+    $python -m pip install -U pip
+    $python -m pip install scipy torch deepbet torchreg requests deepmriprep
+    
+    $python -c "import deepmriprep" &>/dev/null
+    if [ $? -gt 0 ]; then
+        echo "${RED}ERROR: Installation of deepmriprep not successful. 
+            Please install it manually${NC}"
+        exit 1
     fi
 }
 
