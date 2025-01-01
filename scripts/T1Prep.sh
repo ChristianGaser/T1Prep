@@ -36,8 +36,8 @@ BOLD=$(tput bold)
 NC=$(tput sgr0)
 
 # defaults
-surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
 T1prep_dir=$(dirname $(dirname "$0"))
+surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
 bin_dir="/usr/local/bin"
 NUMBER_OF_JOBS=-1
 use_bids_naming=0
@@ -48,11 +48,11 @@ min_thickness=1
 registration=0 # currently skip spherical registration to save time
 post_fwhm=1
 pre_fwhm=4
+do_install=0
 use_sanlm=0
 use_amap=0
 thresh=0.5
 debug=0
-
 
 ########################################################
 # run main
@@ -65,6 +65,7 @@ main ()
     parse_args ${1+"$@"}
     
     check_python
+    check_install
     check_files
     get_no_of_cpus
     process
@@ -93,6 +94,9 @@ parse_args ()
         paras="$paras $optname $optarg"
 
         case "$1" in
+            --install)
+                do_install=1
+                ;;
             --python)
                 exit_if_empty "$optname" "$optarg"
                 python=$optarg
@@ -142,7 +146,7 @@ parse_args ()
                 exit_if_empty "$optname" "$optarg"
                 NUMBER_OF_JOBS="$optarg"
                 shift
-                ;; 
+                ;;
             --no-surf)
                 estimate_surf=0
                 ;;
@@ -219,17 +223,13 @@ echo $NC
 
 check_python_cmd ()
 {
-    found=`which python 2>/dev/null`
-    if [ ! -n "$found" ]; then
-        found=`which python3 2>/dev/null`
-        if [ ! -n "$found" ]; then
-            echo "python or python3 not found. Please use '--python' flag to define python command"
-            exit 1
-        else
-            python=python3
-        fi
+    if command -v python3 &>/dev/null; then
+        python="python3"
+    elif command -v python &>/dev/null; then
+        python="python"
     else
-        python=python
+        echo "python or python3 not found. Please use '--python' flag to define python command and/or install python"
+        exit 1
     fi
 }
 
@@ -266,10 +266,33 @@ check_files ()
 
 check_python ()
 {
-    found=`which "${python}" 2>/dev/null`
-    if [ ! -n "$found" ]; then
+    if ! command -v "${python}" &>/dev/null; then
         echo "${RED}ERROR: $python not found${NC}"
         exit 1
+    fi
+}
+
+########################################################
+# check for installation
+########################################################
+
+check_install ()
+{
+    $python -c "import deepmriprep" &>/dev/null
+        
+    if [ $? -ne 0 ]; then
+        echo "deepmriprep is NOT installed"
+        $python -m venv ${T1prep_dir}/T1prep-env
+        source ${T1prep_dir}/T1prep-env/bin/activate
+        $python -m pip install -U pip
+        $python -m pip install scipy torch deepbet torchreg requests deepmriprep
+        
+        $python -c "import deepmriprep" &>/dev/null
+        if [ $? -gt 0 ]; then
+            echo "${RED}ERROR: Installation of deepmriprep not successful. 
+                Please install it manually${NC}"
+            exit 1
+        fi
     fi
 }
 
@@ -422,6 +445,11 @@ process ()
     # set overall starting time
     start0=$(date +%s)
 
+    # use defined environment
+    $python -m venv ${T1prep_dir}/T1prep-env
+    source ${T1prep_dir}/T1prep-env/bin/activate
+    python="${T1prep_dir}/T1prep-env/bin/python"
+
     i=0
     while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
 
@@ -558,7 +586,7 @@ process ()
                     amap=' --amap '
                 else amap=''
                 fi
-                "${python}" "${cmd_dir}/deepmriprep_predict.py" --amapdir ${bin_dir} ${amap} --input "${input}" \
+                "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} --input "${input}" \
                     --outdir "${outmridir}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
