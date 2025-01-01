@@ -60,6 +60,7 @@ def correct_bias_field(brain, seg):
     Returns:
         tuple: Bias field-corrected brain image and bias field.
     """
+    
     # Defaults
     subdivide = True
     accumulate = True
@@ -82,40 +83,130 @@ def correct_bias_field(brain, seg):
         mask = (seg.get_fdata() > 2.5)
     else:
         mask = (brain0 > 0.0)
-
+      
     # Subsampling for efficiency
-    if subsamp:
-        offset = 0 
-        dataSub = brain0[offset::subsamp, offset::subsamp, offset::subsamp]
-        mask = mask[offset::subsamp, offset::subsamp, offset::subsamp]
+    if subsamp :
+        offset = 0
+        dataSub = brain0[offset::subsamp,offset::subsamp,offset::subsamp]
+        mask = mask[offset::subsamp,offset::subsamp,offset::subsamp]
         dataSubVoxSize = dataVoxSize * subsamp
+    
+    dataSubVoxSize = 1 / (np.array(dataSub.shape) -1)
+    dataVoxSize = dataSubVoxSize / subsamp
 
     # Prepare data and parameters for bias correction
-    dataSubVoxSize = 1 / (np.array(dataSub.shape) - 1)
-    dataVoxSize = dataSubVoxSize / subsamp
     datalog = dataSub.astype(np.float32)
     datalog[mask] = np.log(datalog[mask])
     datalog[np.logical_not(mask)] = 0
+    datalogmasked = datalog[mask]
+    datafill = np.zeros_like(datalog)    
+    datalogmaskedcur = np.copy(datalogmasked)
 
-    # Initialize smoothing and interpolation tools
-    splsm3d = SplineSmooth3DUnregularized(datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=mask)
-    predictor = SplineSmooth3D(brain0, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False)
-
-    # Iteratively refine the bias correction field
-    controlField = None
+    # Descending FWHM scheme
+    levels=[ lvl for lvl in range(maxlevel) for _ in range(steps) ]
+    # At some point will have to generalise into fwhm and subdivision
+    # level scheme, at the moment it's either or:
+    if not subdivide:
+        levelfwhm = fwhm / (np.arange(maxlevel) + 1)
+    else:
+        levelfwhm = fwhm * np.ones(maxlevel)
+    
+    splsm3d = SplineSmooth3DUnregularized(datalog, dataSubVoxSize,
+                                            spacing, domainMethod="minc",
+                                            mask=mask)
+    
+    # Prediction interpolator
+    predictor = SplineSmooth3D(brain0, dataVoxSize,
+                               spacing, knts=splsm3d.kntsArr, dofit=False)
+    lastinterpbc = np.zeros(datalogmasked.shape[0])
+    datalogcur = np.copy(datalog)
+    nextlevel = 0
+    
+    controlField=None
     chosenkernelfn = kernelfntri
-    for N in tqdm(range(maxlevel * steps)):
-        hist, histvaledge, histval, histbinwidth = distrib_kde(datalog[mask], Nbins, kernfn=chosenkernelfn, binCentreLimits=bcl)
-        histfiltclip = np.clip(hist, 0, None)
-        uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval)
+    
+    for N in tqdm(range(len(levels))):
+        if levels[N] < nextlevel:
+          continue
+        
+        hist,histvaledge,histval,histbinwidth = \
+          distrib_kde(datalogmaskedcur, Nbins, kernfn=chosenkernelfn,
+                      binCentreLimits=bcl)
+        thisFWHM = levelfwhm[levels[N]] # * math.sqrt(8*math.log(2))
+        thisSD = thisFWHM /  math.sqrt(8*math.log(2))
+        mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
+    
+        histfilt = wiener_filter_withpad(hist, mfilt, mfiltmid, Z)
+        histfiltclip = np.clip(histfilt,0,None)
+    
+        uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval, mfilt, hist)
+        datalogmaskedupd = map_Eu_v(histval, uest, datalogmaskedcur)
+        if accumulate:
+          logbc = datalogmaskedcur - datalogmaskedupd
+        else:
+          logbc = datalogmasked - datalogmaskedupd
+        meanadj=True
+        if meanadj:
+          logbc = logbc - np.mean(logbc)
+        usegausspde=True
+    
+        # Need masking!
+        datafill[mask] = logbc
+        splsm3d.fit(datafill, reportingLevel=0)
+        logbcsmfull = splsm3d.predict()
+        logbcsm = logbcsmfull[mask]
+    
+        if accumulate:
+            logbcratio = logbcsm
+        else:
+            logbcratio = logbcsm - lastinterpbc
+            lastinterpbc = logbcsm
+            
+        bcratio = np.exp(logbcratio)
+        ratiomean = bcratio.mean()
+        ratiosd = bcratio.std()
+        conv = ratiosd / ratiomean
+    
+        if accumulate:
+            datalogmaskedcur = datalogmaskedcur - logbcsm
+            if controlField is None:
+                controlField  = splsm3d.P.copy()
+            else:
+                controlField += splsm3d.P
+        else:
+            datalogmaskedcur = datalogmasked - logbcsm
+            
+        datalogcur[mask] = datalogmaskedcur
+        if (conv < stopthr):
+            nextlevel = levels[N] + 1
+            
+        if subdivide and (N+1)<len(levels) and (nextlevel>levels[N] or levels[N+1] != levels[N]):
+            # Applies to both cumulative and normal iterative
+            # mode, in normal iterative mode we're just upgrading
+            # to a finer mesh for the following updates.
+            # In cumulative mode we first get the current cumulative
+            # estimate before refining.
+            if accumulate:
+                splsm3d.P = controlField
+            splsm3d = splsm3d.promote()
+            predictor = predictor.promote()
+            controlField = splsm3d.P
+    
+    if accumulate:
+        splsm3d.P = controlField
+    
+    predictor.P = splsm3d.P
 
     # Apply computed bias field correction
     bias0 = np.exp(predictor.predict())
+
+    # apply nu-correction
     tissue_idx = bias0 != 0
     brain0[tissue_idx] /= bias0[tissue_idx]
 
     brain = nib.Nifti1Image(brain0, brain.affine, brain.header)
-    bias = nib.Nifti1Image(bias0, brain.affine, brain.header)
+    bias  = nib.Nifti1Image(bias0,  brain.affine, brain.header)
+    
     return bias, brain
 
 def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, device='cpu'):
@@ -133,6 +224,7 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
     Returns:
         nibabel.Nifti1Image: Aligned atlas image.
     """
+
     # Extract headers and affine transformations
     header = p1_large.header
     transform = p1_large.affine
@@ -148,6 +240,8 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
     scaled_yx = F.interpolate(yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
 
     # Perform atlas registration
+    #warps = {}
+    #warps.update({shape: scaled_yx.permute(0, 2, 3, 4, 1)})
     warps = {shape: scaled_yx.permute(0, 2, 3, 4, 1)}
     atlas_register = AtlasRegistration()
     atlas = atlas_register(affine, warps[shape], atlas, t1.shape)
@@ -159,8 +253,9 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
 
     # Return the aligned atlas image
     return nib.Nifti1Image(atlas, transform, header)
-
+    
 def run_segment():
+
     """
     Perform brain segmentation on input medical image data using preprocessing, affine registration, and segmentation techniques.
 
@@ -194,80 +289,101 @@ def run_segment():
 
     # Set processing parameters
     no_gpu = True
-    target_res = np.array([0.5]*3)  # Target resolution for resampling
-
+    target_res = np.array([0.5]*3) # Target resolution for resampling
+    
     # Preprocess the input volume
     vol = t1.get_fdata()
     vol, affine2, header2 = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
     t1 = nib.Nifti1Image(vol, affine2, header2)
-
+    
     # Step 1: Skull-stripping
-    bar(1, 8, 'Skull-stripping    ')
+    bar(1, 8, 'Skull-stripping               ')
     prep = Preprocess(no_gpu)
     output_bet = prep.run_bet(t1)
     brain = output_bet['brain']
     mask = output_bet['mask']
-
+    
     # Step 2: Affine registration
-    bar(2, 8, 'Affine registration')
+    bar(2, 8, 'Affine registration           ')
     output_aff = prep.run_affine_register(brain, mask)
     affine = output_aff['affine']
     brain_large = output_aff['brain_large']
     mask_large = output_aff['mask_large']
-
+    
     # Step 3: Segmentation
-    bar(3, 8, 'Segmentation       ')
+    bar(3, 8, 'Segmentation                  ')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
 
     # Step 4: Resampling segmented volumes
-    bar(4, 8, 'Resampling          ')
+    bar(4, 8, 'Resampling                    ')
     header2, affine2 = get_resampled_header(brain.header, brain.affine, target_res)
     dim = header2['dim']
     shape = dim[1:4]
-    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
-    grid = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=True)
-
+    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())        
+    grid = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
+    
     # Apply grid sampling to resample segmentation
-    vol = F.grid_sample(nifti_to_tensor(p0_large)[None, None], grid, align_corners=True)[0, 0]
-    vol, tmp1, tmp2 = align_brain(vol.cpu().numpy(), affine2, header2, np.eye(4), 1)
+    vol = F.grid_sample(nifti_to_tensor(p0_large)[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
     nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg.nii')
-
+    
     # Conditional processing based on AMAP flag
-    if use_amap:
+    if (use_amap):
         # AMAP segmentation pipeline
         amapdir = args.amapdir
-        bar(5, 8, 'Fine AMAP segmentation')
+        bar(5, 8, 'Fine Amap segmentation')
         bias, brain_large = correct_bias_field(brain_large, p0_large)
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
-        cmd = os.path.join(amapdir, 'CAT_VolAmap') + f' -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 1 1 1 -label {out_dir}/{out_name}_seg_large.nii {out_dir}/{out_name}_brain_large.nii'
+        cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
         os.system(cmd)
 
         # Load probability maps for GM, WM, CSF
         p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
         p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
+        p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
+
+        warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
+        p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
+        p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
+        
+        wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
+        wj_affine = pd.Series([wj_affine])
     else:
         # DeepMRI prep segmentation pipeline
         bar(5, 8, 'Fine Deepmriprep segmentation')
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
         p1_large = output_nogm['p1_large']
         p2_large = output_nogm['p2_large']
+        p3_large = output_nogm['p3_large']
+        p1_affine = output_nogm['p1_affine']
+        p2_affine = output_nogm['p2_affine']
+        wj_affine = output_nogm['wj_affine']
 
     # Step 6: Warping
-    bar(6, 8, 'Warping                    ')
-    output_reg = prep.run_warp_register(p0_large, p1_large, p2_large)
+    bar(6, 8, 'Warping                          ')
+    output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
+    warp_yx = output_reg['warp_yx']
+    mwp1 = output_reg['mwp1']
+    mwp2 = output_reg['mwp2']
 
     # Step 7: Atlas creation
-    bar(7, 8, 'Atlas creation             ')
-    atlas = get_atlas(t1, affine, output_reg['warp_yx'], p1_large, p2_large, None, 'ibsr')
+    bar(7, 8, 'Atlas creation                 ')
+    atlas = get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large,'ibsr')
     lh, rh = get_partition(p0_large, atlas, 'ibsr')
 
     # Step 8: Save hemisphere outputs
-    bar(8, 8, 'Resampling                  ')
-    vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=True)[0, 0]
-    vol, tmp1, tmp2 = align_brain(vol.cpu().numpy(), affine2, header2, np.eye(4), 1)
+    bar(8, 8, 'Resampling                     ')
+    vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
     nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-L.nii')
+
+    vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(rh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
+    nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-R.nii')
 
 def get_resampled_header(header, aff, new_vox_size):
     """
@@ -285,6 +401,7 @@ def get_resampled_header(header, aff, new_vox_size):
     tuple:
         Updated header and affine transformation matrix.
     """
+
     header2 = header.copy()
     
     # Update dimensions and pixel sizes
@@ -295,9 +412,10 @@ def get_resampled_header(header, aff, new_vox_size):
     dim[1:4] = np.round(dim[1:4]*factor)
     
     header2['dim'] = dim
+
     pixdim[1:4] = new_vox_size
     header2['pixdim'] = pixdim
-
+    
     # Update affine matrix to match new voxel size
     aff2 = aff.copy()
     for c in range(3):
@@ -313,7 +431,7 @@ def get_resampled_header(header, aff, new_vox_size):
     header2['qoffset_z'] = aff2[2,3]
 
     return header2, aff2
-        
+    
 def get_partition(p0_large, atlas, atlas_name):
     """
     Partition the input volume into left and right hemispheres with labels for CSF, GM, and WM.
@@ -330,6 +448,7 @@ def get_partition(p0_large, atlas, atlas_name):
     tuple:
         Left hemisphere (lh) and right hemisphere (rh) labeled volumes.
     """
+
     rois = pd.read_csv(f'{DATA_PATH}/templates/{atlas_name}.csv', sep=';')[['ROIid', 'ROIabbr']]
     regions = dict(zip(rois.ROIabbr,rois.ROIid))
 
@@ -340,16 +459,15 @@ def get_partition(p0_large, atlas, atlas_name):
     # a rim around it
     lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
     lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 2)
-    
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["rLatVen"]) & \
                        ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) & \
                        ~(atlas == regions["lAmy"]) & ~(atlas == regions["lHip"])
-    # WM 
+    #WM 
     wm = ((atlas >= regions["lThaPro"])  &  (atlas <= regions["lPal"])) | \
            (atlas == regions["lAcc"])    |  (atlas == regions["lVenDC"])
     # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, generate_binary_structure(3, 3), 1) | lateral_ventricle
+    wm = binary_dilation(wm, generate_binary_structure(3, 3), 2) | lateral_ventricle
 
     # CSF + BKG
     csf = (atlas == 0)                   |  (atlas == regions["lCbeWM"]) | \
@@ -371,7 +489,6 @@ def get_partition(p0_large, atlas, atlas_name):
     # a rim around it
     lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
     lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 2)
-    
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["lLatVen"]) & \
                        ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -380,7 +497,7 @@ def get_partition(p0_large, atlas, atlas_name):
     wm =  ((atlas >= regions["rThaPro"]) &  (atlas <= regions["rPal"])) | \
             (atlas == regions["rAcc"])   |  (atlas == regions["rVenDC"])
     # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, generate_binary_structure(3, 3), 1) | lateral_ventricle
+    wm = binary_dilation(wm, generate_binary_structure(3, 3), 2) | lateral_ventricle
 
     # CSF + BKG
     csf = ((atlas <= regions["lVenDC"])  & ~(atlas == regions["bCSF"])) | \
@@ -389,7 +506,7 @@ def get_partition(p0_large, atlas, atlas_name):
     csf = (atlas == 0)                   |  (atlas == regions["rCbeWM"]) | \
            (atlas == regions["rCbeGM"])  |  (atlas == regions["b3thVen"]) | \
            (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) | \
-           (atlas <= regions["lAmy"])    |  (atlas == regions["lVenDC"]) | (atlas == regions["lAcc"]) 
+           (atlas <= regions["lAmy"])    | (atlas == regions["lVenDC"]) | (atlas == regions["lAcc"]) 
 
     lesion_mask = atlas == regions["rCbrWM"]
 
@@ -449,7 +566,7 @@ def align_brain(data, aff, header, aff_ref, do_flip):
     align_ax = [np.where(ras_aff == axis)[0][0] for axis in ras_ref]
     aligned_data = np.transpose(data, axes=align_ax)
 
-    # Step 3: Flip image axes if necessary
+    # Step 5: Flip image axes if necessary
     if do_flip:
         dot_products = np.sum(aff[:dim, :dim] * aff_ref[:dim, :dim], axis=0)
         for i in range(dim):

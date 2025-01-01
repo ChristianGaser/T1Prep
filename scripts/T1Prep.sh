@@ -281,7 +281,7 @@ check_install ()
     if [ -d ${T1prep_dir}/T1prep-env ]; then
         $python -m venv ${T1prep_dir}/T1prep-env
         source ${T1prep_dir}/T1prep-env/bin/activate
-        $python -m pip install -U pip
+        $python -m pip install -U pip &>/dev/null
         
         $python -c "import deepmriprep" &>/dev/null
         if [ $? -gt 0 ]; then
