@@ -4,6 +4,7 @@ models/
 .DS_Store
 *.nii
 test.py
+T1prep-env
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
