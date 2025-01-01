@@ -38,7 +38,6 @@ NC=$(tput sgr0)
 # defaults
 T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
-bin_dir="/usr/local/bin"
 NUMBER_OF_JOBS=-1
 use_bids_naming=0
 thickness_fwhm=8
@@ -68,6 +67,7 @@ main ()
     check_install
     check_files
     get_no_of_cpus
+    get_OS
     process
 
     exit 0
@@ -302,7 +302,7 @@ install_deepmriprep ()
     $python -m venv ${T1prep_dir}/T1prep-env
     source ${T1prep_dir}/T1prep-env/bin/activate
     $python -m pip install -U pip
-    $python -m pip install scipy torch deepbet torchreg requests deepmriprep
+    $python -m pip install scipy torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep
     
     $python -c "import deepmriprep" &>/dev/null
     if [ $? -gt 0 ]; then
@@ -354,6 +354,41 @@ get_no_of_cpus () {
             NUMBER_OF_JOBS=$NUMBER_OF_PROC
         fi
     fi
+}
+
+########################################################
+# get OS
+########################################################
+
+get_OS () {
+
+    # Determine OS type
+    os_type=$(uname -s)
+    
+    # Determine CPU architecture
+    cpu_arch=$(uname -m)
+
+    case "$os_type" in
+        Linux*)     
+            bin_dir="${T1prep_dir}/Linux"
+            ;;
+        Darwin*)    
+            if [[ "$cpu_arch" == arm64 ]]; then 
+                bin_dir="${T1prep_dir}/MacOS"
+            else 
+                echo "MacOS Intel not supported anymore"
+                exit 1
+            fi
+            ;;
+        CYGWIN*|MINGW32*|MSYS*|MINGW*) 
+            bin_dir="${T1prep_dir}/Windows"
+            ;;
+        *)
+            echo "Unknown OS system"
+            exit 1
+            ;;
+    esac
+    
 }
 
 ########################################################
@@ -693,7 +728,6 @@ USAGE:
  
   --python <FILE>            python command (default $python)
   --out-dir <DIR>            output folder (default same folder)
-  --bin-dir <DIR>            folder of CAT binaries (default $bin_dir)
   --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes (default $pre_fwhm). 
   --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes (default $post_fwhm). 
   --thickness-fwhm <NUMBER>  FWHM size of volumetric thickness smoothing in CAT_VolThicknessPbt (default $thickness_fwhm). 
@@ -729,7 +763,7 @@ OUTPUT:
 
 USED FUNCTIONS:
   CAT_VolAmap
-  CAT_Sanlm
+  CAT_VolSanlm
   CAT_VolThicknessPbt
   CAT_VolMarchingCubes
   CAT_3dVol2Surf
