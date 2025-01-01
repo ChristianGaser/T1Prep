@@ -8,9 +8,13 @@ import numpy as np
 import pandas as pd
 import warnings
 
+# Suppress warnings
 warnings.filterwarnings("ignore")
 
+# Progress bar utility
 from tqdm import tqdm
+
+# Import deep learning and image processing utilities
 from deepbet import BrainExtraction
 from deepbet.utils import reoriented_nifti
 from deepmriprep.preprocess import Preprocess
@@ -20,11 +24,12 @@ from deepmriprep.atlas import ATLASES, get_volumes, shape_from_to, AtlasRegistra
 from torchreg.utils import INTERP_KWARGS
 from scipy.ndimage import binary_dilation, generate_binary_structure
 
-# add main folder to python path and import ./ext/SynthSeg/predict_synthseg.py
+# Add external modules to Python path
 home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
 sys.path.append(home)
 sys.path.append(os.path.join(home, 'ext'))
 
+# Import additional processing tools
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
     
@@ -52,7 +57,17 @@ def bar(elapsed, total, name):
     print(f'{prog}{remaining} {elapsed}/{total} {name}\r', end='')
 
 def correct_bias_field(brain, seg):
+    """
+    Applies bias field correction to an input brain image.
 
+    Args:
+        brain (nibabel.Nifti1Image): Input brain image.
+        seg (nibabel.Nifti1Image): Segmentation mask.
+
+    Returns:
+        tuple: Bias field-corrected brain image and bias field.
+    """
+    
     # Defaults
     subdivide = True
     accumulate = True
@@ -66,6 +81,7 @@ def correct_bias_field(brain, seg):
     stopthr = 1e-4
     spacing = 1
 
+    # Process voxel sizes and mask for brain segmentation
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
     brain0 = brain.get_fdata()
     
@@ -368,7 +384,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(4, 3))
+    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 2)
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["rLatVen"]) & \
                        ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -377,7 +393,7 @@ def get_partition(p0_large, atlas, atlas_name):
     wm = ((atlas >= regions["lThaPro"])  &  (atlas <= regions["lPal"])) | \
            (atlas == regions["lAcc"])    |  (atlas == regions["lVenDC"])
     # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, generate_binary_structure(4, 3)) | lateral_ventricle
+    wm = binary_dilation(wm, generate_binary_structure(3, 3), 2) | lateral_ventricle
 
     # CSF + BKG
     csf = (atlas == 0)                   |  (atlas == regions["lCbeWM"]) | \
@@ -398,7 +414,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(4, 3))
+    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 2)
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["lLatVen"]) & \
                        ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -407,7 +423,7 @@ def get_partition(p0_large, atlas, atlas_name):
     wm =  ((atlas >= regions["rThaPro"]) &  (atlas <= regions["rPal"])) | \
             (atlas == regions["rAcc"])   |  (atlas == regions["rVenDC"])
     # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, generate_binary_structure(4, 3)) | lateral_ventricle
+    wm = binary_dilation(wm, generate_binary_structure(3, 3), 2) | lateral_ventricle
 
     # CSF + BKG
     csf = ((atlas <= regions["lVenDC"])  & ~(atlas == regions["bCSF"])) | \
