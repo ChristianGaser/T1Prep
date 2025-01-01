@@ -23,13 +23,6 @@ from deepmriprep.utils import (DEVICE, DATA_PATH, nifti_to_tensor, unsmooth_kern
 from deepmriprep.atlas import ATLASES, get_volumes, shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
 from scipy.ndimage import binary_dilation, generate_binary_structure
-
-# Add external modules to Python path
-home = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
-sys.path.append(home)
-sys.path.append(os.path.join(home, 'ext'))
-
-# Import additional processing tools
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
     
@@ -347,15 +340,16 @@ def get_partition(p0_large, atlas, atlas_name):
     # a rim around it
     lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
     lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 2)
+    
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["rLatVen"]) & \
                        ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) & \
                        ~(atlas == regions["lAmy"]) & ~(atlas == regions["lHip"])
-    #WM 
+    # WM 
     wm = ((atlas >= regions["lThaPro"])  &  (atlas <= regions["lPal"])) | \
            (atlas == regions["lAcc"])    |  (atlas == regions["lVenDC"])
     # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, generate_binary_structure(3, 3), 2) | lateral_ventricle
+    wm = binary_dilation(wm, generate_binary_structure(3, 3), 1) | lateral_ventricle
 
     # CSF + BKG
     csf = (atlas == 0)                   |  (atlas == regions["lCbeWM"]) | \
@@ -377,6 +371,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # a rim around it
     lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
     lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 2)
+    
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["lLatVen"]) & \
                        ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -385,7 +380,7 @@ def get_partition(p0_large, atlas, atlas_name):
     wm =  ((atlas >= regions["rThaPro"]) &  (atlas <= regions["rPal"])) | \
             (atlas == regions["rAcc"])   |  (atlas == regions["rVenDC"])
     # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, generate_binary_structure(3, 3), 2) | lateral_ventricle
+    wm = binary_dilation(wm, generate_binary_structure(3, 3), 1) | lateral_ventricle
 
     # CSF + BKG
     csf = ((atlas <= regions["lVenDC"])  & ~(atlas == regions["bCSF"])) | \
@@ -394,7 +389,7 @@ def get_partition(p0_large, atlas, atlas_name):
     csf = (atlas == 0)                   |  (atlas == regions["rCbeWM"]) | \
            (atlas == regions["rCbeGM"])  |  (atlas == regions["b3thVen"]) | \
            (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) | \
-           (atlas <= regions["lAmy"])    | (atlas == regions["lVenDC"]) | (atlas == regions["lAcc"]) 
+           (atlas <= regions["lAmy"])    |  (atlas == regions["lVenDC"]) | (atlas == regions["lAcc"]) 
 
     lesion_mask = atlas == regions["rCbrWM"]
 
