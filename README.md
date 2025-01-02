@@ -1,41 +1,37 @@
-# T1Prep: T1 PREProcessing pipeline (aka DeepCAT)
+# T1Prep: T1 PREProcessing Pipeline (aka DeepCAT)
 
-T1Prep is a pipeline designed to preprocess T1-weighted MRI images for segmentation and cortical surface extraction. It provides a comprehensive suite of tools to handle and process MRI data efficiently.
+T1Prep is a pipeline designed for the preprocessing of T1-weighted MRI images, facilitating segmentation and cortical surface extraction. This tool provides a comprehensive suite of utilities to efficiently manage and process MRI data.
 
-The segmentation is based on [deepmriprep](https://github.com/wwu-mmll/deepmriprep), which mimics CAT12 using deep-learning based processing of MRI data: Lukas Fisch et al. deepmriprep: Voxel-based Morphometry (VBM) Preprocessing via Deep Neural Networks. arXiv. https://doi.org/10.48550/arXiv.2408.10656
+The segmentation leverages [deepmriprep](https://github.com/wwu-mmll/deepmriprep), which employs deep-learning techniques to mimic the capabilities of CAT12 in processing MRI data. For more details, see: Lukas Fisch et al., "deepmriprep: Voxel-based Morphometry (VBM) Preprocessing via Deep Neural Networks," available on arXiv at https://doi.org/10.48550/arXiv.2408.10656.
 
-The surface creation and thickness estimation is based on the [Cortex Analysis Tools for Surface](https://github.com/ChristianGaser/CAT-Surface). which are also part of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12).
+Surface creation and thickness estimation are performed using the [Cortex Analysis Tools for Surface](https://github.com/ChristianGaser/CAT-Surface), also integral to the [CAT12 toolbox](https://github.com/ChristianGaser/cat12).
 
-## Main differences to CAT12
-- **Code is purely written in python and c and no Matlab license is necessary anymore
-- **No support yet for longitduinal pipelines
+## Main Differences to CAT12
 
-## Features
-
-- **Segmentation and Surface Extraction:** Automates the processing of MRI images to extract segmentation maps and cortical surfaces.
-- **Multiple Input Formats:** Supports `.nii` and `.nii.gz` formats.
+- Implemented purely in Python and C, eliminating the need for a Matlab license.
+- Currently does not support longitudinal pipelines.
 
 ## Usage
 
+```bash
 ./T1Prep.sh [options] file1.nii file2.nii ...
 
 ## Options
-  --python <FILE>            python command
-  --out-dir <DIR>            output folder (default same folder)
-  --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes. 
-  --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes. 
-  --thickness-fwhm <NUMBER>  FWHM size of volumetric thickness smoothing in CAT_VolThicknessPbt. 
-  --thresh    <NUMBER>       threshold (isovalue) for creating surface in CAT_VolMarchingCubes. 
-  --min-thickness <NUMBER>   values below minimum thickness are set to zero and will be approximated
-                             using the replace option in the vbdist method. 
-  --median-filter <NUMBER>   specify how many times to apply a median filter to areas with
-                             topology artifacts to reduce these artifacts.
-  --no-surf                  skip surface and thickness estimation
-  --no-mwp                   skip estimation of modulated and warped segmentations
-  --rp                       additionally estimate affine registered segmentations
-  --sanlm                    apply denoising with SANLM-filter
-  --bids                     use BIDS naming of output files
-  --debug                    keep temporary files for debugging
+
+- `--python <FILE>`: Specify the Python command.
+- `--out-dir <DIR>`: Define the output directory (default is the same folder as the input files).
+- `--pre-fwhm <NUMBER>`: Set the FWHM size for pre-smoothing in CAT_VolMarchingCubes.
+- `--post-fwhm <NUMBER>`: Set the FWHM size for post-smoothing in CAT_VolMarchingCubes.
+- `--thickness-fwhm <NUMBER>`: Define the FWHM size for volumetric thickness smoothing in CAT_VolThicknessPbt.
+- `--thresh <NUMBER>`: Set the threshold (isovalue) for creating surfaces in CAT_VolMarchingCubes.
+- `--min-thickness <NUMBER>`: Values below the minimum thickness are set to zero and approximated using the replace option in the vbdist method.
+- `--median-filter <NUMBER>`: Specify how many times to apply a median filter to areas with topology artifacts to reduce these artifacts.
+- `--no-surf`: Skip surface and thickness estimation.
+- `--no-mwp`: Skip estimation of modulated and warped segmentations.
+- `--rp`: Additionally estimate affine registered segmentations.
+- `--sanlm`: Apply denoising with the SANLM-filter.
+- `--bids`: Use BIDS naming for output files.
+- `--debug`: Keep temporary files for debugging purposes.
 
 ## Example
 ```bash

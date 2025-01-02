@@ -1,7 +1,6 @@
 # custom
 .DS_Store
 log*
-models/
 *.nii
 test.py
 T1prep-env
@@ -9,3 +8,5 @@ MacOS
 Windows
 Linux
 
+BIDS-Naming.txt
+*.m
