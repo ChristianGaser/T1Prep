@@ -15,6 +15,7 @@ Surface creation and thickness estimation are performed using the [Cortex Analys
 
 ```bash
 ./T1Prep.sh [options] file1.nii file2.nii ...
+```
 
 ## Options
 
@@ -36,6 +37,7 @@ Surface creation and thickness estimation are performed using the [Cortex Analys
 ## Example
 ```bash
 ./T1Prep.sh --out-dir output_folder --no-surf image1.nii
+```
 
 ## Input
 Files: T1-weighted MRI images in NIfTI format.
