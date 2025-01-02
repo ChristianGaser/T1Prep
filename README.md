@@ -23,11 +23,11 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 - `--pre-fwhm <NUMBER>`: Set the FWHM size for pre-smoothing in CAT_VolMarchingCubes.
 - `--post-fwhm <NUMBER>`: Set the FWHM size for post-smoothing in CAT_VolMarchingCubes.
 - `--thickness-fwhm <NUMBER>`: Set the FWHM size for volumetric thickness smoothing in CAT_VolThicknessPbt.
-- Threshold <NUMBER>: Set the threshold (isovalue) for surface generation in CAT_VolMarchingCubes.
+- '--thresh <NUMBER>': Set the threshold (isovalue) for surface generation in CAT_VolMarchingCubes.
 - `--min-thickness <NUMBER>`: Values below the minimum thickness are set to zero and approximated using the replace option in the vbdist method.
 - `--median-filter <NUMBER>': Specify the number of times a median filter should be applied to regions with topology artifacts to reduce these artifacts.
-- no-surf`: Skip surface and thickness estimation.
-- no-mwp`: Skip modulated and warped segmentation estimation.
+- '--no-surf`: Skip surface and thickness estimation.
+- '--no-mwp`: Skip modulated and warped segmentation estimation.
 - `--rp`: Additionally estimate affine registered segmentations.
 - `--sanlm`: Apply denoising with the SANLM filter.
 - `--bids`: Use BIDS naming for output files.
