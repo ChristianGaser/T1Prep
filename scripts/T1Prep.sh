@@ -594,7 +594,7 @@ process ()
         # check for outputs from previous step
         if [ -f "${input}" ]; then
             echo -e "${BLUE}---------------------------------------------${NC}"
-            echo -e "${BLUE}Deepmriprep segmentation${NC}"
+            echo -e "${BLUE}Segmentation${NC}"
                 if [ "${use_amap}" -eq 1 ]; then
                     amap=' --amap '
                 else amap=''
@@ -699,9 +699,9 @@ help ()
 cat <<__EOM__
 
 USAGE:
-  T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder]
+  T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder] [--amap]
                     [--thickness-fwhm thickness_fwm] [--sanlm] [--no-surf] [--no-mwp] [--rp]
-                    [--pre-fwhm pre_fwhm] [--post-fwhm post_fwhm] 
+                    [--pre-fwhm pre_fwhm] [--post-fwhm post_fwhm]  
                     [--bids] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
@@ -718,6 +718,7 @@ USAGE:
   --no-mwp                   skip estimation of modulated and warped segmentations
   --rp                       additionally estimate affine registered segmentations
   --sanlm                    apply denoising with SANLM-filter
+  --amap                     use segmentation from AMAP instead of deepmriprep
   --bids                     use BIDS naming of output files
   --debug                    keep temporary files for debugging
  

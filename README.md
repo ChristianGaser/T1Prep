@@ -32,6 +32,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 - `--no-mwp`: Skip modulated and warped segmentation estimation.
 - `--rp`: Additionally estimate affine registered segmentations.
 - `--sanlm`: Apply denoising with the SANLM filter.
+- `--amap`: Use segmentation from AMAP instead of deepmriprep
 - `--bids`: Use BIDS naming for output files.
 - `--debug`: Keep temporary files for debugging.
 
