@@ -3,7 +3,7 @@
 
 VERSION='0.9'
 
-FILES=data ext models scripts templates_surfaces_32k MacOS Linux WindowsLICENSE
+FILES=scripts templates_surfaces_32k MacOS Linux WindowsLICENSE
 
 ZIPFILE=T1prep_${VERSION}.zip
 
@@ -19,7 +19,7 @@ clean:
 	-@find . -type f \( -name "*.sh" \) -exec chmod a+x {} \;
 
 # zip release
-zip: update clean
+zip: clean
 	-@echo zip
 	-@test ! -d T1prep || rm -r T1prep
 	-@mkdir T1prep
