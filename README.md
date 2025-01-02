@@ -14,7 +14,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 
 ## Usage
 ```bash
-./T1Prep.sh [options] file1.nii file2.nii ...
+./scripts/T1Prep.sh [options] file1.nii file2.nii ...
 ```
 
 ## Options
@@ -35,7 +35,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 
 ## Example
 ```bash
-./T1Prep.sh --out-dir output_folder --no-surf image1.nii
+./scripts/T1Prep.sh --out-dir output_folder --no-surf image1.nii
 ```
 
 ## Input
