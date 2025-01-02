@@ -1,5 +1,6 @@
 import os
 import sys
+import platform
 import torch
 import argparse
 import nibabel as nib
@@ -17,7 +18,7 @@ from tqdm import tqdm
 # Import deep learning and image processing utilities
 from deepbet import BrainExtraction
 from deepbet.utils import reoriented_nifti
-from deepmriprep.preprocess import Preprocess
+from deepmriprep.preprocess import Preprocess, save_output
 from deepmriprep.segment import BrainSegmentation, scale_intensity
 from deepmriprep.utils import (DEVICE, DATA_PATH, nifti_to_tensor, unsmooth_kernel, nifti_volume)
 from deepmriprep.atlas import ATLASES, get_volumes, shape_from_to, AtlasRegistration
@@ -26,7 +27,7 @@ from scipy.ndimage import binary_dilation, generate_binary_structure
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
     
-def bar(elapsed, total, name):
+def progress_bar(elapsed, total, name):
     """
     Displays a progress bar.
 
@@ -36,7 +37,10 @@ def bar(elapsed, total, name):
         name (str): Name of the process.
 
     Usage:
-        bar(1, 100, "Name")
+        progress_bar(1, 100, "Name")
+        
+    Returns:
+        int: Elapsed progress count increased by 1.
     """
     # Calculate percentage completion
     it = elapsed * 100 // total
@@ -48,6 +52,24 @@ def bar(elapsed, total, name):
     # Print the progress bar with percentage and name
     #print(f'{prog}{remaining} {it}% {name}\r', end='')
     print(f'{prog}{remaining} {elapsed}/{total} {name}\r', end='')
+    
+    elapsed += 1
+    return elapsed
+
+def remove_file(name):
+    """
+    Remove file if exists.
+
+    Args:
+        name (str): Name of file.
+
+    Usage:
+        remove_file("Filename")
+    """
+    if os.path.exists(name):
+        os.remove(name)
+    else:
+        print(f"The file '{name}' does not exist.")
 
 def correct_bias_field(brain, seg):
     """
@@ -79,11 +101,8 @@ def correct_bias_field(brain, seg):
     brain0 = brain.get_fdata()
     
     # Generate mask based on segmentation or brain data
-    if seg is not None:
-        mask = (seg.get_fdata() > 2.5)
-    else:
-        mask = (brain0 > 0.0)
-      
+    mask = (seg.get_fdata() > 2.5) if seg is not None else (brain0 > 0.0)
+
     # Subsampling for efficiency
     if subsamp :
         offset = 0
@@ -106,10 +125,7 @@ def correct_bias_field(brain, seg):
     levels=[ lvl for lvl in range(maxlevel) for _ in range(steps) ]
     # At some point will have to generalise into fwhm and subdivision
     # level scheme, at the moment it's either or:
-    if not subdivide:
-        levelfwhm = fwhm / (np.arange(maxlevel) + 1)
-    else:
-        levelfwhm = fwhm * np.ones(maxlevel)
+    levelfwhm = fwhm / (np.arange(maxlevel) + 1) if not subdivide else fwhm * np.ones(maxlevel)
     
     splsm3d = SplineSmooth3DUnregularized(datalog, dataSubVoxSize,
                                             spacing, domainMethod="minc",
@@ -240,8 +256,6 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
     scaled_yx = F.interpolate(yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
 
     # Perform atlas registration
-    #warps = {}
-    #warps.update({shape: scaled_yx.permute(0, 2, 3, 4, 1)})
     warps = {shape: scaled_yx.permute(0, 2, 3, 4, 1)}
     atlas_register = AtlasRegistration()
     atlas = atlas_register(affine, warps[shape], atlas, t1.shape)
@@ -274,22 +288,41 @@ def run_segment():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', help='Input file or folder', required=True, type=str, default=None)
     parser.add_argument('-o', '--outdir', help='Output folder', required=True, type=str, default=None)
+    parser.add_argument("-s", '--surf', action="store_true", help="(optional) Save partioned segmentation map for surface estimation.")
+    parser.add_argument("-m", '--mwp', action="store_true", help="(optional) Save modulated and warped segmentations.")
+    parser.add_argument("-r", '--rp', action="store_true", help="(optional) Save affine registered segmentations.")
+    parser.add_argument("-b", '--bids', action="store_true", help="(optional) Use bids naming convention.")
     parser.add_argument("-a", '--amap', action="store_true", help="(optional) Use AMAP segmentation.")
     parser.add_argument('-d', '--amapdir', help='Amap binary folder', type=str, default=None)
     args = parser.parse_args()
 
     # Extract input parameters
-    t1_name = args.input
-    out_dir = args.outdir
+    t1_name  = args.input
+    out_dir  = args.outdir
     use_amap = args.amap
+    use_bids = args.bids
+    save_mwp = args.mwp
+    save_rp  = args.rp
+    do_surf  = args.surf
 
     # Prepare filenames and load input MRI data
     out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '')
     t1 = nib.load(t1_name)
 
+    # Check for GPU support
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        no_gpu = False
+    elif torch.backends.mps.is_available() and False: # not yet fully supported
+        device = torch.device("mps")
+        no_gpu = False
+    else:
+        device = torch.device("cpu")
+        no_gpu = True
+            
     # Set processing parameters
-    no_gpu = True
     target_res = np.array([0.5]*3) # Target resolution for resampling
+    count = 1
     
     # Preprocess the input volume
     vol = t1.get_fdata()
@@ -297,26 +330,26 @@ def run_segment():
     t1 = nib.Nifti1Image(vol, affine2, header2)
     
     # Step 1: Skull-stripping
-    bar(1, 8, 'Skull-stripping               ')
+    count = progress_bar(count, 8, 'Skull-stripping               ')
     prep = Preprocess(no_gpu)
     output_bet = prep.run_bet(t1)
     brain = output_bet['brain']
     mask = output_bet['mask']
     
     # Step 2: Affine registration
-    bar(2, 8, 'Affine registration           ')
+    count = progress_bar(count, 8, 'Affine registration           ')
     output_aff = prep.run_affine_register(brain, mask)
     affine = output_aff['affine']
     brain_large = output_aff['brain_large']
     mask_large = output_aff['mask_large']
     
     # Step 3: Segmentation
-    bar(3, 8, 'Segmentation                  ')    
+    count = progress_bar(count, 8, 'Segmentation                  ')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
 
     # Step 4: Resampling segmented volumes
-    bar(4, 8, 'Resampling                    ')
+    count = progress_bar(count, 8, 'Resampling                    ')
     header2, affine2 = get_resampled_header(brain.header, brain.affine, target_res)
     dim = header2['dim']
     shape = dim[1:4]
@@ -325,14 +358,14 @@ def run_segment():
     
     # Apply grid sampling to resample segmentation
     vol = F.grid_sample(nifti_to_tensor(p0_large)[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
-    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
+    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(), affine2, header2, np.eye(4), 1)
     nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg.nii')
     
     # Conditional processing based on AMAP flag
     if (use_amap):
         # AMAP segmentation pipeline
         amapdir = args.amapdir
-        bar(5, 8, 'Fine Amap segmentation')
+        count = progress_bar(count, 8, 'Fine Amap segmentation')
         bias, brain_large = correct_bias_field(brain_large, p0_large)
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
@@ -343,7 +376,14 @@ def run_segment():
         p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
         p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
         p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
-
+        
+        # remove temporary files
+        remove_file(f'{out_dir}/{out_name}_brain_large.nii')
+        remove_file(f'{out_dir}/{out_name}_seg_large.nii')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
+  
         warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
         p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
@@ -354,7 +394,7 @@ def run_segment():
         wj_affine = pd.Series([wj_affine])
     else:
         # DeepMRI prep segmentation pipeline
-        bar(5, 8, 'Fine Deepmriprep segmentation')
+        count = progress_bar(count, 8, 'Fine Deepmriprep segmentation')
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
         p1_large = output_nogm['p1_large']
         p2_large = output_nogm['p2_large']
@@ -363,27 +403,49 @@ def run_segment():
         p2_affine = output_nogm['p2_affine']
         wj_affine = output_nogm['wj_affine']
 
-    # Step 6: Warping
-    bar(6, 8, 'Warping                          ')
-    output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
-    warp_yx = output_reg['warp_yx']
-    mwp1 = output_reg['mwp1']
-    mwp2 = output_reg['mwp2']
+        gmv = output_nogm['gmv']
+        tiv = output_nogm['tiv']
 
-    # Step 7: Atlas creation
-    bar(7, 8, 'Atlas creation                 ')
-    atlas = get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large,'ibsr')
-    lh, rh = get_partition(p0_large, atlas, 'ibsr')
+        nogm = output_nogm['nogm']
+        nib.save(nogm, f'{out_dir}/{out_name}_nogm.nii')
 
-    # Step 8: Save hemisphere outputs
-    bar(8, 8, 'Resampling                     ')
-    vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
-    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
-    nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-L.nii')
+    if (save_rp):
+        nib.save(p1_affine, f'{out_dir}/rp1{out_name}_affine.nii')
+        nib.save(p2_affine, f'{out_dir}/rp2{out_name}_affine.nii')
 
-    vol = F.grid_sample(nifti_to_tensor(nib.Nifti1Image(rh, p0_large.affine, p0_large.header))[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
-    vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(),affine2, header2, np.eye(4), 1)
-    nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-R.nii')
+    # Warping is necessary for surface creation and saving warped segmentations
+    if ((do_surf) | (save_mwp)):
+        # Step 6: Warping
+        count = progress_bar(count, 8, 'Warping                          ')
+        output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
+        warp_yx = output_reg['warp_yx']
+        warp_xy = output_reg['warp_xy']
+        mwp1 = output_reg['mwp1']
+        mwp2 = output_reg['mwp2']
+
+        nib.save(mwp1, f'{out_dir}/mwp1{out_name}.nii')
+        nib.save(mwp2, f'{out_dir}/mwp2{out_name}.nii')
+        nib.save(warp_xy, f'{out_dir}/y_{out_name}.nii')
+        nib.save(warp_yx, f'{out_dir}/iy_{out_name}.nii')
+    
+    # Atlas is necessary for surface creation
+    if (do_surf):
+        # Step 7: Atlas creation
+        count = progress_bar(count, 8, 'Atlas creation                 ')
+        atlas = get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, 'ibsr', device)
+        lh, rh = get_partition(p0_large, atlas, 'ibsr')
+
+        # Step 8: Save hemisphere outputs
+        count = progress_bar(count, 8, 'Resampling                     ')
+        nii_lh = nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))
+        vol = F.grid_sample(nii_lh[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+        vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(), affine2, header2, np.eye(4), 1)
+        nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-L.nii')
+    
+        nii_rh = nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))
+        vol = F.grid_sample(nii_rh[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+        vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(), affine2, header2, np.eye(4), 1)
+        nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-R.nii')
 
 def get_resampled_header(header, aff, new_vox_size):
     """
