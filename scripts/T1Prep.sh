@@ -16,6 +16,9 @@
 # - check_python_cmd: Checks if the Python command is available.
 # - check_files: Checks if the input files exist.
 # - check_python: Checks if the specified Python command is available.
+# - check_install: Checks python installation.
+# - get_OS: Identifies operations system and folder of binaries.
+# - bar: Displays progress bar.
 # - get_no_of_cpus: Determines the number of available CPUs.
 # - process: Performs the preprocessing steps on each input file.
 
@@ -38,11 +41,12 @@ NC=$(tput sgr0)
 # defaults
 T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
-NUMBER_OF_JOBS=-1
 use_bids_naming=0
 thickness_fwhm=8
 median_filter=4
 estimate_surf=1
+estimate_mwp=1
+estimate_rp=0
 min_thickness=1
 registration=0 # currently skip spherical registration to save time
 post_fwhm=1
@@ -66,7 +70,6 @@ main ()
     check_python
     check_install
     check_files
-    get_no_of_cpus
     get_OS
     process
 
@@ -142,13 +145,14 @@ parse_args ()
                 bin_dir=$optarg
                 shift
                 ;;
-            --nproc)
-                exit_if_empty "$optname" "$optarg"
-                NUMBER_OF_JOBS="$optarg"
-                shift
-                ;;
             --no-surf)
                 estimate_surf=0
+                ;;
+            --no-mwp*)
+                estimate_mwp=0
+                ;;
+            --rp*)
+                estimate_rp=1
                 ;;
             --amap)
                 use_amap=1
@@ -309,50 +313,6 @@ install_deepmriprep ()
         echo "${RED}ERROR: Installation of deepmriprep not successful. 
             Please install it manually${NC}"
         exit 1
-    fi
-}
-
-########################################################
-# get # of cpus
-########################################################
-# modified code from
-# PPSS, the Parallel Processing Shell Script
-# 
-# Copyright (c) 2009, Louwrentius
-# All rights reserved.
-
-get_no_of_cpus () {
-
-    CPUINFO=/proc/cpuinfo
-    ARCH=`uname`
-
-    if [ ! -n "$NUMBER_OF_JOBS" ] | [ $NUMBER_OF_JOBS -le -1 ]; then
-        if [ "$ARCH" == "Linux" ]; then
-            NUMBER_OF_PROC=`grep ^processor $CPUINFO | wc -l`
-        elif [ "$ARCH" == "Darwin" ]; then
-            NUMBER_OF_PROC=`sysctl -a hw | grep -w hw.logicalcpu | awk '{ print $2 }'`
-        elif [ "$ARCH" == "FreeBSD" ]; then
-            NUMBER_OF_PROC=`sysctl hw.ncpu | awk '{ print $2 }'`
-        else
-            NUMBER_OF_PROC=`grep ^processor $CPUINFO | wc -l`
-        fi
-    
-        if [ ! -n "$NUMBER_OF_PROC" ]; then
-            echo "${RED}${FUNCNAME} ERROR - number of CPUs not obtained. Use --nproc to define number of processes.${NC}"
-            exit 1
-        fi
-    
-        # use all processors if not defined otherwise
-        if [ ! -n "$NUMBER_OF_JOBS" ]; then
-            NUMBER_OF_JOBS=$NUMBER_OF_PROC
-        fi
-
-        if [ $NUMBER_OF_JOBS -le -1 ]; then
-            NUMBER_OF_JOBS=$NUMBER_OF_PROC
-        fi
-        if [ "$NUMBER_OF_JOBS" -gt "$NUMBER_OF_PROC" ]; then
-            NUMBER_OF_JOBS=$NUMBER_OF_PROC
-        fi
     fi
 }
 
@@ -536,6 +496,8 @@ process ()
         
         if [ "${use_bids_naming}" -eq 1 ]; then
         
+            echo -e "${RED}BIDS names for volumes not yet supported.${NC}"
+            
             # get output names
             sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
             
@@ -637,8 +599,24 @@ process ()
                     amap=' --amap '
                 else amap=''
                 fi
-                "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} --input "${input}" \
-                    --outdir "${outmridir}"
+                if [ "${estimate_mwp}" -eq 1 ]; then
+                    mwp=' --mwp '
+                else mwp=''
+                fi
+                if [ "${estimate_rp}" -eq 1 ]; then
+                    rp=' --rp '
+                else rp=''
+                fi
+                if [ "${use_bids_naming}" -eq 1 ]; then
+                    bids=' --bids '
+                else bids=''
+                fi
+                if [ "${estimate_surf}" -eq 1 ]; then
+                    surf=' --surf '
+                else surf=''
+                fi
+                "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} ${mwp} ${rp} \
+                    ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -722,8 +700,8 @@ cat <<__EOM__
 
 USAGE:
   T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder]
-                    [--pre-fwhm pre_fwhm] [--post-fwhm post_fwhm] [--thickness-fwhm thickness_fwm]
-                    [--sanlm] [--no-surf] [--nproc number_of_processes]  
+                    [--thickness-fwhm thickness_fwm] [--sanlm] [--no-surf] [--no-mwp] [--rp]
+                    [--pre-fwhm pre_fwhm] [--post-fwhm post_fwhm] 
                     [--bids] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
@@ -736,8 +714,9 @@ USAGE:
                              using the replace option in the vbdist method (default $min_thickness). 
   --median-filter <NUMBER>   specify how many times to apply a median filter to areas with
                              topology artifacts to reduce these artifacts.
-  --nproc <NUMBER>           number of parallel jobs (=number of processors)
   --no-surf                  skip surface and thickness estimation
+  --no-mwp                   skip estimation of modulated and warped segmentations
+  --rp                       additionally estimate affine registered segmentations
   --sanlm                    apply denoising with SANLM-filter
   --bids                     use BIDS naming of output files
   --debug                    keep temporary files for debugging
