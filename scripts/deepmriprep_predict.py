@@ -48,10 +48,17 @@ def progress_bar(elapsed, total, name):
     # Create the progress bar
     prog = '■' * elapsed
     remaining = ' ' * (total - elapsed)
-
+    
+    # Format the name with padding
+    name = name.ljust(50)
+    
     # Print the progress bar with percentage and name
     #print(f'{prog}{remaining} {it}% {name}\r', end='')
     print(f'{prog}{remaining} {elapsed}/{total} {name}\r', end='')
+    
+    if (elapsed == total):
+        spaces = ' ' * 100
+        print(f'{spaces}\r', end='')
     
     elapsed += 1
     return elapsed
@@ -306,7 +313,8 @@ def run_segment():
     do_surf  = args.surf
 
     # Prepare filenames and load input MRI data
-    out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '')
+    out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '').replace('.gz','')
+
     t1 = nib.load(t1_name)
 
     # Check for GPU support
@@ -344,7 +352,7 @@ def run_segment():
     mask_large = output_aff['mask_large']
     
     # Step 3: Segmentation
-    count = progress_bar(count, 8, 'Segmentation                  ')    
+    count = progress_bar(count, 8, 'Deepmriprep segmentation                  ')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
 
@@ -406,9 +414,6 @@ def run_segment():
         gmv = output_nogm['gmv']
         tiv = output_nogm['tiv']
 
-        nogm = output_nogm['nogm']
-        nib.save(nogm, f'{out_dir}/{out_name}_nogm.nii')
-
     if (save_rp):
         nib.save(p1_affine, f'{out_dir}/rp1{out_name}_affine.nii')
         nib.save(p2_affine, f'{out_dir}/rp2{out_name}_affine.nii')
@@ -427,7 +432,31 @@ def run_segment():
         nib.save(mwp2, f'{out_dir}/mwp2{out_name}.nii')
         nib.save(warp_xy, f'{out_dir}/y_{out_name}.nii')
         nib.save(warp_yx, f'{out_dir}/iy_{out_name}.nii')
-    
+
+        """
+        # write atlas ROI volumes to csv files
+        atlas_list = tuple([f'{atlas}_volumes' for atlas in ATLASES])
+        atlas_list = list(atlas_list)
+        output_paths = tuple([f'{out_dir}/../label/{out_name}_{atlas}.csv' for atlas in ATLASES])
+        output_paths = list(output_paths)
+
+        output_atlas = prep.run_atlas_register(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list)
+        for k, output in output_atlas.items():
+            print("k")
+            print(k)
+            print("output")
+            print(output)
+         
+        for i, atl in enumerate(output_atlas):
+            print("atl")
+            atl
+            print("output_paths")
+            output_paths[i]
+            print("output_atlas")
+            output_atlas[i]
+        """    
+        #save_output(output_atlas, output_paths)
+                
     # Atlas is necessary for surface creation
     if (do_surf):
         # Step 7: Atlas creation
@@ -442,7 +471,7 @@ def run_segment():
         vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(), affine2, header2, np.eye(4), 1)
         nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-L.nii')
     
-        nii_rh = nifti_to_tensor(nib.Nifti1Image(lh, p0_large.affine, p0_large.header))
+        nii_rh = nifti_to_tensor(nib.Nifti1Image(rh, p0_large.affine, p0_large.header))
         vol = F.grid_sample(nii_rh[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
         vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(), affine2, header2, np.eye(4), 1)
         nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-R.nii')
