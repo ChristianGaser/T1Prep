@@ -48,7 +48,7 @@ estimate_surf=1
 estimate_mwp=1
 estimate_rp=0
 min_thickness=1
-registration=0 # currently skip spherical registration to save time
+registration=1 # currently skip spherical registration to save time
 post_fwhm=2
 pre_fwhm=4
 do_install=0
@@ -143,6 +143,11 @@ parse_args ()
             --bin-dir| --bindir)
                 exit_if_empty "$optname" "$optarg"
                 bin_dir=$optarg
+                shift
+                ;;
+            --no-overwrite* | -no*)
+                exit_if_empty "$optname" "$optarg"
+                no_overwrite=$optarg
                 shift
                 ;;
             --no-surf)
@@ -365,8 +370,18 @@ bar() {
     # Create the bar with spaces.
     printf -v prog  "%${elapsed}s"
     printf -v total "%$(($2-elapsed))s"
+
+    # Pad the name to 20 characters (using printf)
+    printf -v padded_name "%-50s" "$3"
+
     #printf '%s %s\r' "${prog// /■}${total} ${it}%" "${3}"
-    printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${3}"
+    printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${padded_name}"
+    
+    # if end is reached print extra line
+    if [ "${1}" -eq "${2}" ]; then
+        printf -v padded_name "%-100s" " "
+        #printf '%s\r' "${padded_name}"
+    fi
 }
 
 ########################################################
@@ -401,7 +416,7 @@ surface_estimation() {
     Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
     
     if [ -f "${outmridir}/${!hemi}" ]; then
-        bar 2 $end_count "Calculate $side thickness         "
+        bar 2 $end_count "Calculate $side thickness"
         ${bin_dir}/CAT_VolThicknessPbt -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
@@ -412,7 +427,7 @@ surface_estimation() {
         # -post-fwhm 1 -thresh 0.495
         # -post-fwhm 2 -thresh 0.490
         # -post-fwhm 3 -thresh 0.475
-        bar 4 $end_count "Extract $side surface             "
+        bar 4 $end_count "Extract $side surface"
         if [ "${debug}" -eq 0 ]; then
             verbose=''
         else 
@@ -420,7 +435,7 @@ surface_estimation() {
         fi
         ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
 
-        bar 6 $end_count "Map $side thickness values         "
+        bar 6 $end_count "Map $side thickness values"
         ${bin_dir}/CAT_3dVol2Surf -weighted_avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
         ${bin_dir}/CAT_SurfDistance -mean -position ${outmridir}/${!ppm} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
         
@@ -428,7 +443,7 @@ surface_estimation() {
         ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5 &
         wait
         if [ "${registration}" -eq 1 ]; then
-            bar 8 $end_count "Spherical inflation $side hemisphere         "
+            bar 8 $end_count "Spherical inflation $side hemisphere"
             ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
             bar 10 $end_count "Spherical registration $side hemisphere       "
             ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
@@ -461,11 +476,9 @@ process ()
     source ${T1prep_dir}/T1prep-env/bin/activate
     python="${T1prep_dir}/T1prep-env/bin/python"
 
-    i=0
+    ((i=0))
+    ((j=0))
     while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
-
-        # set starting time
-        start=$(date +%s)
 
         # check whether absolute or relative names were given
         if [ ! -f "${ARRAY[$i]}" ]; then
@@ -479,21 +492,65 @@ process ()
         # replace white spaces
         FILE=$(echo "$FILE" | sed -e "s/ /\\ /g")
 
+        # check whether processed files exist if no-overwrite flag is used
+        if [ -n "${no_overwrite}" ]; then
+            dn=$(dirname "$FILE")
+            bn=$(basename "$FILE" |cut -f1 -d'.')
+            if [ ! -n "$outdir" ]; then
+                outdir0=${dn}
+            else
+                outdir0=${outdir}
+            fi
+            processed=$(ls "${outdir0}/${no_overwrite}${bn}"* 2>/dev/null)
+        fi
+
+        if [ ! -n "${processed}" ]; then
+            ARRAY2[$j]="$FILE"
+            ((j++))
+        else
+            echo Skip processing of ${FILE}
+        fi
+        ((i++))
+    done
+
+    ((i=0))
+    SIZE_OF_ARRAY="${#ARRAY2[@]}"
+
+    while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
+        
+        # set starting time
+        start=$(date +%s)
+
+        FILE="${ARRAY2[$i]}"
+
         # get directory and basename and also consider ancient Analyze img files
         dn=$(dirname "$FILE")
         bn=$(basename "$FILE" | sed -e "s/.img/.nii/g")
-        bn_gz=$(basename "$FILE" | sed -e "s/.img/.nii/g" -e "s/.gz//g")
+        bn_gz=$(basename "$FILE" | sed -e "s/.img/.nii/g" -e "s/.gz//g")     
         
         # if defined use output dir otherwise use the folder of input files
         if [ ! -n "$outdir" ]; then
             outdir=${dn}
+        fi
+
+        # check again whether processed files exist if no-overwrite flag is used
+        if [ -n "${no_overwrite}" ]; then
+            bn0=$(basename "$FILE" |cut -f1 -d'.')
+            processed=$(ls "${outdir}/${no_overwrite}${bn0}"* 2>/dev/null)
+            echo $processed
+            
+            # Check if $processed is empty
+            if [ ! -n $processed ]; then
+                echo Skip processing of ${FILE}
+                continue  # Skip to the next iteration of the loop
+            fi
         fi
         
         # create outdir if not exists
         if [ ! -d "$outdir" ]; then
             mkdir -p "$outdir"
         fi
-        
+
         if [ "${use_bids_naming}" -eq 1 ]; then
         
             echo -e "${RED}BIDS names for volumes not yet supported.${NC}"
@@ -502,7 +559,7 @@ process ()
             sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
             
             # remove T1w|T2w from basename
-            seg=$(echo "$bn"  | sed -e "s/.nii/_seg.nii/g")            
+            seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")            
             
             hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
             hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
@@ -534,7 +591,7 @@ process ()
             sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
             
             # remove T1w|T2w from basename
-            seg=$(echo "$bn"  | sed -e "s/.nii/_seg.nii/g")
+            seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
                         
             hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
             hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
@@ -575,13 +632,13 @@ process ()
 
         # print progress and filename
         j=$(expr $i + 1)
-        echo -e "${BOLD}${BLACK}######################################################${NC}"
+        echo -e "${BOLD}${BLACK}-------------------------------------------------------${NC}"
         echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE}${NC}"
 
         # 1. Call SANLM denoising filter
         # ----------------------------------------------------------------------
         if [ "${use_sanlm}" -eq 1 ]; then
-            echo -e "${BLUE}---------------------------------------------${NC}"
+            #echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}SANLM denoising${NC}"
             ${bin_dir}/CAT_VolSanlm "${FILE}" "${outmridir}/${sanlm}"
             input="${outmridir}/${sanlm}"
@@ -593,7 +650,7 @@ process ()
         # ----------------------------------------------------------------------
         # check for outputs from previous step
         if [ -f "${input}" ]; then
-            echo -e "${BLUE}---------------------------------------------${NC}"
+            #echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Segmentation${NC}"
                 if [ "${use_amap}" -eq 1 ]; then
                     amap=' --amap '
@@ -645,7 +702,7 @@ process ()
             # allow parallelization
             # ----------------------------------------------------------------------
             # check for outputs from previous step
-            echo -e "${BLUE}---------------------------------------------${NC}"
+            #echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Extracting surfaces${NC}"
             for side in left right; do
                 surface_estimation $side $outmridir $outsurfdir $registration &
@@ -706,14 +763,19 @@ USAGE:
  
   --python <FILE>            python command (default $python)
   --out-dir <DIR>            output folder (default same folder)
-  --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes (default $pre_fwhm). 
-  --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes (default $post_fwhm). 
-  --thickness-fwhm <NUMBER>  FWHM size of volumetric thickness smoothing in CAT_VolThicknessPbt (default $thickness_fwhm). 
-  --thresh    <NUMBER>       threshold (isovalue) for creating surface in CAT_VolMarchingCubes (default $thresh). 
+  --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes 
+                             (default $pre_fwhm). 
+  --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes 
+                             (default $post_fwhm). 
+  --thickness-fwhm <NUMBER>  FWHM size of volumetric thickness smoothing in CAT_VolThicknessPbt 
+                             (default $thickness_fwhm). 
+  --thresh    <NUMBER>       threshold (isovalue) for creating surface in CAT_VolMarchingCubes 
+                             (default $thresh). 
   --min-thickness <NUMBER>   values below minimum thickness are set to zero and will be approximated
                              using the replace option in the vbdist method (default $min_thickness). 
   --median-filter <NUMBER>   specify how many times to apply a median filter to areas with
                              topology artifacts to reduce these artifacts.
+  --no-overwrite <STRING>    do not overwrite existing results
   --no-surf                  skip surface and thickness estimation
   --no-mwp                   skip estimation of modulated and warped segmentations
   --rp                       additionally estimate affine registered segmentations
