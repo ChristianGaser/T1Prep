@@ -326,6 +326,7 @@ def run_segment():
     parser.add_argument('-o', '--outdir', help='Output folder', required=True, type=str, default=None)
     parser.add_argument("-s", '--surf', action="store_true", help="(optional) Save partioned segmentation map for surface estimation.")
     parser.add_argument("-m", '--mwp', action="store_true", help="(optional) Save modulated and warped segmentations.")
+    parser.add_argument("-w", '--wp', action="store_true", help="(optional) Save warped segmentations.")
     parser.add_argument("-p", '--p', action="store_true", help="(optional) Save native segmentations.")
     parser.add_argument("-r", '--rp', action="store_true", help="(optional) Save affine registered segmentations.")
     parser.add_argument("-b", '--bids', action="store_true", help="(optional) Use bids naming convention.")
@@ -339,6 +340,7 @@ def run_segment():
     use_amap = args.amap
     use_bids = args.bids
     save_mwp = args.mwp
+    save_wp  = args.wp
     save_rp  = args.rp
     save_p   = args.p
     do_surf  = args.surf
@@ -453,19 +455,27 @@ def run_segment():
         resample_and_save_nifti(p3_large, grid_native, mask.affine, mask.header, f'{out_dir}/p3{out_name}.nii')
 
     # Warping is necessary for surface creation and saving warped segmentations
-    if ((do_surf) | (save_mwp)):
+    if ((do_surf) | (save_mwp) | (save_wp)):
         # Step 5: Warping
         count = progress_bar(count, end_count, 'Warping                          ')
         output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
         warp_yx = output_reg['warp_yx']
         warp_xy = output_reg['warp_xy']
-        mwp1 = output_reg['mwp1']
-        mwp2 = output_reg['mwp2']
+        
+        if (save_mwp):
+            mwp1 = output_reg['mwp1']
+            mwp2 = output_reg['mwp2']
+            nib.save(mwp1, f'{out_dir}/mwp1{out_name}.nii')
+            nib.save(mwp2, f'{out_dir}/mwp2{out_name}.nii')
+            
+        if (save_wp):
+            wp1 = output_reg['mwp1']
+            wp2 = output_reg['mwp2']
+            nib.save(wp1, f'{out_dir}/wp1{out_name}.nii')
+            nib.save(wp2, f'{out_dir}/wp2{out_name}.nii')
 
-        nib.save(mwp1, f'{out_dir}/mwp1{out_name}.nii')
-        nib.save(mwp2, f'{out_dir}/mwp2{out_name}.nii')
         nib.save(warp_xy, f'{out_dir}/y_{out_name}.nii')
-        nib.save(warp_yx, f'{out_dir}/iy_{out_name}.nii')
+        #nib.save(warp_yx, f'{out_dir}/iy_{out_name}.nii')
 
         """
         # write atlas ROI volumes to csv files

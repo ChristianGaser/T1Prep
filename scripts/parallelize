@@ -245,7 +245,6 @@ parallelize ()
   done
 
   if [ ! "${LOGDIR}" == "" ]; then
-    time=`date "+%Y%b%d_%H%M"`
     log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
     if [ "${TEST}" == "" ]; then
       echo Check $log for logging information
@@ -310,6 +309,10 @@ EXAMPLE
    
    parallelize -c gunzip *.zip
      Parallelize unzipping of all zip-files in current folder. 
+
+   parallelize -m 10 -c "T1prep.sh --no-surf" sTRIO*.nii
+     Parallelize T1prep.sh without surface estimation and consider that each 
+     process needs 10GB RAM. 
 
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).
 This is ${version}.

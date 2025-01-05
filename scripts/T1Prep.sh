@@ -46,6 +46,7 @@ thickness_fwhm=8
 median_filter=4
 estimate_surf=1
 estimate_mwp=1
+estimate_wp=0
 estimate_rp=0
 estimate_p=0
 min_thickness=1
@@ -156,6 +157,9 @@ parse_args ()
                 ;;
             --no-mwp*)
                 estimate_mwp=0
+                ;;
+            --wp*)
+                estimate_wp=1
                 ;;
             --rp*)
                 estimate_rp=1
@@ -659,12 +663,15 @@ process ()
             #echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Segmentation${NC}"
                 if [ "${use_amap}" -eq 1 ]; then
-                    amap=" --amap --amapdir ${bin_dir}"
+                    cmd=" --amap --amapdir ${bin_dir}"
                 else amap=""
                 fi
                 if [ "${estimate_mwp}" -eq 1 ]; then
                     mwp=" --mwp "
                 else mwp=""
+                if [ "${estimate_wp}" -eq 1 ]; then
+                    wp=" --wp "
+                else wp=""
                 fi
                 if [ "${estimate_rp}" -eq 1 ]; then
                     rp=" --rp "
@@ -683,7 +690,7 @@ process ()
                 else surf=""
                 fi
                 "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} ${mwp} ${rp} \
-                    ${p} ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
+                    ${wp} ${p} ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -768,7 +775,7 @@ cat <<__EOM__
 USAGE:
   T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder] [--amap]
                     [--thickness-fwhm thickness_fwm] [--sanlm] [--no-surf] [--no-mwp] [--rp]
-                    [--pre-fwhm pre_fwhm] [--post-fwhm post_fwhm]  
+                    [--wp] [--p] [--pre-fwhm pre_fwhm] [--post-fwhm post_fwhm]  
                     [--bids] [--debug] filenames 
  
   --python <FILE>            python command (default $python)
@@ -788,7 +795,8 @@ USAGE:
   --no-overwrite <STRING>    do not overwrite existing results
   --no-surf                  skip surface and thickness estimation
   --no-mwp                   skip estimation of modulated and warped segmentations
-  --rp                       additionally estimate affine registered segmentations
+  --wp                       additionally save warped segmentations
+  --rp                       additionally save affine registered segmentations
   --sanlm                    apply denoising with SANLM-filter
   --amap                     use segmentation from AMAP instead of deepmriprep
   --bids                     use BIDS naming of output files
