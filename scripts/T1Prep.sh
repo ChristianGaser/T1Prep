@@ -47,6 +47,7 @@ median_filter=4
 estimate_surf=1
 estimate_mwp=1
 estimate_rp=0
+estimate_p=0
 min_thickness=1
 registration=1 # currently skip spherical registration to save time
 post_fwhm=2
@@ -158,6 +159,9 @@ parse_args ()
                 ;;
             --rp*)
                 estimate_rp=1
+                ;;
+            --p*)
+                estimate_p=1
                 ;;
             --amap)
                 use_amap=1
@@ -560,6 +564,7 @@ process ()
             
             # remove T1w|T2w from basename
             seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")            
+            p0=$(echo p0"$bn_gz")
             
             hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
             hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
@@ -592,6 +597,7 @@ process ()
             
             # remove T1w|T2w from basename
             seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
+            p0=$(echo p0"$bn_gz")
                         
             hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
             hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
@@ -664,6 +670,10 @@ process ()
                     rp=" --rp "
                 else rp=""
                 fi
+                if [ "${estimate_p}" -eq 1 ]; then
+                    p=" --p "
+                else p=""
+                fi
                 if [ "${use_bids_naming}" -eq 1 ]; then
                     bids=" --bids "
                 else bids=""
@@ -673,7 +683,7 @@ process ()
                 else surf=""
                 fi
                 "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} ${mwp} ${rp} \
-                    ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
+                    ${p} ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -691,7 +701,7 @@ process ()
             # 3. Create hemispheric label maps for cortical surface extraction
             # ----------------------------------------------------------------------
             # check for outputs from previous step
-            if [ ! -f "${outmridir}/${seg}" ]; then
+            if [ ! -f "${outmridir}/${p0}" ]; then
                 echo -e "${RED}ERROR: ${cmd_dir}/deepmriprep_predict.py failed${NC}"
                 ((i++))
                 continue
@@ -721,8 +731,8 @@ process ()
             if  [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
                 for files in hemi ppm gmt; do
                     for side in left right; do
-                        rm_file=$files_$side
-                        [ -f "${!rm_file}" ] && rm "${!rm_file}"
+                        rm_file=${files}_${side}
+                        [ -f "${outmridir}/${!rm_file}" ] && rm "${outmridir}/${!rm_file}"
                     done
                 done
             fi
