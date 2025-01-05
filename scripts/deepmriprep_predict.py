@@ -13,9 +13,6 @@ import math
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
-# Progress bar utility
-from tqdm import tqdm
-
 # Import deep learning and image processing utilities
 from deepbet import BrainExtraction
 from deepbet.utils import reoriented_nifti
@@ -149,7 +146,7 @@ def correct_bias_field(brain, seg):
     controlField=None
     chosenkernelfn = kernelfntri
     
-    for N in tqdm(range(len(levels))):
+    for N in range(len(levels)):
         if levels[N] < nextlevel:
           continue
         
