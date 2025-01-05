@@ -662,35 +662,36 @@ process ()
         if [ -f "${input}" ]; then
             #echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Segmentation${NC}"
-                if [ "${use_amap}" -eq 1 ]; then
-                    cmd=" --amap --amapdir ${bin_dir}"
-                else amap=""
-                fi
-                if [ "${estimate_mwp}" -eq 1 ]; then
-                    mwp=" --mwp "
-                else mwp=""
-                if [ "${estimate_wp}" -eq 1 ]; then
-                    wp=" --wp "
-                else wp=""
-                fi
-                if [ "${estimate_rp}" -eq 1 ]; then
-                    rp=" --rp "
-                else rp=""
-                fi
-                if [ "${estimate_p}" -eq 1 ]; then
-                    p=" --p "
-                else p=""
-                fi
-                if [ "${use_bids_naming}" -eq 1 ]; then
-                    bids=" --bids "
-                else bids=""
-                fi
-                if [ "${estimate_surf}" -eq 1 ]; then
-                    surf=" --surf "
-                else surf=""
-                fi
-                "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} ${mwp} ${rp} \
-                    ${wp} ${p} ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
+            if [ "${use_amap}" -eq 1 ]; then
+                cmd=" --amap --amapdir ${bin_dir}"
+            else amap=""
+            fi
+            if [ "${estimate_mwp}" -eq 1 ]; then
+                mwp=" --mwp "
+            else mwp=""
+            fi
+            if [ "${estimate_wp}" -eq 1 ]; then
+                wp=" --wp "
+            else wp=""
+            fi
+            if [ "${estimate_rp}" -eq 1 ]; then
+                rp=" --rp "
+            else rp=""
+            fi
+            if [ "${estimate_p}" -eq 1 ]; then
+                p=" --p "
+            else p=""
+            fi
+            if [ "${use_bids_naming}" -eq 1 ]; then
+                bids=" --bids "
+            else bids=""
+            fi
+            if [ "${estimate_surf}" -eq 1 ]; then
+                surf=" --surf "
+            else surf=""
+            fi
+            "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} ${mwp} ${rp} \
+                ${wp} ${p} ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
