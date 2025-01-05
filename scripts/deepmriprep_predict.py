@@ -385,13 +385,6 @@ def run_segment():
         p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
         p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
         
-        # remove temporary files
-        remove_file(f'{out_dir}/{out_name}_brain_large.nii')
-        remove_file(f'{out_dir}/{out_name}_seg_large.nii')
-        remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
-        remove_file(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
-        remove_file(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
-  
         warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
         p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
@@ -475,6 +468,14 @@ def run_segment():
         vol = F.grid_sample(nii_rh[None, None], grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
         vol, tmp1, tmp2   = align_brain(vol.cpu().numpy(), affine2, header2, np.eye(4), 1)
         nib.save(nib.Nifti1Image(vol, affine2, header2), f'{out_dir}/{out_name}_seg_hemi-R.nii')
+
+    # remove temporary AMAP files
+    if (use_amap):
+        remove_file(f'{out_dir}/{out_name}_brain_large.nii')
+        remove_file(f'{out_dir}/{out_name}_seg_large.nii')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
 
 def get_resampled_header(header, aff, new_vox_size):
     """
