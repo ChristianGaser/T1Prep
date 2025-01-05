@@ -9,6 +9,7 @@ COMMAND=""
 TEST=""
 LOGDIR=""
 time=`date "+%Y%b%d_%H%M"`
+MEM_LIMIT=0
 
 ########################################################
 # run main
@@ -40,6 +41,11 @@ parse_args ()
         --command* | -c*)
             exit_if_empty "$optname" "$optarg"
             COMMAND=$optarg
+            shift
+            ;;
+        --mem-limit* | -mem*)
+            exit_if_empty "$optname" "$optarg"
+            MEM_LIMIT=$optarg
             shift
             ;;
         --processes* | -p*)
@@ -156,6 +162,46 @@ get_no_of_cpus () {
       NUMBER_OF_JOBS=`grep ^processor $CPUINFO | wc -l`
   
   fi
+}
+
+########################################################
+# get # of processes w.r.t. available memory
+########################################################
+
+get_no_processes () {
+
+  ARCH=`uname`
+
+  if [ "$ARCH" == "Linux" ]
+  then
+    # Get total available memory in MB
+    mem_available=$(free -m | awk '/^Mem:/{print $7}')
+    
+    # Convert MB to GB
+    mem_gb=$(echo "$mem_available / 1024" | bc)
+
+  elif [ "$ARCH" == "Darwin" ]
+  then
+    # Get available memory in pages (page size is 4096 bytes)
+    page_size=$(vm_stat | grep "page size of" | awk '{print $8}')
+    mem_free_pages=$(vm_stat | grep "Pages free" | awk '{print $3}' | tr -d '.')
+    
+    # Convert pages to GB
+    mem_gb=$(echo "($mem_free_pages * $page_size / 1024 / 1024 / 1024)" | bc)
+
+  elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]
+  then
+    # Get total available memory in MB
+    mem_available=$(wmic OS get FreePhysicalMemory | grep -Eo '[0-9]+')
+    
+    # Convert KB to GB
+    mem_gb=$(echo "$mem_available / 1024 / 1024" | bc)
+  else
+    echo "System $ARCH not recognized"
+    exit 1
+  
+  # Calculate number of processes (at least 1) and require 10GB memory for each process
+  NUMBER_OF_JOBS=$(echo "if ($mem_gb < 10) 1 else $mem_gb / $MEM_LIMIT" | bc)
 }
 
 ########################################################
