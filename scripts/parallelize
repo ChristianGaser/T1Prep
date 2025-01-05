@@ -19,7 +19,11 @@ main ()
 {
   parse_args ${1+"$@"}
   check_files
-  get_no_of_cpus
+  if [ "$MEM_LIMIT" -gt 0 ]; then
+    get_no_processes
+  else
+    get_no_of_cpus
+  fi
   parallelize
 
   exit 0
@@ -43,7 +47,7 @@ parse_args ()
             COMMAND=$optarg
             shift
             ;;
-        --mem-limit* | -mem*)
+        --mem-limit* | -m*)
             exit_if_empty "$optname" "$optarg"
             MEM_LIMIT=$optarg
             shift
@@ -160,6 +164,7 @@ get_no_of_cpus () {
   
     else
       NUMBER_OF_JOBS=`grep ^processor $CPUINFO | wc -l`
+    fi
   
   fi
 }
@@ -174,32 +179,33 @@ get_no_processes () {
 
   if [ "$ARCH" == "Linux" ]
   then
-    # Get total available memory in MB
-    mem_available=$(free -m | awk '/^Mem:/{print $7}')
-    
-    # Convert MB to GB
-    mem_gb=$(echo "$mem_available / 1024" | bc)
+    # Get total installed memory in MB
+    mem_total=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+
+    # Convert KB to GB
+    mem_gb=$(echo "$mem_total / 1024 / 1024" | bc)
 
   elif [ "$ARCH" == "Darwin" ]
   then
-    # Get available memory in pages (page size is 4096 bytes)
-    page_size=$(vm_stat | grep "page size of" | awk '{print $8}')
-    mem_free_pages=$(vm_stat | grep "Pages free" | awk '{print $3}' | tr -d '.')
-    
-    # Convert pages to GB
-    mem_gb=$(echo "($mem_free_pages * $page_size / 1024 / 1024 / 1024)" | bc)
+    # Get total installed memory in bytes
+    mem_total=$(sysctl hw.memsize | awk '{print $2}')
+
+    # Convert bytes to GB
+    mem_gb=$(echo "$mem_total / 1024 / 1024 / 1024" | bc)
 
   elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]
   then
-    # Get total available memory in MB
-    mem_available=$(wmic OS get FreePhysicalMemory | grep -Eo '[0-9]+')
-    
-    # Convert KB to GB
-    mem_gb=$(echo "$mem_available / 1024 / 1024" | bc)
+    # Get total installed memory in KB
+    mem_total=$(wmic ComputerSystem get TotalPhysicalMemory | grep -Eo '[0-9]+')
+
+    # Convert bytes to GB
+    mem_gb=$(echo "$mem_total / 1024 / 1024 / 1024" | bc)
   else
     echo "System $ARCH not recognized"
     exit 1
-  
+  fi
+    
+  echo $mem_gb
   # Calculate number of processes (at least 1) and require 10GB memory for each process
   NUMBER_OF_JOBS=$(echo "if ($mem_gb < 10) 1 else $mem_gb / $MEM_LIMIT" | bc)
 }
@@ -280,10 +286,12 @@ cat <<__EOM__
 USAGE:
   parallelize [-p number_of_processes] [-l log_folder] [-t] -c command_to_parallelize filename|filepattern
   
-   -p   number of parallel jobs (=number of processors)
-   -c   command that should be parallelized
-   -t   do not call command, but print files to be processed
-   -l   directory where log-file will be saved
+  -p  <NUMBER>| --processes <NUMBER>  number of parallel jobs (=number of processors)
+                                      (default $NUMBER_OF_JOBS)
+  -c  <STRING>| --command <STRING>    command that should be parallelized
+  -t          | --test                do not call command, but print files to be processed
+  -l <Dir>    | --logdir <DIR>        directory where log-file will be saved
+  -m <INT>    | --mem-limit <INT>     memory limit for each process (default $MEM_LIMIT)
 
    Only one filename or pattern is allowed. This can be either a single file or a pattern
    with wildcards to process multiple files. Optionally you can set number of processes,
