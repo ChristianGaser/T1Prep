@@ -797,6 +797,7 @@ USAGE:
   --no-mwp                   skip estimation of modulated and warped segmentations
   --wp                       additionally save warped segmentations
   --rp                       additionally save affine registered segmentations
+  --p                        additionally save native segmentations
   --sanlm                    apply denoising with SANLM-filter
   --amap                     use segmentation from AMAP instead of deepmriprep
   --bids                     use BIDS naming of output files

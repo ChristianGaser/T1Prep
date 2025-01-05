@@ -30,7 +30,9 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 - `--median-filter <NUMBER>`: Specify the number of times a median filter should be applied to regions with topology artifacts to reduce these artifacts.
 - `--no-surf`: Skip surface and thickness estimation.
 - `--no-mwp`: Skip modulated and warped segmentation estimation.
+- `--wp`: Additionally save warped segmentations.
 - `--rp`: Additionally estimate affine registered segmentations.
+- `--p`: Additionally save native segmentations.
 - `--sanlm`: Apply denoising with the SANLM filter.
 - `--amap`: Use segmentation from AMAP instead of deepmriprep
 - `--bids`: Use BIDS naming for output files.
