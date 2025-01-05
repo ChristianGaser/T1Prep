@@ -1,4 +1,4 @@
-# T1Prep: T1 PREProcessing Pipeline (aka DeepCAT)
+# T1Prep: T1 PREProcessing Pipeline (aka PyCAT)
 T1Prep is a pipeline designed for the preprocessing of T1-weighted MRI images, facilitating segmentation and cortical surface extraction. This tool provides a comprehensive suite of utilities to efficiently manage and process MRI data.
 
 The segmentation leverages [deepmriprep](https://github.com/wwu-mmll/deepmriprep), which employs deep-learning techniques to mimic the capabilities of CAT12 in processing MRI data. For more details, see: Lukas Fisch et al., "deepmriprep: Voxel-based Morphometry (VBM) Preprocessing via Deep Neural Networks," available on arXiv at https://doi.org/10.48550/arXiv.2408.10656.
