@@ -311,7 +311,7 @@ install_deepmriprep ()
     $python -m venv ${T1prep_dir}/T1prep-env
     source ${T1prep_dir}/T1prep-env/bin/activate
     $python -m pip install -U pip
-    $python -m pip install scipy torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep
+    $python -m pip install scipy==1.13.1 torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep
     
     $python -c "import deepmriprep" &>/dev/null
     if [ $? -gt 0 ]; then
@@ -653,24 +653,24 @@ process ()
             #echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Segmentation${NC}"
                 if [ "${use_amap}" -eq 1 ]; then
-                    amap=' --amap '
-                else amap=''
+                    amap=" --amap --amapdir ${bin_dir}"
+                else amap=""
                 fi
                 if [ "${estimate_mwp}" -eq 1 ]; then
-                    mwp=' --mwp '
-                else mwp=''
+                    mwp=" --mwp "
+                else mwp=""
                 fi
                 if [ "${estimate_rp}" -eq 1 ]; then
-                    rp=' --rp '
-                else rp=''
+                    rp=" --rp "
+                else rp=""
                 fi
                 if [ "${use_bids_naming}" -eq 1 ]; then
-                    bids=' --bids '
-                else bids=''
+                    bids=" --bids "
+                else bids=""
                 fi
                 if [ "${estimate_surf}" -eq 1 ]; then
-                    surf=' --surf '
-                else surf=''
+                    surf=" --surf "
+                else surf=""
                 fi
                 "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} ${mwp} ${rp} \
                     ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
