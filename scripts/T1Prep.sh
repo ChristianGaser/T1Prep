@@ -663,7 +663,7 @@ process ()
             #echo -e "${BLUE}---------------------------------------------${NC}"
             echo -e "${BLUE}Segmentation${NC}"
             if [ "${use_amap}" -eq 1 ]; then
-                cmd=" --amap --amapdir ${bin_dir}"
+                amap=" --amap --amapdir ${bin_dir}"
             else amap=""
             fi
             if [ "${estimate_mwp}" -eq 1 ]; then
