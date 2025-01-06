@@ -423,9 +423,16 @@ surface_estimation() {
     Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
     Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
     
+    if [ "${debug}" -eq 0 ]; then
+        verbose=''
+    else 
+        verbose=' -verbose '
+    fi
+
+    
     if [ -f "${outmridir}/${!hemi}" ]; then
         bar 2 $end_count "Calculate $side thickness"
-        ${bin_dir}/CAT_VolThicknessPbt -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
         # average between original and smoothed images based on their distance to 
@@ -436,11 +443,6 @@ surface_estimation() {
         # -post-fwhm 2 -thresh 0.490
         # -post-fwhm 3 -thresh 0.475
         bar 4 $end_count "Extract $side surface"
-        if [ "${debug}" -eq 0 ]; then
-            verbose=''
-        else 
-            verbose=' -verbose '
-        fi
         ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
 
         bar 6 $end_count "Map $side thickness values"
@@ -454,7 +456,7 @@ surface_estimation() {
             bar 8 $end_count "Spherical inflation $side hemisphere"
             ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
             bar 10 $end_count "Spherical registration $side hemisphere       "
-            ${bin_dir}/CAT_WarpSurf -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
+            ${bin_dir}/CAT_WarpSurf CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
         fi
     else
         echo -e "${RED}ERROR: ${python} ${cmd_dir}/deepmriprep_predict.py failed${NC}"
@@ -649,7 +651,7 @@ process ()
         # ----------------------------------------------------------------------
         if [ "${use_sanlm}" -eq 1 ]; then
             #echo -e "${BLUE}---------------------------------------------${NC}"
-            echo -e "${BLUE}SANLM denoising${NC}"
+            #echo -e "${BLUE}SANLM denoising${NC}"
             ${bin_dir}/CAT_VolSanlm "${FILE}" "${outmridir}/${sanlm}"
             input="${outmridir}/${sanlm}"
         else
@@ -661,7 +663,7 @@ process ()
         # check for outputs from previous step
         if [ -f "${input}" ]; then
             #echo -e "${BLUE}---------------------------------------------${NC}"
-            echo -e "${BLUE}Segmentation${NC}"
+            #echo -e "${BLUE}Segmentation${NC}"
             if [ "${use_amap}" -eq 1 ]; then
                 amap=" --amap --amapdir ${bin_dir}"
             else amap=""
@@ -721,7 +723,7 @@ process ()
             # ----------------------------------------------------------------------
             # check for outputs from previous step
             #echo -e "${BLUE}---------------------------------------------${NC}"
-            echo -e "${BLUE}Extracting surfaces${NC}"
+            #echo -e "${BLUE}Extracting surfaces${NC}"
             for side in left right; do
                 surface_estimation $side $outmridir $outsurfdir $registration &
             done
