@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import warnings
 import math
+import shutil
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -18,13 +19,18 @@ from deepbet import BrainExtraction
 from deepbet.utils import reoriented_nifti
 from deepmriprep.preprocess import Preprocess, save_output
 from deepmriprep.segment import BrainSegmentation, scale_intensity
-from deepmriprep.utils import (DEVICE, DATA_PATH, nifti_to_tensor, unsmooth_kernel, nifti_volume)
+from deepmriprep.utils import DEVICE, DATA_PATH, nifti_to_tensor, unsmooth_kernel, nifti_volume
 from deepmriprep.atlas import ATLASES, get_volumes, shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
 from scipy.ndimage import binary_dilation, generate_binary_structure
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
-    
+from pathlib import Path
+
+DATA_PATH0 = Path(__file__).resolve().parent.parent / 'data/'
+MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 'segmentation_nogm_model.pt'] +
+               [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 'warp_model.pt'])
+
 def progress_bar(elapsed, total, name):
     """
     Displays a progress bar.
@@ -273,7 +279,7 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
     # Return the aligned atlas image
     return nib.Nifti1Image(atlas, transform, header)
     
-def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name):
+def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align = None):
     """
     Saves a NIfTI object with resampling and reorientation.
 
@@ -295,10 +301,14 @@ def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name):
     tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
 
     # Step 3: Align to reference orientation
-    tensor, tmp1, tmp2  = align_brain(tensor.cpu().numpy(), affine, header, np.eye(4), 1)
+    #if (align):
 
     # Step 4: Reorient and save as NIfTI
-    nib.save(reoriented_nifti(tensor, affine, header), out_name)
+    if (align):
+        tensor, tmp1, tmp2  = align_brain(tensor.cpu().numpy(), affine, header, np.eye(4), 1)
+        nib.save(nib.Nifti1Image(tensor, affine, header), out_name)
+    else:
+        nib.save(reoriented_nifti(tensor, affine, header), out_name)
 
 
 def run_segment():
@@ -342,11 +352,6 @@ def run_segment():
     save_p   = args.p
     do_surf  = args.surf
 
-    # Prepare filenames and load input MRI data
-    out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '').replace('.gz','')
-
-    t1 = nib.load(t1_name)
-
     # Check for GPU support
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -367,6 +372,17 @@ def run_segment():
     if (do_surf):
         end_count = 7
     
+    # Prepare filenames and load input MRI data
+    out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '').replace('.gz','')
+
+    t1 = nib.load(t1_name)
+
+    # copy necessary model files from local folder to install it, since often the API rate limit is exceeded
+    Path(f'{DATA_PATH}/models').mkdir(exist_ok=True)
+    for file in MODEL_FILES:
+        if not Path(f'{DATA_PATH}/models/{file}').exists():
+            shutil.copy(f'{DATA_PATH0}/models/{file}', f'{DATA_PATH}/models/{file}') 
+
     # Preprocess the input volume
     vol = t1.get_fdata()
     vol, affine2, header2 = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
@@ -444,7 +460,7 @@ def run_segment():
         nib.save(p2_affine, f'{out_dir}/rp2{out_name}_affine.nii')
 
     # Save native registration
-    resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, f'{out_dir}/p0{out_name}.nii')
+    resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, f'{out_dir}/p0{out_name}.nii', True)
     if (save_p):
         resample_and_save_nifti(brain_large, grid_native, mask.affine, mask.header, f'{out_dir}/m{out_name}.nii')
         resample_and_save_nifti(p1_large, grid_native, mask.affine, mask.header, f'{out_dir}/p1{out_name}.nii')
@@ -506,8 +522,8 @@ def run_segment():
 
         # Step 7: Save hemisphere outputs
         count = progress_bar(count, end_count, 'Resampling                     ')
-        resample_and_save_nifti(nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.nii')
-        resample_and_save_nifti(nib.Nifti1Image(rh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii')
+        resample_and_save_nifti(nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.nii', True)
+        resample_and_save_nifti(nib.Nifti1Image(rh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii', True)
 
     # remove temporary AMAP files
     if (use_amap):
