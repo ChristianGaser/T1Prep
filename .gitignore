@@ -3,6 +3,7 @@
 log*
 *.nii
 test.py
+data
 T1prep-env
 MacOS
 Windows

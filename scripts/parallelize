@@ -5,9 +5,6 @@
 ########################################################
 version='parallelize v1.01'
 
-COMMAND=""
-TEST=""
-LOGDIR=""
 time=`date "+%Y%b%d_%H%M"`
 MEM_LIMIT=0
 
@@ -244,13 +241,15 @@ parallelize ()
     ((i++))
   done
 
-  if [ ! "${LOGDIR}" == "" ]; then
-    log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
-    if [ "${TEST}" == "" ]; then
-      echo Check $log for logging information
-      echo > $log
-      echo
-    fi
+  if [ -z "${LOGDIR}" ]; then
+    LOGDIR=$PWD
+  fi
+
+  log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
+  if [ -z "${TEST}" ]; then
+    echo Check $log for logging information
+    echo > $log
+    echo
   fi
   
   i=0
@@ -261,8 +260,8 @@ parallelize ()
       j=$(($i+1))
       echo job ${j}/"$NUMBER_OF_JOBS":
       echo $COMMAND ${ARG_LIST[$i]}
-      if [ "${TEST}" == "" ]; then
-        if [ ! "${LOGDIR}" == "" ]; then
+      if [ -z "${TEST}" ]; then
+        if [ -n "${LOGDIR}" ]; then
           echo job ${j}/"$NUMBER_OF_JOBS": $COMMAND ${ARG_LIST[$i]} >> $log
           nohup bash -c "for k in ${ARG_LIST[$i]}; do $COMMAND \$k; done" >> $log 2>&1 &
         else
