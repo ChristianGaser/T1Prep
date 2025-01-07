@@ -271,7 +271,58 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
     # Return the aligned atlas image
     return nib.Nifti1Image(atlas, transform, header)
     
-def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align = None):
+def crop_nifti_image_with_border(img, border=5, threshold = 0):
+    """
+    Crop a NIfTI image to the smallest bounding box containing non-zero values,
+    add a border, ensure the resulting dimensions are even, and update the affine
+    and header to preserve the spatial origin.
+    
+    Parameters:
+    img (nib.Nifti1Image): Input NIfTI image
+    border (int): Number of voxels to add as a border (default=5)
+    
+    Returns:
+    nib.Nifti1Image: Cropped and padded NIfTI image with updated affine and header
+    """
+    # Load image data, affine, and header
+    data = img.get_fdata()
+    affine = img.affine
+    header = img.header
+
+    # Find the bounding box of non-zero values
+    mask = data > threshold
+    coords = np.array(np.where(mask))
+    min_coords = coords.min(axis=1)
+    max_coords = coords.max(axis=1)
+
+    # Add border
+    min_coords = np.maximum(min_coords - border, 0)
+    max_coords = np.minimum(max_coords + border + 1, data.shape)  # +1 for inclusive index
+
+    # Crop the data
+    cropped_data = data[min_coords[0]:max_coords[0],
+                        min_coords[1]:max_coords[1],
+                        min_coords[2]:max_coords[2]]
+
+    # Ensure even dimensions
+    pad_x = (0, (cropped_data.shape[0] % 2))  # Pad 1 voxel if odd
+    pad_y = (0, (cropped_data.shape[1] % 2))
+    pad_z = (0, (cropped_data.shape[2] % 2))
+    cropped_data = np.pad(cropped_data, (pad_x, pad_y, pad_z))
+
+    # Update affine matrix to keep the origin
+    cropped_affine = affine.copy()
+    cropped_affine[:3, 3] += np.dot(affine[:3, :3], min_coords)
+
+    # Create a new NIfTI image
+    cropped_img = nib.Nifti1Image(cropped_data, affine=cropped_affine, header=header)
+
+    # Update header dimensions
+    cropped_img.header.set_data_shape(cropped_data.shape)
+
+    return cropped_img
+    
+def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align = None, crop = None):
     """
     Saves a NIfTI object with resampling and reorientation.
 
@@ -298,9 +349,14 @@ def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align = N
     # Step 4: Reorient and save as NIfTI
     if (align):
         tensor, tmp1, tmp2  = align_brain(tensor.cpu().numpy(), affine, header, np.eye(4), 1)
-        nib.save(nib.Nifti1Image(tensor, affine, header), out_name)
+        nii_data = nib.Nifti1Image(tensor, affine, header)
     else:
-        nib.save(reoriented_nifti(tensor, affine, header), out_name)
+        nii_data = reoriented_nifti(tensor, affine, header)
+
+    if (crop):
+        nii_data = crop_nifti_image_with_border(nii_data, threshold = 1.1)
+
+    nib.save(nii_data, out_name)
 
 def get_resampled_header(header, aff, new_vox_size):
     """
