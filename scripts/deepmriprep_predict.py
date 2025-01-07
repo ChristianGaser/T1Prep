@@ -529,6 +529,7 @@ def run_segment():
     parser.add_argument("-b", '--bids', action="store_true", help="(optional) Use bids naming convention.", default=None)
     parser.add_argument("-a", '--amap', action="store_true", help="(optional) Use AMAP segmentation.", default=None)
     parser.add_argument('-d', '--amapdir', help='Amap binary folder', type=str, default=None)
+    parser.add_argument("-c", '--csf', action="store_true", help="(optional) Save also CSF segmentations.", default=None)
     args = parser.parse_args()
 
     # Input/output parameters
@@ -545,7 +546,8 @@ def run_segment():
     save_wp  = args.wp
     save_rp  = args.rp
     save_p   = args.p
-    do_surf  = args.surf
+    save_csf = args.csf
+    save_hemilabel = args.surf
 
     # Check for GPU support
     if torch.cuda.is_available():
@@ -564,12 +566,11 @@ def run_segment():
     end_count = 4
     if (save_mwp):
         end_count = 5
-    if (do_surf):
+    if (save_hemilabel):
         end_count = 7
     
     # Prepare filenames and load input MRI data
     out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '').replace('.gz','')
-
     t1 = nib.load(t1_name)
 
     # copy necessary model files from local folder to install it, since often the API rate limit is exceeded
@@ -614,10 +615,14 @@ def run_segment():
     if (use_amap):
         # AMAP segmentation pipeline
         amapdir = args.amapdir
+        
+        # Correct bias using label from deepmriprep
         count = progress_bar(count, end_count, 'Fine Amap segmentation')
         bias, brain_large = correct_bias_field(brain_large, p0_large)
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
+        
+        # Cann AMAP
         cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
         os.system(cmd)
 
@@ -627,11 +632,15 @@ def run_segment():
         p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
         p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
         
+        # Get affine segmentations
         warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
         p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-        p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
+        p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
+        if ((save_csf) and (save_rp)):
+            p3_affine = F.interpolate(nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+            p3_affine = reoriented_nifti(p3_affine, warp_template.affine, warp_template.header)
         
         wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
         wj_affine = pd.Series([wj_affine])
@@ -644,6 +653,7 @@ def run_segment():
         p3_large = output_nogm['p3_large']
         p1_affine = output_nogm['p1_affine']
         p2_affine = output_nogm['p2_affine']
+        p3_affine = output_nogm['p3_affine']
         wj_affine = output_nogm['wj_affine']
 
         gmv = output_nogm['gmv']
@@ -653,6 +663,8 @@ def run_segment():
     if (save_rp):
         nib.save(p1_affine, f'{out_dir}/rp1{out_name}_affine.nii')
         nib.save(p2_affine, f'{out_dir}/rp2{out_name}_affine.nii')
+        if (save_csf):
+            nib.save(p3_affine, f'{out_dir}/rp3{out_name}_affine.nii')
 
     # Save native registration
     resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, f'{out_dir}/p0{out_name}.nii', True)
@@ -660,10 +672,11 @@ def run_segment():
         resample_and_save_nifti(brain_large, grid_native, mask.affine, mask.header, f'{out_dir}/m{out_name}.nii')
         resample_and_save_nifti(p1_large, grid_native, mask.affine, mask.header, f'{out_dir}/p1{out_name}.nii')
         resample_and_save_nifti(p2_large, grid_native, mask.affine, mask.header, f'{out_dir}/p2{out_name}.nii')
-        resample_and_save_nifti(p3_large, grid_native, mask.affine, mask.header, f'{out_dir}/p3{out_name}.nii')
+        if (save_csf):
+            resample_and_save_nifti(p3_large, grid_native, mask.affine, mask.header, f'{out_dir}/p3{out_name}.nii')
 
     # Warping is necessary for surface creation and saving warped segmentations
-    if ((do_surf) | (save_mwp) | (save_wp)):
+    if ((save_hemilabel) | (save_mwp) | (save_wp)):
         # Step 5: Warping
         count = progress_bar(count, end_count, 'Warping                          ')
         output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
@@ -675,12 +688,18 @@ def run_segment():
             mwp2 = output_reg['mwp2']
             nib.save(mwp1, f'{out_dir}/mwp1{out_name}.nii')
             nib.save(mwp2, f'{out_dir}/mwp2{out_name}.nii')
+            if (save_csf):
+                mwp3 = output_reg['mwp3']
+                nib.save(mwp3, f'{out_dir}/mwp3{out_name}.nii')
             
         if (save_wp):
             wp1 = output_reg['mwp1']
             wp2 = output_reg['mwp2']
             nib.save(wp1, f'{out_dir}/wp1{out_name}.nii')
             nib.save(wp2, f'{out_dir}/wp2{out_name}.nii')
+            if (save_csf):
+                wp3 = output_reg['mwp3']
+                nib.save(wp3, f'{out_dir}/wp3{out_name}.nii')
 
         nib.save(warp_xy, f'{out_dir}/y_{out_name}.nii')
         #nib.save(warp_yx, f'{out_dir}/iy_{out_name}.nii')
@@ -707,9 +726,22 @@ def run_segment():
             print("output_atlas")
             output_atlas[i]
         """    
+        
+        """
+        # Create the file structure
+        root = ET.Element('data')
+        items = ET.SubElement(root, 'items')
+        item1 = ET.SubElement(items, 'item')
+        item1.set('name', 'item1')
+        item1.text = 'item1description'
+        
+        # Create a new XML file with the results
+        tree = ET.ElementTree(root)
+        tree.write(f'{out_dir}/../report/{out_name}.xml')
+        """
                 
     # Atlas is necessary for surface creation
-    if (do_surf):
+    if (save_hemilabel):
         # Step 6: Atlas creation
         count = progress_bar(count, end_count, 'Atlas creation                 ')
         atlas = get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, 'ibsr', device)
