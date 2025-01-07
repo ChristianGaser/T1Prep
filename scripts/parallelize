@@ -153,7 +153,7 @@ get_no_of_cpus () {
   
     elif [ "$ARCH" == "Darwin" ]
     then
-      NUMBER_OF_JOBS=`sysctl -a hw | grep -w logicalcpu | awk '{ print $2 }'`
+      NUMBER_OF_JOBS=`sysctl -a hw | grep -w "hw.logicalcpu" | awk '{ print $2 }'`
   
     elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]
     then
@@ -163,7 +163,7 @@ get_no_of_cpus () {
       NUMBER_OF_JOBS=`grep ^processor $CPUINFO | wc -l`
     fi
   
-  fi
+  fi  
 }
 
 ########################################################
