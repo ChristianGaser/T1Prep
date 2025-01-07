@@ -162,13 +162,14 @@ def run_segment():
         
         # Get affine segmentations
         warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
-        p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-        p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
-        p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-        p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
-        if ((save_csf) and (save_rp)):
-            p3_affine = F.interpolate(nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-            p3_affine = reoriented_nifti(p3_affine, warp_template.affine, warp_template.header)
+        if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
+            p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+            p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
+            p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+            p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
+            if ((save_csf) and (save_rp)):
+                p3_affine = F.interpolate(nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+                p3_affine = reoriented_nifti(p3_affine, warp_template.affine, warp_template.header)
         
         wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
         wj_affine = pd.Series([wj_affine])
@@ -179,10 +180,12 @@ def run_segment():
         p1_large = output_nogm['p1_large']
         p2_large = output_nogm['p2_large']
         p3_large = output_nogm['p3_large']
-        p1_affine = output_nogm['p1_affine']
-        p2_affine = output_nogm['p2_affine']
-        p3_affine = output_nogm['p3_affine']
-        wj_affine = output_nogm['wj_affine']
+        
+        if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
+            p1_affine = output_nogm['p1_affine']
+            p2_affine = output_nogm['p2_affine']
+            p3_affine = output_nogm['p3_affine']
+            wj_affine = output_nogm['wj_affine']
 
         gmv = output_nogm['gmv']
         tiv = output_nogm['tiv']
@@ -277,8 +280,8 @@ def run_segment():
 
         # Step 7: Save hemisphere outputs
         count = progress_bar(count, end_count, 'Resampling                     ')
-        resample_and_save_nifti(nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.nii', True)
-        resample_and_save_nifti(nib.Nifti1Image(rh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii', True)
+        resample_and_save_nifti(nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.nii', True, True)
+        resample_and_save_nifti(nib.Nifti1Image(rh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii', True, True)
 
     # remove temporary AMAP files
     if (use_amap):
