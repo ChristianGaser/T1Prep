@@ -24,8 +24,7 @@ from deepmriprep.utils import DEVICE, DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import ATLASES, get_volumes, shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
-from .utils import progress_bar, remove_filename, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain
-
+from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain
 DATA_PATH0 = Path(__file__).resolve().parent.parent / 'data/'
 MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 'segmentation_nogm_model.pt'] +
                [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 'warp_model.pt'])
@@ -33,11 +32,11 @@ MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', '
 def run_segment():
 
     """
-    Perform brain segmentation on input medical image data using preprocessing, affine registration, and segmentation techniques.
+    Perform brain segmentation (either using deepmriprep or AMAP) on input T1w brain data using preprocessing, affine registration, and segmentation techniques.
 
     Command-line Arguments:
     -i, --input : str (required)
-        Input file or folder containing the MRI data (.nii format).
+        Input file or folder containing the MRI data (.nii/.nii.gz format).
     -o, --outdir : str (required)
         Output directory to save the processed results.
     -a, --amap : flag (optional)
@@ -50,15 +49,15 @@ def run_segment():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', help='Input file', required=True, type=str)
     parser.add_argument('-o', '--outdir', help='Output folder', required=True, type=str)
-    parser.add_argument("-s", '--surf', action="store_true", help="(optional) Save partioned segmentation map for surface estimation.", default=None)
-    parser.add_argument("-m", '--mwp', action="store_true", help="(optional) Save modulated and warped segmentations.", default=None)
-    parser.add_argument("-w", '--wp', action="store_true", help="(optional) Save warped segmentations.", default=None)
-    parser.add_argument("-p", '--p', action="store_true", help="(optional) Save native segmentations.", default=None)
-    parser.add_argument("-r", '--rp', action="store_true", help="(optional) Save affine registered segmentations.", default=None)
-    parser.add_argument("-b", '--bids', action="store_true", help="(optional) Use bids naming convention.", default=None)
-    parser.add_argument("-a", '--amap', action="store_true", help="(optional) Use AMAP segmentation.", default=None)
-    parser.add_argument('-d', '--amapdir', help='Amap binary folder', type=str, default=None)
-    parser.add_argument("-c", '--csf', action="store_true", help="(optional) Save also CSF segmentations.", default=None)
+    parser.add_argument("-s", '--surf', action="store_true", help="(optional) Save partioned segmentation map for surface estimation.")
+    parser.add_argument("-c", '--csf', action="store_true", help="(optional) Save also CSF segmentations.")
+    parser.add_argument("-m", '--mwp', action="store_true", help="(optional) Save modulated and warped segmentations.")
+    parser.add_argument("-w", '--wp', action="store_true", help="(optional) Save warped segmentations.")
+    parser.add_argument("-p", '--p', action="store_true", help="(optional) Save native segmentations.")
+    parser.add_argument("-r", '--rp', action="store_true", help="(optional) Save affine registered segmentations.")
+    parser.add_argument("-b", '--bids', action="store_true", help="(optional) Use bids naming convention.")
+    parser.add_argument("-a", '--amap', action="store_true", help="(optional) Use AMAP segmentation.")
+    parser.add_argument('-d', '--amapdir', help='Amap binary folder', type=str)
     args = parser.parse_args()
 
     # Input/output parameters

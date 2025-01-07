@@ -45,6 +45,7 @@ use_bids_naming=0
 thickness_fwhm=8
 median_filter=4
 estimate_surf=1
+estimate_csf=0
 estimate_mwp=1
 estimate_wp=0
 estimate_rp=0
@@ -166,6 +167,9 @@ parse_args ()
                 ;;
             --p*)
                 estimate_p=1
+                ;;
+            --csf*)
+                estimate_csf=1
                 ;;
             --amap)
                 use_amap=1
@@ -459,7 +463,7 @@ surface_estimation() {
             ${bin_dir}/CAT_WarpSurf CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
         fi
     else
-        echo -e "${RED}ERROR: ${python} ${cmd_dir}/deepmriprep_predict.py failed${NC}"
+        echo -e "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed${NC}"
         ((i++))
         continue
     fi
@@ -692,8 +696,12 @@ process ()
                 surf=" --surf "
             else surf=""
             fi
-            "${python}" "${cmd_dir}/deepmriprep_predict.py" ${amap} ${mwp} ${rp} \
-                ${wp} ${p} ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
+            if [ "${estimate_csf}" -eq 1 ]; then
+                csf=" --csf "
+            else csf=""
+            fi
+            "${python}" "${cmd_dir}/segment.py" ${amap} ${mwp} ${rp} \
+                ${csf} ${wp} ${p} ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -712,7 +720,7 @@ process ()
             # ----------------------------------------------------------------------
             # check for outputs from previous step
             if [ ! -f "${outmridir}/${p0}" ]; then
-                echo -e "${RED}ERROR: ${cmd_dir}/deepmriprep_predict.py failed${NC}"
+                echo -e "${RED}ERROR: ${cmd_dir}/segment.py failed${NC}"
                 ((i++))
                 continue
             fi
@@ -776,10 +784,7 @@ help ()
 cat <<__EOM__
 
 USAGE:
-  T1Prep.sh [--python python_command] [--out-dir out_folder] [--bin-dir bin_folder] [--amap]
-                    [--thickness-fwhm thickness_fwm] [--sanlm] [--no-surf] [--no-mwp] [--rp]
-                    [--wp] [--p] [--pre-fwhm pre_fwhm] [--post-fwhm post_fwhm]  
-                    [--bids] [--debug] filenames 
+  T1Prep.sh [options] filenames 
  
   --python <FILE>            python command (default $python)
   --out-dir <DIR>            output folder (default same folder)
@@ -801,6 +806,7 @@ USAGE:
   --wp                       additionally save warped segmentations
   --rp                       additionally save affine registered segmentations
   --p                        additionally save native segmentations
+  --csf                      additionally save CSF segmentations (default is GM/WM only)
   --sanlm                    apply denoising with SANLM-filter
   --amap                     use segmentation from AMAP instead of deepmriprep
   --bids                     use BIDS naming of output files
@@ -833,7 +839,7 @@ USED FUNCTIONS:
   CAT_3dVol2Surf
   CAT_SurfDistance
   CAT_Central2Pial
-  ${cmd_dir}/deepmriprep_predict.py
+  ${cmd_dir}/segment.py
   
 This script was written by Christian Gaser (christian.gaser@uni-jena.de).
 
