@@ -57,7 +57,7 @@ save_rp=0
 save_p=0
 min_thickness=1
 registration=1
-post_fwhm=1
+post_fwhm=2
 pre_fwhm=0
 re_install=0
 use_sanlm=0
@@ -189,6 +189,7 @@ parse_args ()
                 ;;
             --debug)
                 debug=1
+                save_p=1
                 ;;
             -h | --help | -v | --version | -V)
                 help
@@ -356,9 +357,8 @@ install_deepmriprep ()
 # get OS
 ########################################################
 
-get_OS () {
-
-    
+get_OS () 
+{
     # Determine CPU architecture
     cpu_arch=$(uname -m)
 
@@ -388,7 +388,8 @@ get_OS () {
 ########################################################
 # progress bar
 ########################################################
-bar() {
+bar() 
+{
     # Usage: bar 1 100 Name
     #            ^--------- Elapsed Percentage (0-100).
     #               ^------ Total length in chars.
@@ -416,18 +417,12 @@ bar() {
 ########################################################
 # surface estimation
 ########################################################
-surface_estimation() {
-  
+surface_estimation() 
+{  
     side=$1
     outmridir=$2
     outsurfdir=$3
     registration=$4
-    ((side_count=$side))
-    if [ "${registration}" -eq 1 ]; then
-        ((end_count=10))
-    else
-        ((end_count=6))
-    fi
 
     # create dynamic variables
     pbt=pbt_$side
@@ -440,10 +435,19 @@ surface_estimation() {
     wm=wm_$side
     sphere=sphere_$side
     spherereg=spherereg_$side
+    intensity=intensity_$side
+    intensity_pial=intensity_pial_$side
+    intensity_white=intensity_white_$side
     fshemi=$(echo "$side" | sed -e "s/left/lh/g" -e "s/right/rh/g")
     Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
     Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
     
+    if [ "${registration}" -eq 1 ]; then
+        ((end_count=10))
+    else
+        ((end_count=6))
+    fi
+
     if [ "${debug}" -eq 0 ]; then
         verbose=''
     else 
@@ -488,6 +492,13 @@ surface_estimation() {
         # Executes 'CAT_Central2Pial' twice to estimate both pial and white matter surfaces.
         ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.5
         ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5
+        
+        # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
+        if [ "${debug}" -eq 1 ]; then
+            ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!mid} ${outmridir}/${mT1} ${outsurfdir}/${!intensity}
+            ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!pial} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_pial}
+            ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!wm} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_white}
+        fi
     
         # If registration is enabled, additional steps for spherical inflation and registration are performed.
         if [ "${registration}" -eq 1 ]; then
@@ -514,7 +525,6 @@ surface_estimation() {
 
 process ()
 {
-        
     # if target-res is set add a field to the name
     res_str='_res-high'
     
@@ -603,23 +613,28 @@ process ()
             mkdir -p "$outdir"
         fi
         
+
+        # get output names
+        sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
+        
+        # remove T1w|T2w from basename
+        seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
+        p0=$(echo p0"$bn_gz")
+        mT1=$(echo m"$bn_gz")
+                    
+        hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
+        hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
+        gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
+        gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
+        
+        # for the following filenames we have to remove the potential .gz from name
+        ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
+        ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
+
         if [ "${use_bids_naming}" -eq 1 ]; then
 
             echo -e "${RED}BIDS names for volumes not yet supported.${NC}"
-            
-            # get output names
-            sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
-            
-            # remove T1w|T2w from basename
-            seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")            
-            p0=$(echo p0"$bn_gz")
-            
-            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
-            hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-            gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-            gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
-            
-            # for the following filenames we have to remove the potential .gz from name
+                        
             ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
             ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
             mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
@@ -636,26 +651,16 @@ process ()
             sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
             spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
             spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
+            intensity_left=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-L_intensity.txt/g")
+            intensity_right=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-R_intensity.txt/g")
+            intensity_pial_left=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-L_intensity_pial.txt/g")
+            intensity_pial_right=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-R_intensity_pial.txt/g")
+            intensity_white_left=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-L_intensity_white.txt/g")
+            intensity_white_right=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-R_intensity_white.txt/g")
             
             outmridir=${outdir}
             outsurfdir=${outdir}
-        else
-            # get output names
-            sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
-            
-            # remove T1w|T2w from basename
-            seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
-            p0=$(echo p0"$bn_gz")
-                        
-            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
-            hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-            gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-            gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
-            
-            # for the following filenames we have to remove the potential .gz from name
-            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
-            
+        else            
             mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
             mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
             pial_left=$(echo "lh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
@@ -670,10 +675,15 @@ process ()
             sphere_right=$(echo "rh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
             spherereg_left=$(echo "lh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
             spherereg_right=$(echo "rh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            intensity_left=$(echo "lh.intensity_${bn_gz}" | sed -e "s/.nii/.txt/g")
+            intensity_right=$(echo "rh.intensity_${bn_gz}" | sed -e "s/.nii/.txt/g")
+            intensity_pial_left=$(echo "lh.intensity_pial_${bn_gz}" | sed -e "s/.nii/.txt/g")
+            intensity_pial_right=$(echo "rh.intensity_pial_${bn_gz}" | sed -e "s/.nii/.txt/g")
+            intensity_white_left=$(echo "lh.intensity_white_${bn_gz}" | sed -e "s/.nii/.txt/g")
+            intensity_white_right=$(echo "rh.intensity_white_${bn_gz}" | sed -e "s/.nii/.txt/g")
             
             outmridir=${outdir}/mri
             outsurfdir=${outdir}/surf
-            
         fi
                 
         # create output folders if needed
@@ -770,6 +780,7 @@ process ()
             
             # only remove temporary files if surfaces exist
             if  [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
+
                 if [ "${save_hemi}" -eq 1 ]; then
                     file_list='ppm gmt'
                 else
@@ -822,7 +833,8 @@ ${BOLD}OPTIONS:${NC}
   ${YELLOW}System:${NC}
     --re-install              Remove old installation and reinstall required Python libraries.
     --python <FILE>           Specify Python command to use (default: $python).
-    --debug                   Enable verbose output and do not delete temporary files.
+    --debug                   Enable verbose output and do not delete temporary files and save some
+                              debugging information..
 
   ${YELLOW}Parameters:${NC}
     --out-dir <DIR>           Specify output directory (default: current folder).
@@ -887,7 +899,7 @@ __EOM__
 check_python
 check_python_cmd
 
-# Check hether local Python environment exists
+# Check whether local Python environment exists
 if [ ! -d "${T1prep_env}" ]; then
 
     # Prompt the user with a Y/N question

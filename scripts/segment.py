@@ -176,6 +176,7 @@ def run_segment():
     else:
         # DeepMRI prep segmentation pipeline
         count = progress_bar(count, end_count, 'Fine Deepmriprep segmentation')
+        bias, brain_large = correct_bias_field(brain_large, p0_large)
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
         p1_large = output_nogm['p1_large']
         p2_large = output_nogm['p2_large']
