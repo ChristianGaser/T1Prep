@@ -20,6 +20,7 @@
 # - get_OS: Identifies operations system and folder of binaries.
 # - bar: Displays progress bar.
 # - get_no_of_cpus: Determines the number of available CPUs.
+# - get_file_names: Get output file names 
 # - process: Performs the preprocessing steps on each input file.
 
 ########################################################
@@ -501,6 +502,91 @@ surface_estimation() {
 }
 
 ########################################################
+# get output file names
+########################################################
+
+get_file_names ()
+{
+    bn=$1
+    bn_gz=$2
+    seg=$3
+    outdir=$4
+    
+    if [ "${use_bids_naming}" -eq 1 ]; then
+    
+        echo -e "${RED}BIDS names for volumes not yet supported.${NC}"
+        
+        # get output names
+        sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
+        
+        # remove T1w|T2w from basename
+        seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")            
+        p0=$(echo p0"$bn_gz")
+        
+        hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
+        hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
+        gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
+        gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
+        
+        # for the following filenames we have to remove the potential .gz from name
+        ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
+        ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
+        mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
+        mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+        pial_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pial.surf.gii/g")
+        pial_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pial.surf.gii/g")
+        wm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_wm.surf.gii/g")
+        wm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_wm.surf.gii/g")
+        thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g")
+        thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
+        pbt_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pbt.txt/g")
+        pbt_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pbt.txt/g")
+        sphere_left=$(echo "$bn_gz"     | sed -e "s/.nii/_hemi-L_sphere.surf.gii/g")
+        sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
+        spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
+        spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
+        
+        outmridir=${outdir}
+        outsurfdir=${outdir}
+    else
+        # get output names
+        sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
+        
+        # remove T1w|T2w from basename
+        seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
+        p0=$(echo p0"$bn_gz")
+                    
+        hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
+        hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
+        gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
+        gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
+        
+        # for the following filenames we have to remove the potential .gz from name
+        ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
+        ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
+        
+        mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        pial_left=$(echo "lh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        pial_right=$(echo "rh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        wm_left=$(echo "lh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        wm_right=$(echo "rh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        thick_left=$(echo "lh.thickness.${bn_gz}" | sed -e "s/.nii//g")
+        thick_right=$(echo "rh.thickness.${bn_gz}" | sed -e "s/.nii//g")
+        pbt_left=$(echo "lh.pbt.${bn_gz}" | sed -e "s/.nii//g")
+        pbt_right=$(echo "rh.pbt.${bn_gz}" | sed -e "s/.nii//g")
+        sphere_left=$(echo "lh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        sphere_right=$(echo "rh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        spherereg_left=$(echo "lh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        spherereg_right=$(echo "rh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
+        
+        outmridir=${outdir}/mri
+        outsurfdir=${outdir}/surf
+        
+    fi
+}
+
+########################################################
 # process data
 ########################################################
 
@@ -594,79 +680,9 @@ process ()
         if [ ! -d "$outdir" ]; then
             mkdir -p "$outdir"
         fi
-
-        if [ "${use_bids_naming}" -eq 1 ]; then
         
-            echo -e "${RED}BIDS names for volumes not yet supported.${NC}"
-            
-            # get output names
-            sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
-            
-            # remove T1w|T2w from basename
-            seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")            
-            p0=$(echo p0"$bn_gz")
-            
-            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
-            hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-            gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-            gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
-            
-            # for the following filenames we have to remove the potential .gz from name
-            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
-            mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
-            mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-            pial_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pial.surf.gii/g")
-            pial_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pial.surf.gii/g")
-            wm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_wm.surf.gii/g")
-            wm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_wm.surf.gii/g")
-            thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g")
-            thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
-            pbt_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pbt.txt/g")
-            pbt_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pbt.txt/g")
-            sphere_left=$(echo "$bn_gz"     | sed -e "s/.nii/_hemi-L_sphere.surf.gii/g")
-            sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
-            spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
-            spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
-            
-            outmridir=${outdir}
-            outsurfdir=${outdir}
-        else
-            # get output names
-            sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
-            
-            # remove T1w|T2w from basename
-            seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
-            p0=$(echo p0"$bn_gz")
-                        
-            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
-            hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-            gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-            gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
-            
-            # for the following filenames we have to remove the potential .gz from name
-            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
-            
-            mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            pial_left=$(echo "lh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            pial_right=$(echo "rh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            wm_left=$(echo "lh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            wm_right=$(echo "rh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            thick_left=$(echo "lh.thickness.${bn_gz}" | sed -e "s/.nii//g")
-            thick_right=$(echo "rh.thickness.${bn_gz}" | sed -e "s/.nii//g")
-            pbt_left=$(echo "lh.pbt.${bn_gz}" | sed -e "s/.nii//g")
-            pbt_right=$(echo "rh.pbt.${bn_gz}" | sed -e "s/.nii//g")
-            sphere_left=$(echo "lh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            sphere_right=$(echo "rh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            spherereg_left=$(echo "lh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            spherereg_right=$(echo "rh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            
-            outmridir=${outdir}/mri
-            outsurfdir=${outdir}/surf
-            
-        fi
+        # get file names
+        get_file_names $bn $bn_gz $seg $outdir
         
         # create output folders if needed
         if [ ! -d "$outmridir" ]; then
