@@ -16,7 +16,7 @@
 # - check_python_cmd: Checks if the Python command is available.
 # - check_files: Checks if the input files exist.
 # - check_python: Checks if the specified Python command is available.
-# - check_install: Checks python installation.
+# - check_python_libraries: Checks python installation.
 # - get_OS: Identifies operations system and folder of binaries.
 # - bar: Displays progress bar.
 # - get_no_of_cpus: Determines the number of available CPUs.
@@ -41,6 +41,7 @@ NC=$(tput sgr0)
 # defaults
 T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
+T1prep_env=${T1prep_dir}/T1prep-env
 use_bids_naming=0
 thickness_fwhm=1
 median_filter=2
@@ -52,11 +53,10 @@ save_wp=0
 save_rp=0
 save_p=0
 min_thickness=1
-registration=1 # currently skip spherical registration to save time
+registration=1
 post_fwhm=2
 pre_fwhm=0
 re_install=0
-do_install=0
 use_sanlm=0
 use_amap=0
 thresh=0.5
@@ -73,14 +73,11 @@ main ()
     parse_args ${1+"$@"}
     
     check_python
-    check_install
+    check_python_libraries    
+    check_files
+    get_OS
     
-    # Skip that part for installation only
-    if [ "${do_install}" -eq 0 ]; then
-        check_files
-        get_OS
-        process
-    fi
+    process
 
     exit 0
 }
@@ -106,10 +103,6 @@ parse_args ()
         paras="$paras $optname $optarg"
 
         case "$1" in
-            --install)
-                do_install=1
-                re_install=1
-                ;;
             --re-install)
                 re_install=1
                 ;;
@@ -163,7 +156,7 @@ parse_args ()
                 no_overwrite=$optarg
                 shift
                 ;;
-            --hemisphere)
+            --hemi*)
                 save_hemi=1
                 ;;
             --no-surf)
@@ -308,23 +301,21 @@ check_python ()
 # check for installation
 ########################################################
 
-check_install ()
+check_python_libraries ()
 {
     # Remove T1pre-env if reinstallation is selected
-    [ -d "${T1prep_dir}/T1prep-env" && "${re_install}" -eq 1] && rm -r "${T1prep_dir}/T1prep-env"
+    if [[ -d "${T1prep_env}" && "${re_install}" == "1" ]]; then
+        rm -r "${T1prep_env}"
+    fi
 
-    if [ -d ${T1prep_dir}/T1prep-env ]; then
-        $python -m venv ${T1prep_dir}/T1prep-env
-        source ${T1prep_dir}/T1prep-env/bin/activate
+    if [ -d ${T1prep_env} ]; then
+        $python -m venv ${T1prep_env}
+        source ${T1prep_env}/bin/activate
         $python -m pip install -U pip &>/dev/null
         
         $python -c "import deepmriprep" &>/dev/null
         if [ $? -gt 0 ]; then
             install_deepmriprep
-        else
-            if [ "${do_install}" -eq 1 ]; then
-                echo "Package deepmriprep is already installed."
-            fi
         fi
     else
         install_deepmriprep
@@ -338,8 +329,8 @@ check_install ()
 install_deepmriprep ()
 {
     echo "Install deepmriprep"
-    $python -m venv ${T1prep_dir}/T1prep-env
-    source ${T1prep_dir}/T1prep-env/bin/activate
+    $python -m venv ${T1prep_env}
+    source ${T1prep_env}/bin/activate
     $python -m pip install -U pip
     $python -m pip install scipy==1.13.1 torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep
     
@@ -504,9 +495,9 @@ process ()
     start0=$(date +%s)
 
     # use defined environment
-    $python -m venv ${T1prep_dir}/T1prep-env
-    source ${T1prep_dir}/T1prep-env/bin/activate
-    python="${T1prep_dir}/T1prep-env/bin/python"
+    $python -m venv ${T1prep_env}
+    source ${T1prep_env}/bin/activate
+    python="${T1prep_env}/bin/python"
 
     ((i=0))
     ((j=0))
@@ -710,7 +701,7 @@ process ()
                 bids=" --bids "
             else bids=""
             fi
-            if [ "${save_surf}" -eq 1 ||  "${save_hemi}" -eq 1 ]; then
+            if [[ "${save_surf}" -eq 1 || "${save_hemi}" -eq 1 ]]; then
                 surf=" --surf "
             else surf=""
             fi
@@ -804,8 +795,8 @@ process ()
 
 help() {
 cat <<__EOM__
-${BOLD}${BLUE}T1Prep Computational Anatomy Pipeline
--------------------------------------${NC}
+${BOLD}${BLUE}T1Prep Computational Anatomy Pipeline (PyCAT)
+---------------------------------------------${NC}
 
 ${BOLD}USAGE:${NC}
   ${GREEN}T1Prep.sh [options] <filenames>${NC}
@@ -815,7 +806,6 @@ ${BOLD}DESCRIPTION:${NC}
 
 ${BOLD}OPTIONS:${NC}
   ${YELLOW}System:${NC}
-    --install                 Install required Python libraries.
     --re-install              Remove old installation and reinstall required Python libraries.
     --python <FILE>           Specify Python command to use (default: $python).
     --debug                   Enable verbose output and do not delete temporary files.
@@ -831,7 +821,7 @@ ${BOLD}OPTIONS:${NC}
     --median-filter <NUMBER>  Number of median filter applications to reduce topology artifacts.
 
   ${YELLOW}Save Options:${NC}
-    --no-overwrite <STRING>   Prevent overwriting of existing results.
+    --no-overwrite <STRING>   Prevent overwriting of existing results by defining filename pattern that will be checked.
     --no-surf                 Skip surface and thickness estimation.
     --no-mwp                  Skip estimation of modulated and warped segmentations.
     --hemisphere              Additionally save hemispheric partitions.
@@ -867,10 +857,30 @@ ${BOLD}USED FUNCTIONS:${NC}
   - CAT_Central2Pial
   - ${cmd_dir}/segment.py
 
-${RED}For further assistance, contact:${NC}
+${BOLD}For further assistance, contact:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
 
 __EOM__
+
+check_python
+check_python_cmd
+
+# Check hether local Python environment exists
+if [ ! -d "${T1prep_env}" ]; then
+
+    # Prompt the user with a Y/N question
+    echo "${RED}${BOLD}Local Python environment "${T1prep_env}" not found.${NC}"
+    echo "Do you want to install required Python libraries? (Y/N)"
+    read -r response
+    
+    # Check if the user's answer is 'Y'
+    case "$response" in
+        [Yy]*)
+            check_python_libraries
+            ;;
+    esac
+fi
+
 }
 
 ########################################################
