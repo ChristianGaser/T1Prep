@@ -431,7 +431,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 2)
+    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 3)
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["rLatVen"]) & \
                        ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -461,7 +461,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 2)
+    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 3)
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["lLatVen"]) & \
                        ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) & \

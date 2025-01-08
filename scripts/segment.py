@@ -198,7 +198,7 @@ def run_segment():
             nib.save(p3_affine, f'{out_dir}/rp3{out_name}_affine.nii')
 
     # Save native registration
-    resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, f'{out_dir}/p0{out_name}.nii', True)
+    resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, f'{out_dir}/p0{out_name}.nii')
     if (save_p):
         resample_and_save_nifti(brain_large, grid_native, mask.affine, mask.header, f'{out_dir}/m{out_name}.nii')
         resample_and_save_nifti(p1_large, grid_native, mask.affine, mask.header, f'{out_dir}/p1{out_name}.nii')
