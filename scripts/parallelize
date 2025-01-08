@@ -3,10 +3,20 @@
 ########################################################
 # global parameters
 ########################################################
-version='parallelize v1.01'
-
 time=`date "+%Y%b%d_%H%M"`
 MEM_LIMIT=0
+
+# output colors
+UNDERLINE=$(tput smul)
+YELLOW=$(tput setaf 3)
+GREEN=$(tput setaf 2)
+BLACK=$(tput setaf 0)
+CYAN=$(tput setaf 6)
+PINK=$(tput setaf 5)
+BLUE=$(tput setaf 4)
+RED=$(tput setaf 1)
+BOLD=$(tput bold)
+NC=$(tput sgr0)
 
 ########################################################
 # run main
@@ -281,40 +291,41 @@ help ()
 {
 cat <<__EOM__
 
-USAGE:
-  parallelize [-p number_of_processes] [-l log_folder] [-t] -c command_to_parallelize filename|filepattern
-  
-  -p  <NUMBER>| --processes <NUMBER>  number of parallel jobs (=number of processors)
-                                      (default $NUMBER_OF_JOBS)
-  -c  <STRING>| --command <STRING>    command that should be parallelized
-  -t          | --test                do not call command, but print files to be processed
-  -l <Dir>    | --logdir <DIR>        directory where log-file will be saved
-  -m <INT>    | --mem-limit <INT>     memory limit for each process (default $MEM_LIMIT)
+${BOLD}USAGE:${NC}
+  parallelize [-p <NUMBER>] [-l <DIR>] [-t] [-m <INT>] -c <STRING> [filename|filepattern]
 
-   Only one filename or pattern is allowed. This can be either a single file or a pattern
-   with wildcards to process multiple files. Optionally you can set number of processes,
-   that are automatically set to the number of processors as default.
+${BOLD}OPTIONS:${NC}
+  -p, --processes <NUMBER>  Specify the number of parallel jobs (default $NUMBER_OF_JOBS).
+  -c, --command <STRING>    Command to be executed in parallel.
+  -t, --test                Run in test mode: print the files to be processed without executing the command.
+  -l, --logdir <DIR>        Directory to save the log file.
+  -m, --mem-limit <INT>     Memory limit for each process in GB (default is $MEM_LIMIT GB).
 
-PURPOSE:
-   Parallelize a job or command
+${BOLD}DESCRIPTION:${NC}
+  Execute commands in parallel across multiple files specified by filenames or a wildcard pattern. 
+  Optionally, adjust the number of processes, memory limits, and logging preferences.
 
-OUTPUT:
-   parallelize_${HOSTNAME}_${time}.log with current data and time in name as log-file if logdir is defined
+${BOLD}OUTPUT:${NC}
+  If a log directory is specified, logs are saved in a file named 'parallelize_${HOSTNAME}_\${time}.log',
+  incorporating the current date and time.
 
-EXAMPLE
-   parallelize -c "niismooth -v -fwhm 8" sTRIO*.nii
-     Parallelize smoothing with fwhm of 8mm for all files sTRIO*.nii. Use
-     verbose mode to see diagnostic output.
-   
-   parallelize -c gunzip *.zip
-     Parallelize unzipping of all zip-files in current folder. 
+${BOLD}EXAMPLES:${NC}
+  parallelize -c "niismooth -v -fwhm 8" sTRIO*.nii
+    Parallelizes the 'niismooth' command with an 8mm FWHM, applied to all files matching 'sTRIO*.nii', displaying verbose output.
 
-   parallelize -m 10 -c "T1prep.sh --no-surf" sTRIO*.nii
-     Parallelize T1prep.sh without surface estimation and consider that each 
-     process needs 10GB RAM. 
+  parallelize -c "gunzip" *.zip
+    Parallelizes unzipping of all .zip files in the current directory.
 
-This script was written by Christian Gaser (christian.gaser@uni-jena.de).
-This is ${version}.
+  parallelize -m 10 -c "T1prep.sh --no-surf" sTRIO*.nii
+    Parallelizes 'T1prep.sh' without surface estimation, setting a 10GB RAM limit per process.
+
+  T1Prep.sh --out-dir ~/test_T1prep --no-surf --hemisphere sTRIO*.nii
+  parallelize -p 8 -c "T1prep.sh --no-mwp1" sTRIO*.nii
+    First, runs 'T1prep.sh' with settings to skip the estimation of segmentations, then
+    parallelizes execution for better performance across 8 processors.
+
+${BOLD}Author:${NC}
+  Christian Gaser (christian.gaser@uni-jena.de)
 
 __EOM__
 }
