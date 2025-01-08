@@ -20,7 +20,6 @@
 # - get_OS: Identifies operations system and folder of binaries.
 # - bar: Displays progress bar.
 # - get_no_of_cpus: Determines the number of available CPUs.
-# - get_file_names: Get output file names 
 # - process: Performs the preprocessing steps on each input file.
 
 ########################################################
@@ -43,6 +42,9 @@ NC=$(tput sgr0)
 T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
 T1prep_env=${T1prep_dir}/T1prep-env
+os_type=$(uname -s) # Determine OS type
+outsurfdir=''
+outmridir=''
 use_bids_naming=0
 thickness_fwhm=1
 median_filter=2
@@ -55,7 +57,7 @@ save_rp=0
 save_p=0
 min_thickness=1
 registration=1
-post_fwhm=2
+post_fwhm=1
 pre_fwhm=0
 re_install=0
 use_sanlm=0
@@ -341,6 +343,13 @@ install_deepmriprep ()
             Please install it manually${NC}"
         exit 1
     fi
+    
+    # Allow executable on MacOS
+    case "$os_type" in
+        Darwin*)    
+            find MacOS -name "${bin_dir}/CAT*" -exec xattr -d com.apple.quarantine {} \;
+            ;;
+    esac
 }
 
 ########################################################
@@ -349,8 +358,6 @@ install_deepmriprep ()
 
 get_OS () {
 
-    # Determine OS type
-    os_type=$(uname -s)
     
     # Determine CPU architecture
     cpu_arch=$(uname -m)
@@ -502,91 +509,6 @@ surface_estimation() {
 }
 
 ########################################################
-# get output file names
-########################################################
-
-get_file_names ()
-{
-    bn=$1
-    bn_gz=$2
-    seg=$3
-    outdir=$4
-    
-    if [ "${use_bids_naming}" -eq 1 ]; then
-    
-        echo -e "${RED}BIDS names for volumes not yet supported.${NC}"
-        
-        # get output names
-        sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
-        
-        # remove T1w|T2w from basename
-        seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")            
-        p0=$(echo p0"$bn_gz")
-        
-        hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
-        hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-        gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
-        
-        # for the following filenames we have to remove the potential .gz from name
-        ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-        ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
-        mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
-        mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-        pial_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pial.surf.gii/g")
-        pial_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pial.surf.gii/g")
-        wm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_wm.surf.gii/g")
-        wm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_wm.surf.gii/g")
-        thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g")
-        thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
-        pbt_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pbt.txt/g")
-        pbt_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pbt.txt/g")
-        sphere_left=$(echo "$bn_gz"     | sed -e "s/.nii/_hemi-L_sphere.surf.gii/g")
-        sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
-        spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
-        spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
-        
-        outmridir=${outdir}
-        outsurfdir=${outdir}
-    else
-        # get output names
-        sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
-        
-        # remove T1w|T2w from basename
-        seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
-        p0=$(echo p0"$bn_gz")
-                    
-        hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
-        hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-        gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
-        
-        # for the following filenames we have to remove the potential .gz from name
-        ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-        ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
-        
-        mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        pial_left=$(echo "lh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        pial_right=$(echo "rh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        wm_left=$(echo "lh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        wm_right=$(echo "rh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        thick_left=$(echo "lh.thickness.${bn_gz}" | sed -e "s/.nii//g")
-        thick_right=$(echo "rh.thickness.${bn_gz}" | sed -e "s/.nii//g")
-        pbt_left=$(echo "lh.pbt.${bn_gz}" | sed -e "s/.nii//g")
-        pbt_right=$(echo "rh.pbt.${bn_gz}" | sed -e "s/.nii//g")
-        sphere_left=$(echo "lh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        sphere_right=$(echo "rh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        spherereg_left=$(echo "lh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        spherereg_right=$(echo "rh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
-        
-        outmridir=${outdir}/mri
-        outsurfdir=${outdir}/surf
-        
-    fi
-}
-
-########################################################
 # process data
 ########################################################
 
@@ -681,9 +603,79 @@ process ()
             mkdir -p "$outdir"
         fi
         
-        # get file names
-        get_file_names $bn $bn_gz $seg $outdir
-        
+        if [ "${use_bids_naming}" -eq 1 ]; then
+
+            echo -e "${RED}BIDS names for volumes not yet supported.${NC}"
+            
+            # get output names
+            sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
+            
+            # remove T1w|T2w from basename
+            seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")            
+            p0=$(echo p0"$bn_gz")
+            
+            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
+            hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
+            gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
+            gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
+            
+            # for the following filenames we have to remove the potential .gz from name
+            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
+            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
+            mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
+            mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
+            pial_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pial.surf.gii/g")
+            pial_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pial.surf.gii/g")
+            wm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_wm.surf.gii/g")
+            wm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_wm.surf.gii/g")
+            thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g")
+            thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
+            pbt_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pbt.txt/g")
+            pbt_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pbt.txt/g")
+            sphere_left=$(echo "$bn_gz"     | sed -e "s/.nii/_hemi-L_sphere.surf.gii/g")
+            sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
+            spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
+            spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
+            
+            outmridir=${outdir}
+            outsurfdir=${outdir}
+        else
+            # get output names
+            sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
+            
+            # remove T1w|T2w from basename
+            seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
+            p0=$(echo p0"$bn_gz")
+                        
+            hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
+            hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
+            gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
+            gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
+            
+            # for the following filenames we have to remove the potential .gz from name
+            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
+            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
+            
+            mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            pial_left=$(echo "lh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            pial_right=$(echo "rh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            wm_left=$(echo "lh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            wm_right=$(echo "rh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            thick_left=$(echo "lh.thickness.${bn_gz}" | sed -e "s/.nii//g")
+            thick_right=$(echo "rh.thickness.${bn_gz}" | sed -e "s/.nii//g")
+            pbt_left=$(echo "lh.pbt.${bn_gz}" | sed -e "s/.nii//g")
+            pbt_right=$(echo "rh.pbt.${bn_gz}" | sed -e "s/.nii//g")
+            sphere_left=$(echo "lh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            sphere_right=$(echo "rh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            spherereg_left=$(echo "lh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            spherereg_right=$(echo "rh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
+            
+            outmridir=${outdir}/mri
+            outsurfdir=${outdir}/surf
+            
+        fi
+                
         # create output folders if needed
         if [ ! -d "$outmridir" ]; then
             mkdir -p "$outmridir"
@@ -714,40 +706,25 @@ process ()
         if [ -f "${input}" ]; then
             #echo -e "${BLUE}---------------------------------------------${NC}"
             #echo -e "${BLUE}Segmentation${NC}"
-            if [ "${use_amap}" -eq 1 ]; then
-                amap=" --amap --amapdir ${bin_dir}"
-            else amap=""
-            fi
-            if [ "${save_mwp}" -eq 1 ]; then
-                mwp=" --mwp "
-            else mwp=""
-            fi
-            if [ "${save_wp}" -eq 1 ]; then
-                wp=" --wp "
-            else wp=""
-            fi
-            if [ "${save_rp}" -eq 1 ]; then
-                rp=" --rp "
-            else rp=""
-            fi
-            if [ "${save_p}" -eq 1 ]; then
-                p=" --p "
-            else p=""
-            fi
-            if [ "${use_bids_naming}" -eq 1 ]; then
-                bids=" --bids "
-            else bids=""
-            fi
-            if [[ "${save_surf}" -eq 1 || "${save_hemi}" -eq 1 ]]; then
-                surf=" --surf "
-            else surf=""
-            fi
-            if [ "${save_csf}" -eq 1 ]; then
-                csf=" --csf "
-            else csf=""
-            fi
-            "${python}" "${cmd_dir}/segment.py" ${amap} ${mwp} ${rp} \
-                ${csf} ${wp} ${p} ${surf} ${bids} --input "${input}" --outdir "${outmridir}"
+
+            # Initialize command string with the Python script call
+            cmd="${python} ${cmd_dir}/segment.py"
+            
+            # Append options conditionally
+            [ "${use_amap}" -eq 1 ] && cmd+=" --amap --amapdir ${bin_dir}"
+            [ "${save_mwp}" -eq 1 ] && cmd+=" --mwp"
+            [ "${save_wp}" -eq 1 ] && cmd+=" --wp"
+            [ "${save_rp}" -eq 1 ] && cmd+=" --rp"
+            [ "${save_p}" -eq 1 ] && cmd+=" --p"
+            [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
+            [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
+            [ "${save_csf}" -eq 1 ] && cmd+=" --csf"     
+            
+            cmd+=" --input \"${input}\" --outdir \"${outmridir}\""
+            
+            # Execute the command
+            [ "${save_mwp}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] || [ "${save_wp}" -eq 1 ] || [ "${save_p}" -eq 1 ] || [ "${save_rp}" -eq 1 ] && eval $cmd
+  
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
             ((i++))
@@ -894,7 +871,7 @@ ${BOLD}USED FUNCTIONS:${NC}
   - CAT_Central2Pial
   - ${cmd_dir}/segment.py
 
-${BOLD}For further assistance, contact:${NC}
+${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
 
 __EOM__
