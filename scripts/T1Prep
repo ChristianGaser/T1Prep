@@ -846,12 +846,20 @@ ${BOLD}OPTIONS:${NC}
     --bids                    Adopt BIDS standard for output file naming.
 
 ${BOLD}EXAMPLES:${NC}
-  ${BLUE}T1Prep.sh --out-dir test_folder single_subj_T1.nii${NC}
+  ${BLUE}${T1prep_dir}/T1Prep.sh --out-dir test_folder single_subj_T1.nii${NC}
     Extract segmentation and surface maps for 'single_subj_T1.nii', saving results in 'test_folder'.
 
-  ${BLUE}T1Prep.sh --no-surf single_subj_T1.nii${NC}
+  ${BLUE}${T1prep_dir}/T1Prep.sh --no-surf single_subj_T1.nii${NC}
     Extract segmentation maps for 'single_subj_T1.nii', saving in the same folder.
 
+  ${BLUE}${T1prep_dir}/T1Prep.sh --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
+  ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-mwp1" sTRIO*.nii${NC}
+    First runs 'T1prep.sh' with settings to skip segmentation estimation, then
+    parallelizes the execution for better performance on 8 processors. The reason for not
+    parallelizing the 1st command is that this part already uses multi-threading and
+    is too memory intensive. In contrast, the 2nd part only calls the surface creation
+    which does not yet use multi-threading and can therefore be easily parallelized.
+    
 ${BOLD}PURPOSE:${NC}
   This script facilitates the analysis of T1-weighted brain images by providing tools for segmentation, surface mapping, and more.
 
