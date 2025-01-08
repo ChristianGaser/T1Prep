@@ -103,7 +103,7 @@ exit_if_empty ()
 
   if [ -z "$val" ]
   then
-    echo ERROR: "No argument given with \"$desc\" command line argument!" >&2
+    echo ERROR: "${RED}No argument given with \"$desc\" command line argument!${NC}" >&2
     exit 1
   fi
 }
@@ -116,7 +116,7 @@ check_files ()
 {
   if [ -z "$COMMAND" ];
   then
-    echo "$FUNCNAME ERROR - no command defined."
+    echo "${RED}$FUNCNAME ERROR - no command defined.${NC}"
       help
     exit 1
   fi
@@ -124,7 +124,7 @@ check_files ()
   SIZE_OF_ARRAY="${#ARRAY[@]}"
   if [ "$SIZE_OF_ARRAY" -eq 0 ]
   then
-      echo 'ERROR: No files given!' >&2
+      echo '${RED}ERROR: No files given!${NC}' >&2
       help
       exit 1
   fi
@@ -133,7 +133,7 @@ check_files ()
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]
   do
     if [ ! -f "${ARRAY[$i]}" ] && [ ! -d "${ARRAY[$i]}" ]; then
-      echo ERROR: File or directory ${ARRAY[$i]} not found
+      echo "${RED}ERROR: File or directory ${ARRAY[$i]} not found${NC}"
       help
       exit 1
     fi
@@ -208,11 +208,10 @@ get_no_processes () {
     # Convert bytes to GB
     mem_gb=$(echo "$mem_total / 1024 / 1024 / 1024" | bc)
   else
-    echo "System $ARCH not recognized"
+    echo "${RED}System $ARCH not recognized${NC}"
     exit 1
   fi
     
-  echo $mem_gb
   # Calculate number of processes (at least 1) and require 10GB memory for each process
   NUMBER_OF_JOBS=$(echo "if ($mem_gb < 10) 1 else $mem_gb / $MEM_LIMIT" | bc)
 }
@@ -257,7 +256,7 @@ parallelize ()
 
   log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
   if [ -z "${TEST}" ]; then
-    echo Check $log for logging information
+    echo "${GREEN}Check $log for logging information${NC}"
     echo > $log
     echo
   fi
@@ -310,17 +309,17 @@ ${BOLD}OUTPUT:${NC}
   incorporating the current date and time.
 
 ${BOLD}EXAMPLES:${NC}
-  parallelize -c "niismooth -v -fwhm 8" sTRIO*.nii
+  ${BLUE}parallelize -c "niismooth -v -fwhm 8" sTRIO*.nii${NC}
     Parallelizes the 'niismooth' command with an 8mm FWHM, applied to all files matching 'sTRIO*.nii', displaying verbose output.
 
-  parallelize -c "gunzip" *.zip
+  ${BLUE}parallelize -c "gunzip" *.zip${NC}
     Parallelizes unzipping of all .zip files in the current directory.
 
-  parallelize -m 10 -c "T1prep.sh --no-surf" sTRIO*.nii
+  ${BLUE}parallelize -m 10 -c "T1prep.sh --no-surf" sTRIO*.nii${NC}
     Parallelizes 'T1prep.sh' without surface estimation, setting a 10GB RAM limit per process.
 
-  T1Prep.sh --out-dir ~/test_T1prep --no-surf --hemisphere sTRIO*.nii
-  parallelize -p 8 -c "T1prep.sh --no-mwp1" sTRIO*.nii
+  ${BLUE}T1Prep.sh --out-dir ~/test_T1prep --no-surf --hemisphere sTRIO*.nii
+  parallelize -p 8 -c "T1prep.sh --out-dir ~/test_T1prep --no-mwp1" sTRIO*.nii${NC}
     First, runs 'T1prep.sh' with settings to skip the estimation of segmentations, then
     parallelizes execution for better performance across 8 processors.
 

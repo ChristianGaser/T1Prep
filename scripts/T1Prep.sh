@@ -256,7 +256,7 @@ check_python_cmd ()
     elif command -v python &>/dev/null; then
         python="python"
     else
-        echo "python or python3 not found. Please use '--python' flag to define python command and/or install python"
+        echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}"
         exit 1
     fi
 }
