@@ -298,7 +298,7 @@ check_python ()
 }
 
 ########################################################
-# check for installation
+# check for python libraries
 ########################################################
 
 check_python_libraries ()
@@ -392,7 +392,7 @@ bar() {
     printf -v prog  "%${elapsed}s"
     printf -v total "%$(($2-elapsed))s"
 
-    # Pad the name to 20 characters (using printf)
+    # Pad the name to 50 characters (using printf)
     printf -v padded_name "%-50s" "$3"
 
     #printf '%s %s\r' "${prog// /■}${total} ${it}%" "${3}"
@@ -442,41 +442,62 @@ surface_estimation() {
         verbose=' -verbose '
     fi
 
-    
+    # This section of the script checks if a specific hemisphere file exists within a given directory.
     if [ -f "${outmridir}/${!hemi}" ]; then
+    
+        # Progress indication
         bar 2 $end_count "Calculate $side thickness"
+    
+        # Executes the 'CAT_VolThicknessPbt' tool with various options:
+        # - ${verbose} toggles verbose output.
+        # - '-n-avgs 4' sets the number of averages for distance estimation.
+        # - '-min-thickness' sets a minimum thickness threshold.
+        # - '-fwhm' sets the FWHM for thickness smoothing.
         ${bin_dir}/CAT_VolThicknessPbt ${verbose} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
-        # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
-        # average between original and smoothed images based on their distance to 
-        # the threshold (isovalue). A negative value will force masked smoothing, which may preserves gyri and sulci even better.
-        # In contrast, post-smoothing aids in correcting the mesh in folded areas like gyri and sulci and removes the voxel-steps
-        # that are visible after marching cubes. However, this also slightly changes the curve in we have to correct the isovalue:
-        # -post-fwhm 1 -thresh 0.495
-        # -post-fwhm 2 -thresh 0.490
-        # -post-fwhm 3 -thresh 0.475
+        # Updates progress to 'Extract $side surface'.
         bar 4 $end_count "Extract $side surface"
+    
+        # Executes the 'CAT_VolMarchingCubes' tool to generate a surface mesh from volumetric data:
+        # - '-median-filter' applies a median filter a specified number of times to reduce artifacts.
+        # - '-pre-fwhm' and '-post-fwhm' control pre and post smoothing.
+        # - '-thresh' sets the isovalue for mesh generation.
+        # - '-no-distopen' disables distance-based opening, a form of morphological operation.
+        # - '-local-smoothing' applies additional local smoothing to the mesh.
         ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
-
+    
+        # Updates progress to 'Map $side thickness values'.
         bar 6 $end_count "Map $side thickness values"
+    
+        # Executes 'CAT_3dVol2Surf' to map volumetric data to a surface representation.
+        # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
         ${bin_dir}/CAT_3dVol2Surf -weighted_avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
+    
+        # Executes 'CAT_SurfDistance' to correct and map thickness values from a volumetric dataset to a surface.
+        # It uses the mean of the closest distance between both surfaces and vice versa (Tfs from Freesurfer).
         ${bin_dir}/CAT_SurfDistance -mean -position ${outmridir}/${!ppm} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
-        
-        ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.5
-        ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5
-
+    
+        # Executes 'CAT_Central2Pial' twice to estimate both pial and white matter surfaces.
+        ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.5
+        ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5
+    
+        # If registration is enabled, additional steps for spherical inflation and registration are performed.
         if [ "${registration}" -eq 1 ]; then
+            # Updates progress to 'Spherical inflation $side hemisphere'.
             bar 8 $end_count "Spherical inflation $side hemisphere"
+            # Inflates the surface to a sphere with additional areal smoothing.
             ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
-            bar 10 $end_count "Spherical registration $side hemisphere       "
-            ${bin_dir}/CAT_WarpSurf CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
+    
+            # Updates progress to 'Spherical registration $side hemisphere'.
+            bar 10 $end_count "Spherical registration $side hemisphere"
+            # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
+            ${bin_dir}/CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
         fi
     else
         echo -e "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed${NC}"
         ((i++))
         continue
     fi
-
 }
 
 ########################################################
