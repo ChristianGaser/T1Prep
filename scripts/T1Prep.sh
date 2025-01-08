@@ -42,18 +42,20 @@ NC=$(tput sgr0)
 T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
 use_bids_naming=0
-thickness_fwhm=8
-median_filter=4
-estimate_surf=1
-estimate_csf=0
-estimate_mwp=1
-estimate_wp=0
-estimate_rp=0
-estimate_p=0
+thickness_fwhm=1
+median_filter=2
+save_hemi=0
+save_surf=1
+save_csf=0
+save_mwp=1
+save_wp=0
+save_rp=0
+save_p=0
 min_thickness=1
 registration=1 # currently skip spherical registration to save time
 post_fwhm=2
-pre_fwhm=4
+pre_fwhm=0
+re_install=0
 do_install=0
 use_sanlm=0
 use_amap=0
@@ -72,9 +74,13 @@ main ()
     
     check_python
     check_install
-    check_files
-    get_OS
-    process
+    
+    # Skip that part for installation only
+    if [ "${do_install}" -eq 0 ]; then
+        check_files
+        get_OS
+        process
+    fi
 
     exit 0
 }
@@ -102,6 +108,10 @@ parse_args ()
         case "$1" in
             --install)
                 do_install=1
+                re_install=1
+                ;;
+            --re-install)
+                re_install=1
                 ;;
             --python)
                 exit_if_empty "$optname" "$optarg"
@@ -153,28 +163,29 @@ parse_args ()
                 no_overwrite=$optarg
                 shift
                 ;;
+            --hemisphere)
+                save_hemi=1
+                ;;
             --no-surf)
-                estimate_surf=0
+                save_surf=0
                 ;;
             --no-mwp*)
-                estimate_mwp=0
+                save_mwp=0
                 ;;
             --wp*)
-                estimate_wp=1
+                save_wp=1
                 ;;
             --rp*)
-                estimate_rp=1
+                save_rp=1
                 ;;
             --p*)
-                estimate_p=1
+                save_p=1
                 ;;
             --csf*)
-                estimate_csf=1
+                save_csf=1
                 ;;
             --amap)
                 use_amap=1
-                ;;
-            --sanlm)
                 use_sanlm=1
                 ;;
             --bids)
@@ -299,6 +310,9 @@ check_python ()
 
 check_install ()
 {
+    # Remove T1pre-env if reinstallation is selected
+    [ -d "${T1prep_dir}/T1prep-env" && "${re_install}" -eq 1] && rm -r "${T1prep_dir}/T1prep-env"
+
     if [ -d ${T1prep_dir}/T1prep-env ]; then
         $python -m venv ${T1prep_dir}/T1prep-env
         source ${T1prep_dir}/T1prep-env/bin/activate
@@ -307,6 +321,10 @@ check_install ()
         $python -c "import deepmriprep" &>/dev/null
         if [ $? -gt 0 ]; then
             install_deepmriprep
+        else
+            if [ "${do_install}" -eq 1 ]; then
+                echo "Package deepmriprep is already installed."
+            fi
         fi
     else
         install_deepmriprep
@@ -436,7 +454,7 @@ surface_estimation() {
     
     if [ -f "${outmridir}/${!hemi}" ]; then
         bar 2 $end_count "Calculate $side thickness"
-        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # The pre-smoothing helps in preserving gyri and sulci by creating a weighted 
         # average between original and smoothed images based on their distance to 
@@ -447,15 +465,15 @@ surface_estimation() {
         # -post-fwhm 2 -thresh 0.490
         # -post-fwhm 3 -thresh 0.475
         bar 4 $end_count "Extract $side surface"
-        ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
+        ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
 
         bar 6 $end_count "Map $side thickness values"
         ${bin_dir}/CAT_3dVol2Surf -weighted_avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
         ${bin_dir}/CAT_SurfDistance -mean -position ${outmridir}/${!ppm} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
         
-        ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.5 &
-        ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5 &
-        wait
+        ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.5
+        ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5
+
         if [ "${registration}" -eq 1 ]; then
             bar 8 $end_count "Spherical inflation $side hemisphere"
             ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
@@ -509,7 +527,7 @@ process ()
         # check whether processed files exist if no-overwrite flag is used
         if [ -n "${no_overwrite}" ]; then
             dn=$(dirname "$FILE")
-            bn=$(basename "$FILE" |cut -f1 -d'.')
+            bn=$(basename "$FILE" | cut -f1 -d'.')
             if [ ! -n "$outdir" ]; then
                 outdir0=${dn}
             else
@@ -549,7 +567,7 @@ process ()
 
         # check again whether processed files exist if no-overwrite flag is used
         if [ -n "${no_overwrite}" ]; then
-            bn0=$(basename "$FILE" |cut -f1 -d'.')
+            bn0=$(basename "$FILE" | cut -f1 -d'.')
             processed=$(ls "${outdir}/${no_overwrite}${bn0}"* 2>/dev/null)
             echo $processed
             
@@ -672,19 +690,19 @@ process ()
                 amap=" --amap --amapdir ${bin_dir}"
             else amap=""
             fi
-            if [ "${estimate_mwp}" -eq 1 ]; then
+            if [ "${save_mwp}" -eq 1 ]; then
                 mwp=" --mwp "
             else mwp=""
             fi
-            if [ "${estimate_wp}" -eq 1 ]; then
+            if [ "${save_wp}" -eq 1 ]; then
                 wp=" --wp "
             else wp=""
             fi
-            if [ "${estimate_rp}" -eq 1 ]; then
+            if [ "${save_rp}" -eq 1 ]; then
                 rp=" --rp "
             else rp=""
             fi
-            if [ "${estimate_p}" -eq 1 ]; then
+            if [ "${save_p}" -eq 1 ]; then
                 p=" --p "
             else p=""
             fi
@@ -692,11 +710,11 @@ process ()
                 bids=" --bids "
             else bids=""
             fi
-            if [ "${estimate_surf}" -eq 1 ]; then
+            if [ "${save_surf}" -eq 1 ||  "${save_hemi}" -eq 1 ]; then
                 surf=" --surf "
             else surf=""
             fi
-            if [ "${estimate_csf}" -eq 1 ]; then
+            if [ "${save_csf}" -eq 1 ]; then
                 csf=" --csf "
             else csf=""
             fi
@@ -714,7 +732,7 @@ process ()
         fi
         
         # optionally extract surface
-        if [ "${estimate_surf}" -eq 1 ]; then
+        if [ "${save_surf}" -eq 1 ]; then
                 
             # 3. Create hemispheric label maps for cortical surface extraction
             # ----------------------------------------------------------------------
@@ -739,7 +757,7 @@ process ()
             # use wait to check finishing the background processes
             wait
             
-        fi # estimate_surf
+        fi # save_surf
 
         # remove temporary files if not debugging
         if [ "${debug}" -eq 0 ]; then
@@ -747,7 +765,12 @@ process ()
             
             # only remove temporary files if surfaces exist
             if  [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
-                for files in hemi ppm gmt; do
+                if [ "${save_hemi}" -eq 1 ]; then
+                    file_list='ppm gmt'
+                else
+                    file_list='hemi ppm gmt'
+                fi
+                for files in ${file_list}t; do
                     for side in left right; do
                         rm_file=${files}_${side}
                         [ -f "${outmridir}/${!rm_file}" ] && rm "${outmridir}/${!rm_file}"
@@ -779,69 +802,73 @@ process ()
 # help
 ########################################################
 
-help ()
-{
+help() {
 cat <<__EOM__
+${BOLD}${BLUE}T1Prep Computational Anatomy Pipeline
+-------------------------------------${NC}
 
-USAGE:
-  T1Prep.sh [options] filenames 
- 
-  --python <FILE>            python command (default $python)
-  --out-dir <DIR>            output folder (default same folder)
-  --pre-fwhm  <NUMBER>       FWHM size of pre-smoothing in CAT_VolMarchingCubes 
-                             (default $pre_fwhm). 
-  --post-fwhm <NUMBER>       FWHM size of post-smoothing in CAT_VolMarchingCubes 
-                             (default $post_fwhm). 
-  --thickness-fwhm <NUMBER>  FWHM size of volumetric thickness smoothing in CAT_VolThicknessPbt 
-                             (default $thickness_fwhm). 
-  --thresh    <NUMBER>       threshold (isovalue) for creating surface in CAT_VolMarchingCubes 
-                             (default $thresh). 
-  --min-thickness <NUMBER>   values below minimum thickness are set to zero and will be approximated
-                             using the replace option in the vbdist method (default $min_thickness). 
-  --median-filter <NUMBER>   specify how many times to apply a median filter to areas with
-                             topology artifacts to reduce these artifacts.
-  --no-overwrite <STRING>    do not overwrite existing results
-  --no-surf                  skip surface and thickness estimation
-  --no-mwp                   skip estimation of modulated and warped segmentations
-  --wp                       additionally save warped segmentations
-  --rp                       additionally save affine registered segmentations
-  --p                        additionally save native segmentations
-  --csf                      additionally save CSF segmentations (default is GM/WM only)
-  --sanlm                    apply denoising with SANLM-filter
-  --amap                     use segmentation from AMAP instead of deepmriprep
-  --bids                     use BIDS naming of output files
-  --debug                    keep temporary files for debugging
- 
-PURPOSE:
-  Computational Anatomy Pipeline for structural MRI data 
+${BOLD}USAGE:${NC}
+  ${GREEN}T1Prep.sh [options] <filenames>${NC}
 
-EXAMPLE
-  T1Prep.sh --out-dir test_folder single_subj_T1.nii.
-  This command will extract segmentation and surface maps for single_subj_T1.nii. 
-  Resuts will be saved in test_folder.
+${BOLD}DESCRIPTION:${NC}
+  Processes T1-weighted brain data for computational anatomy analysis, including segmentation and surface extraction.
 
-  T1Prep.sh --no-surf single_subj_T1.nii.
-  This command will extract segmentation maps for single_subj_T1.nii in the same 
-  folder.
+${BOLD}OPTIONS:${NC}
+  ${YELLOW}System:${NC}
+    --install                 Install required Python libraries.
+    --re-install              Remove old installation and reinstall required Python libraries.
+    --python <FILE>           Specify Python command to use (default: $python).
+    --debug                   Enable verbose output and do not delete temporary files.
 
-INPUT:
-  nifti files
+  ${YELLOW}Parameters:${NC}
+    --out-dir <DIR>           Specify output directory (default: current folder).
+    --amap                    Use AMAP segmentation instead of deepmriprep.
+    --pre-fwhm <NUMBER>       Pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
+    --post-fwhm <NUMBER>      Post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
+    --thickness-fwhm <NUMBER> Volumetric thickness smoothing FWHM size in CAT_VolThicknessPbt (default: $thickness_fwhm).
+    --thresh <NUMBER>         Isovalue threshold for surface creation in CAT_VolMarchingCubes (default: $thresh).
+    --min-thickness <NUMBER>  Minimum thickness values (below this are set to zero) for vbdist method (default: $min_thickness).
+    --median-filter <NUMBER>  Number of median filter applications to reduce topology artifacts.
 
-OUTPUT:
-  segmented images
-  surface extractions
+  ${YELLOW}Save Options:${NC}
+    --no-overwrite <STRING>   Prevent overwriting of existing results.
+    --no-surf                 Skip surface and thickness estimation.
+    --no-mwp                  Skip estimation of modulated and warped segmentations.
+    --hemisphere              Additionally save hemispheric partitions.
+    --wp                      Additionally save warped segmentations.
+    --rp                      Additionally save affine registered segmentations.
+    --p                       Additionally save native segmentations.
+    --csf                     Additionally save CSF segmentations (default: GM/WM only).
+    --bids                    Adopt BIDS standard for output file naming.
 
-USED FUNCTIONS:
-  CAT_VolAmap
-  CAT_VolSanlm
-  CAT_VolThicknessPbt
-  CAT_VolMarchingCubes
-  CAT_3dVol2Surf
-  CAT_SurfDistance
-  CAT_Central2Pial
-  ${cmd_dir}/segment.py
-  
-This script was written by Christian Gaser (christian.gaser@uni-jena.de).
+${BOLD}EXAMPLES:${NC}
+  ${BLUE}T1Prep.sh --out-dir test_folder single_subj_T1.nii${NC}
+    Extract segmentation and surface maps for 'single_subj_T1.nii', saving results in 'test_folder'.
+
+  ${BLUE}T1Prep.sh --no-surf single_subj_T1.nii${NC}
+    Extract segmentation maps for 'single_subj_T1.nii', saving in the same folder.
+
+${BOLD}PURPOSE:${NC}
+  This script facilitates the analysis of T1-weighted brain images by providing tools for segmentation, surface mapping, and more.
+
+${BOLD}INPUT:${NC}
+  Accepts NIfTI files as input.
+
+${BOLD}OUTPUT:${NC}
+  Produces segmented images and surface extractions.
+
+${BOLD}USED FUNCTIONS:${NC}
+  - CAT_VolAmap
+  - CAT_VolSanlm
+  - CAT_VolThicknessPbt
+  - CAT_VolMarchingCubes
+  - CAT_3dVol2Surf
+  - CAT_SurfDistance
+  - CAT_Central2Pial
+  - ${cmd_dir}/segment.py
+
+${RED}For further assistance, contact:${NC}
+  Christian Gaser (christian.gaser@uni-jena.de)
 
 __EOM__
 }
