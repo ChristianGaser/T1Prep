@@ -55,6 +55,7 @@ save_mwp=1
 save_wp=0
 save_rp=0
 save_p=0
+estimate_seg=1
 min_thickness=1
 registration=1
 post_fwhm=2
@@ -165,6 +166,9 @@ parse_args ()
             --no-surf)
                 save_surf=0
                 ;;
+            --no-seg*)
+                estimate_seg=0
+                ;;
             --no-mwp*)
                 save_mwp=0
                 ;;
@@ -205,6 +209,11 @@ parse_args ()
         esac
         shift
     done
+
+    if [[ "$estimate_seg" -eq 0 && "$save_surf" -eq 0 ]]; then
+        echo "${RED}ERROR: Options "--no-surf" and "--no-seg" cannot be used together.${NC}" >&2
+        exit 1
+    fi
 
 }
 
@@ -257,7 +266,7 @@ check_python_cmd ()
     elif command -v python &>/dev/null; then
         python="python"
     else
-        echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}"
+        echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}" >&2
         exit 1
     fi
 }
@@ -279,7 +288,7 @@ check_files ()
     while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
         if [ ! -f "${ARRAY[$i]}" ]; then
             if [ ! -L "${ARRAY[$i]}" ]; then
-            echo "${RED}ERROR: File ${ARRAY[$i]} not found${NC}"
+            echo "${RED}ERROR: File ${ARRAY[$i]} not found${NC}" >&2
             help
             exit 1
             fi
@@ -296,7 +305,7 @@ check_files ()
 check_python ()
 {
     if ! command -v "${python}" &>/dev/null; then
-        echo "${RED}ERROR: $python not found${NC}"
+        echo "${RED}ERROR: $python not found${NC}" >&2
         exit 1
     fi
 }
@@ -341,7 +350,7 @@ install_deepmriprep ()
     $python -c "import deepmriprep" &>/dev/null
     if [ $? -gt 0 ]; then
         echo "${RED}ERROR: Installation of deepmriprep not successful. 
-            Please install it manually${NC}"
+            Please install it manually${NC}" >&2
         exit 1
     fi
     
@@ -513,7 +522,7 @@ surface_estimation()
             ${bin_dir}/CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
         fi
     else
-        echo -e "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed${NC}"
+        echo -e "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed${NC}" >&2
         ((i++))
         continue
     fi
@@ -733,10 +742,10 @@ process ()
             cmd+=" --input \"${input}\" --outdir \"${outmridir}\""
             
             # Execute the command
-            [ "${save_mwp}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] || [ "${save_wp}" -eq 1 ] || [ "${save_p}" -eq 1 ] || [ "${save_rp}" -eq 1 ] && eval $cmd
+            [ "${estimate_seg}" -eq 0 ] && eval $cmd
   
         else
-            echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}"
+            echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}" >&2
             ((i++))
             continue
         fi
@@ -753,7 +762,7 @@ process ()
             # ----------------------------------------------------------------------
             # check for outputs from previous step
             if [ ! -f "${outmridir}/${p0}" ]; then
-                echo -e "${RED}ERROR: ${cmd_dir}/segment.py failed${NC}"
+                echo -e "${RED}ERROR: ${cmd_dir}/segment.py failed${NC}" >&2
                 ((i++))
                 continue
             fi
@@ -779,7 +788,7 @@ process ()
             [ -f "${outmridir}/${seg}" ] && rm "${outmridir}/${seg}"
             
             # only remove temporary files if surfaces exist
-            if  [ -f "${outsurfdir}/${mid_left}" ] && [ -f "${outsurfdir}/${mid_right}" ]; then
+            if  [[ -f "${outsurfdir}/${mid_left}"  &&  -f "${outsurfdir}/${mid_right}" ]]; then
 
                 if [ "${save_hemi}" -eq 1 ]; then
                     file_list='ppm gmt'
@@ -849,6 +858,7 @@ ${BOLD}OPTIONS:${NC}
   ${YELLOW}Save Options:${NC}
     --no-overwrite <STRING>   Prevent overwriting of existing results by defining filename pattern that will be checked.
     --no-surf                 Skip surface and thickness estimation.
+    --no-seg                  Skip segmentation.
     --no-mwp                  Skip estimation of modulated and warped segmentations.
     --hemisphere              Additionally save hemispheric partitions.
     --wp                      Additionally save warped segmentations.
@@ -865,7 +875,7 @@ ${BOLD}EXAMPLES:${NC}
     Extract segmentation maps for 'single_subj_T1.nii', saving in the same folder.
 
   ${BLUE}${T1prep_dir}/T1Prep.sh --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-mwp1" sTRIO*.nii${NC}
+  ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
     First runs 'T1prep.sh' with settings to skip segmentation estimation, then
     parallelizes the execution for better performance on 8 processors. The reason for not
     parallelizing the 1st command is that this part already uses multi-threading and

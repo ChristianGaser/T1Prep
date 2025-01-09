@@ -319,7 +319,7 @@ ${BOLD}EXAMPLES:${NC}
     Parallelizes 'T1prep.sh' without surface estimation, setting a 10GB RAM limit per process.
 
   ${BLUE}T1Prep.sh --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-mwp1" sTRIO*.nii${NC}
+  parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
     First, runs 'T1prep.sh' with settings to skip the estimation of segmentations, then
     parallelizes execution for better performance across 8 processors.
 
