@@ -55,14 +55,15 @@ save_mwp=1
 save_wp=0
 save_rp=0
 save_p=0
+estimate_spherereg=1
 estimate_seg=1
-min_thickness=1
-registration=1
+min_thickness=0.5
 post_fwhm=2
 pre_fwhm=0
 re_install=0
 use_sanlm=0
 use_amap=0
+isoval=0.5
 thresh=0.5
 debug=0
 
@@ -168,6 +169,9 @@ parse_args ()
                 ;;
             --no-seg*)
                 estimate_seg=0
+                ;;
+            --no-sphere*)
+                estimate_spherereg=0
                 ;;
             --no-mwp*)
                 save_mwp=0
@@ -324,7 +328,7 @@ check_python_libraries ()
     if [ -d ${T1prep_env} ]; then
         $python -m venv ${T1prep_env}
         source ${T1prep_env}/bin/activate
-        $python -m pip install -U pip &>/dev/null
+        #$python -m pip install -U pip &>/dev/null
         
         $python -c "import deepmriprep" &>/dev/null
         if [ $? -gt 0 ]; then
@@ -431,7 +435,7 @@ surface_estimation()
     side=$1
     outmridir=$2
     outsurfdir=$3
-    registration=$4
+    estimate_spherereg=$4
 
     # create dynamic variables
     pbt=pbt_$side
@@ -451,7 +455,7 @@ surface_estimation()
     Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
     Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
     
-    if [ "${registration}" -eq 1 ]; then
+    if [ "${estimate_spherereg}" -eq 1 ]; then
         ((end_count=10))
     else
         ((end_count=6))
@@ -474,7 +478,7 @@ surface_estimation()
         # - '-n-avgs 4' sets the number of averages for distance estimation.
         # - '-min-thickness' sets a minimum thickness threshold.
         # - '-fwhm' sets the FWHM for thickness smoothing.
-        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -downsample 0 -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # Updates progress to 'Extract $side surface'.
         bar 4 $end_count "Extract $side surface"
@@ -498,6 +502,12 @@ surface_estimation()
         # It uses the mean of the closest distance between both surfaces and vice versa (Tfs from Freesurfer).
         ${bin_dir}/CAT_SurfDistance -mean -position ${outmridir}/${!ppm} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
     
+        # Estimate the necessary shift if the threshold is not 0.5
+        shift=$(echo "$thresh - $isoval" | bc)
+        if (( $(echo "$shift != 0" | bc) )); then
+            ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} 0.1
+        fi
+
         # Executes 'CAT_Central2Pial' twice to estimate both pial and white matter surfaces.
         ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.5
         ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5
@@ -509,22 +519,24 @@ surface_estimation()
             ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!wm} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_white}
         fi
     
-        # If registration is enabled, additional steps for spherical inflation and registration are performed.
-        if [ "${registration}" -eq 1 ]; then
+        # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
+        if [ "${estimate_spherereg}" -eq 1 ]; then
             # Updates progress to 'Spherical inflation $side hemisphere'.
             bar 8 $end_count "Spherical inflation $side hemisphere"
             # Inflates the surface to a sphere with additional areal smoothing.
             ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
     
-            # Updates progress to 'Spherical registration $side hemisphere'.
-            bar 10 $end_count "Spherical registration $side hemisphere"
+            # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
+            bar 10 $end_count "Spherical estimate_spherereg $side hemisphere"
             # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
             ${bin_dir}/CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
         fi
     else
-        echo -e "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed${NC}" >&2
-        ((i++))
-        continue
+        if [ "${estimate_seg}" -eq 0 ]; then        
+            echo -e "${RED}ERROR: Could not find ${outmridir}/${!hemi}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
+        else
+            echo -e "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed${NC}" >&2
+        fi
     fi
 }
 
@@ -534,11 +546,9 @@ surface_estimation()
 
 process ()
 {
-    # if target-res is set add a field to the name
-    res_str='_res-high'
     
     SIZE_OF_ARRAY="${#ARRAY[@]}"
-
+    
     # set overall starting time
     start0=$(date +%s)
 
@@ -741,8 +751,9 @@ process ()
             
             cmd+=" --input \"${input}\" --outdir \"${outmridir}\""
             
-            # Execute the command
-            [ "${estimate_seg}" -eq 0 ] && eval $cmd
+            # Execute the command and print errors
+            [ "${estimate_seg}" -eq 1 ] && eval $cmd
+            
   
         else
             echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}" >&2
@@ -775,7 +786,7 @@ process ()
             #echo -e "${BLUE}---------------------------------------------${NC}"
             #echo -e "${BLUE}Extracting surfaces${NC}"
             for side in left right; do
-                surface_estimation $side $outmridir $outsurfdir $registration &
+                surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
             done
             
             # use wait to check finishing the background processes
@@ -859,6 +870,7 @@ ${BOLD}OPTIONS:${NC}
     --no-overwrite <STRING>   Prevent overwriting of existing results by defining filename pattern that will be checked.
     --no-surf                 Skip surface and thickness estimation.
     --no-seg                  Skip segmentation.
+    --no-surf                 Skip spherical surface registration.
     --no-mwp                  Skip estimation of modulated and warped segmentations.
     --hemisphere              Additionally save hemispheric partitions.
     --wp                      Additionally save warped segmentations.
