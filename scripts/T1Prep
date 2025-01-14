@@ -58,6 +58,7 @@ save_p=0
 estimate_spherereg=1
 estimate_seg=1
 min_thickness=0.5
+sharpening=0.2
 post_fwhm=2
 pre_fwhm=0
 re_install=0
@@ -139,6 +140,11 @@ parse_args ()
             --min-thickness)
                 exit_if_empty "$optname" "$optarg"
                 min_thickness=$optarg
+                shift
+                ;;
+            --sharpen)
+                exit_if_empty "$optname" "$optarg"
+                sharpening=$optarg
                 shift
                 ;;
             --median-filter)
@@ -478,7 +484,7 @@ surface_estimation()
         # - '-n-avgs 4' sets the number of averages for distance estimation.
         # - '-min-thickness' sets a minimum thickness threshold.
         # - '-fwhm' sets the FWHM for thickness smoothing.
-        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -downsample 0 -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample 0 -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # Updates progress to 'Extract $side surface'.
         bar 4 $end_count "Extract $side surface"
@@ -862,6 +868,8 @@ ${BOLD}OPTIONS:${NC}
     --pre-fwhm <NUMBER>       Pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
     --post-fwhm <NUMBER>      Post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
     --thickness-fwhm <NUMBER> Volumetric thickness smoothing FWHM size in CAT_VolThicknessPbt (default: $thickness_fwhm).
+    --sharpening              Amount of sharpening the PPM map by adding the difference between the unsmoothed and
+                              smoothed PPM map (default: $sharpening).
     --thresh <NUMBER>         Isovalue threshold for surface creation in CAT_VolMarchingCubes (default: $thresh).
     --min-thickness <NUMBER>  Minimum thickness values (below this are set to zero) for vbdist method (default: $min_thickness).
     --median-filter <NUMBER>  Number of median filter applications to reduce topology artifacts.

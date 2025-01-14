@@ -150,7 +150,7 @@ def run_segment():
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
         
-        # Cann AMAP
+        # Call AMAP
         cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
         os.system(cmd)
 
@@ -191,6 +191,27 @@ def run_segment():
         gmv = output_nogm['gmv']
         tiv = output_nogm['tiv']
 
+    vol_t1 = 1e-3 * nifti_volume(t1)
+    vol_p0 = 1e-3 * nifti_volume(p0_large)
+    
+    print(vol_t1)
+    print(vol_p0)
+            
+    vol_abs_CGW = []
+    mean_CGW = []
+    for label in (1, 2, 3):
+        mask_label = p0_large.get_fdata() == label
+        mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
+        vol_abs_CGW.append(brain_large.get_fdata()[mask_label].mean())
+        
+    print(vol_abs_CGW)
+    print(tuple(vol_abs_CGW))
+        
+    # * p[None].mean((2, 3, 4)).cpu().numpy()
+    #abs_vol = pd.DataFrame(vol, columns=['gmv_cm3', 'wmv_cm3', 'csfv_cm3'])
+    #rel_vol = pd.DataFrame(vol / vol.sum(), columns=['gmv/tiv', 'wmv/tiv', 'csfv/tiv'])
+    #tiv = pd.Series([vol.sum()], name='tiv_cm3')
+    
     # Save affine registration
     if (save_rp):
         nib.save(p1_affine, f'{out_dir}/rp1{out_name}_affine.nii')
