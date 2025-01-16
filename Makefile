@@ -1,6 +1,3 @@
-# Personal Makefile variables
-#
-
 VERSION='0.9'
 
 FILES=scripts templates_surfaces_32k data MacOS Linux Windows LICENSE README.md
@@ -29,7 +26,9 @@ zip: clean
 # copy binaries after cross-compiling
 cp_binaries: 
 	-@echo copy binaries
-	-@test ! -f ~/Dropbox/GitHub/CAT-Surface/build-*/Progs/*.o || rm ~/Dropbox/GitHub/CAT-Surface/build-*/Progs/*.o
+	-@for file in ~/Dropbox/GitHub/CAT-Surface/build-*/Progs/*.o; do \
+			[ -f "$$file" ] && rm "$$file"; \
+	done
 	-@for i in Linux/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` Linux/ ; done
 	-@for i in Windows/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-i586-mingw32/Progs/`basename $${i}` Windows/ ; done
 	-@for i in MacOS/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` MacOS/ ; done
