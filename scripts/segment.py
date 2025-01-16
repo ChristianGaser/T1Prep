@@ -151,14 +151,26 @@ def run_segment():
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
         
         # Call AMAP
-        cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
-        os.system(cmd)
+        cleanup_gm = False
+        if(cleanup_gm):
+            cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 0 0 0 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
+            os.system(cmd)
+            p0_large = nib.load(f'{out_dir}/{out_name}_brain_large_seg.nii')
+            output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 
-        # Load probability maps for GM, WM, CSF
-        p0_large = nib.load(f'{out_dir}/{out_name}_brain_large_seg.nii')
-        p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
-        p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
-        p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
+            # Load probability maps for GM, WM, CSF
+            p1_large = output_nogm['p1_large']
+            p2_large = output_nogm['p2_large']
+            p3_large = output_nogm['p3_large']        
+        else:
+            cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
+            os.system(cmd)
+
+            # Load probability maps for GM, WM, CSF
+            p0_large = nib.load(f'{out_dir}/{out_name}_brain_large_seg.nii')
+            p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
+            p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
+            p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
         
         # Get affine segmentations
         warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
@@ -194,8 +206,8 @@ def run_segment():
     vol_t1 = 1e-3 * nifti_volume(t1)
     vol_p0 = 1e-3 * nifti_volume(p0_large)
     
-    print(vol_t1)
-    print(vol_p0)
+    #print(vol_t1)
+    #print(vol_p0)
             
     vol_abs_CGW = []
     mean_CGW = []
@@ -204,8 +216,7 @@ def run_segment():
         mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
         vol_abs_CGW.append(brain_large.get_fdata()[mask_label].mean())
         
-    print(vol_abs_CGW)
-    print(tuple(vol_abs_CGW))
+    #print(vol_abs_CGW)
         
     # * p[None].mean((2, 3, 4)).cpu().numpy()
     #abs_vol = pd.DataFrame(vol, columns=['gmv_cm3', 'wmv_cm3', 'csfv_cm3'])
