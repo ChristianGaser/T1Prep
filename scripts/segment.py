@@ -109,7 +109,7 @@ def run_segment():
 
     # Preprocess the input volume
     vol = t1.get_fdata()
-    vol, affine2, header2 = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
+    vol, affine2, header2, ras_affine = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
     t1 = nib.Nifti1Image(vol, affine2, header2)
     
     # Step 1: Skull-stripping
@@ -125,14 +125,14 @@ def run_segment():
     affine = output_aff['affine']
     brain_large = output_aff['brain_large']
     mask_large = output_aff['mask_large']
-    
+        
     # Step 3: Segmentation
     count = progress_bar(count, end_count, 'Deepmriprep segmentation                  ')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
 
-    # Prepare for esampling
-    header2, affine2 = get_resampled_header(brain.header, brain.affine, target_res)
+    # Prepare for resampling
+    header2, affine2 = get_resampled_header(brain.header, brain.affine, target_res, ras_affine)
     dim_target_res = header2['dim']
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())        
     grid_target_res = F.affine_grid(inv_affine[None, :3], [1, 3, *dim_target_res[1:4]], align_corners=INTERP_KWARGS['align_corners'])

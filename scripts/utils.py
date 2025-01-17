@@ -74,6 +74,14 @@ def remove_file(name):
     else:
         print(f"The file '{name}' does not exist.")
 
+def get_ras(aff, dim):
+    """
+    Determines the RAS axes order for an affine matrix.
+    """
+    aff_inv = np.linalg.inv(aff)
+    aff_ras = np.argmax(np.abs(aff_inv[:dim, :dim]), axis=1)
+    return aff_ras
+
 def correct_bias_field(brain, seg):
     """
     Applies bias field correction to an input brain image.
@@ -343,12 +351,9 @@ def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align = N
     # Step 2: Resample using grid
     tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
 
-    # Step 3: Align to reference orientation
-    #if (align):
-
-    # Step 4: Reorient and save as NIfTI
+    # Step 3: Reorient and save as NIfTI
     if (align):
-        tensor, tmp1, tmp2  = align_brain(tensor.cpu().numpy(), affine, header, np.eye(4), 1)
+        tensor, tmp1, tmp2, tmp3  = align_brain(tensor.cpu().numpy(), affine, header, np.eye(4), 1)
         nii_data = nib.Nifti1Image(tensor, affine, header)
     else:
         nii_data = reoriented_nifti(tensor, affine, header)
@@ -358,7 +363,7 @@ def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align = N
 
     nib.save(nii_data, out_name)
 
-def get_resampled_header(header, aff, new_vox_size):
+def get_resampled_header(header, aff, new_vox_size, ras_aff):
     """
     Adjust the NIfTI header and affine matrix for a new voxel size.
 
@@ -374,14 +379,21 @@ def get_resampled_header(header, aff, new_vox_size):
     tuple:
         Updated header and affine transformation matrix.
     """
-
+    
     header2 = header.copy()
     
     # Update dimensions and pixel sizes
     dim = header2['dim']
     pixdim = header2['pixdim']
 
+    ras_ref = get_ras(aff, 3)
+
     factor = pixdim[1:4] / new_vox_size
+    reordered_factor = np.zeros_like(pixdim[1:4])
+    for i, axis in enumerate(ras_ref):
+        reordered_factor[i] = factor[np.where(ras_aff == axis)[0][0]]
+    factor = reordered_factor
+
     dim[1:4] = np.round(dim[1:4]*factor)
     
     header2['dim'] = dim
@@ -506,17 +518,10 @@ def align_brain(data, aff, header, aff_ref, do_flip):
         ndarray: Aligned affine matrix.
         ndarray: Aligned nifti header.
     """
-    def get_ras(aff, dim):
-        """
-        Determines the RAS axes order for an affine matrix.
-        """
-        aff_inv = np.linalg.inv(aff)
-        aff_ras = np.argmax(np.abs(aff_inv[:dim, :dim]), axis=1)
-        return aff_ras
 
     dim = 3  # Assume 3D volume
     ras_aff = get_ras(aff, dim)
-    ras_ref = get_ras(aff_ref, dim)
+    ras_ref = get_ras(aff_ref, dim)    
 
     # Step 1: Reorder the rotation-scaling part (3x3) to match reference axes
     reordered_aff = np.zeros_like(aff)
@@ -546,4 +551,4 @@ def align_brain(data, aff, header, aff_ref, do_flip):
             if dot_products[i] < 0:
                 aligned_data = np.flip(aligned_data, axis=i) 
                                                               
-    return aligned_data, aff, header
+    return aligned_data, aff, header, ras_aff

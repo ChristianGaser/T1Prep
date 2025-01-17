@@ -65,7 +65,7 @@ re_install=0
 use_sanlm=0
 use_amap=0
 isoval=0.5
-thresh=0.5
+thresh=0.6
 debug=0
 
 ########################################################
@@ -484,7 +484,7 @@ surface_estimation()
         # - '-n-avgs 4' sets the number of averages for distance estimation.
         # - '-min-thickness' sets a minimum thickness threshold.
         # - '-fwhm' sets the FWHM for thickness smoothing.
-        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample 0 -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample 1.0 -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # Updates progress to 'Extract $side surface'.
         bar 4 $end_count "Extract $side surface"
