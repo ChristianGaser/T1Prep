@@ -3,7 +3,7 @@
 # PURPOSE: This script performs preprocessing steps on T1-weighted MRI images
 #          to create segmentations and extract cortical surface. 
 #
-# USAGE: T1Prep.sh [options] file1.nii file2.nii ...
+# USAGE: T1Prep [options] file1.nii file2.nii ...
 #
 # INPUT: T1-weighted MRI images in NIfTI format (.nii or .nii.gz).
 #
@@ -57,6 +57,7 @@ save_rp=0
 save_p=0
 estimate_spherereg=1
 estimate_seg=1
+downsample=1.0
 min_thickness=0.5
 sharpening=0.2
 post_fwhm=2
@@ -140,6 +141,11 @@ parse_args ()
             --min-thickness)
                 exit_if_empty "$optname" "$optarg"
                 min_thickness=$optarg
+                shift
+                ;;
+            --downsample)
+                exit_if_empty "$optname" "$optarg"
+                downsample=$optarg
                 shift
                 ;;
             --sharpen)
@@ -484,7 +490,7 @@ surface_estimation()
         # - '-n-avgs 4' sets the number of averages for distance estimation.
         # - '-min-thickness' sets a minimum thickness threshold.
         # - '-fwhm' sets the FWHM for thickness smoothing.
-        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample 1.0 -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+        ${bin_dir}/CAT_VolThicknessPbt ${verbose} -sigmoid-center ${thresh} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
         
         # Updates progress to 'Extract $side surface'.
         bar 4 $end_count "Extract $side surface"
@@ -495,7 +501,7 @@ surface_estimation()
         # - '-thresh' sets the isovalue for mesh generation.
         # - '-no-distopen' disables distance-based opening, a form of morphological operation.
         # - '-local-smoothing' applies additional local smoothing to the mesh.
-        ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -no-distopen -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
+        ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
     
         # Updates progress to 'Map $side thickness values'.
         bar 6 $end_count "Map $side thickness values"
@@ -535,6 +541,7 @@ surface_estimation()
             # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
             bar 10 $end_count "Spherical estimate_spherereg $side hemisphere"
             # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
+            echo ${bin_dir}/CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
             ${bin_dir}/CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
         fi
     else
@@ -850,7 +857,7 @@ ${BOLD}${BLUE}T1Prep Computational Anatomy Pipeline (PyCAT)
 ---------------------------------------------${NC}
 
 ${BOLD}USAGE:${NC}
-  ${GREEN}T1Prep.sh [options] <filenames>${NC}
+  ${GREEN}T1Prep [options] <filenames>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
   Processes T1-weighted brain data for computational anatomy analysis, including segmentation and surface extraction.
@@ -867,11 +874,15 @@ ${BOLD}OPTIONS:${NC}
     --amap                    Use AMAP segmentation instead of deepmriprep.
     --pre-fwhm <NUMBER>       Pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
     --post-fwhm <NUMBER>      Post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
-    --thickness-fwhm <NUMBER> Volumetric thickness smoothing FWHM size in CAT_VolThicknessPbt (default: $thickness_fwhm).
-    --sharpening              Amount of sharpening the PPM map by adding the difference between the unsmoothed and
-                              smoothed PPM map (default: $sharpening).
+    --thickness-fwhm <NUMBER> Volumetric thickness smoothing FWHM size in CAT_VolThicknessPbt 
+                              (default: $thickness_fwhm).
+    --sharpening <NUMBER>     Amount of sharpening the PPM map by adding the difference between the 
+                              unsmoothed and smoothed PPM map (default: $sharpening).
     --thresh <NUMBER>         Isovalue threshold for surface creation in CAT_VolMarchingCubes (default: $thresh).
-    --min-thickness <NUMBER>  Minimum thickness values (below this are set to zero) for vbdist method (default: $min_thickness).
+    --downsample <NUMBER>     Downsampling PPM and GMT maps to reduce surface intersections 
+                              (default: $downsample).
+    --min-thickness <NUMBER>  Minimum thickness values (below this are set to zero) for vbdist 
+                              method (default: $min_thickness).
     --median-filter <NUMBER>  Number of median filter applications to reduce topology artifacts.
 
   ${YELLOW}Save Options:${NC}
@@ -888,13 +899,13 @@ ${BOLD}OPTIONS:${NC}
     --bids                    Adopt BIDS standard for output file naming.
 
 ${BOLD}EXAMPLES:${NC}
-  ${BLUE}${T1prep_dir}/T1Prep.sh --out-dir test_folder single_subj_T1.nii${NC}
+  ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder single_subj_T1.nii${NC}
     Extract segmentation and surface maps for 'single_subj_T1.nii', saving results in 'test_folder'.
 
-  ${BLUE}${T1prep_dir}/T1Prep.sh --no-surf single_subj_T1.nii${NC}
+  ${BLUE}${T1prep_dir}/T1Prep --no-surf single_subj_T1.nii${NC}
     Extract segmentation maps for 'single_subj_T1.nii', saving in the same folder.
 
-  ${BLUE}${T1prep_dir}/T1Prep.sh --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
+  ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
   ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
     First runs 'T1prep.sh' with settings to skip segmentation estimation, then
     parallelizes the execution for better performance on 8 processors. The reason for not

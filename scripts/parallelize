@@ -69,6 +69,9 @@ parse_args ()
             LOGDIR=$optarg
             shift
             ;;
+        --fg* | -f*)
+            FG=1
+            ;;
         --test* | -t*)
             TEST=1
             ;;
@@ -280,6 +283,12 @@ parallelize ()
     fi
     ((i++))
   done
+  
+  # keep all processes in foreground
+  if [ -z "${FG}" ]; then
+      echo "wait"
+      wait
+  fi
 }
 
 ########################################################
@@ -291,11 +300,12 @@ help ()
 cat <<__EOM__
 
 ${BOLD}USAGE:${NC}
-  parallelize [-p <NUMBER>] [-l <DIR>] [-t] [-m <INT>] -c <STRING> [filename|filepattern]
+  parallelize [options] -c <STRING> [filename|filepattern]
 
 ${BOLD}OPTIONS:${NC}
   -p, --processes <NUMBER>  Specify the number of parallel jobs (default $NUMBER_OF_JOBS).
   -c, --command <STRING>    Command to be executed in parallel.
+  -f, --fg.                 Keep all processes in foreground.
   -t, --test                Run in test mode: print the files to be processed without executing the command.
   -l, --logdir <DIR>        Directory to save the log file.
   -m, --mem-limit <INT>     Memory limit for each process in GB (default is $MEM_LIMIT GB).
@@ -315,12 +325,12 @@ ${BOLD}EXAMPLES:${NC}
   ${BLUE}parallelize -c "gunzip" *.zip${NC}
     Parallelizes unzipping of all .zip files in the current directory.
 
-  ${BLUE}parallelize -m 10 -c "T1prep.sh --no-surf" sTRIO*.nii${NC}
-    Parallelizes 'T1prep.sh' without surface estimation, setting a 10GB RAM limit per process.
+  ${BLUE}parallelize -m 10 -c "T1prep --no-surf" sTRIO*.nii${NC}
+    Parallelizes 'T1prep' without surface estimation, setting a 10GB RAM limit per process.
 
   ${BLUE}T1Prep.sh --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
-    First, runs 'T1prep.sh' with settings to skip the estimation of segmentations, then
+  parallelize -p 8 -c "T1prep --out-dir test_folder --no-seg" sTRIO*.nii${NC}
+    First, runs 'T1prep' with settings to skip the estimation of segmentations, then
     parallelizes execution for better performance across 8 processors.
 
 ${BOLD}Author:${NC}
