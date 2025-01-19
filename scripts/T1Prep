@@ -553,7 +553,6 @@ surface_estimation()
             # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
             bar 10 $end_count "Spherical estimate_spherereg $side hemisphere"
             # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
-            echo ${bin_dir}/CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
             ${bin_dir}/CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
         fi
     else
@@ -599,6 +598,12 @@ filter_arguments() {
 
 process ()
 {
+
+    SIZE_OF_ARRAY="${#ARRAY[@]}"
+    if [[ "$SIZE_OF_ARRAY" -lt 2 && "$multi" -ne -2 ]]; then
+        multi=0
+    fi
+
     # Call T1Prep script recursively with different arguments
     if [[ "$multi" -ne 0 && "$multi" -gt -2 ]]; then
 
@@ -645,8 +650,6 @@ process ()
         GREEN=""
         BLACK=""
     fi
-
-    SIZE_OF_ARRAY="${#ARRAY[@]}"
     
     # set overall starting time
     start0=$(date +%s)
