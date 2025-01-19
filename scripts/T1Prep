@@ -26,17 +26,20 @@
 # global parameters
 ########################################################
 
-# output colors
-UNDERLINE=$(tput smul)
-YELLOW=$(tput setaf 3)
-GREEN=$(tput setaf 2)
-BLACK=$(tput setaf 0)
-CYAN=$(tput setaf 6)
-PINK=$(tput setaf 5)
-BLUE=$(tput setaf 4)
-RED=$(tput setaf 1)
+# Text formatting
 BOLD=$(tput bold)
-NC=$(tput sgr0)
+UNDERLINE=$(tput smul)
+NC=$(tput sgr0) # Reset all attributes
+
+# Colors
+BLACK=$(tput setaf 0)
+RED=$(tput setaf 1)
+GREEN=$(tput setaf 2)
+YELLOW=$(tput setaf 3)
+BLUE=$(tput setaf 4)
+PINK=$(tput setaf 5)
+CYAN=$(tput setaf 6)
+WHITE=$(tput setaf 7)
 
 # defaults
 T1prep_dir=$(dirname $(dirname "$0"))
@@ -68,6 +71,7 @@ use_amap=0
 isoval=0.5
 thresh=0.6
 debug=0
+multi=0
 
 ########################################################
 # run main
@@ -75,16 +79,18 @@ debug=0
 
 main ()
 {
-    logo
-    check_python_cmd
+    check_python_cmd    
     parse_args ${1+"$@"}
-    
+    if [[ "$multi" -ne -2 ]]; then
+        logo
+    fi
+
     check_python
     check_python_libraries    
     check_files
     get_OS
     
-    process
+    process "$@"
 
     exit 0
 }
@@ -100,6 +106,7 @@ parse_args ()
     local optname optarg
 
     if [ $# -lt 1 ]; then
+        logo
         help
         exit 1
     fi
@@ -168,9 +175,14 @@ parse_args ()
                 bin_dir=$optarg
                 shift
                 ;;
-            --no-overwrite* | -no*)
+            --no-overwrite*)
                 exit_if_empty "$optname" "$optarg"
                 no_overwrite=$optarg
+                shift
+                ;;
+            --multi*)
+                exit_if_empty "$optname" "$optarg"
+                multi=$optarg
                 shift
                 ;;
             --hemi*)
@@ -554,12 +566,86 @@ surface_estimation()
 }
 
 ########################################################
+# filter arguments so that filenames are removed 
+########################################################
+
+filter_arguments() {
+    local args=("$@")       # All input arguments to filter
+    local filtered=()       # Array to store filtered arguments
+    local filepatterns=("${ARRAY[@]}")  # File patterns to exclude
+
+    for arg in "${args[@]}"; do
+        # Check if the argument is a file pattern by comparing it to ${ARRAY[@]}
+        local is_filepattern=0
+        for pattern in "${filepatterns[@]}"; do
+            if [[ "$arg" == "$pattern" ]]; then
+                is_filepattern=1
+                break
+            fi
+        done
+
+        # If it's not a file pattern, add it to the filtered list
+        if [[ $is_filepattern -eq 0 ]]; then
+            filtered+=("$arg")
+        fi
+    done
+
+    echo "${filtered[@]}"  # Return the filtered arguments
+}
+
+########################################################
 # process data
 ########################################################
 
 process ()
 {
-    
+    # Call T1Prep script recursively with different arguments
+    if [[ "$multi" -ne 0 && "$multi" -gt -2 ]]; then
+
+        # Filter arguments before recursion
+        filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
+
+        # Recursive call with filtered and additional arguments
+        echo "${BOLD}Sequential Segmentation${NC}"
+        "$0" "${filtered_args[@]}" --no-surf --hemisphere --multi -2 "${ARRAY[@]}"
+
+        # Call parallelize with filtered arguments
+        echo "${BOLD}Parallel Surface Estimation${NC}"
+        # Define number of processes, otherwise estimate it automatically 
+        if [ "$multi" -gt 0 ]; then
+            arg_parallelize="-p ${multi}"
+        fi
+
+        cmd=(
+          "$(dirname "$0")/parallelize"
+          -fg "${arg_parallelize}"
+          -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-seg --multi -2)"
+          "${ARRAY[@]}"
+        )
+        
+        # Execute the command using eval
+        if [ "${save_surf}" -eq 1 ]; then
+            eval "${cmd[@]}"
+        fi
+        
+        exit 1
+    fi
+
+    # Don't use colored text in parallelization
+    if [[ "$multi" -eq -2 ]]; then
+        UNDERLINE=""
+        BOLD=""
+        NC=""
+        CYAN=""
+        PINK=""
+        RED=""
+        YELLOW=""
+        BLUE=""
+        WHITE=""
+        GREEN=""
+        BLACK=""
+    fi
+
     SIZE_OF_ARRAY="${#ARRAY[@]}"
     
     # set overall starting time
@@ -799,11 +885,17 @@ process ()
             #echo -e "${BLUE}---------------------------------------------${NC}"
             #echo -e "${BLUE}Extracting surfaces${NC}"
             for side in left right; do
-                surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
+                if [ "${multi}" -eq -2 ]; then
+                    surface_estimation $side $outmridir $outsurfdir $estimate_spherereg
+                else
+                    surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
+                fi
             done
             
             # use wait to check finishing the background processes
-            wait
+            if [ "${multi}" -ne -2 ]; then
+                wait
+            fi
             
         fi # save_surf
 
@@ -831,7 +923,7 @@ process ()
         # print execution time per data set
         end=$(date +%s)
         runtime=$((end - start))
-        echo -e "${GREEN}---------------------------------------------${NC}"
+        echo -e "${GREEN}-------------------------------------------------------${NC}"
         echo -e "${GREEN}Finished after ${runtime}s${NC}"
             
         ((i++))
@@ -863,56 +955,70 @@ ${BOLD}DESCRIPTION:${NC}
   Processes T1-weighted brain data for computational anatomy analysis, including segmentation and surface extraction.
 
 ${BOLD}OPTIONS:${NC}
-  ${YELLOW}System:${NC}
-    --re-install              Remove old installation and reinstall required Python libraries.
-    --python <FILE>           Specify Python command to use (default: $python).
-    --debug                   Enable verbose output and do not delete temporary files and save some
-                              debugging information..
-
-  ${YELLOW}Parameters:${NC}
-    --out-dir <DIR>           Specify output directory (default: current folder).
-    --amap                    Use AMAP segmentation instead of deepmriprep.
-    --pre-fwhm <NUMBER>       Pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
-    --post-fwhm <NUMBER>      Post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
-    --thickness-fwhm <NUMBER> Volumetric thickness smoothing FWHM size in CAT_VolThicknessPbt 
-                              (default: $thickness_fwhm).
-    --sharpening <NUMBER>     Amount of sharpening the PPM map by adding the difference between the 
-                              unsmoothed and smoothed PPM map (default: $sharpening).
-    --thresh <NUMBER>         Isovalue threshold for surface creation in CAT_VolMarchingCubes (default: $thresh).
-    --downsample <NUMBER>     Downsampling PPM and GMT maps to reduce surface intersections 
-                              (default: $downsample).
-    --min-thickness <NUMBER>  Minimum thickness values (below this are set to zero) for vbdist 
-                              method (default: $min_thickness).
-    --median-filter <NUMBER>  Number of median filter applications to reduce topology artifacts.
-
-  ${YELLOW}Save Options:${NC}
-    --no-overwrite <STRING>   Prevent overwriting of existing results by defining filename pattern that will be checked.
+  ${BOLD}${YELLOW}General Options:${NC}
+    --re-install              Remove the old installation and reinstall the required Python libraries.
+    --python <FILE>           Specify the Python interpreter to use (default: $python).
+    --multi <NUMBER>          Specify the number of processes for parallelization. Use '-1' to
+                              automatically estimate the number of available processors 
+                              (default: $multi).
+    --debug                   Enable verbose output, retain temporary files, and save additional 
+                              debugging information.
+  
+  ${BOLD}${YELLOW}Processing Parameters:${NC}
+    --out-dir <DIR>           Specify the output directory (default: current working directory).
+    --amap                    Use AMAP segmentation instead of DeepMRIPrep.
+    --pre-fwhm <NUMBER>       Specify the pre-smoothing FWHM size in CAT_VolMarchingCubes 
+                              (default: $pre_fwhm).
+    --post-fwhm <NUMBER>      Specify the post-smoothing FWHM size in CAT_VolMarchingCubes 
+                              (default: $post_fwhm).
+    --thickness-fwhm <NUMBER> Specify the FWHM size for volumetric thickness smoothing in 
+                              CAT_VolThicknessPbt (default: $thickness_fwhm).
+    --sharpening <NUMBER>     Specify the amount of sharpening applied to the PPM map by adding 
+                              the difference between the unsmoothed and smoothed PPM map 
+                              (default: $sharpening).
+    --thresh <NUMBER>         Specify the isovalue threshold for surface creation in 
+                              CAT_VolMarchingCubes (default: $thresh).
+    --downsample <NUMBER>     Specify the downsampling factor for PPM and GMT maps to reduce 
+                              surface intersections (default: $downsample).
+    --min-thickness <NUMBER>  Specify the minimum thickness value (values below this are set to 
+                              zero) for the vbdist method (default: $min_thickness).
+    --median-filter <NUMBER>  Specify the number of median filter applications to reduce 
+                              topology artifacts.
+  
+  ${BOLD}${YELLOW}Save Options:${NC}
+    --no-overwrite <STRING>   Prevent overwriting existing results by checking for the specified 
+                              filename pattern.
     --no-surf                 Skip surface and thickness estimation.
-    --no-seg                  Skip segmentation.
-    --no-surf                 Skip spherical surface registration.
-    --no-mwp                  Skip estimation of modulated and warped segmentations.
-    --hemisphere              Additionally save hemispheric partitions.
+    --no-seg                  Skip segmentation processing.
+    --no-sphere               Skip spherical surface registration.
+    --no-mwp                  Skip the estimation of modulated and warped segmentations.
+    --hemisphere              Additionally save hemispheric partitions of the segmentation.
     --wp                      Additionally save warped segmentations.
-    --rp                      Additionally save affine registered segmentations.
-    --p                       Additionally save native segmentations.
-    --csf                     Additionally save CSF segmentations (default: GM/WM only).
-    --bids                    Adopt BIDS standard for output file naming.
+    --rp                      Additionally save affine-registered segmentations.
+    --p                       Additionally save native space segmentations.
+    --csf                     Additionally save CSF segmentations (default: only GM/WM are saved).
+    --bids                    Use BIDS (Brain Imaging Data Structure) standard for output file 
+                              naming conventions.
 
-${BOLD}EXAMPLES:${NC}
+${BOLD}${YELLOW}Examples:${NC}
   ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder single_subj_T1.nii${NC}
-    Extract segmentation and surface maps for 'single_subj_T1.nii', saving results in 'test_folder'.
+    Process 'single_subj_T1.nii' to extract segmentation and surface maps, saving the 
+    results in the 'test_folder' directory.
 
   ${BLUE}${T1prep_dir}/T1Prep --no-surf single_subj_T1.nii${NC}
-    Extract segmentation maps for 'single_subj_T1.nii', saving in the same folder.
+    Extract only the segmentation maps for 'single_subj_T1.nii', skipping surface creation 
+    and saving the results in the same directory as the input file.
 
   ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
   ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
-    First runs 'T1prep.sh' with settings to skip segmentation estimation, then
-    parallelizes the execution for better performance on 8 processors. The reason for not
-    parallelizing the 1st command is that this part already uses multi-threading and
-    is too memory intensive. In contrast, the 2nd part only calls the surface creation
-    which does not yet use multi-threading and can therefore be easily parallelized.
-    
+    1. Runs 'T1prep.sh' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
+       and saving results in 'test_folder'.
+    2. Parallelizes the processing using 8 processors for improved performance. The first command 
+       is not parallelized because it already uses multi-threading and is memory-intensive, while 
+       the second command (surface creation) is single-threaded and can benefit from parallelization.
+       
+    NOTE: You can automatically enable parallelization by using the '--multi' flag.
+        
 ${BOLD}PURPOSE:${NC}
   This script facilitates the analysis of T1-weighted brain images by providing tools for segmentation, surface mapping, and more.
 

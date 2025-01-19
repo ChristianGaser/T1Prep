@@ -6,17 +6,20 @@
 time=`date "+%Y%b%d_%H%M"`
 MEM_LIMIT=0
 
-# output colors
-UNDERLINE=$(tput smul)
-YELLOW=$(tput setaf 3)
-GREEN=$(tput setaf 2)
-BLACK=$(tput setaf 0)
-CYAN=$(tput setaf 6)
-PINK=$(tput setaf 5)
-BLUE=$(tput setaf 4)
-RED=$(tput setaf 1)
+# Text formatting
 BOLD=$(tput bold)
-NC=$(tput sgr0)
+UNDERLINE=$(tput smul)
+NC=$(tput sgr0) # Reset all attributes
+
+# Colors
+BLACK=$(tput setaf 0)
+RED=$(tput setaf 1)
+GREEN=$(tput setaf 2)
+YELLOW=$(tput setaf 3)
+BLUE=$(tput setaf 4)
+PINK=$(tput setaf 5)
+CYAN=$(tput setaf 6)
+WHITE=$(tput setaf 7)
 
 ########################################################
 # run main
@@ -24,7 +27,8 @@ NC=$(tput sgr0)
 
 main ()
 {
-  parse_args ${1+"$@"}
+  get_no_of_cpus
+  parse_args "${@}"
   check_files
   if [ "$MEM_LIMIT" -gt 0 ]; then
     get_no_processes
@@ -40,34 +44,36 @@ main ()
 # check arguments and files
 ########################################################
 
-parse_args ()
-{
+parse_args () {
   local optname optarg
-  count=0
-  while [ $# -gt 0 ]
-  do
-    optname="`echo $1 | sed 's,=.*,,'`"
-    optarg="$2"
+  count=0  # To track positional arguments (filenames)
+
+  # Iterate through all arguments
+  while [ $# -gt 0 ]; do
+    optname="$(echo "$1" | sed 's,=.*,,' )"  # Extract the flag/option name
+    optarg="$2"  # Capture the next argument as a potential value
+
     case "$1" in
-        --command* | -c*)
-            exit_if_empty "$optname" "$optarg"
-            COMMAND=$optarg
-            shift
-            ;;
         --mem-limit* | -m*)
             exit_if_empty "$optname" "$optarg"
-            MEM_LIMIT=$optarg
+            MEM_LIMIT="$optarg"
             shift
             ;;
         --processes* | -p*)
             exit_if_empty "$optname" "$optarg"
-            NUMBER_OF_JOBS=$optarg
+            NUMBER_OF_JOBS="$optarg"
             shift
             ;;
         --logdir* | -l*)
             exit_if_empty "$optname" "$optarg"
-            LOGDIR=$optarg
+            LOGDIR="$optarg"
             shift
+            ;;
+        --command* | -c*)
+            # Ensure that the option has an argument
+            exit_if_empty "$optname" "$optarg"
+            COMMAND="$optarg"
+            shift  # Skip the next argument since it's the value for --command
             ;;
         --fg* | -f*)
             FG=1
@@ -81,15 +87,17 @@ parse_args ()
             ;;
         -*)
             echo "`basename $0`: ERROR: Unrecognized option \"$1\"" >&2
+            #exit 1
             ;;
         *)
-            ARRAY[$count]=$1
+            # Treat anything not starting with `-` as a positional argument (filename)
+            ARRAY[$count]="$1"
             ((count++))
             ;;
     esac
-    shift
-  done
 
+    shift  # Move to the next argument
+  done
 }
 
 ########################################################
@@ -104,8 +112,7 @@ exit_if_empty ()
   shift
   val="$*"
 
-  if [ -z "$val" ]
-  then
+  if [ -z "$val" ]; then
     echo ERROR: "${RED}No argument given with \"$desc\" command line argument!${NC}" >&2
     exit 1
   fi
@@ -117,24 +124,22 @@ exit_if_empty ()
 
 check_files ()
 {
-  if [ -z "$COMMAND" ];
-  then
+  if [ -z "$COMMAND" ]; then
     echo "${RED}$FUNCNAME ERROR - no command defined.${NC}"
       help
     exit 1
   fi
   
   SIZE_OF_ARRAY="${#ARRAY[@]}"
-  if [ "$SIZE_OF_ARRAY" -eq 0 ]
-  then
+  
+  if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
       echo '${RED}ERROR: No files given!${NC}' >&2
       help
       exit 1
   fi
 
   i=0
-  while [ "$i" -lt "$SIZE_OF_ARRAY" ]
-  do
+  while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
     if [ ! -f "${ARRAY[$i]}" ] && [ ! -d "${ARRAY[$i]}" ]; then
       echo "${RED}ERROR: File or directory ${ARRAY[$i]} not found${NC}"
       help
@@ -160,16 +165,13 @@ get_no_of_cpus () {
   ARCH=`uname`
 
   if [ -z "$NUMBER_OF_JOBS" ]; then
-    if [ "$ARCH" == "Linux" ]
-    then
+    if [ "$ARCH" == "Linux" ]; then
       NUMBER_OF_JOBS=`grep ^processor $CPUINFO | wc -l`
   
-    elif [ "$ARCH" == "Darwin" ]
-    then
+    elif [ "$ARCH" == "Darwin" ]; then
       NUMBER_OF_JOBS=`sysctl -a hw | grep -w "hw.logicalcpu" | awk '{ print $2 }'`
   
-    elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]
-    then
+    elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]; then
       NUMBER_OF_JOBS=`wmic cpu get NumberOfLogicalProcessors | grep -v NumberOfLogicalProcessors`
   
     else
@@ -187,24 +189,21 @@ get_no_processes () {
 
   ARCH=`uname`
 
-  if [ "$ARCH" == "Linux" ]
-  then
+  if [ "$ARCH" == "Linux" ]; then
     # Get total installed memory in MB
     mem_total=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 
     # Convert KB to GB
     mem_gb=$(echo "$mem_total / 1024 / 1024" | bc)
 
-  elif [ "$ARCH" == "Darwin" ]
-  then
+  elif [ "$ARCH" == "Darwin" ]; then
     # Get total installed memory in bytes
     mem_total=$(sysctl hw.memsize | awk '{print $2}')
 
     # Convert bytes to GB
     mem_gb=$(echo "$mem_total / 1024 / 1024 / 1024" | bc)
 
-  elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]
-  then
+  elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]; then
     # Get total installed memory in KB
     mem_total=$(wmic ComputerSystem get TotalPhysicalMemory | grep -Eo '[0-9]+')
 
@@ -222,29 +221,33 @@ get_no_processes () {
 ########################################################
 # run parallelize
 ########################################################
-
+ 
 parallelize ()
 {
     
-  SIZE_OF_ARRAY="${#ARRAY[@]}"
+  local SIZE_OF_ARRAY="${#ARRAY[@]}"
 
-  # if number of processors is equal 0 call command serially
-  if [ "$NUMBER_OF_JOBS" -eq "0" ]; then
-    i=0
-    while [ "$i" -lt "$SIZE_OF_ARRAY" ]
-    do
-      $COMMAND ${ARRAY[$i]}; 
-      ((i++))
-    done
-    return
+  # If NUMBER_OF_JOBS is 0, execute commands serially
+  if [ "$NUMBER_OF_JOBS" -lt 2 ]; then
+      echo "Executing serially..."
+      for file in "${ARRAY[@]}"; do
+          eval "$COMMAND \"$file\""  # Use eval to handle complex commands
+      done
+      return
   fi
 
-  BLOCK=$((10000* $SIZE_OF_ARRAY / $NUMBER_OF_JOBS ))
+  local BLOCK=$((10000* $SIZE_OF_ARRAY / $NUMBER_OF_JOBS ))
+  local i=0
+  
+  # Initialize logging
+  if [ -z "${LOGDIR}" ]; then
+    LOGDIR=$PWD
+  fi
+  local log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
 
-  i=0
-  while [ "$i" -lt "$SIZE_OF_ARRAY" ]
-  do
-    count=$((10000* $i / $BLOCK ))
+  # Process files in parallel
+  while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
+    local count=$((10000* $i / $BLOCK ))
     if [ -z "${ARG_LIST[$count]}" ]; then
       ARG_LIST[$count]="${ARRAY[$i]}"
     else
@@ -253,11 +256,6 @@ parallelize ()
     ((i++))
   done
 
-  if [ -z "${LOGDIR}" ]; then
-    LOGDIR=$PWD
-  fi
-
-  log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
   if [ -z "${TEST}" ]; then
     echo "${GREEN}Check $log for logging information${NC}"
     echo > $log
@@ -265,9 +263,7 @@ parallelize ()
   fi
   
   i=0
-  
-  while [ "$i" -lt "$NUMBER_OF_JOBS" ]
-  do
+  while [ "$i" -lt "$NUMBER_OF_JOBS" ]; do
     if [ ! "${ARG_LIST[$i]}" == "" ]; then
       j=$(($i+1))
       echo job ${j}/"$NUMBER_OF_JOBS":
@@ -285,8 +281,8 @@ parallelize ()
   done
   
   # keep all processes in foreground
-  if [ -z "${FG}" ]; then
-      echo "wait"
+  if [ -n "${FG}" ]; then
+      echo "Waiting for jobs to complete..."
       wait
   fi
 }
