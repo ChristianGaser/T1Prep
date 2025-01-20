@@ -112,9 +112,8 @@ parse_args ()
     fi
 
     while [ $# -gt 0 ]; do
-        optname=$(echo "$1" | sed 's,=.*,,' )
-        optarg=$(echo "$2")
-        paras="$paras $optname $optarg"
+        optname="${1%%=*}"
+        optarg="${2:-}"
 
         case "$1" in
             --re-install)
@@ -257,7 +256,7 @@ exit_if_empty ()
     shift
     val="$*"
 
-    if [ ! -n "$val" ]; then
+    if [ -z "$val" ]; then
         echo "${RED}ERROR: No argument given with \"$desc\" command line argument!${NC}" >&2
         exit 1
     fi
@@ -316,9 +315,15 @@ check_files ()
     while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
         if [ ! -f "${ARRAY[$i]}" ]; then
             if [ ! -L "${ARRAY[$i]}" ]; then
-            echo "${RED}ERROR: File ${ARRAY[$i]} not found${NC}" >&2
-            help
-            exit 1
+                echo "${RED}ERROR: File ${ARRAY[$i]} not found${NC}" >&2
+                help
+                exit 1
+            fi
+        else
+            if [[ ! "${ARRAY[$i]}" =~ \.nii(\.gz)?$ ]]; then
+                echo "${RED}ERROR: File ${ARRAY[$i]} is not a valid NIfTI file${NC}" >&2
+                help
+                exit 1
             fi
         fi
         ((i++))
@@ -475,7 +480,8 @@ surface_estimation()
     intensity=intensity_$side
     intensity_pial=intensity_pial_$side
     intensity_white=intensity_white_$side
-    fshemi=$(echo "$side" | sed -e "s/left/lh/g" -e "s/right/rh/g")
+    fshemi="${side/left/lh}"
+    fshemi="${fshemi/right/rh}"
     Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
     Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
     
@@ -557,9 +563,9 @@ surface_estimation()
         fi
     else
         if [ "${estimate_seg}" -eq 0 ]; then        
-            echo -e "${RED}ERROR: Could not find ${outmridir}/${!hemi}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
+            echo "${RED}ERROR: Could not find ${outmridir}/${!hemi}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
         else
-            echo -e "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed${NC}" >&2
+            echo "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed (file ${outmridir}/${!hemi} not found)${NC}" >&2
         fi
     fi
 }
@@ -669,17 +675,20 @@ process ()
                 FILE="${pwd}/${ARRAY[$i]}"
             fi
         else
-            FILE=${ARRAY[$i]}
+            FILE="${ARRAY[$i]}"
         fi
 
         # replace white spaces
-        FILE=$(echo "$FILE" | sed -e "s/ /\\ /g")
+        FILE="${FILE// /\\ }"
 
         # check whether processed files exist if no-overwrite flag is used
         if [ -n "${no_overwrite}" ]; then
             dn=$(dirname "$FILE")
-            bn=$(basename "$FILE" | cut -f1 -d'.')
-            if [ ! -n "$outdir" ]; then
+            bn=$(basename "$FILE")
+            bn="${bn%.nii}"
+            bn="${bn%.gz}"
+
+            if [ -z "$outdir" ]; then
                 outdir0=${dn}
             else
                 outdir0=${outdir}
@@ -687,7 +696,7 @@ process ()
             processed=$(ls "${outdir0}/${no_overwrite}${bn}"* 2>/dev/null)
         fi
 
-        if [ ! -n "${processed}" ]; then
+        if [ -z "${processed}" ]; then
             ARRAY2[$j]="$FILE"
             ((j++))
         else
@@ -706,105 +715,106 @@ process ()
 
         FILE="${ARRAY2[$i]}"
 
-        # get directory and basename and also consider ancient Analyze img files
+        # get directory and basename
         dn=$(dirname "$FILE")
-        bn=$(basename "$FILE" | sed -e "s/.img/.nii/g")
-        bn_gz=$(basename "$FILE" | sed -e "s/.img/.nii/g" -e "s/.gz//g")     
+        bn=$(basename "$FILE")
+        bn_base="${bn%.nii}"
+        bn_gz_base="${bn_base%.gz}"
         
         # if defined use output dir otherwise use the folder of input files
-        if [ ! -n "$outdir" ]; then
-            outdir=${dn}
+        if [ -z "$outdir" ]; then
+            outdir0=${dn}
+        else
+            outdir0=${outdir}
         fi
 
         # check again whether processed files exist if no-overwrite flag is used
         if [ -n "${no_overwrite}" ]; then
             bn0=$(basename "$FILE" | cut -f1 -d'.')
-            processed=$(ls "${outdir}/${no_overwrite}${bn0}"* 2>/dev/null)
+            processed=$(ls "${outdir0}/${no_overwrite}${bn0}"* 2>/dev/null)
             echo $processed
             
             # Check if $processed is empty
-            if [ ! -n $processed ]; then
+            if [ -z $processed ]; then
                 echo Skip processing of ${FILE}
                 continue  # Skip to the next iteration of the loop
             fi
         fi
         
         # create outdir if not exists
-        if [ ! -d "$outdir" ]; then
-            mkdir -p "$outdir"
+        if [ ! -d "$outdir0" ]; then
+            mkdir -p "$outdir0"
         fi
         
 
         # get output names
-        sanlm=$(echo "$bn"     | sed -e "s/.nii/_desc-sanlm.nii/g")
-        
-        # remove T1w|T2w from basename
-        seg=$(echo "$bn_gz"  | sed -e "s/.nii/_seg.nii/g")
-        p0=$(echo p0"$bn_gz")
-        mT1=$(echo m"$bn_gz")
-                    
-        hemi_left=$(echo "$seg"  | sed -e "s/.nii/_hemi-L.nii/g")
-        hemi_right=$(echo "$seg" | sed -e "s/.nii/_hemi-R.nii/g")
-        gmt_left=$(echo "$bn"    | sed -e "s/.nii/_hemi-L_thickness.nii/g")
-        gmt_right=$(echo "$bn"   | sed -e "s/.nii/_hemi-R_thickness.nii/g")
-        
+        sanlm="${bn_base}_desc-sanlm.nii"
+        seg="${bn_gz_base}_seg.nii"
+        p0="p0${bn_gz_base}.nii"
+        mT1="m${bn_gz_base}.nii"
+
+        hemi_left="${bn_gz_base}_seg_hemi-L.nii"
+        hemi_right="${bn_gz_base}_seg_hemi-R.nii"
+        gmt_left="${bn_base}_hemi-L_thickness.nii"
+        gmt_right="${bn_base}_hemi-R_thickness.nii"
+
         # for the following filenames we have to remove the potential .gz from name
-        ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-        ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
+        ppm_left="${bn_gz_base}_hemi-L_ppm.nii"
+        ppm_right="${bn_gz_base}_hemi-R_ppm.nii"
 
         if [ "${use_bids_naming}" -eq 1 ]; then
 
-            echo -e "${RED}BIDS names for volumes not yet supported.${NC}"
-                        
-            ppm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_ppm.nii/g")
-            ppm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_ppm.nii/g")
-            mid_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_midthickness.surf.gii/g")
-            mid_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_midthickness.surf.gii/g")
-            pial_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pial.surf.gii/g")
-            pial_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pial.surf.gii/g")
-            wm_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_wm.surf.gii/g")
-            wm_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_wm.surf.gii/g")
-            thick_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_thickness.txt/g")
-            thick_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_thickness.txt/g")
-            pbt_left=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-L_pbt.txt/g")
-            pbt_right=$(echo "$bn_gz"   | sed -e "s/.nii/_hemi-R_pbt.txt/g")
-            sphere_left=$(echo "$bn_gz"     | sed -e "s/.nii/_hemi-L_sphere.surf.gii/g")
-            sphere_right=$(echo "$bn_gz"    | sed -e "s/.nii/_hemi-R_sphere.surf.gii/g")
-            spherereg_left=$(echo "$bn_gz"  | sed -e "s/.nii/_hemi-L_sphere.reg.surf.gii/g")
-            spherereg_right=$(echo "$bn_gz" | sed -e "s/.nii/_hemi-R_sphere.reg.surf.gii/g")
-            intensity_left=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-L_intensity.txt/g")
-            intensity_right=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-R_intensity.txt/g")
-            intensity_pial_left=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-L_intensity_pial.txt/g")
-            intensity_pial_right=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-R_intensity_pial.txt/g")
-            intensity_white_left=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-L_intensity_white.txt/g")
-            intensity_white_right=$(echo "${bn_gz}" | sed -e "s/.nii/_hemi-R_intensity_white.txt/g")
-            
-            outmridir=${outdir}
-            outsurfdir=${outdir}
+            echo "${RED}BIDS names for volumes not yet supported.${NC}"
+
+            ppm_left="${bn_gz_base}_hemi-L_ppm.nii"
+            ppm_right="${bn_gz_base}_hemi-R_ppm.nii"
+            mid_left="${bn_gz_base}_hemi-L_midthickness.surf.gii"
+            mid_right="${bn_gz_base}_hemi-R_midthickness.surf.gii"
+            pial_left="${bn_gz_base}_hemi-L_pial.surf.gii"
+            pial_right="${bn_gz_base}_hemi-R_pial.surf.gii"
+            wm_left="${bn_gz_base}_hemi-L_wm.surf.gii"
+            wm_right="${bn_gz_base}_hemi-R_wm.surf.gii"
+            thick_left="${bn_gz_base}_hemi-L_thickness.txt"
+            thick_right="${bn_gz_base}_hemi-R_thickness.txt"
+            pbt_left="${bn_gz_base}_hemi-L_pbt.txt"
+            pbt_right="${bn_gz_base}_hemi-R_pbt.txt"
+            sphere_left="${bn_gz_base}_hemi-L_sphere.surf.gii"
+            sphere_right="${bn_gz_base}_hemi-R_sphere.surf.gii"
+            spherereg_left="${bn_gz_base}_hemi-L_sphere.reg.surf.gii"
+            spherereg_right="${bn_gz_base}_hemi-R_sphere.reg.surf.gii"
+            intensity_left="${bn_gz_base}_hemi-L_intensity.txt"
+            intensity_right="${bn_gz_base}_hemi-R_intensity.txt"
+            intensity_pial_left="${bn_gz_base}_hemi-L_intensity_pial.txt"
+            intensity_pial_right="${bn_gz_base}_hemi-R_intensity_pial.txt"
+            intensity_white_left="${bn_gz_base}_hemi-L_intensity_white.txt"
+            intensity_white_right="${bn_gz_base}_hemi-R_intensity_white.txt"
+
+            outmridir=${outdir0}
+            outsurfdir=${outdir0}
         else            
-            mid_left=$(echo "lh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            mid_right=$(echo "rh.central.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            pial_left=$(echo "lh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            pial_right=$(echo "rh.pial.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            wm_left=$(echo "lh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            wm_right=$(echo "rh.white.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            thick_left=$(echo "lh.thickness.${bn_gz}" | sed -e "s/.nii//g")
-            thick_right=$(echo "rh.thickness.${bn_gz}" | sed -e "s/.nii//g")
-            pbt_left=$(echo "lh.pbt.${bn_gz}" | sed -e "s/.nii//g")
-            pbt_right=$(echo "rh.pbt.${bn_gz}" | sed -e "s/.nii//g")
-            sphere_left=$(echo "lh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            sphere_right=$(echo "rh.sphere.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            spherereg_left=$(echo "lh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            spherereg_right=$(echo "rh.sphere.reg.${bn_gz}" | sed -e "s/.nii/.gii/g")
-            intensity_left=$(echo "lh.intensity_${bn_gz}" | sed -e "s/.nii/.txt/g")
-            intensity_right=$(echo "rh.intensity_${bn_gz}" | sed -e "s/.nii/.txt/g")
-            intensity_pial_left=$(echo "lh.intensity_pial_${bn_gz}" | sed -e "s/.nii/.txt/g")
-            intensity_pial_right=$(echo "rh.intensity_pial_${bn_gz}" | sed -e "s/.nii/.txt/g")
-            intensity_white_left=$(echo "lh.intensity_white_${bn_gz}" | sed -e "s/.nii/.txt/g")
-            intensity_white_right=$(echo "rh.intensity_white_${bn_gz}" | sed -e "s/.nii/.txt/g")
-            
-            outmridir=${outdir}/mri
-            outsurfdir=${outdir}/surf
+            mid_left="lh.central.${bn_gz_base}.gii"
+            mid_right="rh.central.${bn_gz_base}.gii"
+            pial_left="lh.pial.${bn_gz_base}.gii"
+            pial_right="rh.pial.${bn_gz_base}.gii"
+            wm_left="lh.white.${bn_gz_base}.gii"
+            wm_right="rh.white.${bn_gz_base}.gii"
+            thick_left="lh.thickness.${bn_gz_base}"
+            thick_right="rh.thickness.${bn_gz_base}"
+            pbt_left="lh.pbt.${bn_gz_base}"
+            pbt_right="rh.pbt.${bn_gz_base}"
+            sphere_left="lh.sphere.${bn_gz_base}.gii"
+            sphere_right="rh.sphere.${bn_gz_base}.gii"
+            spherereg_left="lh.sphere.reg.${bn_gz_base}.gii"
+            spherereg_right="rh.sphere.reg.${bn_gz_base}.gii"
+            intensity_left="lh.intensity_${bn_gz_base}.txt"
+            intensity_right="rh.intensity_${bn_gz_base}.txt"
+            intensity_pial_left="lh.intensity_pial_${bn_gz_base}.txt"
+            intensity_pial_right="rh.intensity_pial_${bn_gz_base}.txt"
+            intensity_white_left="lh.intensity_white_${bn_gz_base}.txt"
+            intensity_white_right="rh.intensity_white_${bn_gz_base}.txt"
+
+            outmridir=${outdir0}/mri
+            outsurfdir=${outdir0}/surf
         fi
                 
         # create output folders if needed
@@ -817,14 +827,14 @@ process ()
 
         # print progress and filename
         j=$(expr $i + 1)
-        echo -e "${BOLD}${BLACK}-------------------------------------------------------${NC}"
-        echo -e "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE}${NC}"
+        echo "${BOLD}${BLACK}-------------------------------------------------------${NC}"
+        echo "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE}${NC}"
 
         # 1. Call SANLM denoising filter
         # ----------------------------------------------------------------------
         if [ "${use_sanlm}" -eq 1 ]; then
-            #echo -e "${BLUE}---------------------------------------------${NC}"
-            #echo -e "${BLUE}SANLM denoising${NC}"
+            #echo "${BLUE}---------------------------------------------${NC}"
+            #echo "${BLUE}SANLM denoising${NC}"
             ${bin_dir}/CAT_VolSanlm "${FILE}" "${outmridir}/${sanlm}"
             input="${outmridir}/${sanlm}"
         else
@@ -835,10 +845,9 @@ process ()
         # ----------------------------------------------------------------------
         # check for outputs from previous step
         if [ -f "${input}" ]; then
-            #echo -e "${BLUE}---------------------------------------------${NC}"
-            #echo -e "${BLUE}Segmentation${NC}"
 
             # Initialize command string with the Python script call
+
             cmd="${python} ${cmd_dir}/segment.py"
             
             # Append options conditionally
@@ -854,11 +863,11 @@ process ()
             cmd+=" --input \"${input}\" --outdir \"${outmridir}\""
             
             # Execute the command and print errors
-            [ "${estimate_seg}" -eq 1 ] && eval $cmd
-            
+            [ "${estimate_seg}" -eq 1 ] && eval "${cmd}"
+                        
   
         else
-            echo -e "${RED}ERROR: CAT_VolSanlm failed${NC}" >&2
+            echo "${RED}ERROR: CAT_VolSanlm failed${NC}" >&2
             ((i++))
             continue
         fi
@@ -875,7 +884,7 @@ process ()
             # ----------------------------------------------------------------------
             # check for outputs from previous step
             if [ ! -f "${outmridir}/${p0}" ]; then
-                echo -e "${RED}ERROR: ${cmd_dir}/segment.py failed${NC}" >&2
+                echo "${RED}ERROR: ${cmd_dir}/segment.py failed (file ${outmridir}/${p0} not found)${NC}" >&2
                 ((i++))
                 continue
             fi
@@ -885,8 +894,6 @@ process ()
             # allow parallelization
             # ----------------------------------------------------------------------
             # check for outputs from previous step
-            #echo -e "${BLUE}---------------------------------------------${NC}"
-            #echo -e "${BLUE}Extracting surfaces${NC}"
             for side in left right; do
                 if [ "${multi}" -eq -2 ]; then
                     surface_estimation $side $outmridir $outsurfdir $estimate_spherereg
@@ -926,8 +933,8 @@ process ()
         # print execution time per data set
         end=$(date +%s)
         runtime=$((end - start))
-        echo -e "${GREEN}-------------------------------------------------------${NC}"
-        echo -e "${GREEN}Finished after ${runtime}s${NC}"
+        echo "${GREEN}-------------------------------------------------------${NC}"
+        echo "${GREEN}Finished after ${runtime}s${NC}"
             
         ((i++))
     done
@@ -937,7 +944,7 @@ process ()
         end0=`date +%s`
         runtime=$((end0-start0))
         runtime="T1Prep finished after: $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))sec"
-        echo -e "${GREEN}${runtime}${NC}"  
+        echo "${GREEN}${runtime}${NC}"  
     fi
 
 }
