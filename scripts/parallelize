@@ -35,7 +35,7 @@ main ()
   else
     get_no_of_cpus
   fi
-  parallelize
+  do_parallelize
 
   exit 0
 }
@@ -46,7 +46,7 @@ main ()
 
 parse_args () {
   local optname optarg
-  count=0  # To track positional arguments (filenames)
+  ((count=0))  # To track positional arguments (filenames)
 
   # Iterate through all arguments
   while [ $# -gt 0 ]; do
@@ -222,11 +222,16 @@ get_no_processes () {
 # run parallelize
 ########################################################
  
-parallelize ()
+do_parallelize ()
 {
     
-  local SIZE_OF_ARRAY="${#ARRAY[@]}"
+  SIZE_OF_ARRAY="${#ARRAY[@]}"
 
+  # Correct if NUMBER_OF_JOBS > SIZE_OF_ARRAY
+  if [ "$SIZE_OF_ARRAY"  -lt "$NUMBER_OF_JOBS" ]; then
+    NUMBER_OF_JOBS=$SIZE_OF_ARRAY
+  fi
+  
   # If NUMBER_OF_JOBS is 0, execute commands serially
   if [ "$NUMBER_OF_JOBS" -lt 2 ]; then
       echo "Executing serially..."
@@ -236,14 +241,11 @@ parallelize ()
       return
   fi
 
-  local BLOCK=$((10000* $SIZE_OF_ARRAY / $NUMBER_OF_JOBS ))
-  local i=0
+  BLOCK=$((10000* $SIZE_OF_ARRAY / $NUMBER_OF_JOBS ))
+  ((i=0))
   
   # Initialize logging
-  if [ -z "${LOGDIR}" ]; then
-    LOGDIR=$PWD
-  fi
-  local log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
+  log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
 
   # Process files in parallel
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
@@ -262,13 +264,15 @@ parallelize ()
     echo
   fi
   
-  i=0
+  ((i=0))
+  echo "$i"  "$NUMBER_OF_JOBS"
   while [ "$i" -lt "$NUMBER_OF_JOBS" ]; do
+    echo "${ARG_LIST[$i]}"
     if [ ! "${ARG_LIST[$i]}" == "" ]; then
       j=$(($i+1))
       echo job ${j}/"$NUMBER_OF_JOBS":
       echo $COMMAND ${ARG_LIST[$i]}
-      if [ -z "${TEST}" ]; then
+      if [ -z "${TEST}" ]; then        
         if [ -n "${LOGDIR}" ]; then
           echo job ${j}/"$NUMBER_OF_JOBS": $COMMAND ${ARG_LIST[$i]} >> $log
           nohup bash -c "for k in ${ARG_LIST[$i]}; do $COMMAND \$k; done" >> $log 2>&1 &
