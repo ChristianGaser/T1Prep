@@ -50,8 +50,8 @@ parse_args () {
 
   # Iterate through all arguments
   while [ $# -gt 0 ]; do
-    optname="$(echo "$1" | sed 's,=.*,,' )"  # Extract the flag/option name
-    optarg="$2"  # Capture the next argument as a potential value
+    optname="${1%%=*}"
+    optarg="${2:-}"
 
     case "$1" in
         --mem-limit* | -m*)
