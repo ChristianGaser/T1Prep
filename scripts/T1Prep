@@ -615,12 +615,22 @@ process ()
     # Filter arguments before recursion
     filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
 
-    # Recursive call with filtered and additional arguments
-    echo "${BOLD}Sequential Segmentation${NC}"
-    "$0" "${filtered_args[@]}" --no-surf --hemisphere --multi -2 "${ARRAY[@]}"
+    # Call parallelize with filtered arguments and use minimal memory limit of 24GB per process
+    echo "${BOLD}Volume Segmentation${NC}"
+    cmd=(
+      "$(dirname "$0")/parallelize"
+      -m 24 -fg
+      -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-surf --hemisphere --multi -2)"
+      "${ARRAY[@]}"
+    )
+    
+    # Execute the command using eval
+    if [ "${estimate_seg}" -eq 1 ]; then
+      eval "${cmd[@]}"
+    fi
 
     # Call parallelize with filtered arguments
-    echo "${BOLD}Parallel Surface Estimation${NC}"
+    echo "${BOLD}Surface Estimation${NC}"
     # Define number of processes, otherwise estimate it automatically 
     if [ "$multi" -gt 0 ]; then
       arg_parallelize="-p ${multi}"
