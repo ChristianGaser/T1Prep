@@ -452,7 +452,6 @@ bar()
   # if end is reached print extra line
   if [ "${1}" -eq "${2}" ]; then
     printf -v padded_name "%-100s" " "
-    #printf '%s\r' "${padded_name}"
   fi
 }
 
