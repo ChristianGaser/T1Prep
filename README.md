@@ -10,6 +10,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 
 ## Main Differences to CAT12
 - Implemented entirely in Python and C, eliminating the need for a Matlab license.
+- New pipeline to estimate cortical surface and thickness.
 - Does not currently support longitudinal pipelines.
 - No quality assessment implemented yet.
 - Only T1 MRI data supported.
