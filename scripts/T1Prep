@@ -444,7 +444,7 @@ bar()
   printf -v total "%$(($2-elapsed))s"
 
   # Pad the name to 50 characters (using printf)
-  printf -v padded_name "%-50s" "$3"
+  printf -v padded_name "%-50s%-20s" "$3" " "
 
   #printf '%s %s\r' "${prog// /■}${total} ${it}%" "${3}"
   printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${padded_name}"
@@ -452,6 +452,7 @@ bar()
   # if end is reached print extra line
   if [ "${1}" -eq "${2}" ]; then
     printf -v padded_name "%-100s" " "
+    printf '%s\r' "${padded_name}"
   fi
 }
 
@@ -1020,13 +1021,17 @@ ${BOLD}OPTIONS:${NC}
                             naming conventions.
 
   ${BOLD}${YELLOW}Examples:${NC}
-  ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder single_subj_T1.nii${NC}
-    Process 'single_subj_T1.nii' to extract segmentation and surface maps, saving the 
-    results in the 'test_folder' directory.
+  ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}
+    Process all files matching the pattern 'sTRIO*.nii' to extract segmentation 
+    and surface maps, saving the results in the 'test_folder' directory.
 
-  ${BLUE}${T1prep_dir}/T1Prep --no-surf single_subj_T1.nii${NC}
-    Extract only the segmentation maps for 'single_subj_T1.nii', skipping surface creation 
-    and saving the results in the same directory as the input file.
+  ${BLUE}${T1prep_dir}/T1Prep --no-surf sTRIO*.nii${NC}
+    Extract only the segmentation maps for all files matching the pattern 'sTRIO*.nii',
+    skipping surface creation and saving the results in the same directory as the input files.
+
+  ${BLUE}${T1prep_dir}/T1Prep --no-overwrite "surf/lh.thickness." sTRIO*.nii${NC}
+    Process all files matching the pattern 'sTRIO*.nii', skipping all files, where the files
+    'surf/lh.thickness.*' already exist and save the results in the same directory as the input files.
 
   ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
   ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
