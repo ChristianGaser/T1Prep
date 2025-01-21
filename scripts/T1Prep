@@ -1043,8 +1043,8 @@ ${BOLD}OPTIONS:${NC}
     'surf/lh.thickness.*' already exist and save the results in the same directory as the input files.
 
   ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
-    1. Runs 'T1prep.sh' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
+  ${T1prep_dir}/parallelize -p 8 -c "${T1prep_dir}/T1prep --out-dir test_folder --no-seg" sTRIO*.nii${NC}
+    1. Runs 'T1prep' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
        and saving results in 'test_folder'.
     2. Parallelizes the processing using 8 processors for improved performance. The first command 
        is not parallelized because it already uses multi-threading and is memory-intensive, while 

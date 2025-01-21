@@ -16,7 +16,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 
 ## Usage
 ```bash
-./scripts/T1Prep.sh [options] file1.nii file2.nii ...
+./scripts/T1Prep [options] file1.nii file2.nii ...
 ```
 
 ## Options
@@ -68,17 +68,19 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
   ./scripts/T1Prep --no-overwrite "surf/lh.thickness." sTRIO*.nii
 ```
     Process all files matching the pattern 'sTRIO*.nii', skipping all files, where the files
-    'surf/lh.thickness.*' already exist and save the results in the same directory as the input files.
+    'surf/lh.thickness.*' already exist and save the results in the same directory as the
+    input files.
 
 ```bash
   ./scripts/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  ./scripts/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii
+  ./scripts/parallelize -p 8 -c "./scripts/T1prep --out-dir test_folder --no-seg" sTRIO*.nii
 ```
-    1. Runs 'T1prep.sh' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
+    1. Runs 'T1prep' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
        and saving results in 'test_folder'.
     2. Parallelizes the processing using 8 processors for improved performance. The first command 
        is not parallelized because it already uses multi-threading and is memory-intensive, while 
-       the second command (surface creation) is single-threaded and can benefit from parallelization.
+       the second command (surface creation) is single-threaded and can benefit from 
+       parallelization.
        
     NOTE: You can automatically enable parallelization by using the '--multi' flag.
 
