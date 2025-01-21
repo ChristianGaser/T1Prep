@@ -77,10 +77,10 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 ```
     1. Runs 'T1prep' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
        and saving results in 'test_folder'.
-    2. Parallelizes the processing using 8 processors for improved performance. The first command 
-       is not parallelized because it already uses multi-threading and is memory-intensive, while 
-       the second command (surface creation) is single-threaded and can benefit from 
-       parallelization.
+    2. Parallelizes the processing using 8 processors for improved performance. The first 
+       command is not parallelized because it already uses multi-threading and is memory-
+       intensive, while the second command (surface creation) is single-threaded and can 
+       benefit from parallelization.
        
     NOTE: You can automatically enable parallelization by using the '--multi' flag.
 
