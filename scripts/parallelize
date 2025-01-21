@@ -5,6 +5,8 @@
 ########################################################
 time=`date "+%Y%b%d_%H%M"`
 MEM_LIMIT=0
+FG=1
+LOGDIR="/tmp"
 
 # Text formatting
 BOLD=$(tput bold)
@@ -75,8 +77,8 @@ parse_args () {
             COMMAND="$optarg"
             shift  # Skip the next argument since it's the value for --command
             ;;
-        --fg* | -f*)
-            FG=1
+        --bg* | -b*)
+            FG=0
             ;;
         --test* | -t*)
             TEST=1
@@ -235,7 +237,7 @@ bar()
   printf -v total "%$(($2-elapsed))s"
 
   # Pad the name to 50 characters (using printf)
-  printf -v padded_name "%-50s%-20s" "$3" " "
+  printf -v padded_name "%-10s%-30s" "$3" " "
 
   #printf '%s %s\r' "${prog// /■}${total} ${it}%" "${3}"
   printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${padded_name}" > /dev/tty
@@ -254,6 +256,9 @@ bar()
 do_parallelize ()
 {
     
+  # set overall starting time
+  start=$(date +%s)
+
   SIZE_OF_ARRAY="${#ARRAY[@]}"
 
   # Correct if NUMBER_OF_JOBS > SIZE_OF_ARRAY
@@ -267,6 +272,17 @@ do_parallelize ()
       for file in "${ARRAY[@]}"; do
           eval "$COMMAND \"$file\""  # Use eval to handle complex commands
       done
+
+      # get overall processing time
+      end=$(date +%s)
+      runtime=$((end - start))
+      runtime="Finished after: $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))sec"
+      
+      # Display the result
+      echo "${GREEN}-------------------------------------------------------${NC}"
+      echo "${GREEN}${runtime}${NC}"
+      echo " "
+
       return
   fi
 
@@ -274,11 +290,7 @@ do_parallelize ()
   i=0
   
   # Initialize logging
-  if [ -n "${LOGDIR}" ]; then
-    log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
-  else
-    log=/tmp/nohup.log
-  fi
+  log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
 
   # Process files in parallel
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
@@ -315,7 +327,10 @@ do_parallelize ()
             # Print to terminal and log
             msg=\"Processing \$k (\$k_count/\$total_k)\"
             # Write to terminal
-            bar \$k_count \$total_k \"Processing \$k\"
+            bn=\$(basename \"\$k\")
+            dn=\$(dirname \"\$k\")
+            dn=\$(basename \"\$dn\")
+            bar \$k_count \$total_k \"Processing ../\$dn/\$bn\"
             # Write to log
             echo \"\$msg\" >> $log            
             $COMMAND \$k
@@ -327,9 +342,18 @@ do_parallelize ()
   done
   
   # keep all processes in foreground
-  if [ -n "${FG}" ]; then
+  if [ "${FG}" -eq 1 ]; then
       echo "Waiting for jobs to complete..."
       wait
+      
+      # get overall processing time
+      end=$(date +%s)
+      runtime=$((end - start))
+      runtime="Finished after: $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))sec"
+      
+      # Display the result
+      echo "${GREEN}-------------------------------------------------------${NC}"
+      echo "${GREEN}${runtime}${NC}"
   fi
 }
 
@@ -346,23 +370,25 @@ ${BOLD}USAGE:${NC}
 
 ${BOLD}OPTIONS:${NC}
   -p, --processes <NUMBER>  Specify the number of parallel jobs (default $NUMBER_OF_JOBS).
-  -c, --command <STRING>    Command to be executed in parallel.
-  -f, --fg.                 Keep all processes in foreground.
-  -t, --test                Run in test mode: print the files to be processed without executing the command.
-  -l, --logdir <DIR>        Directory to save the log file.
   -m, --mem-limit <INT>     Memory limit for each process in GB (default is $MEM_LIMIT GB).
+  -c, --command <STRING>    Command to be executed in parallel.
+  -b, --bg                  Keep all processes in background.
+  -l, --logdir <DIR>        Directory to save the log file (default $LOGDIR).
+  -t, --test                Run in test mode: print the files to be processed without 
+                            executing the command.
 
 ${BOLD}DESCRIPTION:${NC}
-  Execute commands in parallel across multiple files specified by filenames or a wildcard pattern. 
-  Optionally, adjust the number of processes, memory limits, and logging preferences.
+  Execute commands in parallel across multiple files specified by filenames or a wildcard 
+  pattern. Optionally, adjust the number of processes, memory limits, and logging preferences.
 
 ${BOLD}OUTPUT:${NC}
-  If a log directory is specified, logs are saved in a file named 'parallelize_${HOSTNAME}_\${time}.log',
-  incorporating the current date and time.
+  If a log directory is specified, logs are saved in that folder in a file named 
+  'parallelize_${HOSTNAME}_\${time}.log', incorporating the current date and time.
 
 ${BOLD}EXAMPLES:${NC}
   ${BLUE}parallelize -c "niismooth -v -fwhm 8" sTRIO*.nii${NC}
-    Parallelizes the 'niismooth' command with an 8mm FWHM, applied to all files matching 'sTRIO*.nii', displaying verbose output.
+    Parallelizes the 'niismooth' command with an 8mm FWHM, applied to all files matching 
+    'sTRIO*.nii', displaying verbose output.
 
   ${BLUE}parallelize -c "gunzip" *.zip${NC}
     Parallelizes unzipping of all .zip files in the current directory.
@@ -372,11 +398,12 @@ ${BOLD}EXAMPLES:${NC}
 
   ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
   ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
-    1. Runs 'T1prep.sh' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
-       and saving results in 'test_folder'.
-    2. Parallelizes the processing using 8 processors for improved performance. The first command 
-       is not parallelized because it already uses multi-threading and is memory-intensive, while 
-       the second command (surface creation) is single-threaded and can benefit from parallelization.
+    1. Runs 'T1prep.sh' on all files matching the pattern 'sTRIO*.nii', skipping surface 
+       creation and saving results in 'test_folder'.
+    2. Parallelizes the processing using 8 processors for improved performance. The first 
+       command is not parallelized because it already uses multi-threading and is 
+       memory-intensive, while the second command (surface creation) is single-threaded 
+       and can benefit from parallelization.
        
     NOTE: You can automatically enable parallelization by using the '--multi' flag.
 
