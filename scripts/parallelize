@@ -46,7 +46,7 @@ main ()
 
 parse_args () {
   local optname optarg
-  ((count=0))  # To track positional arguments (filenames)
+  count=0  # To track positional arguments (filenames)
 
   # Iterate through all arguments
   while [ $# -gt 0 ]; do
@@ -219,6 +219,35 @@ get_no_processes () {
 }
 
 ########################################################
+# progress bar
+########################################################
+bar() 
+{
+  # Usage: bar 1 100 Name
+  #      ^--------- Elapsed Percentage (0-100).
+  #       ^------ Total length in chars.
+  #         ^-- Name of process.
+  ((it=$1*100/$2))
+  ((elapsed=$1))
+
+  # Create the bar with spaces.
+  printf -v prog  "%${elapsed}s"
+  printf -v total "%$(($2-elapsed))s"
+
+  # Pad the name to 50 characters (using printf)
+  printf -v padded_name "%-50s%-20s" "$3" " "
+
+  #printf '%s %s\r' "${prog// /■}${total} ${it}%" "${3}"
+  printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${padded_name}" > /dev/tty
+  
+  # if end is reached print extra line
+  if [ "${1}" -eq "${2}" ]; then
+    printf -v padded_name "%-100s" " "
+    printf '%s\r' "${padded_name}" > /dev/tty
+  fi
+}
+
+########################################################
 # run parallelize
 ########################################################
  
@@ -242,10 +271,14 @@ do_parallelize ()
   fi
 
   BLOCK=$((10000* $SIZE_OF_ARRAY / $NUMBER_OF_JOBS ))
-  ((i=0))
+  i=0
   
   # Initialize logging
-  log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
+  if [ -n "${LOGDIR}" ]; then
+    log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
+  else
+    log=/tmp/nohup.log
+  fi
 
   # Process files in parallel
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
@@ -264,21 +297,30 @@ do_parallelize ()
     echo
   fi
   
-  ((i=0))
-  echo "$i"  "$NUMBER_OF_JOBS"
+  i=0
+  export -f bar
   while [ "$i" -lt "$NUMBER_OF_JOBS" ]; do
-    echo "${ARG_LIST[$i]}"
     if [ ! "${ARG_LIST[$i]}" == "" ]; then
       j=$(($i+1))
-      echo job ${j}/"$NUMBER_OF_JOBS":
-      echo $COMMAND ${ARG_LIST[$i]}
-      if [ -z "${TEST}" ]; then        
-        if [ -n "${LOGDIR}" ]; then
-          echo job ${j}/"$NUMBER_OF_JOBS": $COMMAND ${ARG_LIST[$i]} >> $log
-          nohup bash -c "for k in ${ARG_LIST[$i]}; do $COMMAND \$k; done" >> $log 2>&1 &
-        else
-          nohup bash -c "for k in ${ARG_LIST[$i]}; do $COMMAND \$k; done" >> /tmp/nohup.log 2>&1 &
-        fi
+      #echo "Job ${j}/${NUMBER_OF_JOBS}:"
+      #echo "$COMMAND ${ARG_LIST[$i]}"
+  
+      if [ -z "${TEST}" ]; then
+        echo "Job ${j}/${NUMBER_OF_JOBS}: $COMMAND ${ARG_LIST[$i]}" >> "$log"
+        nohup bash -c "
+          total_k=\$(echo ${ARG_LIST[$i]} | wc -w)
+          k_count=0
+          for k in ${ARG_LIST[$i]}; do
+            ((k_count++))
+            # Print to terminal and log
+            msg=\"Processing \$k (\$k_count/\$total_k)\"
+            # Write to terminal
+            bar \$k_count \$total_k \"Processing \$k\"
+            # Write to log
+            echo \"\$msg\" >> $log            
+            $COMMAND \$k
+          done
+        " >> "$log" 2>&1 &
       fi
     fi
     ((i++))
@@ -325,13 +367,18 @@ ${BOLD}EXAMPLES:${NC}
   ${BLUE}parallelize -c "gunzip" *.zip${NC}
     Parallelizes unzipping of all .zip files in the current directory.
 
-  ${BLUE}parallelize -m 10 -c "T1prep --no-surf" sTRIO*.nii${NC}
+  ${BLUE}parallelize -m 20 -c "T1prep --no-surf" sTRIO*.nii${NC}
     Parallelizes 'T1prep' without surface estimation, setting a 10GB RAM limit per process.
 
-  ${BLUE}T1Prep.sh --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  parallelize -p 8 -c "T1prep --out-dir test_folder --no-seg" sTRIO*.nii${NC}
-    First, runs 'T1prep' with settings to skip the estimation of segmentations, then
-    parallelizes execution for better performance across 8 processors.
+  ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
+  ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
+    1. Runs 'T1prep.sh' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
+       and saving results in 'test_folder'.
+    2. Parallelizes the processing using 8 processors for improved performance. The first command 
+       is not parallelized because it already uses multi-threading and is memory-intensive, while 
+       the second command (surface creation) is single-threaded and can benefit from parallelization.
+       
+    NOTE: You can automatically enable parallelization by using the '--multi' flag.
 
 ${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
