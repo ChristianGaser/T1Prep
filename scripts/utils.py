@@ -126,7 +126,7 @@ def cleanup(gm0, wm0, csf0, threshold_wm = 0.4, cerebellum = None):
     """
     Perform cleanup operations on CSF (Cerebrospinal Fluid), GM (Gray Matter),
     and WM (White Matter) maps to refine their segmentation by isolating clusters
-    and removing noise.
+    (e.g. removing vessels).
 
     Parameters:
         gm0 (nibabel.Nifti1Image): Nifti map representing the GM probability map.

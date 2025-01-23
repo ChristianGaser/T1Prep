@@ -61,7 +61,7 @@ save_p=0
 estimate_spherereg=1
 estimate_seg=1
 downsample=1.0
-thresh_wm=0.4
+vessel=0.4
 min_thickness=0.5
 sharpening=0.02
 post_fwhm=2
@@ -170,9 +170,9 @@ parse_args ()
         thresh=$optarg
         shift
         ;;
-      --cleanup*)
+      --vessel*)
         exit_if_empty "$optname" "$optarg"
-        thresh_wm=$optarg
+        vessel=$optarg
         shift
         ;;
       --bin-dir| --bindir)
@@ -885,7 +885,7 @@ process ()
       [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
       
-      cmd+=" --threshold_wm \"${thresh_wm}\" --input \"${input}\" --outdir \"${outmridir}\""
+      cmd+=" --vessel \"${vessel}\" --input \"${input}\" --outdir \"${outmridir}\""
       
       # Execute the command and print errors
       [ "${estimate_seg}" -eq 1 ] && eval "${cmd}"
@@ -1013,9 +1013,9 @@ ${BOLD}OPTIONS:${NC}
                             (default: $sharpening).
   --thresh <NUMBER>         Specify the isovalue threshold for surface creation in 
                             CAT_VolMarchingCubes (default: $thresh).
-  --cleanup <NUMBER>        Set the initial white matter (WM) threshold for vessel removal. 
+  --vessel <NUMBER>         Set the initial white matter (WM) threshold for vessel removal. 
                             Use 0.2 for mild cleanup, 0.4 for strong cleanup, or 0 to disable 
-                            vessel removal (default: $thresh_wm).
+                            vessel removal (default: $vessel).
   --downsample <NUMBER>     Specify the downsampling factor for PPM and GMT maps to reduce 
                             surface intersections (default: $downsample).
   --min-thickness <NUMBER>  Set the minimum thickness value (values below this are set to zero) 

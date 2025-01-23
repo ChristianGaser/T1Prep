@@ -10,7 +10,6 @@ import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
-import xml.etree.cElementTree as ET
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -58,7 +57,7 @@ def run_segment():
     parser.add_argument("-b", '--bids', action="store_true", help="(optional) Use bids naming convention.")
     parser.add_argument("-a", '--amap', action="store_true", help="(optional) Use AMAP segmentation.")
     parser.add_argument('-d', '--amapdir', help='Amap binary folder', type=str)
-    parser.add_argument('-t', '--threshold_wm', type=float, default=0.4, help="Initial threshold to isolate WM for cleanup") 
+    parser.add_argument('-v', '--vessel', type=float, default=0.4, help="Initial threshold to isolate WM for vessel removal") 
     args = parser.parse_args()
 
     # Input/output parameters
@@ -69,7 +68,7 @@ def run_segment():
     # Processing options
     use_amap = args.amap
     use_bids = args.bids
-    threshold_wm = args.threshold_wm
+    vessel = args.vessel
     
     # Save options
     save_mwp = args.mwp
@@ -192,10 +191,10 @@ def run_segment():
     wj_affine = pd.Series([wj_affine])
 
     # Cleanup (e.g. remove vessels outside cerebellum) to refine segmentation
-    if (wm_threshold > 0):
+    if (vessel > 0):
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'ibsr', None, device)
         cerebellum = get_cerebellum(atlas)
-        p0_large, p1_large, p2_large, p3_large = cleanup(p1_large, p2_large, p3_large, threshold_wm, cerebellum)
+        p0_large, p1_large, p2_large, p3_large = cleanup(p1_large, p2_large, p3_large, vessel, cerebellum)
     
     # Get affine segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
@@ -294,19 +293,6 @@ def run_segment():
             print("output_atlas")
             output_atlas[i]
         """    
-        
-        """
-        # Create the file structure
-        root = ET.Element('data')
-        items = ET.SubElement(root, 'items')
-        item1 = ET.SubElement(items, 'item')
-        item1.set('name', 'item1')
-        item1.text = 'item1description'
-        
-        # Create a new XML file with the results
-        tree = ET.ElementTree(root)
-        tree.write(f'{out_dir}/../report/{out_name}.xml')
-        """
                 
     # Atlas is necessary for surface creation
     if (save_hemilabel):

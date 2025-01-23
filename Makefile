@@ -2,7 +2,7 @@ VERSION='0.9'
 
 FILES=scripts templates_surfaces_32k data MacOS Linux Windows LICENSE README.md
 
-ZIPFILE=T1prep_${VERSION}.zip
+ZIPFILE=T1Prep_${VERSION}.zip
 
 # print available commands
 help:
@@ -18,10 +18,10 @@ clean:
 # zip release
 zip: clean
 	-@echo zip
-	-@test ! -d T1prep || rm -r T1prep
-	-@mkdir T1prep
-	-@cp -rp ${FILES} T1prep
-	-@zip ${ZIPFILE} -rm T1prep
+	-@test ! -d T1Prep || rm -r T1Prep
+	-@mkdir T1Prep
+	-@cp -rp ${FILES} T1Prep
+	-@zip ${ZIPFILE} -rm T1Prep
 
 # copy binaries after cross-compiling
 cp_binaries: 
