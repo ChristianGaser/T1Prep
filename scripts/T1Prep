@@ -1039,27 +1039,36 @@ ${BOLD}OPTIONS:${NC}
                             naming conventions.
 
   ${BOLD}${YELLOW}Examples:${NC}
-  ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}
-    Process all files matching the pattern 'sTRIO*.nii' to extract segmentation 
-    and surface maps, saving the results in the 'test_folder' directory.
 
-  ${BLUE}${T1prep_dir}/T1Prep --no-surf sTRIO*.nii${NC}
-    Extract only the segmentation maps for all files matching the pattern 'sTRIO*.nii',
-    skipping surface creation and saving the results in the same directory as the input files.
+${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}
+  Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation and 
+  surface maps, saving the results in the 'test_folder' directory.
 
-  ${BLUE}${T1prep_dir}/T1Prep --no-overwrite "surf/lh.thickness." sTRIO*.nii${NC}
-    Process all files matching the pattern 'sTRIO*.nii', skipping all files, where the files
-    'surf/lh.thickness.*' already exist and save the results in the same directory as the input files.
+${BLUE}${T1prep_dir}/T1Prep --no-surf sTRIO*.nii${NC}
+  Process all files matching the pattern 'sTRIO*.nii', but skip surface creation. 
+  Only segmentation maps are generated and saved in the same directory as the input files.
 
-  ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  ${T1prep_dir}/parallelize -p 8 -c "${T1prep_dir}/T1prep --out-dir test_folder --no-seg" sTRIO*.nii${NC}
-    1. Runs 'T1prep' on all files matching the pattern 'sTRIO*.nii', skipping surface creation 
-       and saving results in 'test_folder'.
-    2. Parallelizes the processing using 8 processors for improved performance. The first command 
-       is not parallelized because it already uses multi-threading and is memory-intensive, while 
-       the second command (surface creation) is single-threaded and can benefit from parallelization.
-       
-    NOTE: You can automatically enable parallelization by using the '--multi' flag.
+${BLUE}${T1prep_dir}/T1Prep --no-overwrite "surf/lh.thickness." sTRIO*.nii${NC}
+  Process all files matching the pattern 'sTRIO*.nii'. Skip processing for files 
+  where 'surf/lh.thickness.*' already exists, and save new results in the same 
+  directory as the input files.
+
+${BLUE}${T1prep_dir}/T1Prep --multi -1 --p --csf sTRIO*.nii${NC}
+  Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
+  in native space, including CSF segmentation. The processing pipeline involves two stages 
+  of parallelization:
+  
+  1. **Segmentation (Python-based)**: Requires approximately 24GB of memory per process. 
+     The number of processes is automatically estimated based on available memory to 
+     optimize resource usage.
+
+  2. **Surface Extraction**: This stage does not require significant memory and is fully 
+     distributed across all available processors.
+
+  If "--multi" is set to a specific number (e.g., 8), the system still estimates memory-based 
+  constraints for segmentation parallelization. However, the specified number of processes 
+  (e.g., 8) will be used for surface extraction, ensuring efficient parallelization across 
+  the two stages.
     
 ${BOLD}PURPOSE:${NC}
   This script facilitates the analysis of T1-weighted brain images by providing tools for segmentation, surface mapping, and more.
