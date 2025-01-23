@@ -24,7 +24,7 @@ from deepmriprep.utils import DEVICE, DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import ATLASES, get_volumes, shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
-from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain
+from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum
 DATA_PATH0 = Path(__file__).resolve().parent.parent / 'data/'
 MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 'segmentation_nogm_model.pt'] +
                [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 'warp_model.pt'])
@@ -139,6 +139,8 @@ def run_segment():
     shape = nib.as_closest_canonical(mask).shape
     grid_native = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
         
+    warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
+
     # Conditional processing based on AMAP flag
     if (use_amap):
         # AMAP segmentation pipeline
@@ -171,20 +173,7 @@ def run_segment():
             p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
             p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
             p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
-        
-        # Get affine segmentations
-        warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
-        if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
-            p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-            p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
-            p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-            p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
-            if ((save_csf) and (save_rp)):
-                p3_affine = F.interpolate(nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
-                p3_affine = reoriented_nifti(p3_affine, warp_template.affine, warp_template.header)
-        
-        wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
-        wj_affine = pd.Series([wj_affine])
+                
     else:
         # DeepMRI prep segmentation pipeline
         count = progress_bar(count, end_count, 'Fine Deepmriprep segmentation')
@@ -194,14 +183,26 @@ def run_segment():
         p2_large = output_nogm['p2_large']
         p3_large = output_nogm['p3_large']
         
-        if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
-            p1_affine = output_nogm['p1_affine']
-            p2_affine = output_nogm['p2_affine']
-            p3_affine = output_nogm['p3_affine']
-            wj_affine = output_nogm['wj_affine']
-
         gmv = output_nogm['gmv']
         tiv = output_nogm['tiv']
+
+    wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
+    wj_affine = pd.Series([wj_affine])
+
+    # Cleanup (e.g. remove vessels outside cerebellum) to refine segmentation
+    atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'ibsr', None, device)
+    cerebellum = get_cerebellum(atlas)
+    p0_large, p1_large, p2_large, p3_large = cleanup(p1_large, p2_large, p3_large, cerebellum)
+    
+    # Get affine segmentations
+    if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
+        p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
+        p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
+        if ((save_csf) and (save_rp)):
+            p3_affine = F.interpolate(nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+            p3_affine = reoriented_nifti(p3_affine, warp_template.affine, warp_template.header)
 
     vol_t1 = 1e-3 * nifti_volume(t1)
     vol_p0 = 1e-3 * nifti_volume(p0_large)
@@ -308,8 +309,8 @@ def run_segment():
     if (save_hemilabel):
         # Step 6: Atlas creation
         count = progress_bar(count, end_count, 'Atlas creation                 ')
-        atlas = get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, 'ibsr', device)
-        lh, rh = get_partition(p0_large, atlas, 'ibsr')
+        atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'ibsr', warp_yx, device)
+        lh, rh = get_partition(p0_large, atlas)
 
         # Step 7: Save hemisphere outputs
         count = progress_bar(count, end_count, 'Resampling                     ')

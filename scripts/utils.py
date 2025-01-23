@@ -19,7 +19,7 @@ from deepbet.utils import reoriented_nifti
 from deepmriprep.utils import DEVICE, DATA_PATH, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
-from scipy.ndimage import binary_dilation, generate_binary_structure
+from scipy.ndimage import binary_dilation, grey_opening, binary_closing, generate_binary_structure, grey_opening, label
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
 
@@ -74,13 +74,131 @@ def remove_file(name):
     else:
         print(f"The file '{name}' does not exist.")
 
+
 def get_ras(aff, dim):
     """
-    Determines the RAS axes order for an affine matrix.
+    Determines the RAS axes order and directions for an affine matrix.
+    
+    Parameters:
+    aff (numpy.ndarray): The affine transformation matrix.
+    dim (int): The number of dimensions (e.g., 3 for 3D space).
+    
+    Returns:
+    aff_ras: Index of the dominant axis.
+    directions: Directon of the dominant axis (+1 or -1).
     """
     aff_inv = np.linalg.inv(aff)
     aff_ras = np.argmax(np.abs(aff_inv[:dim, :dim]), axis=1)
-    return aff_ras
+    directions = np.sign(aff_inv[np.arange(dim), aff_ras])
+    return aff_ras, directions
+
+def find_largest_cluster(binary_volume):
+    """
+    Finds the largest connected cluster in a binary 3D volume.
+
+    Parameters:
+        binary_volume (numpy.ndarray): A 3D binary numpy array (0 and 1).
+
+    Returns:
+        largest_cluster (numpy.ndarray): A binary 3D numpy array containing only the largest cluster.
+    """
+    # Label connected components
+    labeled_volume, num_features = label(binary_volume)
+    
+    if num_features == 0:
+        raise ValueError("No clusters found in the binary volume.")
+    
+    # Find the sizes of each connected component
+    component_sizes = np.bincount(labeled_volume.ravel())
+    
+    # The background (label 0) is not a cluster, so ignore it
+    component_sizes[0] = 0
+    
+    # Identify the largest component by size
+    largest_component_label = component_sizes.argmax()
+    
+    # Create a binary mask for the largest component
+    largest_cluster = (labeled_volume == largest_component_label)
+    
+    return largest_cluster
+
+def cleanup(gm0, wm0, csf0, cerebellum = None):
+    """
+    Perform cleanup operations on CSF (Cerebrospinal Fluid), GM (Gray Matter),
+    and WM (White Matter) maps to refine their segmentation by isolating clusters
+    and removing noise.
+
+    Parameters:
+        gm0 (nibabel.Nifti1Image): Nifti map representing the GM probability map.
+        wm0 (nibabel.Nifti1Image): Nifti map representing the WM probability map.
+        csf0 (nibabel.Nifti1Image): Nifti map representing the CSF probability map.
+        cerebellum (nibabel.Nifti1Image): Nifti map defining cerebellum
+
+    Returns:
+        tuple: Updated CSF, GM, and WM Nifti maps and label after cleanup.
+        
+    Steps:
+        1. Identify the largest WM cluster to isolate the main WM structure.
+        2. Dilate and close the CSF mask to refine its boundaries.
+        3. Create a mask to handle regions where CSF overlaps with the surrounding WM.
+        4. Adjust the CSF and WM maps using the mask to correct the overlaps.
+        5. Apply morphological opening to the GM-WM map to smooth boundaries.
+        6. Retain only the largest cluster in the GM-WM map and correct the GM map.
+    """
+
+    gm  = gm0.get_fdata()
+    wm  = wm0.get_fdata()
+    csf = csf0.get_fdata()
+
+    # Step 1: Identify the largest WM cluster to isolate the main WM structure
+    wm_morph = find_largest_cluster(wm > 0.25)
+    wm_morph = binary_dilation(wm_morph, generate_binary_structure(3, 3), iterations=1)
+
+    # Step 2: Refine the CSF map by dilating and closing the mask
+    if (False):
+        csf_morph = binary_dilation(csf > 0.15, generate_binary_structure(3, 3), iterations=1)
+        csf_morph = binary_closing(csf_morph, generate_binary_structure(3, 3), iterations=1)
+        csf_morph = binary_dilation(csf_morph, generate_binary_structure(3, 3), iterations=1)
+        # Step 3: Create a mask that isolates WM clusters and surrounding CSF regions
+        mask = ~wm_morph & csf_morph
+    else:
+        # Step 3: Create a mask that isolates WM clusters
+        mask = ~wm_morph
+
+    # Additionally restrict mask to areas outside cerebellum
+    if cerebellum is not None:
+        mask = mask & (cerebellum == 0)
+        
+    # Step 4: Adjust CSF and WM maps using the mask
+    # Add the WM contribution to the GM and set WM to zero in masked regions
+    gm[mask] += wm[mask]
+    wm[mask] = 0
+
+    # Step 5: Perform cleanup of the combined GM-WM map using morphological opening
+    gm_wm = grey_opening(gm + wm, size=[3, 3, 3])
+    
+    # Step 6: Retain only the largest GM-WM cluster
+    # Add the GM contribution to the CSF and set GM to zero in masked regions
+    gm_wm = find_largest_cluster(gm_wm > 0.25)
+    csf[~gm_wm] += gm[~gm_wm]
+    gm[~gm_wm] = 0
+    
+    # Compute the sum of gm, wm, csf at each voxel
+    total = gm + wm + csf
+    mask = total > 0
+    
+    # Normalize each volume
+    gm[mask]  = gm[mask] / total[mask]
+    wm[mask]  = wm[mask] / total[mask]
+    csf[mask] = csf[mask] / total[mask]
+    label = csf + 2*gm + 3*wm
+
+    gm  = nib.Nifti1Image(gm, gm0.affine, gm0.header)
+    wm  = nib.Nifti1Image(wm, wm0.affine, wm0.header)
+    csf = nib.Nifti1Image(csf, csf0.affine, csf0.header)
+    label  = nib.Nifti1Image(label, gm0.affine, gm0.header)
+
+    return label, gm, wm, csf
 
 def correct_bias_field(brain, seg):
     """
@@ -236,14 +354,14 @@ def correct_bias_field(brain, seg):
     
     return bias, brain
 
-def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, device='cpu'):
+def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None, device='cpu'):
     """
     Generates an atlas-aligned image for brain segmentation.
 
     Args:
         t1 (nibabel.Nifti1Image): Input T1-weighted image.
         affine (numpy.ndarray): Affine transformation matrix.
-        warp_yx (nibabel.Nifti1Image): Warp field for alignment.
+        warp_yx (nibabel.Nifti1Image, optional): Warp field for alignment. Defaults to None.
         p1_large, p2_large, p3_large (nibabel.Nifti1Image): Probability maps for tissue segmentation.
         atlas_name (str): Name of the atlas template.
         device (str): Device to use ('cpu' or 'cuda').
@@ -258,18 +376,21 @@ def get_atlas(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_name, dev
 
     # Convert inputs to tensors
     p1_large, p2_large, p3_large = [nifti_to_tensor(p).to(device) for p in [p1_large, p2_large, p3_large]]
-    warp_yx = nib.as_closest_canonical(warp_yx)
-    yx = nifti_to_tensor(warp_yx)[None].to(device)
 
-    # Load and resample the atlas template
+    # Load the atlas template
     atlas = nib.as_closest_canonical(nib.load(f'{DATA_PATH}/templates/{atlas_name}.nii.gz'))
-    shape = tuple(shape_from_to(atlas, warp_yx))
-    scaled_yx = F.interpolate(yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
-
-    # Perform atlas registration
-    warps = {shape: scaled_yx.permute(0, 2, 3, 4, 1)}
     atlas_register = AtlasRegistration()
-    atlas = atlas_register(affine, warps[shape], atlas, t1.shape)
+
+    if warp_yx is not None:
+        # Perform affine and warp-based registration
+        warp_yx = nib.as_closest_canonical(warp_yx)
+        yx = nifti_to_tensor(warp_yx)[None].to(device)
+
+        # Compute the shape for interpolation
+        shape = tuple(shape_from_to(atlas, warp_yx))
+        scaled_yx = F.interpolate(yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
+        warps = {shape: scaled_yx.permute(0, 2, 3, 4, 1)}
+        atlas = atlas_register(affine, warps[shape], atlas, t1.shape)
 
     # Interpolate and finalize atlas alignment
     atlas = nifti_to_tensor(atlas)[None, None].to(device)
@@ -386,27 +507,28 @@ def get_resampled_header(header, aff, new_vox_size, ras_aff):
     dim = header2['dim']
     pixdim = header2['pixdim']
 
-    ras_ref = get_ras(aff, 3)
+    ras_ref, dirs_ref = get_ras(aff, 3)
 
     factor = pixdim[1:4] / new_vox_size
     reordered_factor = np.zeros_like(pixdim[1:4])
     for i, axis in enumerate(ras_ref):
         reordered_factor[i] = factor[np.where(ras_aff == axis)[0][0]]
+        #reordered_factor[axis] = dirs_ref[i] * factor[i]  # Adjust for axis direction
     factor = reordered_factor
 
-    dim[1:4] = np.round(dim[1:4]*factor)
+    dim[1:4] = np.abs(np.round(dim[1:4]*factor))
     
     header2['dim'] = dim
 
     pixdim[1:4] = new_vox_size
     header2['pixdim'] = pixdim
-    
+
     # Update affine matrix to match new voxel size
     aff2 = aff.copy()
     for c in range(3):
         aff2[:-1, c] = aff2[:-1, c] / factor[c]
     aff2[:-1, -1] = aff2[:-1, -1] - np.matmul(aff2[:-1, :-1], 0.5 * (factor - 1))
-    
+         
     # Update header transformation fields
     header2['srow_x'] = aff2[0,:]
     header2['srow_y'] = aff2[1,:]
@@ -414,27 +536,50 @@ def get_resampled_header(header, aff, new_vox_size, ras_aff):
     header2['qoffset_x'] = aff2[0,3]
     header2['qoffset_y'] = aff2[1,3]
     header2['qoffset_z'] = aff2[2,3]
-
+    
     return header2, aff2
     
-def get_partition(p0_large, atlas, atlas_name):
+def get_cerebellum(atlas):
     """
-    Partition the input volume into left and right hemispheres with labels for CSF, GM, and WM.
+    Get labeled volume using IBSR atlas with Ones in cerebellum
+
+    Parameters:
+    atlas : Nifti1Image
+        Atlas template for anatomical regions.
+
+    Returns:
+    tuple:
+        Labeled volume with Ones in cerebellum.
+    """
+
+    rois = pd.read_csv(f'{DATA_PATH}/templates/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
+    regions = dict(zip(rois.ROIabbr,rois.ROIid))
+
+    atlas = atlas.get_fdata()
+
+    # get ceerebellum
+    cerebellum = (atlas == regions["lCbeWM"]) | (atlas == regions["lCbeGM"]) | \
+                 (atlas == regions["rCbeWM"]) | (atlas == regions["rCbeGM"])
+    
+    return cerebellum
+
+def get_partition(p0_large, atlas):
+    """
+    Partition the input volume into left and right hemispheres using IBSR atlas
+    with labels for CSF, GM, and WM.
 
     Parameters:
     p0_large : Nifti1Image
         Input probability map from segmentation.
     atlas : Nifti1Image
         Atlas template for anatomical regions.
-    atlas_name : str
-        Name of the atlas used to define regions.
 
     Returns:
     tuple:
         Left hemisphere (lh) and right hemisphere (rh) labeled volumes.
     """
 
-    rois = pd.read_csv(f'{DATA_PATH}/templates/{atlas_name}.csv', sep=';')[['ROIid', 'ROIabbr']]
+    rois = pd.read_csv(f'{DATA_PATH}/templates/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
     regions = dict(zip(rois.ROIabbr,rois.ROIid))
 
     atlas = atlas.get_fdata()
@@ -443,7 +588,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 3)
+    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 4)
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["rLatVen"]) & \
                        ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -473,7 +618,7 @@ def get_partition(p0_large, atlas, atlas_name):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 3)
+    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 4)
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
     lateral_ventricle = lateral_ventricle & ~(atlas == regions["lLatVen"]) & \
                        ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) & \
@@ -519,15 +664,26 @@ def align_brain(data, aff, header, aff_ref, do_flip):
         ndarray: Aligned nifti header.
     """
 
-    dim = 3  # Assume 3D volume
-    ras_aff = get_ras(aff, dim)
-    ras_ref = get_ras(aff_ref, dim)    
+    dim = 3
+    ras_aff, dirs_aff = get_ras(aff, dim)
+    ras_ref, dirs_ref = get_ras(aff_ref, dim)    
 
     # Step 1: Reorder the rotation-scaling part (3x3) to match reference axes
     reordered_aff = np.zeros_like(aff)
-    for i, axis in enumerate(ras_ref):
-        reordered_aff[:dim, i] = aff[:dim, np.where(ras_aff == axis)[0][0]]
-    reordered_aff[:dim, 3] = aff[:dim, 3]  # Copy the translation vector
+
+    # Reorder the rotation-scaling part (3x3) to match reference axes and directions
+    if (False):
+        for i, axis_ref in enumerate(ras_ref):
+            # Find the corresponding axis in the input affine matrix
+            matching_axis_idx = np.where(ras_aff == axis_ref)[0][0]
+            reordered_aff[:dim, i] = dirs_ref[i] * dirs_aff[matching_axis_idx] * aff[:dim, matching_axis_idx]
+    
+    else:
+        for i, axis in enumerate(ras_ref):
+            reordered_aff[:dim, i] = aff[:dim, np.where(ras_aff == axis)[0][0]]
+
+    # Copy the translation vector
+    reordered_aff[:dim, 3] = aff[:dim, 3]
     reordered_aff[3, :] = [0, 0, 0, 1]     # Ensure the bottom row remains [0, 0, 0, 1]
 
     header['srow_x'] = reordered_aff[0,:]
