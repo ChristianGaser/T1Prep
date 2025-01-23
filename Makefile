@@ -1,3 +1,6 @@
+.PHONY: help docker clean zip cp_binaries
+.DEFAULT: help
+
 VERSION='0.9'
 
 FILES=scripts templates_surfaces_32k data MacOS Linux Windows LICENSE README.md
@@ -14,6 +17,12 @@ clean:
 	-@find . -type f -name .DS_Store -exec rm {} \;
 	-@chmod -R a+r,g+w,o-w .
 	-@find . -type f \( -name "*.sh" \) -exec chmod a+x {} \;
+
+docker:
+	docker build --rm -t ChristianGaser/T1Prep:$(tag) \
+	--build-arg BUILD_DATE=`date -u +"%Y-%m-%dT%H:%M:%SZ"` \
+	--build-arg VCS_REF=`git rev-parse --short HEAD` \
+	--build-arg VERSION=`python3 setup.py --version` .
 
 # zip release
 zip: clean
