@@ -122,7 +122,7 @@ def find_largest_cluster(binary_volume):
     
     return largest_cluster
 
-def cleanup(gm0, wm0, csf0, cerebellum = None):
+def cleanup(gm0, wm0, csf0, threshold_wm = 0.4, cerebellum = None):
     """
     Perform cleanup operations on CSF (Cerebrospinal Fluid), GM (Gray Matter),
     and WM (White Matter) maps to refine their segmentation by isolating clusters
@@ -132,6 +132,7 @@ def cleanup(gm0, wm0, csf0, cerebellum = None):
         gm0 (nibabel.Nifti1Image): Nifti map representing the GM probability map.
         wm0 (nibabel.Nifti1Image): Nifti map representing the WM probability map.
         csf0 (nibabel.Nifti1Image): Nifti map representing the CSF probability map.
+        threshold_wm (float): Initial threshold for isolating WM
         cerebellum (nibabel.Nifti1Image): Nifti map defining cerebellum
 
     Returns:
@@ -151,7 +152,7 @@ def cleanup(gm0, wm0, csf0, cerebellum = None):
     csf = csf0.get_fdata()
 
     # Step 1: Identify the largest WM cluster to isolate the main WM structure
-    wm_morph = find_largest_cluster(wm > 0.25)
+    wm_morph = find_largest_cluster(wm > threshold_wm)
     wm_morph = binary_dilation(wm_morph, generate_binary_structure(3, 3), iterations=1)
 
     # Step 2: Refine the CSF map by dilating and closing the mask

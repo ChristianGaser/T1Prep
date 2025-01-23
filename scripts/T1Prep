@@ -61,6 +61,7 @@ save_p=0
 estimate_spherereg=1
 estimate_seg=1
 downsample=1.0
+thresh_wm=0.4
 min_thickness=0.5
 sharpening=0.02
 post_fwhm=2
@@ -169,6 +170,11 @@ parse_args ()
         thresh=$optarg
         shift
         ;;
+      --cleanup*)
+        exit_if_empty "$optname" "$optarg"
+        thresh_wm=$optarg
+        shift
+        ;;
       --bin-dir| --bindir)
         exit_if_empty "$optname" "$optarg"
         bin_dir=$optarg
@@ -275,8 +281,8 @@ cat <<__EOM__
 ╚══██╔══╝███║ ██╔══██╗██╔══██╗██╔════╝██╔══██╗
    ██║    ██║ █████╔╝║██████╔╝█████╗  ██████╔╝
    ██║    ██║ ██╔═══╝ ██╔══██╗██╔══╝  ██╔═══╝ 
-   ██║    ██║ ██║   ██║  ██║███████╗██║   
-   ╚═╝    ╚═╝ ╚═╝   ╚═╝  ╚═ ╚══════╝╚═╝   
+   ██║    ██║ ██║     ██║  ██║███████╗██║   
+   ╚═╝    ╚═╝ ╚═╝     ╚═╝  ╚═ ╚══════╝╚═╝   
 
 __EOM__
 echo $NC
@@ -879,7 +885,7 @@ process ()
       [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
       
-      cmd+=" --input \"${input}\" --outdir \"${outmridir}\""
+      cmd+=" --threshold_wm \"${thresh_wm}\" --input \"${input}\" --outdir \"${outmridir}\""
       
       # Execute the command and print errors
       [ "${estimate_seg}" -eq 1 ] && eval "${cmd}"
@@ -985,10 +991,10 @@ ${BOLD}DESCRIPTION:${NC}
 
 ${BOLD}OPTIONS:${NC}
   ${BOLD}${YELLOW}General Options:${NC}
-  --re-install              Remove the old installation and reinstall the required Python libraries.
+  --re-install              Remove the existing installation and reinstall the required Python libraries.
   --python <FILE>           Specify the Python interpreter to use (default: $python).
-  --multi <NUMBER>          Specify the number of processes for parallelization. Use '-1' to
-                            automatically estimate the number of available processors 
+  --multi <NUMBER>          Set the number of processes for parallelization. Use '-1' to 
+                            automatically detect the number of available processors 
                             (default: $multi).
   --debug                   Enable verbose output, retain temporary files, and save additional 
                             debugging information.
@@ -996,26 +1002,29 @@ ${BOLD}OPTIONS:${NC}
   ${BOLD}${YELLOW}Processing Parameters:${NC}
   --out-dir <DIR>           Specify the output directory (default: current working directory).
   --amap                    Use AMAP segmentation instead of DeepMRIPrep.
-  --pre-fwhm <NUMBER>       Specify the pre-smoothing FWHM size in CAT_VolMarchingCubes 
+  --pre-fwhm <NUMBER>       Set the pre-smoothing FWHM size in CAT_VolMarchingCubes 
                             (default: $pre_fwhm).
-  --post-fwhm <NUMBER>      Specify the post-smoothing FWHM size in CAT_VolMarchingCubes 
+  --post-fwhm <NUMBER>      Set the post-smoothing FWHM size in CAT_VolMarchingCubes 
                             (default: $post_fwhm).
-  --thickness-fwhm <NUMBER> Specify the FWHM size for volumetric thickness smoothing in 
+  --thickness-fwhm <NUMBER> Set the FWHM size for volumetric thickness smoothing in 
                             CAT_VolThicknessPbt (default: $thickness_fwhm).
-  --sharpening <NUMBER>     Specify the amount of sharpening applied to the PPM map by adding 
-                            the difference between the unsmoothed and smoothed PPM map 
+  --sharpening <NUMBER>     Set the sharpening level applied to the PPM map by enhancing 
+                            differences between the unsmoothed and smoothed PPM maps 
                             (default: $sharpening).
   --thresh <NUMBER>         Specify the isovalue threshold for surface creation in 
                             CAT_VolMarchingCubes (default: $thresh).
+  --cleanup <NUMBER>        Set the initial white matter (WM) threshold for vessel removal. 
+                            Use 0.2 for mild cleanup, 0.4 for strong cleanup, or 0 to disable 
+                            vessel removal (default: $thresh_wm).
   --downsample <NUMBER>     Specify the downsampling factor for PPM and GMT maps to reduce 
                             surface intersections (default: $downsample).
-  --min-thickness <NUMBER>  Specify the minimum thickness value (values below this are set to 
-                            zero) for the vbdist method (default: $min_thickness).
-  --median-filter <NUMBER>  Specify the number of median filter applications to reduce 
-                            topology artifacts.
+  --min-thickness <NUMBER>  Set the minimum thickness value (values below this are set to zero) 
+                            for the vbdist method (default: $min_thickness).
+  --median-filter <NUMBER>  Specify the number of median filter applications to reduce topology 
+                            artifacts.
   
   ${BOLD}${YELLOW}Save Options:${NC}
-  --no-overwrite <STRING>   Prevent overwriting existing results by checking for the specified 
+  --no-overwrite <STRING>   Avoid overwriting existing results by checking for the specified 
                             filename pattern.
   --no-surf                 Skip surface and thickness estimation.
   --no-seg                  Skip segmentation processing.
