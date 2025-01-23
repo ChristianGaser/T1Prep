@@ -61,7 +61,7 @@ save_p=0
 estimate_spherereg=1
 estimate_seg=1
 downsample=1.0
-vessel=0.4
+vessel=0.5
 min_thickness=0.5
 sharpening=0.02
 post_fwhm=2
@@ -1014,7 +1014,7 @@ ${BOLD}OPTIONS:${NC}
   --thresh <NUMBER>         Specify the isovalue threshold for surface creation in 
                             CAT_VolMarchingCubes (default: $thresh).
   --vessel <NUMBER>         Set the initial white matter (WM) threshold for vessel removal. 
-                            Use 0.2 for mild cleanup, 0.4 for strong cleanup, or 0 to disable 
+                            Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable 
                             vessel removal (default: $vessel).
   --downsample <NUMBER>     Specify the downsampling factor for PPM and GMT maps to reduce 
                             surface intersections (default: $downsample).

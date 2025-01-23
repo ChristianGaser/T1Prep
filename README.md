@@ -44,7 +44,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 `--thickness-fwhm <NUMBER>` |Specify the FWHM size for volumetric thickness smoothing in CAT_VolThicknessPbt
 `--sharpening <NUMBER>` |Specify the amount of sharpening applied to the PPM map by adding the difference between the unsmoothed and smoothed PPM map 
 `--thresh <NUMBER>` |Specify the isovalue threshold for surface creation in CAT_VolMarchingCubes
-`--vessel <NUMBER>` |Set the initial white matter (WM) threshold for vessel removal. Use 0.2 for mild cleanup, 0.4 for strong cleanup, or 0 to disable vessel removal.
+`--vessel <NUMBER>` |Set the initial white matter (WM) threshold for vessel removal. Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable vessel removal.
 `--downsample <NUMBER>` |Specify the downsampling factor for PPM and GMT maps to reduce surface intersections (default: $downsample).
 `--min-thickness <NUMBER>` |Specify the minimum thickness value (values below this are set to zero) for the vbdist method (default: $min_thickness).
 `--median-filter <NUMBER>` |Specify the number of median filter applications to reduce topology artifacts.
