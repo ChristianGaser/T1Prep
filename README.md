@@ -4,6 +4,8 @@
 ![PyPI - Version](https://img.shields.io/pypi/v/T1Prep)
 -->
 
+![Alt-Text](T1Prep.png)
+
 > [!WARNING]
 > This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
 
