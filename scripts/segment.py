@@ -190,11 +190,13 @@ def run_segment():
     wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
     wj_affine = pd.Series([wj_affine])
 
-    # Cleanup (e.g. remove vessels outside cerebellum) to refine segmentation
+    # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) to refine segmentation
     if (vessel > 0):
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'ibsr', None, device)
         cerebellum = get_cerebellum(atlas)
-        p0_large, p1_large, p2_large, p3_large = cleanup(p1_large, p2_large, p3_large, vessel, cerebellum)
+        atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'csf_TPM', None, device)
+        csf_TPM = atlas.get_fdata()
+        p0_large, p1_large, p2_large, p3_large = cleanup(p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM)
     
     # Get affine segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):

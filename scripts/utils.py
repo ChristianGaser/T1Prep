@@ -16,12 +16,15 @@ warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
 from deepbet.utils import reoriented_nifti
-from deepmriprep.utils import DEVICE, DATA_PATH, nifti_to_tensor
+from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
 from scipy.ndimage import binary_dilation, grey_opening, binary_closing, generate_binary_structure, grey_opening, label
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
+from pathlib import Path
+
+DATA_PATH = Path(__file__).resolve().parent.parent / 'data'
 
 def progress_bar(elapsed, total, name):
     """
@@ -49,7 +52,6 @@ def progress_bar(elapsed, total, name):
     name = name.ljust(50)
     
     # Print the progress bar with percentage and name
-    #print(f'{prog}{remaining} {it}% {name}\r', end='')
     print(f'{prog}{remaining} {elapsed}/{total} {name}\r', end='')
     
     if (elapsed == total):
@@ -122,7 +124,7 @@ def find_largest_cluster(binary_volume):
     
     return largest_cluster
 
-def cleanup(gm0, wm0, csf0, threshold_wm = 0.4, cerebellum = None):
+def cleanup(gm0, wm0, csf0, threshold_wm = 0.4, cerebellum = None, csf_TPM = None):
     """
     Perform cleanup operations on CSF (Cerebrospinal Fluid), GM (Gray Matter),
     and WM (White Matter) maps to refine their segmentation by isolating clusters
@@ -133,7 +135,9 @@ def cleanup(gm0, wm0, csf0, threshold_wm = 0.4, cerebellum = None):
         wm0 (nibabel.Nifti1Image): Nifti map representing the WM probability map.
         csf0 (nibabel.Nifti1Image): Nifti map representing the CSF probability map.
         threshold_wm (float): Initial threshold for isolating WM
-        cerebellum (nibabel.Nifti1Image): Nifti map defining cerebellum
+        cerebellum (tuple): 3D array defining cerebellum
+        csf_TPM (tuple): 3D array defining tissue probability map (TPM)
+        of CSF
 
     Returns:
         tuple: Updated CSF, GM, and WM Nifti maps and label after cleanup.
@@ -141,7 +145,7 @@ def cleanup(gm0, wm0, csf0, threshold_wm = 0.4, cerebellum = None):
     Steps:
         1. Identify the largest WM cluster to isolate the main WM structure.
         2. Dilate and close the CSF mask to refine its boundaries.
-        3. Create a mask to handle regions where CSF overlaps with the surrounding WM.
+        3. Create a mask of largest WM cluster.
         4. Adjust the CSF and WM maps using the mask to correct the overlaps.
         5. Apply morphological opening to the GM-WM map to smooth boundaries.
         6. Retain only the largest cluster in the GM-WM map and correct the GM map.
@@ -151,47 +155,41 @@ def cleanup(gm0, wm0, csf0, threshold_wm = 0.4, cerebellum = None):
     wm  = wm0.get_fdata()
     csf = csf0.get_fdata()
 
-    # Step 1: Identify the largest WM cluster to isolate the main WM structure
+    # Identify the largest WM cluster to isolate the main WM structure
     wm_morph = find_largest_cluster(wm > threshold_wm)
     wm_morph = binary_dilation(wm_morph, generate_binary_structure(3, 3), iterations=1)
 
-    # Step 2: Refine the CSF map by dilating and closing the mask
-    if (False):
-        csf_morph = binary_dilation(csf > 0.15, generate_binary_structure(3, 3), iterations=1)
-        csf_morph = binary_closing(csf_morph, generate_binary_structure(3, 3), iterations=1)
-        csf_morph = binary_dilation(csf_morph, generate_binary_structure(3, 3), iterations=1)
-        # Step 3: Create a mask that isolates WM clusters and surrounding CSF regions
-        mask = ~wm_morph & csf_morph
-    else:
-        # Step 3: Create a mask that isolates WM clusters
-        mask = ~wm_morph
+    # Create a mask that isolates WM clusters
+    mask = ~wm_morph
 
     # Additionally restrict mask to areas outside cerebellum
     if cerebellum is not None:
         mask = mask & (cerebellum == 0)
         
-    # Step 4: Adjust CSF and WM maps using the mask
+    # Additionally restrict mask to CSF areas defined in tissue probability map
+    if csf_TPM is not None:
+        mask = mask & (csf_TPM >= 0.025*255)
+
+    # Adjust CSF and WM maps using the mask
     # Add the WM contribution to the GM and set WM to zero in masked regions
     gm[mask] += wm[mask]
     wm[mask] = 0
 
-    # Step 5: Perform cleanup of the combined GM-WM map using morphological opening
+    # Perform cleanup of the combined GM-WM map using morphological opening
     gm_wm = grey_opening(gm + wm, size=[3, 3, 3])
     
-    # Step 6: Retain only the largest GM-WM cluster
+    # Retain only the largest GM-WM cluster
+    gm_wm = find_largest_cluster(gm_wm > 0.5)
+
+    # Additionally restrict mask to areas outside cerebellum
+    if cerebellum is not None:
+        gm_wm = gm_wm | (cerebellum > 0)
+
     # Add the GM contribution to the CSF and set GM to zero in masked regions
-    gm_wm = find_largest_cluster(gm_wm > 0.25)
     csf[~gm_wm] += gm[~gm_wm]
     gm[~gm_wm] = 0
     
-    # Compute the sum of gm, wm, csf at each voxel
-    total = gm + wm + csf
-    mask = total > 0
-    
-    # Normalize each volume
-    gm[mask]  = gm[mask] / total[mask]
-    wm[mask]  = wm[mask] / total[mask]
-    csf[mask] = csf[mask] / total[mask]
+    # Compute label
     label = csf + 2*gm + 3*wm
 
     gm  = nib.Nifti1Image(gm, gm0.affine, gm0.header)
@@ -379,7 +377,7 @@ def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None
     p1_large, p2_large, p3_large = [nifti_to_tensor(p).to(device) for p in [p1_large, p2_large, p3_large]]
 
     # Load the atlas template
-    atlas = nib.as_closest_canonical(nib.load(f'{DATA_PATH}/templates/{atlas_name}.nii.gz'))
+    atlas = nib.as_closest_canonical(nib.load(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/{atlas_name}.nii.gz'))
     atlas_register = AtlasRegistration()
 
     if warp_yx is not None:
@@ -553,7 +551,7 @@ def get_cerebellum(atlas):
         Labeled volume with Ones in cerebellum.
     """
 
-    rois = pd.read_csv(f'{DATA_PATH}/templates/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
+    rois = pd.read_csv(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
     regions = dict(zip(rois.ROIabbr,rois.ROIid))
 
     atlas = atlas.get_fdata()
@@ -580,7 +578,7 @@ def get_partition(p0_large, atlas):
         Left hemisphere (lh) and right hemisphere (rh) labeled volumes.
     """
 
-    rois = pd.read_csv(f'{DATA_PATH}/templates/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
+    rois = pd.read_csv(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
     regions = dict(zip(rois.ROIabbr,rois.ROIid))
 
     atlas = atlas.get_fdata()

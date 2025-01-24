@@ -88,7 +88,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
     in native space, including CSF segmentation. The processing pipeline involves two stages 
     of parallelization:
     
-    1. **Segmentation (Python-based)**: Requires approximately 24GB of memory per process. 
+    1. **Segmentation (Python-based)**: Runs best with about 24GB of memory per process. 
        The number of processes is automatically estimated based on available memory to 
        optimize resource usage.
   
