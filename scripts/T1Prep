@@ -384,7 +384,8 @@ install_deepmriprep ()
   $python -m venv ${T1prep_env}
   source ${T1prep_env}/bin/activate
   $python -m pip install -U pip
-  $python -m pip install scipy==1.13.1 torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep
+  #$python -m pip install scipy==1.13.1 torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep
+  $python -m pip install torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep scipy
   
   $python -c "import deepmriprep" &>/dev/null
   if [ $? -gt 0 ]; then
@@ -766,7 +767,6 @@ process ()
     if [ ! -d "$outdir0" ]; then
       mkdir -p "$outdir0"
     fi
-    
 
     # get output names
     sanlm="${bname}_desc-sanlm.nii"

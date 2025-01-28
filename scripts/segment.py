@@ -25,13 +25,16 @@ from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum
 DATA_PATH0 = Path(__file__).resolve().parent.parent / 'data/'
-MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 'segmentation_nogm_model.pt'] +
-               [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 'warp_model.pt'])
+MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 
+                'segmentation_nogm_model.pt'] +
+               [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 
+               'warp_model.pt'])
 
 def run_segment():
 
     """
-    Perform brain segmentation (either using deepmriprep or AMAP) on input T1w brain data using preprocessing, affine registration, and segmentation techniques.
+    Perform brain segmentation (either using deepmriprep or AMAP) on input T1w brain data using 
+    preprocessing, affine registration, and segmentation techniques.
 
     Command-line Arguments:
     -i, --input : str (required)
@@ -46,18 +49,30 @@ def run_segment():
     
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--input', help='Input file', required=True, type=str)
-    parser.add_argument('-o', '--outdir', help='Output folder', required=True, type=str)
-    parser.add_argument("-s", '--surf', action="store_true", help="(optional) Save partioned segmentation map for surface estimation.")
-    parser.add_argument("-c", '--csf', action="store_true", help="(optional) Save also CSF segmentations.")
-    parser.add_argument("-m", '--mwp', action="store_true", help="(optional) Save modulated and warped segmentations.")
-    parser.add_argument("-w", '--wp', action="store_true", help="(optional) Save warped segmentations.")
-    parser.add_argument("-p", '--p', action="store_true", help="(optional) Save native segmentations.")
-    parser.add_argument("-r", '--rp', action="store_true", help="(optional) Save affine registered segmentations.")
-    parser.add_argument("-b", '--bids', action="store_true", help="(optional) Use bids naming convention.")
-    parser.add_argument("-a", '--amap', action="store_true", help="(optional) Use AMAP segmentation.")
-    parser.add_argument('-d', '--amapdir', help='Amap binary folder', type=str)
-    parser.add_argument('-v', '--vessel', type=float, default=0.4, help="Initial threshold to isolate WM for vessel removal") 
+    parser.add_argument('-i', '--input', 
+                        help='Input file', required=True, type=str)
+    parser.add_argument('-o', '--outdir', 
+                        help='Output folder', required=True, type=str)
+    parser.add_argument("-s", '--surf', action="store_true", 
+                        help="(optional) Save partioned segmentation map for surface estimation.")
+    parser.add_argument("-c", '--csf', action="store_true", 
+                        help="(optional) Save also CSF segmentations.")
+    parser.add_argument("-m", '--mwp', action="store_true", 
+                        help="(optional) Save modulated and warped segmentations.")
+    parser.add_argument("-w", '--wp', action="store_true", 
+                        help="(optional) Save warped segmentations.")
+    parser.add_argument("-p", '--p', action="store_true", 
+                        help="(optional) Save native segmentations.")
+    parser.add_argument("-r", '--rp', action="store_true", 
+                        help="(optional) Save affine registered segmentations.")
+    parser.add_argument("-b", '--bids', action="store_true", 
+                        help="(optional) Use bids naming convention.")
+    parser.add_argument("-a", '--amap', action="store_true", 
+                        help="(optional) Use AMAP segmentation.")
+    parser.add_argument('-d', '--amapdir', 
+                        help='Amap binary folder', type=str)
+    parser.add_argument('-v', '--vessel', type=float, default=0.4, 
+                        help="Initial threshold to isolate WM for vessel removal") 
     args = parser.parse_args()
 
     # Input/output parameters
@@ -93,13 +108,14 @@ def run_segment():
     target_res = np.array([0.5]*3) # Target resolution for resampling
     count = 1
     end_count = 4
-    if (save_mwp):
+    if save_mwp:
         end_count = 5
-    if (save_hemilabel):
+    if save_hemilabel:
         end_count = 7
     
     # Prepare filenames and load input MRI data
-    out_name = os.path.basename(os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '').replace('.gz','')
+    out_name = os.path.basename(
+        os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '').replace('.gz','')
     t1 = nib.load(t1_name)
 
     # copy necessary model files from local folder to install it, since often the API rate limit is exceeded
@@ -136,9 +152,12 @@ def run_segment():
     header2, affine2 = get_resampled_header(brain.header, brain.affine, target_res, ras_affine)
     dim_target_res = header2['dim']
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())        
-    grid_target_res = F.affine_grid(inv_affine[None, :3], [1, 3, *dim_target_res[1:4]], align_corners=INTERP_KWARGS['align_corners'])
+    grid_target_res = F.affine_grid(
+        inv_affine[None, :3], [1, 3, *dim_target_res[1:4]], 
+        align_corners=INTERP_KWARGS['align_corners'])
     shape = nib.as_closest_canonical(mask).shape
-    grid_native = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
+    grid_native = F.affine_grid(
+        inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
         
     warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
 
@@ -156,7 +175,11 @@ def run_segment():
         # Call AMAP
         cleanup_gm = False
         if(cleanup_gm):
-            cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 0 0 0 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
+            cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
+                ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 ' +
+                ' -write-seg 0 0 0 -label ' +
+                f'{out_dir}/{out_name}_seg_large.nii' + ' ' +
+                f'{out_dir}/{out_name}_brain_large.nii')
             os.system(cmd)
             p0_large = nib.load(f'{out_dir}/{out_name}_brain_large_seg.nii')
             output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
@@ -166,7 +189,11 @@ def run_segment():
             p2_large = output_nogm['p2_large']
             p3_large = output_nogm['p3_large']        
         else:
-            cmd = os.path.join(amapdir, 'CAT_VolAmap') + ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 -write-seg 1 1 1 -label ' + f'{out_dir}/{out_name}_seg_large.nii' + ' ' + f'{out_dir}/{out_name}_brain_large.nii'
+            cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
+                ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 ' +
+                ' -write-seg 1 1 1 -label ' +
+                f'{out_dir}/{out_name}_seg_large.nii' + ' ' +
+                f'{out_dir}/{out_name}_brain_large.nii')
             os.system(cmd)
 
             # Load probability maps for GM, WM, CSF
@@ -196,16 +223,20 @@ def run_segment():
         cerebellum = get_cerebellum(atlas)
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'csf_TPM', None, device)
         csf_TPM = atlas.get_fdata()
-        p0_large, p1_large, p2_large, p3_large = cleanup(p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM)
+        p0_large, p1_large, p2_large, p3_large = cleanup(
+            p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM)
     
     # Get affine segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
-        p1_affine = F.interpolate(nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        p1_affine = F.interpolate(
+            nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
-        p2_affine = F.interpolate(nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+        p2_affine = F.interpolate(
+            nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
         if ((save_csf) and (save_rp)):
-            p3_affine = F.interpolate(nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
+            p3_affine = F.interpolate(
+                nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
             p3_affine = reoriented_nifti(p3_affine, warp_template.affine, warp_template.header)
 
     vol_t1 = 1e-3 * nifti_volume(t1)
@@ -236,13 +267,22 @@ def run_segment():
             nib.save(p3_affine, f'{out_dir}/rp3{out_name}_affine.nii')
 
     # Save native registration
-    resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, f'{out_dir}/p0{out_name}.nii')
+    resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, 
+        f'{out_dir}/p0{out_name}.nii')
     if (save_p):
-        resample_and_save_nifti(brain_large, grid_native, mask.affine, mask.header, f'{out_dir}/m{out_name}.nii')
-        resample_and_save_nifti(p1_large, grid_native, mask.affine, mask.header, f'{out_dir}/p1{out_name}.nii')
-        resample_and_save_nifti(p2_large, grid_native, mask.affine, mask.header, f'{out_dir}/p2{out_name}.nii')
+        resample_and_save_nifti(
+            brain_large, grid_native, mask.affine, mask.header, 
+            f'{out_dir}/m{out_name}.nii')
+        resample_and_save_nifti(
+            p1_large, grid_native, mask.affine, mask.header, 
+            f'{out_dir}/p1{out_name}.nii')
+        resample_and_save_nifti(
+            p2_large, grid_native, mask.affine, mask.header, 
+            f'{out_dir}/p2{out_name}.nii')
         if (save_csf):
-            resample_and_save_nifti(p3_large, grid_native, mask.affine, mask.header, f'{out_dir}/p3{out_name}.nii')
+            resample_and_save_nifti(
+                p3_large, grid_native, mask.affine, mask.header, 
+                f'{out_dir}/p3{out_name}.nii')
 
     # Warping is necessary for surface creation and saving warped segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp)):
@@ -305,8 +345,12 @@ def run_segment():
 
         # Step 7: Save hemisphere outputs
         count = progress_bar(count, end_count, 'Resampling                     ')
-        resample_and_save_nifti(nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.nii', True, True)
-        resample_and_save_nifti(nib.Nifti1Image(rh, p0_large.affine, p0_large.header), grid_target_res, affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii', True, True)
+        resample_and_save_nifti(
+            nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, 
+            affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.nii', True, True)
+        resample_and_save_nifti(
+            nib.Nifti1Image(rh, p0_large.affine, p0_large.header), grid_target_res, 
+            affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii', True, True)
 
     # remove temporary AMAP files
     if (use_amap):

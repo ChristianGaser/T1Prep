@@ -92,6 +92,7 @@ def get_ras(aff, dim):
     aff_inv = np.linalg.inv(aff)
     aff_ras = np.argmax(np.abs(aff_inv[:dim, :dim]), axis=1)
     directions = np.sign(aff_inv[np.arange(dim), aff_ras])
+    
     return aff_ras, directions
 
 def find_largest_cluster(binary_volume):
@@ -124,7 +125,7 @@ def find_largest_cluster(binary_volume):
     
     return largest_cluster
 
-def cleanup(gm0, wm0, csf0, threshold_wm = 0.4, cerebellum = None, csf_TPM = None):
+def cleanup(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
     """
     Perform cleanup operations on CSF (Cerebrospinal Fluid), GM (Gray Matter),
     and WM (White Matter) maps to refine their segmentation by isolating clusters
@@ -232,7 +233,7 @@ def correct_bias_field(brain, seg):
     mask = (seg.get_fdata() > 2.5) if seg is not None else (brain0 > 0.0)
 
     # Subsampling for efficiency
-    if subsamp :
+    if subsamp:
         offset = 0
         dataSub = brain0[offset::subsamp,offset::subsamp,offset::subsamp]
         mask = mask[offset::subsamp,offset::subsamp,offset::subsamp]
@@ -255,13 +256,12 @@ def correct_bias_field(brain, seg):
     # level scheme, at the moment it's either or:
     levelfwhm = fwhm / (np.arange(maxlevel) + 1) if not subdivide else fwhm * np.ones(maxlevel)
     
-    splsm3d = SplineSmooth3DUnregularized(datalog, dataSubVoxSize,
-                                            spacing, domainMethod="minc",
-                                            mask=mask)
+    splsm3d = SplineSmooth3DUnregularized(
+        datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=mask)
     
     # Prediction interpolator
-    predictor = SplineSmooth3D(brain0, dataVoxSize,
-                               spacing, knts=splsm3d.kntsArr, dofit=False)
+    predictor = SplineSmooth3D(
+        brain0, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False)
     lastinterpbc = np.zeros(datalogmasked.shape[0])
     datalogcur = np.copy(datalog)
     nextlevel = 0
@@ -273,11 +273,11 @@ def correct_bias_field(brain, seg):
         if levels[N] < nextlevel:
           continue
         
-        hist,histvaledge,histval,histbinwidth = \
+        hist,histvaledge,histval,histbinwidth = (
           distrib_kde(datalogmaskedcur, Nbins, kernfn=chosenkernelfn,
-                      binCentreLimits=bcl)
+                      binCentreLimits=bcl))
         thisFWHM = levelfwhm[levels[N]] # * math.sqrt(8*math.log(2))
-        thisSD = thisFWHM /  math.sqrt(8*math.log(2))
+        thisSD = thisFWHM / math.sqrt(8*math.log(2))
         mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
     
         histfilt = wiener_filter_withpad(hist, mfilt, mfiltmid, Z)
@@ -324,7 +324,8 @@ def correct_bias_field(brain, seg):
         if (conv < stopthr):
             nextlevel = levels[N] + 1
             
-        if subdivide and (N+1)<len(levels) and (nextlevel>levels[N] or levels[N+1] != levels[N]):
+        if (subdivide and (N+1)<len(levels) and (nextlevel>levels[N] or 
+          levels[N+1] != levels[N])):
             # Applies to both cumulative and normal iterative
             # mode, in normal iterative mode we're just upgrading
             # to a finer mesh for the following updates.
@@ -377,7 +378,8 @@ def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None
     p1_large, p2_large, p3_large = [nifti_to_tensor(p).to(device) for p in [p1_large, p2_large, p3_large]]
 
     # Load the atlas template
-    atlas = nib.as_closest_canonical(nib.load(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/{atlas_name}.nii.gz'))
+    atlas = nib.as_closest_canonical(
+        nib.load(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/{atlas_name}.nii.gz'))
     atlas_register = AtlasRegistration()
 
     if warp_yx is not None:
@@ -387,7 +389,8 @@ def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None
 
         # Compute the shape for interpolation
         shape = tuple(shape_from_to(atlas, warp_yx))
-        scaled_yx = F.interpolate(yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
+        scaled_yx = F.interpolate(
+            yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
         warps = {shape: scaled_yx.permute(0, 2, 3, 4, 1)}
         atlas = atlas_register(affine, warps[shape], atlas, t1.shape)
 
@@ -399,7 +402,7 @@ def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None
     # Return the aligned atlas image
     return nib.Nifti1Image(atlas, transform, header)
     
-def crop_nifti_image_with_border(img, border=5, threshold = 0):
+def crop_nifti_image_with_border(img, border=5, threshold=0):
     """
     Crop a NIfTI image to the smallest bounding box containing non-zero values,
     add a border, ensure the resulting dimensions are even, and update the affine
@@ -450,7 +453,7 @@ def crop_nifti_image_with_border(img, border=5, threshold = 0):
 
     return cropped_img
     
-def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align = None, crop = None):
+def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align=None, crop=None):
     """
     Saves a NIfTI object with resampling and reorientation.
 
@@ -469,11 +472,13 @@ def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align = N
     tensor = nifti_to_tensor(nifti_obj)[None, None]
 
     # Step 2: Resample using grid
-    tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+    tensor = F.grid_sample(
+        tensor, grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
 
     # Step 3: Reorient and save as NIfTI
     if (align):
-        tensor, tmp1, tmp2, tmp3  = align_brain(tensor.cpu().numpy(), affine, header, np.eye(4), 1)
+        tensor, tmp1, tmp2, tmp3  = align_brain(
+            tensor.cpu().numpy(), affine, header, np.eye(4), 1)
         nii_data = nib.Nifti1Image(tensor, affine, header)
     else:
         nii_data = reoriented_nifti(tensor, affine, header)
@@ -557,8 +562,8 @@ def get_cerebellum(atlas):
     atlas = atlas.get_fdata()
 
     # get ceerebellum
-    cerebellum = (atlas == regions["lCbeWM"]) | (atlas == regions["lCbeGM"]) | \
-                 (atlas == regions["rCbeWM"]) | (atlas == regions["rCbeGM"])
+    cerebellum = ((atlas == regions["lCbeWM"]) | (atlas == regions["lCbeGM"]) |
+                  (atlas == regions["rCbeWM"]) | (atlas == regions["rCbeGM"]))
     
     return cerebellum
 
@@ -589,20 +594,20 @@ def get_partition(p0_large, atlas):
     lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
     lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 4)
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
-    lateral_ventricle = lateral_ventricle & ~(atlas == regions["rLatVen"]) & \
-                       ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) & \
-                       ~(atlas == regions["lAmy"]) & ~(atlas == regions["lHip"])
+    lateral_ventricle = (lateral_ventricle & ~(atlas == regions["rLatVen"]) &
+                       ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) &
+                       ~(atlas == regions["lAmy"]) & ~(atlas == regions["lHip"]))
     #WM 
-    wm = ((atlas >= regions["lThaPro"])  &  (atlas <= regions["lPal"])) | \
-           (atlas == regions["lAcc"])    |  (atlas == regions["lVenDC"])
+    wm = (((atlas >= regions["lThaPro"])  &  (atlas <= regions["lPal"])) |
+           (atlas == regions["lAcc"])    |  (atlas == regions["lVenDC"]))
     # we also have to dilate whole WM to close the remaining rims
     wm = binary_dilation(wm, generate_binary_structure(3, 3), 2) | lateral_ventricle
 
     # CSF + BKG
-    csf = (atlas == 0)                   |  (atlas == regions["lCbeWM"]) | \
-           (atlas == regions["lCbeGM"])  |  (atlas == regions["b3thVen"]) | \
-           (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) | \
-           (atlas >= regions["rCbrWM"])
+    csf = ((atlas == 0)                  |  (atlas == regions["lCbeWM"]) |
+           (atlas == regions["lCbeGM"])  |  (atlas == regions["b3thVen"]) |
+           (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) |
+           (atlas >= regions["rCbrWM"]))
 
     lesion_mask = atlas == regions["lCbrWM"]
 
@@ -617,25 +622,27 @@ def get_partition(p0_large, atlas):
     # first we have to dilate the ventricles because otherwise after filling there remains
     # a rim around it
     lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 4)
+    lateral_ventricle = binary_dilation(
+        lateral_ventricle, generate_binary_structure(3, 3), 4)
     # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
-    lateral_ventricle = lateral_ventricle & ~(atlas == regions["lLatVen"]) & \
-                       ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) & \
-                       ~(atlas == regions["rAmy"]) & ~(atlas == regions["rHip"])
+    lateral_ventricle = (lateral_ventricle & ~(atlas == regions["lLatVen"]) &
+                       ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) &
+                       ~(atlas == regions["rAmy"]) & ~(atlas == regions["rHip"]))
     # WM 
-    wm =  ((atlas >= regions["rThaPro"]) &  (atlas <= regions["rPal"])) | \
-            (atlas == regions["rAcc"])   |  (atlas == regions["rVenDC"])
+    wm =  (((atlas >= regions["rThaPro"]) &  (atlas <= regions["rPal"])) |
+            (atlas == regions["rAcc"])    |  (atlas == regions["rVenDC"]))
     # we also have to dilate whole WM to close the remaining rims
     wm = binary_dilation(wm, generate_binary_structure(3, 3), 2) | lateral_ventricle
 
     # CSF + BKG
-    csf = ((atlas <= regions["lVenDC"])  & ~(atlas == regions["bCSF"])) | \
-            (atlas == regions["rCbeWM"]) |  (atlas == regions["rCbeGM"])
+    csf = (((atlas <= regions["lVenDC"]) & ~(atlas == regions["bCSF"])) |
+            (atlas == regions["rCbeWM"]) |  (atlas == regions["rCbeGM"]))
 
-    csf = (atlas == 0)                   |  (atlas == regions["rCbeWM"]) | \
-           (atlas == regions["rCbeGM"])  |  (atlas == regions["b3thVen"]) | \
-           (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) | \
-           (atlas <= regions["lAmy"])    | (atlas == regions["lVenDC"]) | (atlas == regions["lAcc"]) 
+    csf = ((atlas == 0)                  |  (atlas == regions["rCbeWM"]) |
+           (atlas == regions["rCbeGM"])  |  (atlas == regions["b3thVen"]) |
+           (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) |
+           (atlas <= regions["lAmy"])    | (atlas == regions["lVenDC"]) | 
+           (atlas == regions["lAcc"]))
 
     lesion_mask = atlas == regions["rCbrWM"]
 
@@ -675,7 +682,8 @@ def align_brain(data, aff, header, aff_ref, do_flip):
         for i, axis_ref in enumerate(ras_ref):
             # Find the corresponding axis in the input affine matrix
             matching_axis_idx = np.where(ras_aff == axis_ref)[0][0]
-            reordered_aff[:dim, i] = dirs_ref[i] * dirs_aff[matching_axis_idx] * aff[:dim, matching_axis_idx]
+            reordered_aff[:dim, i] = (dirs_ref[i] * dirs_aff[matching_axis_idx] * 
+                aff[:dim, matching_axis_idx])
     
     else:
         for i, axis in enumerate(ras_ref):
