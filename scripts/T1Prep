@@ -16,7 +16,8 @@
 # - check_python_cmd: Checks if the Python command is available.
 # - check_files: Checks if the input files exist.
 # - check_python: Checks if the specified Python command is available.
-# - check_python_libraries: Checks python installation.
+# - check_python_module: Checks for python modules.
+# - check_python_libraries: Checks for python libraries.
 # - get_OS: Identifies operations system and folder of binaries.
 # - bar: Displays progress bar.
 # - get_no_of_cpus: Determines the number of available CPUs.
@@ -85,6 +86,8 @@ main ()
   if [[ "$multi" -ne -2 ]]; then
     logo
     check_python
+    check_python_module venv
+    check_python_module pip
     check_python_libraries    
   fi
 
@@ -350,6 +353,20 @@ check_python ()
 }
 
 ########################################################
+# check for python modules (e.g. pip)
+########################################################
+
+# Function to check if a Python module is available
+check_python_module() {
+    ${python} -c "import $1" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "Error: Python module '$1' is not installed."
+        echo "On Linux use 'apt install $(basename "$python")-"$1"'"
+        exit 1
+    fi
+}
+
+########################################################
 # check for python libraries
 ########################################################
 
@@ -363,7 +380,6 @@ check_python_libraries ()
   if [ -d ${T1prep_env} ]; then
     $python -m venv ${T1prep_env}
     source ${T1prep_env}/bin/activate
-    #$python -m pip install -U pip &>/dev/null
     
     $python -c "import deepmriprep" &>/dev/null
     if [ $? -gt 0 ]; then
@@ -727,7 +743,6 @@ process ()
   start0=$(date +%s)
 
   # use defined environment
-  $python -m venv ${T1prep_env}
   source ${T1prep_env}/bin/activate
   python="${T1prep_env}/bin/python"
 
@@ -847,11 +862,11 @@ process ()
 
     # print progress and filename
     j=$(expr $i + 1)
-    echo "${BOLD}${WHITE}-------------------------------------------------------${NC}"
+    echo "${BOLD}-------------------------------------------------------${NC}"
     if [ "${SIZE_OF_ARRAY}" -gt 1 ]; then
-      echo "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${WHITE}Processing ${FILE}${NC}"
+      echo "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}Processing ${FILE}${NC}"
     else
-      echo "${BOLD}${WHITE}Processing ${FILE}${NC}"
+      echo "${BOLD}Processing ${FILE}${NC}"
     fi
 
     # 1. Call SANLM denoising filter
@@ -1103,6 +1118,8 @@ if [ ! -d "${T1prep_env}" ]; then
   # Check if the user's answer is 'Y'
   case "$response" in
     [Yy]*)
+      check_python_module venv
+      check_python_module pip
       check_python_libraries
       ;;
   esac
