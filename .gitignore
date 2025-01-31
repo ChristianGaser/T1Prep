@@ -7,7 +7,7 @@ data
 T1prep-env
 MacOS
 Windows
-Linux
+Linux*
 test
 
 BIDS-Naming.txt

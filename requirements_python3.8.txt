@@ -1,9 +1,0 @@
-scipy==1.13.1
-numpy==2.0.2
-requests
-SplineSmooth3D>=0.1.1
-nxbc>=0.2.0
-deepmriprep>=0.1.0
-torch>=1.11.0
-deepbet>=1.0.2
-torchreg>=0.1.2

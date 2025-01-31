@@ -77,10 +77,10 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
     Only segmentation maps are generated and saved in the same directory as the input files.
 
 ```bash
-  ./scripts/T1Prep --no-overwrite "surf/lh.thickness." sTRIO*.nii
+  ./scripts/T1Prep --python python3.8 --no-overwrite "surf/lh.thickness." sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii'. Skip processing for files 
-    where 'surf/lh.thickness.*' already exists, and save new results in the same 
+    Process all files matching the pattern 'sTRIO*.nii' and use python3.8. Skip processing 
+    for files where 'surf/lh.thickness.*' already exists, and save new results in the same 
     directory as the input files.
 
 ```bash
