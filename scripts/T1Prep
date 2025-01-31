@@ -44,7 +44,7 @@ WHITE=$(tput setaf 7)
 # defaults
 T1prep_dir=$(dirname $(dirname "$0"))
 surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
-T1prep_env=${T1prep_dir}/T1prep-env
+T1prep_env=${T1prep_dir}/T1Prep-env
 os_type=$(uname -s) # Determine OS type
 outsurfdir=''
 outmridir=''
@@ -384,8 +384,7 @@ install_deepmriprep ()
   $python -m venv ${T1prep_env}
   source ${T1prep_env}/bin/activate
   $python -m pip install -U pip
-  #$python -m pip install scipy==1.13.1 torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep
-  $python -m pip install torch deepbet torchreg requests SplineSmooth3D nxbc deepmriprep scipy
+  $python -m pip install scipy>=1.10.1 torch>=1.11.0 deepbet>=1.0.2 torchreg>=0.1.2 requests SplineSmooth3D>=0.1.1 nxbc>=0.2.0 deepmriprep>=0.1.0
   
   $python -c "import deepmriprep" &>/dev/null
   if [ $? -gt 0 ]; then
@@ -848,11 +847,11 @@ process ()
 
     # print progress and filename
     j=$(expr $i + 1)
-    echo "${BOLD}${BLACK}-------------------------------------------------------${NC}"
+    echo "${BOLD}${WHITE}-------------------------------------------------------${NC}"
     if [ "${SIZE_OF_ARRAY}" -gt 1 ]; then
-      echo "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${BLACK}Processing ${FILE}${NC}"
+      echo "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}${WHITE}Processing ${FILE}${NC}"
     else
-      echo "${BOLD}${BLACK}Processing ${FILE}${NC}"
+      echo "${BOLD}${WHITE}Processing ${FILE}${NC}"
     fi
 
     # 1. Call SANLM denoising filter
@@ -920,17 +919,11 @@ process ()
       # ----------------------------------------------------------------------
       # check for outputs from previous step
       for side in left right; do
-        if [ "${multi}" -eq -2 ]; then
-          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg
-        else
-          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
-        fi
+        surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
       done
       
       # use wait to check finishing the background processes
-      if [ "${multi}" -ne -2 ]; then
-        wait
-      fi
+      wait
       
     fi # save_surf
 
@@ -1048,9 +1041,9 @@ ${BLUE}${T1prep_dir}/T1Prep --no-surf sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii', but skip surface creation. 
   Only segmentation maps are generated and saved in the same directory as the input files.
 
-${BLUE}${T1prep_dir}/T1Prep --no-overwrite "surf/lh.thickness." sTRIO*.nii${NC}
-  Process all files matching the pattern 'sTRIO*.nii'. Skip processing for files 
-  where 'surf/lh.thickness.*' already exists, and save new results in the same 
+${BLUE}${T1prep_dir}/T1Prep --python python3.8 --no-overwrite "surf/lh.thickness." sTRIO*.nii${NC}
+  Process all files matching the pattern 'sTRIO*.nii' and use python3.8. Skip processing 
+  for files where 'surf/lh.thickness.*' already exists, and save new results in the same 
   directory as the input files.
 
 ${BLUE}${T1prep_dir}/T1Prep --multi -1 --p --csf sTRIO*.nii${NC}

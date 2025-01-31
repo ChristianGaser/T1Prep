@@ -273,7 +273,7 @@ def correct_bias_field(brain, seg):
         if levels[N] < nextlevel:
           continue
         
-        hist,histvaledge,histval,histbinwidth = (
+        hist, histvaledge, histval, histbinwidth = (
           distrib_kde(datalogmaskedcur, Nbins, kernfn=chosenkernelfn,
                       binCentreLimits=bcl))
         thisFWHM = levelfwhm[levels[N]] # * math.sqrt(8*math.log(2))
