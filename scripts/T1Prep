@@ -65,7 +65,7 @@ downsample=1.0
 vessel=0.5
 min_thickness=0.5
 sharpening=0.02
-post_fwhm=2
+post_fwhm=1.5
 pre_fwhm=0
 re_install=0
 use_sanlm=0
@@ -530,7 +530,8 @@ surface_estimation()
     # - '-n-avgs 4' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -sigmoid-center ${thresh} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -sigmoid-center 0 -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+#    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -sigmoid-center ${thresh} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
     
     # Updates progress to 'Extract $side surface'.
     bar 4 $end_count "Extract $side surface"
