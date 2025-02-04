@@ -566,7 +566,7 @@ surface_estimation()
     ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5
     
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
-    if [ "${debug}" -eq 1 ]; then
+    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
       ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!mid} ${outmridir}/${mT1} ${outsurfdir}/${!intensity}
       ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!pial} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_pial}
       ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!wm} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_white}
@@ -923,12 +923,12 @@ process ()
       # 3. Create hemispheric label maps for cortical surface extraction
       # ----------------------------------------------------------------------
       # check for outputs from previous step
-      if [ ! -f "${outmridir}/${p0}" ]; then
-        echo "${RED}ERROR: ${cmd_dir}/segment.py failed (file ${outmridir}/${p0} not found)${NC}" >&2
+      if [ ! -f "${outmridir}/${hemi_right}" ]; then
+        echo "${RED}ERROR: ${cmd_dir}/segment.py failed (file ${outmridir}/${hemi_right} not found)${NC}" >&2
         ((i++))
         continue
       fi
-      
+
       # 4. Estimate thickness and percentage position maps for each hemisphere
       #  and extract cortical surface and call it as background process to
       # allow parallelization
