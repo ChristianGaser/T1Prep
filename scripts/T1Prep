@@ -988,12 +988,12 @@ process ()
 ########################################################
 
 help() {
-cat <<__EOM__
+cat << EOM
 ${BOLD}${BLUE}T1Prep Computational Anatomy Pipeline (PyCAT)
 ---------------------------------------------${NC}
 
 ${BOLD}USAGE:${NC}
-  ${GREEN}T1Prep [options] <filenames>${NC}
+  ${GREEN}T1Prep [options] <filename(s)>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
   Processes T1-weighted brain data for computational anatomy analysis, including segmentation and surface extraction.
@@ -1103,7 +1103,7 @@ ${BOLD}USED FUNCTIONS:${NC}
 ${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
 
-__EOM__
+EOM
 
 check_python
 check_python_cmd
