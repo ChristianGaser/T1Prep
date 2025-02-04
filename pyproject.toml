@@ -18,6 +18,11 @@ python = '^3.8'
 torch = '>=1.11.0'
 deepbet = '>=1.0.2'
 torchreg = '>=0.1.2'
+scipy = '>=1.10.1'
+SplineSmooth3D = '>=0.1.1'
+nxbc = '>=0.2.0'
+deepmriprep = '>=0.1.0'
+requests
 
 [tool.poetry.dev-dependencies]
 scipy = '*'
