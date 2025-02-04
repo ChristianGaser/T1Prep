@@ -1,34 +1,35 @@
-[tool.poetry]
+[project]
 name = 'T1Prep'
 version = '0.1.0'
 description = 'T1 PREProcessing Pipeline (aka PyCAT)'
-authors = ['Christian Gaser <christian.gaser@uni-jena.de>']
+authors = [
+    {name = 'Christian Gaser, email = 'christian.gaser@uni-jena.de'},
+]
+maintainers = [
+    {name = 'Christian Gaser, email = 'christian.gaser@uni-jena.de'},
+]
 license = 'Apache-2.0'
 readme = 'README.md'
 repository = 'https://github.com/ChristianGaser/T1Prep'
 classifiers = [
-    'Programming Language :: Python :: 3',
     'Operating System :: OS Independent',
+    'Programming Language :: Python :: 3 :: Only',
+    'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
     'Intended Audience :: Science/Research'
 ]
 exclude = ['Makefile']
 
-[tool.poetry.dependencies]
-python = '^3.8'
-torch = '>=1.11.0'
-deepbet = '>=1.0.2'
-torchreg = '>=0.1.2'
-scipy = '>=1.10.1'
-SplineSmooth3D = '>=0.1.1'
-nxbc = '>=0.2.0'
-deepmriprep = '>=0.1.0'
-requests
-
-[tool.poetry.dev-dependencies]
-scipy = '*'
-
-[tool.poetry.scripts]
-
-[build-system]
-requires = ['poetry-core']
-build-backend = 'poetry.core.masonry.api'
+dependencies = [
+    'scipy>=1.10.1',
+    'torch>=1.11.0',
+    'deepbet>=1.0.2',
+    'torchreg>=0.1.2',
+    'SplineSmooth3D>=0.1.1',
+    'nxbc>=0.2.0',
+    'deepmriprep>=0.1.0',
+    'requests'
+]
