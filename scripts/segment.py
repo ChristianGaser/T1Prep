@@ -176,7 +176,7 @@ def run_segment():
         
         # Call AMAP
         cleanup_gm = False
-        if(cleanup_gm):
+        if (cleanup_gm):
             cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
                 ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 ' +
                 ' -write-seg 0 0 0 -label ' +
@@ -355,7 +355,7 @@ def run_segment():
             affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii', True, True)
 
     # remove temporary AMAP files
-    if (use_amap):
+    if use_amap and (not cleanup_gm):
         remove_file(f'{out_dir}/{out_name}_brain_large.nii')
         remove_file(f'{out_dir}/{out_name}_brain_large_seg.nii')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
