@@ -531,8 +531,7 @@ surface_estimation()
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
     ${bin_dir}/CAT_VolThicknessPbt ${verbose} -sigmoid-center 0 -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
-#    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -sigmoid-center ${thresh} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
-    
+  
     # Updates progress to 'Extract $side surface'.
     bar 4 $end_count "Extract $side surface"
   
@@ -633,13 +632,14 @@ process ()
     multi=0
   fi
 
-  # Call T1Prep script recursively with different arguments
+  # Call T1Prep script recursively with different "--multi" arguments in case that
+  # "--multi" is defined
   if [[ "$multi" -ne 0 && "$multi" -gt -2 ]]; then
 
     # Filter arguments before recursion
     filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
 
-    # Call parallelize with filtered arguments and use minimal memory limit of 24GB per process
+    # Call parallelize with filtered arguments and use memory limit of 24GB per process
     echo "${BOLD}Volume Segmentation${NC}"
     cmd=(
       "$(dirname "$0")/parallelize"
@@ -660,7 +660,6 @@ process ()
     if [ "$multi" -gt 0 ]; then
       arg_parallelize="-p ${multi}"
     fi
-
     cmd=(
       "$(dirname "$0")/parallelize"
       -l "/tmp"
@@ -677,7 +676,7 @@ process ()
     exit 1
   fi
 
-  # Don't use colored text in parallelization
+  # Don't use colored text in parallelization (for clearer log-file)
   if [[ "$multi" -eq -2 ]]; then
     UNDERLINE=""
     BOLD=""
@@ -1080,7 +1079,8 @@ ${BLUE}${T1prep_dir}/T1Prep --multi -1 --p --csf sTRIO*.nii${NC}
   the two stages.
     
 ${BOLD}PURPOSE:${NC}
-  This script facilitates the analysis of T1-weighted brain images by providing tools for segmentation, surface mapping, and more.
+  This script facilitates the analysis of T1-weighted brain images by providing tools for 
+  segmentation, surface mapping, and more.
 
 ${BOLD}INPUT:${NC}
   Accepts NIfTI files as input.
