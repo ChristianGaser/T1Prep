@@ -50,7 +50,7 @@ os_type=$(uname -s) # Determine OS type
 outsurfdir=''
 outmridir=''
 use_bids_naming=0
-thickness_fwhm=1
+thickness_fwhm=6
 median_filter=2
 save_hemi=0
 save_surf=1
@@ -61,17 +61,16 @@ save_rp=0
 save_p=0
 estimate_spherereg=1
 estimate_seg=1
-downsample=1.0
+downsample=0.0
 vessel=0.5
-min_thickness=0.5
 sharpening=0.02
 post_fwhm=1.5
-pre_fwhm=0
+pre_fwhm=2
 re_install=0
 use_sanlm=0
 use_amap=0
 isoval=0.5
-thresh=0.6
+thresh=0.5
 debug=0
 multi=0
 
@@ -146,11 +145,6 @@ parse_args ()
       --thickness-fwhm)
         exit_if_empty "$optname" "$optarg"
         thickness_fwhm=$optarg
-        shift
-        ;;
-      --min-thickness)
-        exit_if_empty "$optname" "$optarg"
-        min_thickness=$optarg
         shift
         ;;
       --downsample)
@@ -530,7 +524,7 @@ surface_estimation()
     # - '-n-avgs 4' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -sigmoid-center 0 -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 4 -min-thickness ${min_thickness} -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
   
     # Updates progress to 'Extract $side surface'.
     bar 4 $end_count "Extract $side surface"
@@ -557,12 +551,12 @@ surface_estimation()
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
     if (( $(echo "$shift != 0" | bc) )); then
-      ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} 0.1
+      ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${shift}
     fi
 
     # Executes 'CAT_Central2Pial' twice to estimate both pial and white matter surfaces.
-    ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.5
-    ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.5
+    ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
+    ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
     
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
     if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
@@ -1026,8 +1020,6 @@ ${BOLD}OPTIONS:${NC}
                             vessel removal (default: $vessel).
   --downsample <NUMBER>     Specify the downsampling factor for PPM and GMT maps to reduce 
                             surface intersections (default: $downsample).
-  --min-thickness <NUMBER>  Set the minimum thickness value (values below this are set to zero) 
-                            for the vbdist method (default: $min_thickness).
   --median-filter <NUMBER>  Specify the number of median filter applications to reduce topology 
                             artifacts.
   
