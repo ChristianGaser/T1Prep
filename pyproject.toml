@@ -1,35 +1,42 @@
+[build-system]
+requires      = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = 'T1Prep'
-version = '0.1.0'
-description = 'T1 PREProcessing Pipeline (aka PyCAT)'
+name = "T1Prep"
+dynamic = ["version"]
+description = "T1 PREProcessing Pipeline (aka PyCAT)"
 authors = [
-    {name = 'Christian Gaser, email = 'christian.gaser@uni-jena.de'},
+    {name = "Christian Gaser, email = "christian.gaser@uni-jena.de"},
 ]
-maintainers = [
-    {name = 'Christian Gaser, email = 'christian.gaser@uni-jena.de'},
-]
-license = 'Apache-2.0'
-readme = 'README.md'
-repository = 'https://github.com/ChristianGaser/T1Prep'
+license = {text = "Apache License Version 2.0"}
+requires-python = ">=3.8"
+readme = "README.md"
+repository = "https://github.com/ChristianGaser/T1Prep"
+
 classifiers = [
-    'Operating System :: OS Independent',
-    'Programming Language :: Python :: 3 :: Only',
-    'Programming Language :: Python :: 3.8',
-    'Programming Language :: Python :: 3.9',
-    'Programming Language :: Python :: 3.10',
-    'Programming Language :: Python :: 3.11',
-    'Programming Language :: Python :: 3.12',
-    'Intended Audience :: Science/Research'
+    "Development Status :: 3 - Alpha",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Science/Research"
 ]
-exclude = ['Makefile']
+exclude = ["Makefile"]
 
 dependencies = [
-    'scipy>=1.10.1',
-    'torch>=1.11.0',
-    'deepbet>=1.0.2',
-    'torchreg>=0.1.2',
-    'SplineSmooth3D>=0.1.1',
-    'nxbc>=0.2.0',
-    'deepmriprep>=0.1.0',
-    'requests'
+    "scipy>=1.10.1",
+    "torch>=1.11.0",
+    "deepbet>=1.0.2",
+    "torchreg>=0.1.2",
+    "SplineSmooth3D>=0.1.1",
+    "nxbc>=0.2.0",
+    "deepmriprep>=0.1.0",
+    "requests"
 ]
+
+[project.urls]
+"Repository"    = "https://github.com/ChristianGaser/T1Prep"
