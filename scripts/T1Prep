@@ -49,6 +49,7 @@ T1prep_env=${T1prep_dir}/T1Prep-env
 os_type=$(uname -s) # Determine OS type
 outsurfdir=''
 outmridir=''
+correct_thickness=1
 use_bids_naming=0
 thickness_fwhm=6
 median_filter=2
@@ -220,6 +221,9 @@ parse_args ()
         ;;
       --bids)
         use_bids_naming=1
+        ;;
+      --no-thickness-correct)
+        correct_thickness=0
         ;;
       --debug)
         debug=1
@@ -501,12 +505,20 @@ surface_estimation()
   Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
   Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
   
+  # Change number of commands if spherical registration is disabled
   if [ "${estimate_spherereg}" -eq 1 ]; then
     ((end_count=10))
   else
     ((end_count=6))
   fi
 
+  # Define label image for thickness correction
+  if [ "${correct_thickness}" -eq 1 ]; then
+    label_str=' -label ${outmridir}/${!hemi} '
+  else
+    label_str=''
+  fi
+    
   if [ "${debug}" -eq 0 ]; then
     verbose=''
   else 
@@ -546,7 +558,7 @@ surface_estimation()
   
     # Executes 'CAT_SurfDistance' to correct and map thickness values from a volumetric dataset to a surface.
     # It uses the mean of the closest distance between both surfaces and vice versa (Tfs from Freesurfer).
-    ${bin_dir}/CAT_SurfDistance -mean -position ${outmridir}/${!ppm} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+    ${bin_dir}/CAT_SurfDistance -mean ${label_str} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
   
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
@@ -555,8 +567,8 @@ surface_estimation()
     fi
 
     # Executes 'CAT_Central2Pial' twice to estimate both pial and white matter surfaces.
-    ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
-    ${bin_dir}/CAT_Central2Pial -position ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
+    ${bin_dir}/CAT_Central2Pial -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
+    ${bin_dir}/CAT_Central2Pial -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
     
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
     if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
@@ -1001,8 +1013,23 @@ ${BOLD}OPTIONS:${NC}
   --debug                   Enable verbose output, retain temporary files, and save additional 
                             debugging information.
   
-  ${BOLD}${YELLOW}Processing Parameters:${NC}
+  ${BOLD}${YELLOW}Save Options:${NC}
   --out-dir <DIR>           Specify the output directory (default: current working directory).
+  --no-overwrite <STRING>   Avoid overwriting existing results by checking for the specified 
+                            filename pattern.
+  --no-surf                 Skip surface and thickness estimation.
+  --no-seg                  Skip segmentation processing.
+  --no-sphere               Skip spherical surface registration.
+  --no-mwp                  Skip the estimation of modulated and warped segmentations.
+  --hemisphere              Additionally save hemispheric partitions of the segmentation.
+  --wp                      Additionally save warped segmentations.
+  --rp                      Additionally save affine-registered segmentations.
+  --p                       Additionally save native space segmentations.
+  --csf                     Additionally save CSF segmentations (default: only GM/WM are saved).
+  --bids                    Use BIDS (Brain Imaging Data Structure) standard for output file 
+                            naming conventions.
+
+  ${BOLD}${YELLOW}Expert Options:${NC}
   --amap                    Use AMAP segmentation instead of DeepMRIPrep.
   --pre-fwhm <NUMBER>       Set the pre-smoothing FWHM size in CAT_VolMarchingCubes 
                             (default: $pre_fwhm).
@@ -1022,22 +1049,10 @@ ${BOLD}OPTIONS:${NC}
                             surface intersections (default: $downsample).
   --median-filter <NUMBER>  Specify the number of median filter applications to reduce topology 
                             artifacts.
+  --no-thickness-correct    Disable the use of an additional label file for checking whether
+                            inner or outer border is reached in order to correct cortical 
+                            thickness.
   
-  ${BOLD}${YELLOW}Save Options:${NC}
-  --no-overwrite <STRING>   Avoid overwriting existing results by checking for the specified 
-                            filename pattern.
-  --no-surf                 Skip surface and thickness estimation.
-  --no-seg                  Skip segmentation processing.
-  --no-sphere               Skip spherical surface registration.
-  --no-mwp                  Skip the estimation of modulated and warped segmentations.
-  --hemisphere              Additionally save hemispheric partitions of the segmentation.
-  --wp                      Additionally save warped segmentations.
-  --rp                      Additionally save affine-registered segmentations.
-  --p                       Additionally save native space segmentations.
-  --csf                     Additionally save CSF segmentations (default: only GM/WM are saved).
-  --bids                    Use BIDS (Brain Imaging Data Structure) standard for output file 
-                            naming conventions.
-
   ${BOLD}${YELLOW}Examples:${NC}
 
 ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}
