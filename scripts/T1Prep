@@ -227,7 +227,6 @@ parse_args ()
         ;;
       --debug)
         debug=1
-        save_p=1
         ;;
       -h | --help | -v | --version | -V)
         help
