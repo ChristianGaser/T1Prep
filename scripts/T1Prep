@@ -60,6 +60,7 @@ save_mwp=1
 save_wp=0
 save_rp=0
 save_p=0
+estimate_pial_white=0
 estimate_spherereg=1
 estimate_seg=1
 downsample=0.0
@@ -224,6 +225,9 @@ parse_args ()
         ;;
       --no-thickness-correct)
         correct_thickness=0
+        ;;
+      --pial-white)
+        estimate_pial_white=1
         ;;
       --debug)
         debug=1
@@ -513,15 +517,15 @@ surface_estimation()
 
   # Define label image for thickness correction
   if [ "${correct_thickness}" -eq 1 ]; then
-    label_str=' -label ${outmridir}/${!hemi} '
+    label_str=" -label ${outmridir}/${!hemi} "
   else
-    label_str=''
+    label_str=""
   fi
     
   if [ "${debug}" -eq 0 ]; then
-    verbose=''
+    verbose=""
   else 
-    verbose=' -verbose '
+    verbose=" -verbose "
   fi
 
   # This section of the script checks if a specific hemisphere file exists within a given directory.
@@ -535,7 +539,7 @@ surface_estimation()
     # - '-n-avgs 4' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+    #${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
   
     # Updates progress to 'Extract $side surface'.
     bar 4 $end_count "Extract $side surface"
@@ -546,7 +550,7 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
+    #${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
   
     # Updates progress to 'Map $side thickness values'.
     bar 6 $end_count "Map $side thickness values"
@@ -557,8 +561,8 @@ surface_estimation()
   
     # Executes 'CAT_SurfDistance' to correct and map thickness values from a volumetric dataset to a surface.
     # It uses the mean of the closest distance between both surfaces and vice versa (Tfs from Freesurfer).
-    ${bin_dir}/CAT_SurfDistance -mean ${label_str} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
-  
+    #${bin_dir}/CAT_SurfDistance -mean ${label_str} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
     if (( $(echo "$shift != 0" | bc) )); then
@@ -566,14 +570,16 @@ surface_estimation()
     fi
 
     # Executes 'CAT_Central2Pial' twice to estimate both pial and white matter surfaces.
-    ${bin_dir}/CAT_Central2Pial -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
-    ${bin_dir}/CAT_Central2Pial -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
-    
-    # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
-    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
-      ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!mid} ${outmridir}/${mT1} ${outsurfdir}/${!intensity}
-      ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!pial} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_pial}
-      ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!wm} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_white}
+    if [ "${estimate_pial_white}" -eq 1 ]; then
+      ${bin_dir}/CAT_Central2Pial -check_intersect -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
+      ${bin_dir}/CAT_Central2Pial -check_intersect -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
+      
+      # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
+      if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
+        ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!mid} ${outmridir}/${mT1} ${outsurfdir}/${!intensity}
+        ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!pial} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_pial}
+        ${bin_dir}/CAT_3dVol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!wm} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_white}
+      fi
     fi
   
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
@@ -581,7 +587,7 @@ surface_estimation()
       # Updates progress to 'Spherical inflation $side hemisphere'.
       bar 8 $end_count "Spherical inflation $side hemisphere"
       # Inflates the surface to a sphere with additional areal smoothing.
-      ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
+      #${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
   
       # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
       bar 10 $end_count "Spherical estimate_spherereg $side hemisphere"
@@ -1021,12 +1027,13 @@ ${BOLD}OPTIONS:${NC}
   --no-sphere               Skip spherical surface registration.
   --no-mwp                  Skip the estimation of modulated and warped segmentations.
   --hemisphere              Additionally save hemispheric partitions of the segmentation.
+  --pial-white              Additionally extract the pial and white surface
   --wp                      Additionally save warped segmentations.
   --rp                      Additionally save affine-registered segmentations.
   --p                       Additionally save native space segmentations.
   --csf                     Additionally save CSF segmentations (default: only GM/WM are saved).
   --bids                    Use BIDS (Brain Imaging Data Structure) standard for output file 
-                            naming conventions.
+                            naming conventions (not yet fully working!).
 
   ${BOLD}${YELLOW}Expert Options:${NC}
   --amap                    Use AMAP segmentation instead of DeepMRIPrep.
