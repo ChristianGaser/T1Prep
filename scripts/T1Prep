@@ -539,7 +539,7 @@ surface_estimation()
     # - '-n-avgs 4' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    #${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
   
     # Updates progress to 'Extract $side surface'.
     bar 4 $end_count "Extract $side surface"
@@ -550,7 +550,7 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    #${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
+    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
   
     # Updates progress to 'Map $side thickness values'.
     bar 6 $end_count "Map $side thickness values"
@@ -561,7 +561,7 @@ surface_estimation()
   
     # Executes 'CAT_SurfDistance' to correct and map thickness values from a volumetric dataset to a surface.
     # It uses the mean of the closest distance between both surfaces and vice versa (Tfs from Freesurfer).
-    #${bin_dir}/CAT_SurfDistance -mean ${label_str} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+    ${bin_dir}/CAT_SurfDistance -mean ${label_str} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
 
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
@@ -587,7 +587,7 @@ surface_estimation()
       # Updates progress to 'Spherical inflation $side hemisphere'.
       bar 8 $end_count "Spherical inflation $side hemisphere"
       # Inflates the surface to a sphere with additional areal smoothing.
-      #${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
+      ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
   
       # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
       bar 10 $end_count "Spherical estimate_spherereg $side hemisphere"
