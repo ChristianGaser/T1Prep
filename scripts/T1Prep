@@ -189,6 +189,9 @@ parse_args ()
         multi=$optarg
         shift
         ;;
+      --pial-white)
+        estimate_pial_white=1
+        ;;
       --hemi*)
         save_hemi=1
         ;;
@@ -225,9 +228,6 @@ parse_args ()
         ;;
       --no-thickness-correct)
         correct_thickness=0
-        ;;
-      --pial-white)
-        estimate_pial_white=1
         ;;
       --debug)
         debug=1
@@ -561,18 +561,18 @@ surface_estimation()
   
     # Executes 'CAT_SurfDistance' to correct and map thickness values from a volumetric dataset to a surface.
     # It uses the mean of the closest distance between both surfaces and vice versa (Tfs from Freesurfer).
-    ${bin_dir}/CAT_SurfDistance -mean ${label_str} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+    ${bin_dir}/CAT_SurfDistance ${verbose} -mean ${label_str} -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
 
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
     if (( $(echo "$shift != 0" | bc) )); then
-      ${bin_dir}/CAT_Central2Pial ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${shift}
+      ${bin_dir}/CAT_Central2Pial ${verbose} ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${shift}
     fi
 
     # Executes 'CAT_Central2Pial' twice to estimate both pial and white matter surfaces.
     if [ "${estimate_pial_white}" -eq 1 ]; then
-      ${bin_dir}/CAT_Central2Pial -check_intersect -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
-      ${bin_dir}/CAT_Central2Pial -check_intersect -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
+      ${bin_dir}/CAT_Central2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
+      ${bin_dir}/CAT_Central2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
       
       # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
       if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
@@ -837,7 +837,7 @@ process ()
 
       outmridir=${outdir0}
       outsurfdir=${outdir0}
-    else      
+    else
       mid_left="lh.central.${bname}.gii"
       mid_right="rh.central.${bname}.gii"
       pial_left="lh.pial.${bname}.gii"
