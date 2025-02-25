@@ -208,7 +208,7 @@ parse_args ()
       --no-mwp*)
         save_mwp=0
         ;;
-      --lesions*)
+      --lesion*)
         save_lesions=1
         ;;
       --wp*)
@@ -382,17 +382,16 @@ check_python_libraries ()
     rm -r "${T1prep_env}"
   fi
 
-  if [ -d ${T1prep_env} ]; then
+  if [ ! -d ${T1prep_env} ]; then
     $python -m venv ${T1prep_env}
-    source ${T1prep_env}/bin/activate
-    
-    $python -c "import deepmriprep" &>/dev/null
-    if [ $? -gt 0 ]; then
-      install_deepmriprep
-    fi
-  else
     install_deepmriprep
-  fi      
+  fi
+  source ${T1prep_env}/bin/activate
+  
+  $python -c "import deepmriprep" &>/dev/null
+  if [ $? -gt 0 ]; then
+    install_deepmriprep
+  fi
 }
 
 ########################################################
@@ -405,7 +404,7 @@ install_deepmriprep ()
   $python -m venv ${T1prep_env}
   source ${T1prep_env}/bin/activate
   $python -m pip install -U pip
-  $python -m pip install scipy>=1.10.1 torch>=1.11.0 deepbet>=1.0.2 torchreg>=0.1.2 requests SplineSmooth3D>=0.1.1 nxbc>=0.2.0 deepmriprep>=0.1.0
+  $python -m pip install -U pip "scipy>=1.10.1" "torch>=1.11.0" "deepbet>=1.0.2" "torchreg>=0.1.2" "requests" "SplineSmooth3D>=0.1.1" "nxbc>=0.2.0" "deepmriprep>=0.1.0"
   
   $python -c "import deepmriprep" &>/dev/null
   if [ $? -gt 0 ]; then
@@ -940,6 +939,7 @@ process ()
       # check for outputs from previous step
       if [ ! -f "${outmridir}/${hemi_right}" ]; then
         echo "${RED}ERROR: ${cmd_dir}/segment.py failed (file ${outmridir}/${hemi_right} not found)${NC}" >&2
+        exit 1
         ((i++))
         continue
       fi
@@ -1132,8 +1132,7 @@ if [ ! -d "${T1prep_env}" ]; then
 
   # Prompt the user with a Y/N question
   echo "${RED}${BOLD}Local Python environment "${T1prep_env}" not found.${NC}"
-  echo "Do you want to install required Python libraries? (Y/N)"
-  read -r response
+  read -p "Do you want to install required Python libraries? (Y/N)" response
   
   # Check if the user's answer is 'Y'
   case "$response" in

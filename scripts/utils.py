@@ -19,7 +19,7 @@ from deepbet.utils import reoriented_nifti
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
-from scipy.ndimage import binary_dilation, grey_opening, binary_closing, generate_binary_structure, grey_opening, label
+from scipy.ndimage import binary_dilation, grey_opening, binary_closing, generate_binary_structure, label
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
 from pathlib import Path
