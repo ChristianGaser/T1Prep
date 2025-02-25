@@ -3,7 +3,7 @@
 ########################################################
 # global parameters
 ########################################################
-time=`date "+%Y%b%d_%H%M"`
+time=$(date "+%Y%b%d_%H%M")
 MEM_LIMIT=0
 FG=1
 LOGDIR="/tmp"
@@ -89,7 +89,7 @@ parse_args () {
             ;;
         -*)
             echo "`basename $0`: ERROR: Unrecognized option \"$1\"" >&2
-            #exit 1
+            exit 1
             ;;
         *)
             # Treat anything not starting with `-` as a positional argument (filename)
@@ -135,7 +135,7 @@ check_files ()
   SIZE_OF_ARRAY="${#ARRAY[@]}"
   
   if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
-      echo '${RED}ERROR: No files given!${NC}' >&2
+      echo "${RED}ERROR: No files given!${NC}" >&2
       help
       exit 1
   fi
@@ -196,14 +196,14 @@ get_no_processes () {
     mem_total=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 
     # Convert KB to GB
-    mem_gb=$(echo "$mem_total / 1024 / 1024" | bc)
+    mem_gb=$(echo "scale=2; $mem_total / 1024 / 1024" | bc)
 
   elif [ "$ARCH" == "Darwin" ]; then
     # Get total installed memory in bytes
     mem_total=$(sysctl hw.memsize | awk '{print $2}')
 
     # Convert bytes to GB
-    mem_gb=$(echo "$mem_total / 1024 / 1024 / 1024" | bc)
+    mem_gb=$(echo "scale=2; $mem_total / 1024 / 1024 / 1024" | bc)
 
   elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]; then
     # Get total installed memory in KB
@@ -217,7 +217,10 @@ get_no_processes () {
   fi
     
   # Calculate number of processes (at least 1) and require 10GB memory for each process
-  NUMBER_OF_JOBS=$(echo "if ($mem_gb < 10) 1 else $mem_gb / $MEM_LIMIT" | bc)
+  NUMBER_OF_JOBS=$(echo "$mem_gb / $MEM_LIMIT" | bc)
+  if [ "$NUMBER_OF_JOBS" -lt 1 ]; then
+    NUMBER_OF_JOBS=1
+  fi
 }
 
 ########################################################
@@ -335,7 +338,7 @@ do_parallelize ()
             echo \"\$msg\" >> $log            
             $COMMAND \$k
           done
-        " >> "$log" 2>&1 &
+        " >> "$log" 2>&1 & pids+=($!)
       fi
     fi
     ((i++))
@@ -344,7 +347,9 @@ do_parallelize ()
   # keep all processes in foreground
   if [ "${FG}" -eq 1 ]; then
       echo "Waiting for jobs to complete..."
-      wait
+      for pid in "${pids[@]}"; do
+        wait "$pid"
+      done
       
       # get overall processing time
       end=$(date +%s)
