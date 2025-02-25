@@ -53,6 +53,7 @@ correct_thickness=1
 use_bids_naming=0
 thickness_fwhm=6
 median_filter=2
+save_lesions=0
 save_hemi=0
 save_surf=1
 save_csf=0
@@ -206,6 +207,9 @@ parse_args ()
         ;;
       --no-mwp*)
         save_mwp=0
+        ;;
+      --lesions*)
+        save_lesions=1
         ;;
       --wp*)
         save_wp=1
@@ -540,7 +544,7 @@ surface_estimation()
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
     ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
-  
+
     # Updates progress to 'Extract $side surface'.
     bar 4 $end_count "Extract $side surface"
   
@@ -551,7 +555,7 @@ surface_estimation()
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
     ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
-  
+    
     # Updates progress to 'Map $side thickness values'.
     bar 6 $end_count "Map $side thickness values"
   
@@ -906,6 +910,7 @@ process ()
       [ "${save_wp}" -eq 1 ] && cmd+=" --wp"
       [ "${save_rp}" -eq 1 ] && cmd+=" --rp"
       [ "${save_p}" -eq 1 ] && cmd+=" --p"
+      [ "${save_lesions}" -eq 1 ] && cmd+=" --lesions --amapdir ${bin_dir}"
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
       [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
@@ -1032,6 +1037,7 @@ ${BOLD}OPTIONS:${NC}
   --rp                      Additionally save affine-registered segmentations.
   --p                       Additionally save native space segmentations.
   --csf                     Additionally save CSF segmentations (default: only GM/WM are saved).
+  --lesions                 Additionally save WMH lesions.
   --bids                    Use BIDS (Brain Imaging Data Structure) standard for output file 
                             naming conventions (not yet fully working!).
 

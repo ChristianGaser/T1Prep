@@ -121,7 +121,7 @@ def find_largest_cluster(binary_volume):
     largest_component_label = component_sizes.argmax()
     
     # Create a binary mask for the largest component
-    largest_cluster = (labeled_volume == largest_component_label)
+    largest_cluster = labeled_volume == largest_component_label
     
     return largest_cluster
 

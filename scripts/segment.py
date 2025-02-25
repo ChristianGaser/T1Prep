@@ -67,6 +67,8 @@ def run_segment():
                         help="(optional) Save native segmentations.")
     parser.add_argument("-r", '--rp', action="store_true", 
                         help="(optional) Save affine registered segmentations.")
+    parser.add_argument("-l", '--lesions', action="store_true", 
+                        help="(optional) Save also WMH lesions.")
     parser.add_argument("-b", '--bids', action="store_true", 
                         help="(optional) Use bids naming convention.")
     parser.add_argument("-a", '--amap', action="store_true", 
@@ -78,8 +80,8 @@ def run_segment():
     args = parser.parse_args()
 
     # Input/output parameters
-    t1_name  = args.input
-    out_dir  = args.outdir
+    t1_name = args.input
+    out_dir = args.outdir
     amap_dir = args.amapdir
     
     # Processing options
@@ -89,10 +91,11 @@ def run_segment():
     
     # Save options
     save_mwp = args.mwp
-    save_wp  = args.wp
-    save_rp  = args.rp
-    save_p   = args.p
+    save_wp = args.wp
+    save_rp = args.rp
+    save_p = args.p
     save_csf = args.csf
+    save_lesions = args.lesions
     save_hemilabel = args.surf
 
     # Check for GPU support
@@ -105,15 +108,17 @@ def run_segment():
     else:
         device = torch.device("cpu")
         no_gpu = True
-            
+
     # Set processing parameters
     target_res = np.array([0.5]*3) # Target resolution for resampling
     count = 1
     end_count = 4
     if save_mwp:
-        end_count = 5
+        end_count += 1
     if save_hemilabel:
-        end_count = 7
+        end_count += 3
+    if use_amap:
+        end_count += 1
     
     # Prepare filenames and load input MRI data
     out_name = os.path.basename(
@@ -163,58 +168,62 @@ def run_segment():
         
     warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
 
-    # Conditional processing based on AMAP flag
-    if (use_amap):
+    # Correct bias using label from deepmriprep
+    bias, brain_large = correct_bias_field(brain_large, p0_large)
+    
+    # Conditional processing based on AMAP or lesion flag
+    if (use_amap | save_lesions):
         # AMAP segmentation pipeline
         amapdir = args.amapdir
         
-        # Correct bias using label from deepmriprep
-        count = progress_bar(count, end_count, 'Fine Amap segmentation')
-        bias, brain_large = correct_bias_field(brain_large, p0_large)
+        count = progress_bar(count, end_count, 'Amap segmentation')
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
         
-        # Call AMAP
-        cleanup_gm = False
-        if (cleanup_gm):
-            cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
-                ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 ' +
-                ' -write-seg 0 0 0 -label ' +
-                f'{out_dir}/{out_name}_seg_large.nii' + ' ' +
-                f'{out_dir}/{out_name}_brain_large.nii')
-            os.system(cmd)
-            p0_large = nib.load(f'{out_dir}/{out_name}_brain_large_seg.nii')
-            output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
+        # Call AMAP and write GM and label map
+        cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
+            ' -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 ' +
+            ' -write-seg 0 1 0 -label ' +
+            f'{out_dir}/{out_name}_seg_large.nii' + ' ' +
+            f'{out_dir}/{out_name}_brain_large.nii')
+        os.system(cmd)
+      
+    if (use_amap):
+        # Load Amap label
+        p0_large_amap = nib.load(f'{out_dir}/{out_name}_seg_large.nii')
+        
+        # Call deepmriprep refinement of Amap label
+        count = progress_bar(count, end_count, 'Fine Amap segmentation')
+        output_nogm = prep.run_segment_nogm(p0_large_amap, affine, t1)
+    else:
+        # Call deepmriprep refinement of deepmriprep label
+        count = progress_bar(count, end_count, 'Fine DeepMriPrep segmentation')
+        output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 
-            # Load probability maps for GM, WM, CSF
-            p1_large = output_nogm['p1_large']
-            p2_large = output_nogm['p2_large']
-            p3_large = output_nogm['p3_large']        
-        else:
-            cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
-                ' -nowrite-corr -bias-fwhm 0 -cleanup 2 -mrf 0 ' +
-                ' -write-seg 1 1 1 -label ' +
-                f'{out_dir}/{out_name}_seg_large.nii' + ' ' +
-                f'{out_dir}/{out_name}_brain_large.nii')
-            os.system(cmd)
+    # Load probability maps for GM, WM, CSF
+    p1_large = output_nogm['p1_large']
+    p2_large = output_nogm['p2_large']
+    p3_large = output_nogm['p3_large']
 
-            # Load probability maps for GM, WM, CSF
-            p0_large = nib.load(f'{out_dir}/{out_name}_brain_large_seg.nii')
-            p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
-            p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
-            p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
+    gmv = output_nogm['gmv']
+    tiv = output_nogm['tiv']
+        
+    if (save_lesions):
+        # Get original WM mask from deepmriprep label (without any lesions)
+        wm = p0_large.get_fdata() > 2.5
+
+        # Get uncorrected GM map from Amap
+        p1_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
+        
+        # Use difference after correction as lesion map and restrict it to WM areas
+        wm_lesions_large = p1_large_uncorr.get_fdata() - p1_large.get_fdata()
+        wm_lesions_large[~wm | (wm_lesions_large < 0)] = 0
+        wm_lesions_large = nib.Nifti1Image(wm_lesions_large, affine2, header2)
                 
     else:
-        # DeepMRI prep segmentation pipeline
-        count = progress_bar(count, end_count, 'Fine Deepmriprep segmentation')
-        bias, brain_large = correct_bias_field(brain_large, p0_large)
-        output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
         p1_large = output_nogm['p1_large']
         p2_large = output_nogm['p2_large']
         p3_large = output_nogm['p3_large']
-        
-        gmv = output_nogm['gmv']
-        tiv = output_nogm['tiv']
 
     wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
     wj_affine = pd.Series([wj_affine])
@@ -227,6 +236,9 @@ def run_segment():
         csf_TPM = atlas.get_fdata()
         p0_large, p1_large, p2_large, p3_large = cleanup(
             p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM)
+    else:
+        tmp = p3_large.get_fdata() + 2*p1_large.get_fdata() + 3*p2_large.get_fdata()
+        p0_large = nib.Nifti1Image(tmp, affine2, header2)
     
     # Get affine segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
@@ -285,6 +297,10 @@ def run_segment():
             resample_and_save_nifti(
                 p3_large, grid_native, mask.affine, mask.header, 
                 f'{out_dir}/p3{out_name}.nii')
+    if (save_lesions):
+        resample_and_save_nifti(
+            wm_lesions_large, grid_native, mask.affine, mask.header, 
+            f'{out_dir}/p7{out_name}.nii')
 
     # Warping is necessary for surface creation and saving warped segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp)):
@@ -355,12 +371,10 @@ def run_segment():
             affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii', True, True)
 
     # remove temporary AMAP files
-    if use_amap and (not cleanup_gm):
+    if use_amap | save_lesions:
         remove_file(f'{out_dir}/{out_name}_brain_large.nii')
         remove_file(f'{out_dir}/{out_name}_brain_large_seg.nii')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
-        remove_file(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.nii')
-        remove_file(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.nii')
 
 if __name__ == '__main__':
     run_segment()
