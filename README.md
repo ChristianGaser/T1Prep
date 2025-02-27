@@ -38,8 +38,22 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 `--python <FILE>` |Specify the Python interpreter to use (default: $python).
 `--multi <NUMBER>` |Specify the number of processes for parallelization. Use '-1' to automatically estimate the number of available processors 
 `--debug` | Enable verbose output, retain temporary files, and save additional debugging information.
-**Processing Parameters** ||
+**Save Options** ||
 `--out-dir <DIR>` |Specify the output directory (default: current working directory).
+`--no-overwrite <STRING>` |Prevent overwriting existing results by checking for the specified filename pattern.
+`--no-surf` |Skip surface and thickness estimation.
+`--no-seg` |Skip segmentation processing.
+`--no-sphere` |Skip spherical surface registration.
+`--no-mwp` |Skip the estimation of modulated and warped segmentations.
+`--hemisphere` |Additionally save hemispheric partitions of the segmentation.
+`--pial-white` |Additionally extract the pial and white surface.
+`--wp` |Additionally save warped segmentations.
+`--rp` |Additionally save affine-registered segmentations.
+`--p` |Additionally save native space segmentations.
+`--csf` |Additionally save CSF segmentations (default: only GM/WM are saved).
+`--lesions` |Additionally save WMH lesions.
+`--bids` |Use BIDS (Brain Imaging Data Structure) standard for output file naming conventions.
+**Expert Options** ||
 `--amap` | Use AMAP segmentation instead of DeepMRIPrep.
 `--pre-fwhm <NUMBER>` |Specify the pre-smoothing FWHM size in CAT_VolMarchingCubes 
 `--post-fwhm <NUMBER>` |Specify the post-smoothing FWHM size in CAT_VolMarchingCubes 
@@ -48,20 +62,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 `--thresh <NUMBER>` |Specify the isovalue threshold for surface creation in CAT_VolMarchingCubes
 `--vessel <NUMBER>` |Set the initial white matter (WM) threshold for vessel removal. Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable vessel removal.
 `--downsample <NUMBER>` |Specify the downsampling factor for PPM and GMT maps to reduce surface intersections (default: $downsample).
-`--min-thickness <NUMBER>` |Specify the minimum thickness value (values below this are set to zero) for the vbdist method (default: $min_thickness).
 `--median-filter <NUMBER>` |Specify the number of median filter applications to reduce topology artifacts.
-**Save Options** ||
-`--no-overwrite <STRING>` |Prevent overwriting existing results by checking for the specified filename pattern.
-`--no-surf` |Skip surface and thickness estimation.
-`--no-seg` |Skip segmentation processing.
-`--no-sphere` |Skip spherical surface registration.
-`--no-mwp` |Skip the estimation of modulated and warped segmentations.
-`--hemisphere` |Additionally save hemispheric partitions of the segmentation.
-`--wp` |Additionally save warped segmentations.
-`--rp` |Additionally save affine-registered segmentations.
-`--p` |Additionally save native space segmentations.
-`--csf` |Additionally save CSF segmentations (default: only GM/WM are saved).
-`--bids` |Use BIDS (Brain Imaging Data Structure) standard for output file naming conventions.
 
 ## Examples
 ```bash
@@ -83,6 +84,13 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
     for files where 'surf/lh.thickness.*' already exists, and save new results in the same 
     directory as the input files.
 
+```bash
+  ./scripts/T1Prep --pial-white --lesion --no-sphere sTRIO*.nii
+```
+    Process all files matching the pattern 'sTRIO*.nii'. Skip processing of spherical
+    registration, but additionally save lesion map (named p7sTRIO*.nii) and pial
+    and white surface.
+  
 ```bash
   ./scripts/T1Prep --multi -1 --p --csf sTRIO*.nii
 ```
