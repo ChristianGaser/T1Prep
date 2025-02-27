@@ -581,7 +581,7 @@ surface_estimation()
       # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
       bar 10 $end_count "Spherical estimate_spherereg $side hemisphere"
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
-      ${bin_dir}/CAT_WarpSurf ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
+      ${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
     fi
   else
     if [ "${estimate_seg}" -eq 0 ]; then    
@@ -1102,6 +1102,8 @@ ${BOLD}USED FUNCTIONS:${NC}
   - CAT_VolMarchingCubes
   - CAT_Vol2Surf
   - CAT_SurfCentral2Pial
+  - CAT_SurfWarp
+  - CAT_Surf2Sphere
   - ${cmd_dir}/segment.py
   - ${cmd_dir}/utils.py
   - ${cmd_dir}/parallelize
