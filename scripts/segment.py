@@ -17,12 +17,10 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
-from deepbet import BrainExtraction
 from deepbet.utils import reoriented_nifti
 from deepmriprep.preprocess import Preprocess
-from deepmriprep.segment import BrainSegmentation
-from deepmriprep.utils import DEVICE, DATA_PATH, nifti_to_tensor, nifti_volume
-from deepmriprep.atlas import ATLASES, get_volumes, shape_from_to, AtlasRegistration
+from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
+from deepmriprep.atlas import ATLASES, get_volumes
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum
@@ -315,18 +313,12 @@ def run_segment():
             mwp2 = output_reg['mwp2']
             nib.save(mwp1, f'{out_dir}/mwp1{out_name}.nii')
             nib.save(mwp2, f'{out_dir}/mwp2{out_name}.nii')
-            if (save_csf):
-                mwp3 = output_reg['mwp3']
-                nib.save(mwp3, f'{out_dir}/mwp3{out_name}.nii')
             
         if (save_wp):
             wp1 = output_reg['mwp1']
             wp2 = output_reg['mwp2']
             nib.save(wp1, f'{out_dir}/wp1{out_name}.nii')
             nib.save(wp2, f'{out_dir}/wp2{out_name}.nii')
-            if (save_csf):
-                wp3 = output_reg['mwp3']
-                nib.save(wp3, f'{out_dir}/wp3{out_name}.nii')
 
         nib.save(warp_xy, f'{out_dir}/y_{out_name}.nii')
         #nib.save(warp_yx, f'{out_dir}/iy_{out_name}.nii')
