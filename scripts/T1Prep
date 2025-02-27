@@ -555,13 +555,13 @@ surface_estimation()
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
     if (( $(echo "$shift != 0" | bc) )); then
-      ${bin_dir}/CAT_Central2Pial ${verbose} ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${shift}
+      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${shift}
     fi
 
-    # Executes 'CAT_Central2Pial' twice to estimate both pial and white matter surfaces.
+    # Executes 'CAT_SurfCentral2Pial' twice to estimate both pial and white matter surfaces.
     if [ "${estimate_pial_white}" -eq 1 ]; then
-      ${bin_dir}/CAT_Central2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
-      ${bin_dir}/CAT_Central2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
+      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
+      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
       
       # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
       if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
@@ -1101,8 +1101,7 @@ ${BOLD}USED FUNCTIONS:${NC}
   - CAT_VolThicknessPbt
   - CAT_VolMarchingCubes
   - CAT_Vol2Surf
-  - CAT_SurfDistance
-  - CAT_Central2Pial
+  - CAT_SurfCentral2Pial
   - ${cmd_dir}/segment.py
   - ${cmd_dir}/utils.py
   - ${cmd_dir}/parallelize
