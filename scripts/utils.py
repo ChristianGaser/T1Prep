@@ -19,7 +19,7 @@ from deepbet.utils import reoriented_nifti
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
-from scipy.ndimage import binary_dilation, grey_opening, binary_closing, generate_binary_structure, label
+from scipy.ndimage import binary_opening, binary_dilation, grey_opening, binary_closing, generate_binary_structure, label
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
 from pathlib import Path
@@ -586,72 +586,68 @@ def get_partition(p0_large, atlas):
     rois = pd.read_csv(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
     regions = dict(zip(rois.ROIabbr,rois.ROIid))
 
-    atlas = atlas.get_fdata()
+    atlas_data = atlas.get_fdata()
+    p0_data = p0_large.get_fdata()
+    gm = (p0_data > 1.5) & (p0_data < 2.5)
+    gm_regions = ["lCbrGM","rCbrGM","lAmy", "lHip", "rAmy", "rHip"]
 
-    # left hemisphere    
-    # first we have to dilate the ventricles because otherwise after filling there remains
-    # a rim around it
-    lateral_ventricle = (atlas == regions["lLatVen"]) | (atlas == regions["lInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 6)
-    # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
-    lateral_ventricle = (lateral_ventricle & ~(atlas == regions["rLatVen"]) &
-                       ~(atlas == regions["rCbrWM"]) & ~(atlas == regions["bCSF"]) &
-                       ~(atlas == regions["lAmy"]) & ~(atlas == regions["lHip"]))
-    #WM 
-    wm = (((atlas >= regions["lThaPro"])  &  (atlas <= regions["lPal"])) |
-           (atlas == regions["lAcc"])    |  (atlas == regions["lVenDC"]))
-    # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, generate_binary_structure(3, 3), 4) | lateral_ventricle
+    # Create cerebral GM mask
+    gm_mask = np.isin(atlas_data, [regions[r] for r in gm_regions])
+    gm_mask = binary_dilation(gm_mask, generate_binary_structure(3, 3), 2)
+    gm = gm & gm_mask
 
-    # CSF + BKG
-    csf = ((atlas == 0)                  |  (atlas == regions["lCbeWM"]) |
-           (atlas == regions["lCbeGM"])  |  (atlas == regions["b3thVen"]) |
-           (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) |
-           (atlas >= regions["rCbrWM"]))
+    # Define left and right hemisphere regions
+    left_regions = ["lCbrWM", "lCbrGM", "lLatVen", "lInfLatVen", "lThaPro",
+                    "lCau", "lPut", "lPal", "lHip", "lAmy", "lAcc", "lVenDC"]
+    right_regions = [r.replace("l", "r", 1) for r in left_regions]  # Replace only first 'l'
 
-    lesion_mask = atlas == regions["lCbrWM"]
+    # Create left/right masks
+    left  = np.isin(atlas_data, [regions[r] for r in left_regions])
+    right = np.isin(atlas_data, [regions[r] for r in right_regions])
+
+    # Process hemispheres: dilation and closing to refine boundaries
+    lh = binary_dilation(left, generate_binary_structure(3, 3), 5) & ~right
+    rh = binary_dilation(right, generate_binary_structure(3, 3), 5) & ~left
+
+    left  = binary_closing(lh, generate_binary_structure(3, 3), 2) & ~rh
+    right = binary_closing(rh, generate_binary_structure(3, 3), 2) & ~left
+
+    # Define regions to exclude
+    excl_regions = ["lCbeWM", "lCbeGM", "rCbeWM", "rCbeGM", "b3thVen", "b4thVen"]
+
+    # Create masks
+    exclude = np.isin(atlas_data, [regions[r] for r in excl_regions])
+    exclude = binary_dilation(exclude, generate_binary_structure(3, 3), 1)
+    exclude = exclude | binary_dilation(np.isin(atlas_data, regions["bBst"]), generate_binary_structure(3, 3), 5)
+
+    # Define regions that should be filled with WM 
+    wm_regions = ["lThaPro", "lCau", "lPut", "lPal", "lAcc", "lLatVen", "lInfLatVen",
+                  "rThaPro", "rCau", "rPut", "rPal", "rAcc", "rLatVen", "rInfLatVen"]
+
+    wm_fill  = np.isin(atlas_data, [regions[r] for r in wm_regions])
+    wm_fill  = binary_dilation(wm_fill, generate_binary_structure(3, 3), 10) 
 
     # build hemispheric label with CSF=1, GM=2, and WM=3
     # adding 0 is neccessary to create a new variable otherwise amap is also modified
-    lh = p0_large.get_fdata() + 0
+    lh = np.copy(p0_data)
     lh[lh < 1] = 1
-    lh[csf] = 1
-    lh[wm]  = 3
-        
-    # right hemisphere    
-    # first we have to dilate the ventricles because otherwise after filling there remains
-    # a rim around it
-    lateral_ventricle = (atlas == regions["rLatVen"]) | (atlas == regions["rInfLatVen"])
-    lateral_ventricle = binary_dilation(lateral_ventricle, generate_binary_structure(3, 3), 6)
-    # don't use dilated ventricles in the opposite hemisphere or Amygdala/Hippocampus
-    lateral_ventricle = (lateral_ventricle & ~(atlas == regions["lLatVen"]) &
-                       ~(atlas == regions["lCbrWM"]) & ~(atlas == regions["bCSF"]) &
-                       ~(atlas == regions["rAmy"]) & ~(atlas == regions["rHip"]))
-    # WM 
-    wm =  (((atlas >= regions["rThaPro"]) &  (atlas <= regions["rPal"])) |
-            (atlas == regions["rAcc"])    |  (atlas == regions["rVenDC"]))
-    # we also have to dilate whole WM to close the remaining rims
-    wm = binary_dilation(wm, generate_binary_structure(3, 3), 4) | lateral_ventricle
+    lh[wm_fill & ~gm_mask] = 3
+    lh[exclude | right] = 1
 
-    # CSF + BKG
-    csf = (((atlas <= regions["lVenDC"]) & ~(atlas == regions["bCSF"])) |
-            (atlas == regions["rCbeWM"]) |  (atlas == regions["rCbeGM"]))
-
-    csf = ((atlas == 0)                  |  (atlas == regions["rCbeWM"]) |
-           (atlas == regions["rCbeGM"])  |  (atlas == regions["b3thVen"]) |
-           (atlas == regions["b4thVen"]) |  (atlas == regions["bBst"]) |
-           (atlas <= regions["lAmy"])    | (atlas == regions["lVenDC"]) | 
-           (atlas == regions["lAcc"]))
-
-    lesion_mask = atlas == regions["rCbrWM"]
-
-    # build hemispheric label with CSF=1, GM=2, and WM=3
-    # adding 0 is neccessary to create a new variable otherwise amap is also modified
-    rh = p0_large.get_fdata() + 0
+    rh = np.copy(p0_data)
     rh[rh < 1] = 1
-    rh[csf] = 1
-    rh[wm]  = 3
+    rh[wm_fill & ~gm_mask] = 3
+    rh[exclude | left] = 1
     
+    # Finally remove small non-connected parts from hemi maps
+    mask = (lh > 1.5)| (rh > 1.5)
+    mask = binary_closing(mask, generate_binary_structure(3, 3), 1)
+    mask = binary_opening(mask, generate_binary_structure(3, 3), 2)
+    mask = find_largest_cluster(mask)
+    mask = binary_dilation(mask, generate_binary_structure(3, 3), 1)
+    lh[~mask] = 1
+    rh[~mask] = 1
+
     return lh, rh
 
 def align_brain(data, aff, header, aff_ref, do_flip):
