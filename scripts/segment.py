@@ -69,6 +69,8 @@ def run_segment():
                         help="(optional) Save also WMH lesions.")
     parser.add_argument("-b", '--bids', action="store_true", 
                         help="(optional) Use bids naming convention.")
+    parser.add_argument("-g", '--gz', action="store_true", 
+                        help="(optional) Save nii.gz images.")
     parser.add_argument("-a", '--amap', action="store_true", 
                         help="(optional) Use AMAP segmentation.")
     parser.add_argument('-d', '--amapdir', 
@@ -93,6 +95,7 @@ def run_segment():
     save_rp = args.rp
     save_p = args.p
     save_csf = args.csf
+    save_gz = args.gz
     save_lesions = args.lesions
     save_hemilabel = args.surf
 
@@ -117,12 +120,17 @@ def run_segment():
         end_count += 3
     if use_amap:
         end_count += 1
+        
+    if save_gz:
+        ext = 'nii.gz'
+    else:
+        ext = 'nii'
     
     # Prepare filenames and load input MRI data
     out_name = os.path.basename(
         os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '').replace('.gz','')
     t1 = nib.load(t1_name)
-
+    
     # copy necessary model files from local folder to install it, since often the API rate limit is exceeded
     Path(f'{DATA_PATH}/models').mkdir(exist_ok=True)
     for file in MODEL_FILES:
@@ -175,20 +183,20 @@ def run_segment():
         amapdir = args.amapdir
         
         count = progress_bar(count, end_count, 'Amap segmentation')
-        nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.nii')
-        nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.nii')
+        nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.{ext}')
+        nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.{ext}')
         
         # Call AMAP and write GM and label map
         cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
             ' -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 ' +
             ' -write-seg 0 1 0 -label ' +
-            f'{out_dir}/{out_name}_seg_large.nii' + ' ' +
-            f'{out_dir}/{out_name}_brain_large.nii')
+            f'{out_dir}/{out_name}_seg_large.{ext}' + ' ' +
+            f'{out_dir}/{out_name}_brain_large.{ext}')
         os.system(cmd)
       
     if (use_amap):
         # Load Amap label
-        p0_large_amap = nib.load(f'{out_dir}/{out_name}_seg_large.nii')
+        p0_large_amap = nib.load(f'{out_dir}/{out_name}_seg_large.{ext}')
         
         # Call deepmriprep refinement of Amap label
         count = progress_bar(count, end_count, 'Fine Amap segmentation')
@@ -211,7 +219,7 @@ def run_segment():
         wm = p0_large.get_fdata() > 2.5
 
         # Get uncorrected GM map from Amap
-        p1_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
+        p1_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
         
         # Use difference after correction as lesion map and restrict it to WM areas
         wm_lesions_large = p1_large_uncorr.get_fdata() - p1_large.get_fdata()
@@ -273,32 +281,32 @@ def run_segment():
     
     # Save affine registration
     if (save_rp):
-        nib.save(p1_affine, f'{out_dir}/rp1{out_name}_affine.nii')
-        nib.save(p2_affine, f'{out_dir}/rp2{out_name}_affine.nii')
+        nib.save(p1_affine, f'{out_dir}/rp1{out_name}_affine.{ext}')
+        nib.save(p2_affine, f'{out_dir}/rp2{out_name}_affine.{ext}')
         if (save_csf):
-            nib.save(p3_affine, f'{out_dir}/rp3{out_name}_affine.nii')
+            nib.save(p3_affine, f'{out_dir}/rp3{out_name}_affine.{ext}')
 
     # Save native registration
     resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, 
-        f'{out_dir}/p0{out_name}.nii')
+        f'{out_dir}/p0{out_name}.{ext}')
     if (save_p):
         resample_and_save_nifti(
             brain_large, grid_native, mask.affine, mask.header, 
-            f'{out_dir}/m{out_name}.nii')
+            f'{out_dir}/m{out_name}.{ext}')
         resample_and_save_nifti(
             p1_large, grid_native, mask.affine, mask.header, 
-            f'{out_dir}/p1{out_name}.nii')
+            f'{out_dir}/p1{out_name}.{ext}')
         resample_and_save_nifti(
             p2_large, grid_native, mask.affine, mask.header, 
-            f'{out_dir}/p2{out_name}.nii')
+            f'{out_dir}/p2{out_name}.{ext}')
         if (save_csf):
             resample_and_save_nifti(
                 p3_large, grid_native, mask.affine, mask.header, 
-                f'{out_dir}/p3{out_name}.nii')
+                f'{out_dir}/p3{out_name}.{ext}')
     if (save_lesions):
         resample_and_save_nifti(
             wm_lesions_large, grid_native, mask.affine, mask.header, 
-            f'{out_dir}/p7{out_name}.nii')
+            f'{out_dir}/p7{out_name}.{ext}')
 
     # Warping is necessary for surface creation and saving warped segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp)):
@@ -311,17 +319,17 @@ def run_segment():
         if (save_mwp):
             mwp1 = output_reg['mwp1']
             mwp2 = output_reg['mwp2']
-            nib.save(mwp1, f'{out_dir}/mwp1{out_name}.nii')
-            nib.save(mwp2, f'{out_dir}/mwp2{out_name}.nii')
+            nib.save(mwp1, f'{out_dir}/mwp1{out_name}.{ext}')
+            nib.save(mwp2, f'{out_dir}/mwp2{out_name}.{ext}')
             
         if (save_wp):
             wp1 = output_reg['mwp1']
             wp2 = output_reg['mwp2']
-            nib.save(wp1, f'{out_dir}/wp1{out_name}.nii')
-            nib.save(wp2, f'{out_dir}/wp2{out_name}.nii')
+            nib.save(wp1, f'{out_dir}/wp1{out_name}.{ext}')
+            nib.save(wp2, f'{out_dir}/wp2{out_name}.{ext}')
 
-        nib.save(warp_xy, f'{out_dir}/y_{out_name}.nii')
-        #nib.save(warp_yx, f'{out_dir}/iy_{out_name}.nii')
+        nib.save(warp_xy, f'{out_dir}/y_{out_name}.{ext}')
+        #nib.save(warp_yx, f'{out_dir}/iy_{out_name}.{ext}')
 
         """
         # write atlas ROI volumes to csv files
@@ -357,16 +365,16 @@ def run_segment():
         count = progress_bar(count, end_count, 'Resampling                     ')
         resample_and_save_nifti(
             nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, 
-            affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.nii', True, True)
+            affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.{ext}', True, True)
         resample_and_save_nifti(
             nib.Nifti1Image(rh, p0_large.affine, p0_large.header), grid_target_res, 
-            affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.nii', True, True)
+            affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.{ext}', True, True)
 
     # remove temporary AMAP files
     if use_amap | save_lesions:
-        remove_file(f'{out_dir}/{out_name}_brain_large.nii')
-        remove_file(f'{out_dir}/{out_name}_brain_large_seg.nii')
-        remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.nii')
+        remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
+        remove_file(f'{out_dir}/{out_name}_brain_large_seg.{ext}')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
 
 if __name__ == '__main__':
     run_segment()
