@@ -2,12 +2,9 @@
 .DS_Store
 log*
 *.nii
-test.py
 data
-T1prep-env
-MacOS
-Windows
-Linux*
+env
+bin
 test
 
 BIDS-Naming.txt

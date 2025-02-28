@@ -3,7 +3,7 @@
 
 VERSION='0.9'
 
-FILES=scripts templates_surfaces_32k data MacOS Linux Windows LICENSE README.md requirements.txt
+FILES=scripts src data bin LICENSE README.md requirements.txt
 
 ZIPFILE=T1Prep_${VERSION}.zip
 

@@ -44,8 +44,9 @@ WHITE=$(tput setaf 7)
 
 # defaults
 T1prep_dir=$(dirname $(dirname "$0"))
-surf_templates_dir=${T1prep_dir}/templates_surfaces_32k
-T1prep_env=${T1prep_dir}/T1Prep-env
+surf_templates_dir=${T1prep_dir}/data/templates_surfaces_32k
+T1prep_env=${T1prep_dir}/env
+src_dir=${T1prep_dir}/src
 os_type=$(uname -s) # Determine OS type
 outsurfdir=''
 outmridir=''
@@ -108,7 +109,6 @@ main ()
 
 parse_args ()
 {
-  cmd_dir=$(dirname "$0")
   local optname optarg
 
   if [ $# -lt 1 ]; then
@@ -432,18 +432,18 @@ get_OS ()
 
   case "$os_type" in
     Linux*)   
-      bin_dir="${T1prep_dir}/Linux"
+      bin_dir="${T1prep_dir}/bin/Linux"
       ;;
     Darwin*)  
       if [[ "$cpu_arch" == arm64 ]]; then 
-        bin_dir="${T1prep_dir}/MacOS"
+        bin_dir="${T1prep_dir}/bin/MacOS"
       else 
         echo "MacOS Intel not supported anymore"
         exit 1
       fi
       ;;
     CYGWIN*|MINGW32*|MSYS*|MINGW*) 
-      bin_dir="${T1prep_dir}/Windows"
+      bin_dir="${T1prep_dir}/bin/Windows"
       ;;
     *)
       echo "Unknown OS system"
@@ -591,7 +591,7 @@ surface_estimation()
     if [ "${estimate_seg}" -eq 0 ]; then    
       echo "${RED}ERROR: Could not find ${outmridir}/${!hemi}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
     else
-      echo "${RED}ERROR: ${python} ${cmd_dir}/segment.py failed (file ${outmridir}/${!hemi} not found)${NC}" >&2
+      echo "${RED}ERROR: ${python} ${src_dir}/segment.py failed (file ${outmridir}/${!hemi} not found)${NC}" >&2
     fi
   fi
 }
@@ -891,7 +891,7 @@ process ()
 
       # Initialize command string with the Python script call
 
-      cmd="${python} ${cmd_dir}/segment.py"
+      cmd="${python} ${src_dir}/segment.py"
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap --amapdir ${bin_dir}"
@@ -929,7 +929,7 @@ process ()
       # ----------------------------------------------------------------------
       # check for outputs from previous step
       if [ ! -f "${outmridir}/${hemi_right}" ]; then
-        echo "${RED}ERROR: ${cmd_dir}/segment.py failed (file ${outmridir}/${hemi_right} not found)${NC}" >&2
+        echo "${RED}ERROR: ${src_dir}/segment.py failed (file ${outmridir}/${hemi_right} not found)${NC}" >&2
         exit 1
         ((i++))
         continue
@@ -1110,9 +1110,9 @@ ${BOLD}USED FUNCTIONS:${NC}
   - CAT_SurfCentral2Pial
   - CAT_SurfWarp
   - CAT_Surf2Sphere
-  - ${cmd_dir}/segment.py
-  - ${cmd_dir}/utils.py
-  - ${cmd_dir}/parallelize
+  - ${src_dir}/segment.py
+  - ${src_dir}/utils.py
+  - ${src_dir}/parallelize
 
 ${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
