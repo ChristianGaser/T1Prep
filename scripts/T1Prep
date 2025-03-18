@@ -51,7 +51,7 @@ os_type=$(uname -s) # Determine OS type
 outsurfdir=''
 outmridir=''
 use_bids_naming=0
-thickness_fwhm=3
+thickness_fwhm=0
 median_filter=2
 save_lesions=0
 save_hemi=0
@@ -67,14 +67,14 @@ estimate_spherereg=1
 estimate_seg=1
 downsample=0.0
 vessel=0.5
-sharpening=0.02
+sharpening=0.0
 post_fwhm=1.5
 pre_fwhm=2
 re_install=0
 use_sanlm=0
 use_amap=0
 isoval=0.5
-thresh=0.5
+thresh=0.6
 debug=0
 multi=0
 
@@ -155,7 +155,7 @@ parse_args ()
         downsample=$optarg
         shift
         ;;
-      --sharpen)
+      --sharpen*)
         exit_if_empty "$optname" "$optarg"
         sharpening=$optarg
         shift
@@ -546,22 +546,21 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} -scl-opening 0.9 -local-smoothing 10 ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
+    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
     
-    # Updates progress to 'Map $side thickness values'.
-    bar 6 $end_count "Map $side thickness values"
+    # Updates progress to 'Deform $side surface'
+    bar 6 $end_count "Deform $side surface"
   
+    ${bin_dir}/CAT_SurfDeform ${verbose} -w1 0.1 -w2 0.1 -w3 1.0 -iter 100 -sigma 0.2 -isovalue ${isoval} ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!mid}
+
+    # Updates progress to 'Map $side thickness values'.
+    bar 8 $end_count "Map $side thickness values"
+
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
     ${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
     ${bin_dir}/CAT_Vol2Surf -range 0 5 -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!thick}
   
-    # Estimate the necessary shift if the threshold is not 0.5
-    shift=$(echo "$thresh - $isoval" | bc)
-    if (( $(echo "$shift != 0" | bc) )); then
-      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${shift}
-    fi
-
     # Executes 'CAT_SurfCentral2Pial' twice to estimate both pial and white matter surfaces.
     if [ "${estimate_pial_white}" -eq 1 ]; then
       ${bin_dir}/CAT_SurfCentral2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
@@ -578,12 +577,12 @@ surface_estimation()
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
     if [ "${estimate_spherereg}" -eq 1 ]; then
       # Updates progress to 'Spherical inflation $side hemisphere'.
-      bar 8 $end_count "Spherical inflation $side hemisphere"
+      bar 10 $end_count "Spherical inflation $side hemisphere"
       # Inflates the surface to a sphere with additional areal smoothing.
       ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
   
       # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
-      bar 10 $end_count "Spherical estimate_spherereg $side hemisphere"
+      bar 12 $end_count "Spherical estimate_spherereg $side hemisphere"
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
       ${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
     fi
@@ -942,7 +941,8 @@ process ()
       # check for outputs from previous step
       for side in left right; do
         if [[ "$multi" -ne -2 ]]; then
-          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
+#          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
+          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg
         else
           surface_estimation $side $outmridir $outsurfdir $estimate_spherereg
         fi
@@ -1110,6 +1110,7 @@ ${BOLD}USED FUNCTIONS:${NC}
   - CAT_SurfCentral2Pial
   - CAT_SurfWarp
   - CAT_Surf2Sphere
+  - CAT_SurfDeform
   - ${src_dir}/segment.py
   - ${src_dir}/utils.py
   - ${src_dir}/parallelize

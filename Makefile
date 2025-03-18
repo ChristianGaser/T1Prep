@@ -35,9 +35,6 @@ zip: clean
 # copy binaries after cross-compiling
 cp_binaries: 
 	-@echo copy binaries
-	-@for file in ~/Dropbox/GitHub/CAT-Surface/build-*/Progs/*.o; do \
-			[ -f "$$file" ] && rm "$$file"; \
-	done
-	-@for i in Linux/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` Linux/ ; done
-	-@for i in Windows/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-w64-mingw32/Progs/`basename $${i}` Windows/ ; done
-	-@for i in MacOS/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` MacOS/ ; done
+	-@for i in bin/Linux/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` bin/Linux/ ; done
+	-@for i in bin/Windows/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-w64-mingw32/Progs/`basename $${i}` bin/Windows/ ; done
+	-@for i in bin/MacOS/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` bin/MacOS/ ; done

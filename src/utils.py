@@ -640,7 +640,7 @@ def get_partition(p0_large, atlas):
     rh[exclude | left] = 1
     
     # Finally remove small non-connected parts from hemi maps
-    mask = (lh > 1.5)| (rh > 1.5)
+    mask = (lh > 1)| (rh > 1)
     mask = binary_closing(mask, generate_binary_structure(3, 3), 1)
     mask = binary_opening(mask, generate_binary_structure(3, 3), 2)
     mask = find_largest_cluster(mask)
