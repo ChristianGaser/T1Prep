@@ -242,6 +242,7 @@ parse_args ()
         ;;
       -*)
         echo "`basename $0`: ERROR: Unrecognized option \"$1\"" >&2
+        exit 1
         ;;
       *)
         ARRAY[$count]=$1
@@ -941,8 +942,7 @@ process ()
       # check for outputs from previous step
       for side in left right; do
         if [[ "$multi" -ne -2 ]]; then
-#          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
-          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg
+          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
         else
           surface_estimation $side $outmridir $outsurfdir $estimate_spherereg
         fi

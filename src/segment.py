@@ -23,6 +23,7 @@ from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import ATLASES, get_volumes
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
+from scipy.ndimage import grey_opening
 from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum
 DATA_PATH0 = Path(__file__).resolve().parent.parent / 'data/'
 MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 
@@ -118,7 +119,7 @@ def run_segment():
         end_count += 1
     if save_hemilabel:
         end_count += 3
-    if use_amap:
+    if (save_lesions):
         end_count += 1
         
     if save_gz:
@@ -188,42 +189,68 @@ def run_segment():
         
         # Call AMAP and write GM and label map
         cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
-            ' -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 ' +
-            ' -write-seg 0 1 0 -label ' +
+            ' -nowrite-corr -bias-fwhm 20 -cleanup 1 -mrf 0 ' +
+            ' -write-seg 1 1 1 -label ' +
             f'{out_dir}/{out_name}_seg_large.{ext}' + ' ' +
             f'{out_dir}/{out_name}_brain_large.{ext}')
         os.system(cmd)
       
     if (use_amap):
         # Load Amap label
-        p0_large_amap = nib.load(f'{out_dir}/{out_name}_seg_large.{ext}')
-        
-        # Call deepmriprep refinement of Amap label
-        count = progress_bar(count, end_count, 'Fine Amap segmentation')
-        output_nogm = prep.run_segment_nogm(p0_large_amap, affine, t1)
+        p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
+        p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}')
+        p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}')        
     else:
         # Call deepmriprep refinement of deepmriprep label
         count = progress_bar(count, end_count, 'Fine DeepMriPrep segmentation')
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 
-    # Load probability maps for GM, WM, CSF
-    p1_large = output_nogm['p1_large']
-    p2_large = output_nogm['p2_large']
-    p3_large = output_nogm['p3_large']
+        # Load probability maps for GM, WM, CSF
+        p1_large = output_nogm['p1_large']
+        p2_large = output_nogm['p2_large']
+        p3_large = output_nogm['p3_large']
 
-    gmv = output_nogm['gmv']
-    tiv = output_nogm['tiv']
+        gmv = output_nogm['gmv']
+        tiv = output_nogm['tiv']
         
-    if (save_lesions):
+    if (use_amap | save_lesions):
         # Get original WM mask from deepmriprep label (without any lesions)
         wm = p0_large.get_fdata() > 2.5
 
-        # Get uncorrected GM map from Amap
-        p1_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
-        
+        # Get uncorrected GM/WM maps from Amap
+        if (use_amap):
+            p1_large_uncorr = p1_large
+            p2_large_uncorr = p2_large
+            
+            # We have to extract the corrected GM from deepmriprep p0 map
+            tmp_p0 = p0_large.get_fdata()
+            tmp_p0[(tmp_p0 < 1.5) | (tmp_p0 > 2.5)] = 1.5;
+            tmp_p0 += -1.5
+            p1_large = nib.Nifti1Image(tmp_p0, affine2, header2)
+            
+        else:
+            p1_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
+            p2_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}')
+            
         # Use difference after correction as lesion map and restrict it to WM areas
         wm_lesions_large = p1_large_uncorr.get_fdata() - p1_large.get_fdata()
-        wm_lesions_large[~wm | (wm_lesions_large < 0)] = 0
+        wm_lesions_large = grey_opening(wm_lesions_large, size=[3, 3, 3])
+        ind_wm_lesions = (wm & (wm_lesions_large > 0))
+        wm_lesions_large[~ind_wm_lesions] = 0
+        
+        # Correct GM/WM segmentation + Label
+        if (use_amap):
+            tmp_p1 = p1_large_uncorr.get_fdata()
+            tmp_p1[ind_wm_lesions] -= wm_lesions_large[ind_wm_lesions]
+            tmp_p1[tmp_p1 < 0] = 0
+            p1_large = nib.Nifti1Image(tmp_p1, affine2, header2)
+    
+            tmp_p2 = p2_large_uncorr.get_fdata()
+            tmp_p2[ind_wm_lesions] += wm_lesions_large[ind_wm_lesions]
+            tmp_p2[tmp_p2 > 1] = 1
+            p2_large = nib.Nifti1Image(tmp_p2, affine2, header2)
+            
+        # Convert back to nifti            
         wm_lesions_large = nib.Nifti1Image(wm_lesions_large, affine2, header2)
                 
     else:
@@ -375,6 +402,8 @@ def run_segment():
         remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_seg.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}')
+        remove_file(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}')
 
 if __name__ == '__main__':
     run_segment()
