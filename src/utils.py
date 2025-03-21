@@ -488,7 +488,7 @@ def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align=Non
 
     nib.save(nii_data, out_name)
 
-def get_resampled_header(header, aff, new_vox_size, ras_aff):
+def get_resampled_header(header, aff, new_vox_size, ras_aff, reorder_method=1):
     """
     Adjust the NIfTI header and affine matrix for a new voxel size.
 
@@ -512,12 +512,13 @@ def get_resampled_header(header, aff, new_vox_size, ras_aff):
     pixdim = header2['pixdim']
 
     ras_ref, dirs_ref = get_ras(aff, 3)
-
     factor = pixdim[1:4] / new_vox_size
     reordered_factor = np.zeros_like(pixdim[1:4])
     for i, axis in enumerate(ras_ref):
-        reordered_factor[i] = factor[np.where(ras_aff == axis)[0][0]]
-        #reordered_factor[axis] = dirs_ref[i] * factor[i]  # Adjust for axis direction
+        if (reorder_method == 1):
+            reordered_factor[i] = factor[np.where(ras_aff == axis)[0][0]]
+        else:
+            reordered_factor[axis] = dirs_ref[i] * factor[i]  # Adjust for axis direction
     factor = reordered_factor
 
     dim[1:4] = np.abs(np.round(dim[1:4]*factor))

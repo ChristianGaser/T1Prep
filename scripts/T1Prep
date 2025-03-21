@@ -514,9 +514,9 @@ surface_estimation()
   
   # Change number of commands if spherical registration is disabled
   if [ "${estimate_spherereg}" -eq 1 ]; then
-    ((end_count=10))
+    ((end_count=12))
   else
-    ((end_count=6))
+    ((end_count=8))
   fi
 
   if [ "${debug}" -eq 0 ]; then
