@@ -62,7 +62,6 @@ save_wp=0
 save_rp=0
 save_p=0
 nii_ext='nii'
-estimate_pial_white=0
 estimate_spherereg=1
 estimate_seg=1
 downsample=0.0
@@ -192,9 +191,6 @@ parse_args ()
         ;;
       --gz)
         nii_ext='nii.gz'
-        ;;
-      --pial-white)
-        estimate_pial_white=1
         ;;
       --hemi*)
         save_hemi=1
@@ -552,7 +548,7 @@ surface_estimation()
     # Updates progress to 'Deform $side surface'
     bar 6 $end_count "Deform $side surface"
   
-    ${bin_dir}/CAT_SurfDeform ${verbose} -w1 0.1 -w2 0.1 -w3 1.0 -iter 100 -sigma 0.2 -isovalue ${isoval} ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!mid}
+    ${bin_dir}/CAT_SurfDeform ${verbose} -w1 0.1 -w2 0.1 -w3 1.0 -iter 50 -sigma 0.2 -isovalue ${isoval} ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!mid}
 
     # Updates progress to 'Map $side thickness values'.
     bar 8 $end_count "Map $side thickness values"
@@ -560,19 +556,22 @@ surface_estimation()
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
     ${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
-    ${bin_dir}/CAT_Vol2Surf -range 0 5 -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!thick}
+    #${bin_dir}/CAT_Vol2Surf -range 0 5 -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!thick}
   
-    # Executes 'CAT_SurfCentral2Pial' twice to estimate both pial and white matter surfaces.
-    if [ "${estimate_pial_white}" -eq 1 ]; then
-      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!pial} 0.55
-      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} -label ${outmridir}/${!hemi} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!wm}  -0.55
-      
-      # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
-      if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
-        ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!mid} ${outmridir}/${mT1} ${outsurfdir}/${!intensity}
-        ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!pial} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_pial}
-        ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!wm} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_white}
-      fi
+    # Executes 'CAT_Surf2PialWhite' to estimate both pial and white matter surfaces.
+    ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!white}
+    
+    # Estimate thickness by using the linked distance between pial and white matter surface and limit to maximum of 5.0
+    ${bin_dir}/CAT_SurfDistance -max 5.0 -link ${outsurfdir}/${!pial} ${outsurfdir}/${!white} ${outsurfdir}/${!thick}
+    
+    # Get central surface by averaging pial and white matter surface
+    ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!white}
+    
+    # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
+    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
+      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!mid} ${outmridir}/${mT1} ${outsurfdir}/${!intensity}
+      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!pial} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_pial}
+      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!wm} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_white}
     fi
   
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
@@ -1024,7 +1023,6 @@ ${BOLD}OPTIONS:${NC}
   --no-sphere-reg           Skip spherical surface registration.
   --no-mwp                  Skip the estimation of modulated and warped segmentations.
   --hemisphere              Additionally save hemispheric partitions of the segmentation.
-  --pial-white              Additionally extract the pial and white surface.
   --wp                      Additionally save warped segmentations.
   --rp                      Additionally save affine-registered segmentations.
   --p                       Additionally save native space segmentations.
@@ -1069,10 +1067,9 @@ ${BLUE}${T1prep_dir}/T1Prep --python python3.8 --no-overwrite "surf/lh.thickness
   for files where 'surf/lh.thickness.*' already exists, and save new results in the same 
   directory as the input files.
 
-${BLUE}${T1prep_dir}/T1Prep --pial-white --lesions --no-sphere-reg sTRIO*.nii${NC}
+${BLUE}${T1prep_dir}/T1Prep --lesions --no-sphere-reg sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Skip processing of spherical
-  registration, but additionally save lesion map (named p7sTRIO*.nii) and pial
-  and white surface.
+  registration, but additionally save lesion map (named p7sTRIO*.nii).
    
 ${BLUE}${T1prep_dir}/T1Prep --multi -1 --p --csf sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
@@ -1107,7 +1104,8 @@ ${BOLD}USED FUNCTIONS:${NC}
   - CAT_VolThicknessPbt
   - CAT_VolMarchingCubes
   - CAT_Vol2Surf
-  - CAT_SurfCentral2Pial
+  - CAT_Surf2PialWhite
+  - CAT_SurfDistance
   - CAT_SurfWarp
   - CAT_Surf2Sphere
   - CAT_SurfDeform
