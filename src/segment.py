@@ -318,10 +318,9 @@ def run_segment():
     # Save native registration
     resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, 
         f'{out_dir}/p0{out_name}.{ext}')
+    resample_and_save_nifti(brain_large, grid_native, mask.affine, mask.header, 
+        f'{out_dir}/m{out_name}.{ext}')
     if (save_p):
-        resample_and_save_nifti(
-            brain_large, grid_native, mask.affine, mask.header, 
-            f'{out_dir}/m{out_name}.{ext}')
         resample_and_save_nifti(
             p1_large, grid_native, mask.affine, mask.header, 
             f'{out_dir}/p1{out_name}.{ext}')
