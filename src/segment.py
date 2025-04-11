@@ -158,7 +158,7 @@ def run_segment():
     mask_large = output_aff['mask_large']
         
     # Step 3: Segmentation
-    count = progress_bar(count, end_count, 'Deepmriprep segmentation                  ')    
+    count = progress_bar(count, end_count, 'DeepMriPrep segmentation                  ')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
 

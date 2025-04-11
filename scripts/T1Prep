@@ -51,7 +51,7 @@ os_type=$(uname -s) # Determine OS type
 outsurfdir=''
 outmridir=''
 use_bids_naming=0
-thickness_fwhm=0
+thickness_fwhm=5
 median_filter=2
 save_lesions=0
 save_hemi=0
@@ -75,7 +75,7 @@ use_amap=0
 isoval=0.5
 thresh=0.6
 debug=0
-multi=0
+multi=-1
 
 ########################################################
 # run main
@@ -453,16 +453,16 @@ get_OS ()
 ########################################################
 # progress bar
 ########################################################
-bar() 
+progress_bar() 
 {
-  # Usage: bar 1 100 Name
+  # Usage: progress_bar 1 100 Name
   #      ^--------- Elapsed Percentage (0-100).
   #       ^------ Total length in chars.
   #         ^-- Name of process.
   ((it=$1*100/$2))
   ((elapsed=$1))
 
-  # Create the bar with spaces.
+  # Create the progress_bar with spaces.
   printf -v prog  "%${elapsed}s"
   printf -v total "%$(($2-elapsed))s"
 
@@ -488,6 +488,7 @@ surface_estimation()
   outmridir=$2
   outsurfdir=$3
   estimate_spherereg=$4
+  multi=$5
 
   # create dynamic variables
   pbt=pbt_$side
@@ -510,9 +511,9 @@ surface_estimation()
   
   # Change number of commands if spherical registration is disabled
   if [ "${estimate_spherereg}" -eq 1 ]; then
-    ((end_count=12))
+    ((end_count=6))
   else
-    ((end_count=8))
+    ((end_count=4))
   fi
 
   if [ "${debug}" -eq 0 ]; then
@@ -522,10 +523,12 @@ surface_estimation()
   fi
 
   # This section of the script checks if a specific hemisphere file exists within a given directory.
+  count=0
   if [ -f "${outmridir}/${!hemi}" ]; then
-  
+
     # Progress indication
-    bar 2 $end_count "Calculate $side thickness"
+    ((count++))
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Calculate $side thickness"; fi
   
     # Executes the 'CAT_VolThicknessPbt' tool with various options:
     # - ${verbose} toggles verbose output.
@@ -535,7 +538,8 @@ surface_estimation()
     ${bin_dir}/CAT_VolThicknessPbt ${verbose} -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
 
     # Updates progress to 'Extract $side surface'.
-    bar 4 $end_count "Extract $side surface"
+    ((count++))
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Extract $side surface"; fi
   
     # Executes the 'CAT_VolMarchingCubes' tool to generate a surface mesh from volumetric data:
     # - '-median-filter' applies a median filter a specified number of times to reduce artifacts.
@@ -544,28 +548,39 @@ surface_estimation()
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
     ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
-    
-    # Updates progress to 'Deform $side surface'
-    bar 6 $end_count "Deform $side surface"
-  
-    ${bin_dir}/CAT_SurfDeform ${verbose} -w1 0.1 -w2 0.1 -w3 1.0 -iter 50 -sigma 0.2 -isovalue ${isoval} ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!mid}
+      
 
     # Updates progress to 'Map $side thickness values'.
-    bar 8 $end_count "Map $side thickness values"
+    ((count++))
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Map $side thickness values"; fi
 
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
     ${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
-    #${bin_dir}/CAT_Vol2Surf -range 0 5 -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!thick}
-  
+    ${bin_dir}/CAT_SurfDistance ${verbose} -max 6.0 -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+    
+     
+    # Updates progress to 'Deform $side surface'
+    ((count++))
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface"; fi
+
     # Executes 'CAT_Surf2PialWhite' to estimate both pial and white matter surfaces.
-    ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!white}
+    # - '-w1' sets the internal smoothness weight.
+    # - '-w2' sets the gradient alignment weight.
+    # - '-w3' sets the balloon force weight.
+    # - '-w4' sets theconncetion force weight.
+    # - '-sigma' sets the smoothing size for filtering the displacement field.
+    # - '-iter' sets the number of iterations.
+    # - '-isovalue' sets the isovalue for mesh generation.
+    ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
     
-    # Estimate thickness by using the linked distance between pial and white matter surface and limit to maximum of 5.0
-    ${bin_dir}/CAT_SurfDistance -max 5.0 -link ${outsurfdir}/${!pial} ${outsurfdir}/${!white} ${outsurfdir}/${!thick}
-    
+    # Estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
+    # - '-max' sets the maximum distance, where all values exceeding that will be cut.
+    # - '-mean' calculates mean of closest distance between surface 1 and 2 and vice versa.
+    ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${!pial} ${outsurfdir}/${!wm} ${outsurfdir}/${!thick}
+
     # Get central surface by averaging pial and white matter surface
-    ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!white}
+    ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
     
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
     if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
@@ -577,12 +592,14 @@ surface_estimation()
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
     if [ "${estimate_spherereg}" -eq 1 ]; then
       # Updates progress to 'Spherical inflation $side hemisphere'.
-      bar 10 $end_count "Spherical inflation $side hemisphere"
+      ((count++))
+      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical inflation $side hemisphere"; fi
       # Inflates the surface to a sphere with additional areal smoothing.
       ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
   
       # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
-      bar 12 $end_count "Spherical estimate_spherereg $side hemisphere"
+      ((count++))
+      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical estimate_spherereg $side hemisphere"; fi
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
       ${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
     fi
@@ -694,8 +711,8 @@ process ()
     BLACK=""
   fi
   
-  ((i=0))
-  ((j=0))
+  i=0
+  j=0
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
 
     # check whether absolute or relative names were given
@@ -734,7 +751,7 @@ process ()
     ((i++))
   done
 
-  ((i=0))
+  i=0
   SIZE_OF_ARRAY="${#ARRAY2[@]}"
   
   # Exit if no files could be found for processing
@@ -941,9 +958,9 @@ process ()
       # check for outputs from previous step
       for side in left right; do
         if [[ "$multi" -ne -2 ]]; then
-          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg &
+          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg $multi &
         else
-          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg
+          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg $multi
         fi
       done
       

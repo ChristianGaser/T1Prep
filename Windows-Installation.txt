@@ -1,0 +1,7 @@
+Install in Store: Windows Subsystem for Linux
+Windows Features:
+[x] Virtual Machine Platform
+[x] Windows Hypervisor Platform
+[x] Windows Subsystem for Linux
+
+in Powershell: wsl --install
