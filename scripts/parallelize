@@ -346,7 +346,7 @@ do_parallelize ()
   
   # keep all processes in foreground
   if [ "${FG}" -eq 1 ]; then
-      echo "Waiting for jobs to complete..."
+      #echo "Waiting for jobs to complete..."
       for pid in "${pids[@]}"; do
         wait "$pid"
       done

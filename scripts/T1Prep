@@ -67,7 +67,7 @@ estimate_seg=1
 downsample=0.0
 vessel=0.5
 sharpening=0.0
-post_fwhm=1.5
+post_fwhm=1.0
 pre_fwhm=2
 re_install=0
 use_sanlm=0
@@ -469,7 +469,6 @@ progress_bar()
   # Pad the name to 50 characters (using printf)
   printf -v padded_name "%-10s%-30s" "$3" " "
 
-  #printf '%s %s\r' "${prog// /■}${total} ${it}%" "${3}"
   printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${padded_name}"
   
   # if end is reached print extra line
@@ -511,9 +510,9 @@ surface_estimation()
   
   # Change number of commands if spherical registration is disabled
   if [ "${estimate_spherereg}" -eq 1 ]; then
-    ((end_count=6))
+    ((end_count=8))
   else
-    ((end_count=4))
+    ((end_count=6))
   fi
 
   if [ "${debug}" -eq 0 ]; then
@@ -574,6 +573,9 @@ surface_estimation()
     # - '-isovalue' sets the isovalue for mesh generation.
     ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
     
+    # Updates progress to 'Refine $side thickness'
+    ((count++))
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
     # Estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
     # - '-max' sets the maximum distance, where all values exceeding that will be cut.
     # - '-mean' calculates mean of closest distance between surface 1 and 2 and vice versa.
