@@ -116,11 +116,15 @@ parse_args ()
     exit 1
   fi
 
+  count=0
   while [ $# -gt 0 ]; do
     optname="${1%%=*}"
     optarg="${2:-}"
 
     case "$1" in
+      --install)
+        re_install=1
+        ;;
       --re-install)
         re_install=1
         ;;
@@ -1024,11 +1028,11 @@ ${BOLD}DESCRIPTION:${NC}
 
 ${BOLD}OPTIONS:${NC}
   ${BOLD}${YELLOW}General Options:${NC}
+  --install                 Install the required Python libraries.
   --re-install              Remove the existing installation and reinstall the required Python libraries.
   --python <FILE>           Specify the Python interpreter to use (default: $python).
-  --multi <NUMBER>          Set the number of processes for parallelization. Use '-1' to 
-                            automatically detect the number of available processors 
-                            (default: $multi).
+  --multi <NUMBER>          Set the number of processes for parallelization. Use '-1' to automatically 
+                            detect the number of available processors (default: $multi).
   --debug                   Enable verbose output, retain temporary files, and save additional 
                             debugging information.
   
@@ -1052,15 +1056,12 @@ ${BOLD}OPTIONS:${NC}
 
   ${BOLD}${YELLOW}Expert Options:${NC}
   --amap                    Use AMAP segmentation instead of DeepMRIPrep.
-  --pre-fwhm <NUMBER>       Set the pre-smoothing FWHM size in CAT_VolMarchingCubes 
-                            (default: $pre_fwhm).
-  --post-fwhm <NUMBER>      Set the post-smoothing FWHM size in CAT_VolMarchingCubes 
-                            (default: $post_fwhm).
+  --pre-fwhm <NUMBER>       Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
+  --post-fwhm <NUMBER>      Set the post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
   --thickness-fwhm <NUMBER> Set the FWHM size for volumetric thickness smoothing in 
                             CAT_VolThicknessPbt (default: $thickness_fwhm).
-  --sharpening <NUMBER>     Set the sharpening level applied to the PPM map by enhancing 
-                            differences between the unsmoothed and smoothed PPM maps 
-                            (default: $sharpening).
+  --sharpening <NUMBER>     Set the sharpening level applied to the PPM map by enhancing differences
+                            between the unsmoothed and smoothed PPM maps (default: $sharpening).
   --thresh <NUMBER>         Specify the isovalue threshold for surface creation in 
                             CAT_VolMarchingCubes (default: $thresh).
   --vessel <NUMBER>         Set the initial white matter (WM) threshold for vessel removal. 
@@ -1069,7 +1070,7 @@ ${BOLD}OPTIONS:${NC}
   --downsample <NUMBER>     Specify the downsampling factor for PPM and GMT maps to reduce 
                             surface intersections (default: $downsample).
   --median-filter <NUMBER>  Specify the number of median filter applications to reduce topology 
-                            artifacts.
+                            artifacts (default: $median_filter).
   
   ${BOLD}${YELLOW}Examples:${NC}
 
