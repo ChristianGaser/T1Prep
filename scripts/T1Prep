@@ -550,8 +550,7 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${outmridir}/${!ppm} ${outsurfdir}/${!mid}
-      
+    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${outmridir}/${!ppm} ${outsurfdir}/${!mid}      
 
     # Updates progress to 'Map $side thickness values'.
     ((count++))
@@ -561,7 +560,12 @@ surface_estimation()
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
     ${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
     ${bin_dir}/CAT_SurfDistance ${verbose} -max 6.0 -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
-    
+
+    # Estimate the necessary shift if the threshold is not 0.5
+    shift=$(echo "$thresh - $isoval" | bc)
+    if (( $(echo "$shift != 0" | bc) )); then
+      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${shift}
+    fi    
      
     # Updates progress to 'Deform $side surface'
     ((count++))
