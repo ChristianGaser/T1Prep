@@ -380,6 +380,7 @@ def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None
     # Load the atlas template
     atlas = nib.as_closest_canonical(
         nib.load(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/{atlas_name}.nii.gz'))
+        
     atlas_register = AtlasRegistration()
 
     if warp_yx is not None:
@@ -392,16 +393,21 @@ def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None
         scaled_yx = F.interpolate(
             yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
         warps = {shape: scaled_yx.permute(0, 2, 3, 4, 1)}
+        
+        # Apply registration
         atlas = atlas_register(affine, warps[shape], atlas, t1.shape)
 
-    # Interpolate and finalize atlas alignment
-    atlas = nifti_to_tensor(atlas)[None, None].to(device)
-    atlas = F.interpolate(atlas, p1_large.shape, mode='nearest')[0, 0]
-    atlas = atlas.type(torch.uint8 if atlas.max() < 256 else torch.int16)
+    # Convert atlas to tensor and interpolate to match segmentation shape
+    atlas_tensor = nifti_to_tensor(atlas)[None, None].to(device)
+    atlas_tensor = F.interpolate(atlas_tensor, p1_large.shape, mode='nearest')[0, 0]
 
-    # Return the aligned atlas image
-    return nib.Nifti1Image(atlas, transform, header)
-    
+    # Choose dtype based on max value
+    atlas_tensor = atlas_tensor.type(torch.uint8 if atlas_tensor.max() < 256 else torch.int16)
+
+    # Convert back to CPU numpy array and return as Nifti
+    atlas_np = atlas_tensor.cpu().numpy()
+    return nib.Nifti1Image(atlas_np, transform, header)
+        
 def crop_nifti_image_with_border(img, border=5, threshold=0):
     """
     Crop a NIfTI image to the smallest bounding box containing non-zero values,
