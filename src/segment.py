@@ -104,13 +104,13 @@ def run_segment():
     if torch.cuda.is_available():
         device = torch.device("cuda")
         no_gpu = False
-    elif torch.backends.mps.is_available() and False: # not yet fully supported
+    elif torch.backends.mps.is_available() and True: # not yet fully supported
         device = torch.device("mps")
-        no_gpu = False
+        no_gpu = True # not yet working for MPS
     else:
         device = torch.device("cpu")
         no_gpu = True
-
+    
     # Set processing parameters
     target_res = np.array([0.5]*3) # Target resolution for resampling
     count = 1
@@ -140,6 +140,7 @@ def run_segment():
 
     # Preprocess the input volume
     vol = t1.get_fdata()
+    vol = np.squeeze(vol)
     vol, affine2, header2, ras_affine = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
     t1 = nib.Nifti1Image(vol, affine2, header2)
     
@@ -149,7 +150,7 @@ def run_segment():
     output_bet = prep.run_bet(t1)
     brain = output_bet['brain']
     mask = output_bet['mask']
-    
+
     # Step 2: Affine registration
     count = progress_bar(count, end_count, 'Affine registration           ')
     output_aff = prep.run_affine_register(brain, mask)
@@ -190,7 +191,7 @@ def run_segment():
         
         # Call AMAP and write GM and label map
         cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
-            ' -nowrite-corr -bias-fwhm 20 -cleanup 1 -mrf 0 ' +
+            ' -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 ' +
             ' -write-seg 1 1 1 -label ' +
             f'{out_dir}/{out_name}_seg_large.{ext}' + ' ' +
             f'{out_dir}/{out_name}_brain_large.{ext}')
