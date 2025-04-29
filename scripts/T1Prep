@@ -83,8 +83,8 @@ multi=-1
 
 main ()
 {
-  check_python_cmd  
   parse_args ${1+"$@"}
+  check_python_cmd  
   if [[ "$multi" -ne -2 ]]; then
     logo
     check_python
@@ -109,7 +109,7 @@ main ()
 parse_args ()
 {
   local optname optarg
-
+  
   if [ $# -lt 1 ]; then
     logo
     help
@@ -271,7 +271,7 @@ exit_if_empty ()
   shift
   val="$*"
 
-  if [ -z "$val" ]; then
+  if [ -z "${val}" ]; then
     echo "${RED}ERROR: No argument given with \"$desc\" command line argument!${NC}" >&2
     exit 1
   fi
@@ -303,13 +303,15 @@ echo $NC
 
 check_python_cmd ()
 {
-  if command -v python3 &>/dev/null; then
-    python="python3"
-  elif command -v python &>/dev/null; then
-    python="python"
-  else
-    echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}" >&2
-    exit 1
+  if [ -z "${python}" ]; then
+    if command -v python3 &>/dev/null; then
+      python="python3"
+    elif command -v python &>/dev/null; then
+      python="python"
+    else
+      echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}" >&2
+      exit 1
+    fi
   fi
 }
 
@@ -405,7 +407,7 @@ install_deepmriprep ()
   $python -m venv ${T1prep_env}
   source ${T1prep_env}/bin/activate
   $python -m pip install -U pip
-  $python -m pip install -U pip "scipy>=1.10.1" "torch>=1.11.0" "deepbet>=1.0.2" "torchreg>=0.1.2" "requests" "SplineSmooth3D>=0.1.1" "nxbc>=0.2.0" "deepmriprep>=0.1.0"
+  $python -m pip install "scipy>=1.10.1" "torch>=1.11.0" "deepbet>=1.0.2" "torchreg>=0.1.2" "requests" "SplineSmooth3D>=0.1.1" "nxbc>=0.2.0" "deepmriprep>=0.1.0"
   
   $python -c "import deepmriprep" &>/dev/null
   if [ $? -gt 0 ]; then
@@ -744,7 +746,7 @@ process ()
       bname="${bname%.nii.gz}"
       bname="${bname%.nii}"
 
-      if [ -z "$outdir" ]; then
+      if [ -z "${outdir}" ]; then
         outdir0=${dname}
       else
         outdir0=${outdir}
@@ -774,7 +776,7 @@ process ()
 
   # use defined environment
   source ${T1prep_env}/bin/activate
-  python="${T1prep_env}/bin/python"
+  #python="${T1prep_env}/bin/python"
 
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
     
@@ -790,7 +792,7 @@ process ()
     bname="${bname%.nii}"
     
     # if defined use output dir otherwise use the folder of input files
-    if [ -z "$outdir" ]; then
+    if [ -z "${outdir}" ]; then
       outdir0=${dname}
     else
       outdir0=${outdir}

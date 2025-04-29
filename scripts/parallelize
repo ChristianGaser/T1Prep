@@ -317,8 +317,7 @@ do_parallelize ()
   while [ "$i" -lt "$NUMBER_OF_JOBS" ]; do
     if [ ! "${ARG_LIST[$i]}" == "" ]; then
       j=$(($i+1))
-      #echo "Job ${j}/${NUMBER_OF_JOBS}:"
-      #echo "$COMMAND ${ARG_LIST[$i]}"
+      echo "Job ${j}/${NUMBER_OF_JOBS}: ${ARG_LIST[$i]}"
   
       if [ -z "${TEST}" ]; then
         echo "Job ${j}/${NUMBER_OF_JOBS}: $COMMAND ${ARG_LIST[$i]}" >> "$log"
