@@ -23,6 +23,7 @@ from scipy.ndimage import binary_opening, binary_dilation, grey_opening, binary_
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
 from pathlib import Path
+from skimage import filters
 
 DATA_PATH = Path(__file__).resolve().parent.parent / 'data'
 
@@ -200,7 +201,7 @@ def cleanup(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
 
     return label, gm, wm, csf
 
-def correct_bias_field(brain, seg):
+def correct_bias_field(brain, seg, steps=1000):
     """
     Applies bias field correction to an input brain image.
 
@@ -220,7 +221,6 @@ def correct_bias_field(brain, seg):
     Nbins = 256
     maxlevel = 4
     fwhm = 0.05
-    steps = 100
     subsamp = 5
     stopthr = 1e-4
     spacing = 1
@@ -230,7 +230,14 @@ def correct_bias_field(brain, seg):
     brain0 = brain.get_fdata()
     
     # Generate mask based on segmentation or brain data
-    mask = (seg.get_fdata() > 2.5) if seg is not None else (brain0 > 0.0)
+    if (seg is None) :
+        print("No mask")
+        mask = np.ones(brain0.shape) > 0
+        _thresh = filters.threshold_otsu(brain0[mask])
+        print(_thresh)
+        mask = np.logical_and(brain0 > _thresh, mask)
+    else:
+        mask = (seg.get_fdata() > 2.5)
 
     # Subsampling for efficiency
     if subsamp:

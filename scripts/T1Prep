@@ -67,6 +67,7 @@ estimate_seg=1
 downsample=0.0
 vessel=0.5
 sharpening=0.0
+bias_fwhm=0
 post_fwhm=1.0
 pre_fwhm=2
 re_install=0
@@ -151,6 +152,11 @@ parse_args ()
       --thickness-fwhm)
         exit_if_empty "$optname" "$optarg"
         thickness_fwhm=$optarg
+        shift
+        ;;
+      --bias-fwhm)
+        exit_if_empty "$optname" "$optarg"
+        bias_fwhm=$optarg
         shift
         ;;
       --downsample)
@@ -933,11 +939,11 @@ process ()
       [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
       
-      cmd+=" --vessel \"${vessel}\" --input \"${input}\" --outdir \"${outmridir}\""
+      cmd+=" --bias-fwhm \"${bias_fwhm}\" --vessel \"${vessel}\""
+      cmd+=" --input \"${input}\" --outdir \"${outmridir}\""
       
       # Execute the command and print errors
       [ "${estimate_seg}" -eq 1 ] && eval "${cmd}"
-            
   
     else
       echo "${RED}ERROR: CAT_VolSanlm failed${NC}" >&2
@@ -1064,6 +1070,7 @@ ${BOLD}OPTIONS:${NC}
   --amap                    Use AMAP segmentation instead of DeepMRIPrep.
   --pre-fwhm <NUMBER>       Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
   --post-fwhm <NUMBER>      Set the post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
+  --bias-fwhm <NUMBER>      Set the FWHM size for bias-correction in CAT_VolAmap (default: $bias_fwhm).
   --thickness-fwhm <NUMBER> Set the FWHM size for volumetric thickness smoothing in 
                             CAT_VolThicknessPbt (default: $thickness_fwhm).
   --sharpening <NUMBER>     Set the sharpening level applied to the PPM map by enhancing differences

@@ -74,6 +74,8 @@ def run_segment():
                         help="(optional) Save nii.gz images.")
     parser.add_argument("-a", '--amap', action="store_true", 
                         help="(optional) Use AMAP segmentation.")
+    parser.add_argument('-f', '--bias-fwhm', type=float, default=0, 
+                        help="(optional)FWHM value for the bias correction in AMAP.") 
     parser.add_argument('-d', '--amapdir', 
                         help='Amap binary folder', type=str)
     parser.add_argument('-v', '--vessel', type=float, default=0.4, 
@@ -89,7 +91,8 @@ def run_segment():
     use_amap = args.amap
     use_bids = args.bids
     vessel = args.vessel
-    
+    bias_fwhm = args.bias_fwhm
+
     # Save options
     save_mwp = args.mwp
     save_wp = args.wp
@@ -104,9 +107,9 @@ def run_segment():
     if torch.cuda.is_available():
         device = torch.device("cuda")
         no_gpu = False
-    elif torch.backends.mps.is_available() and True: # not yet fully supported
+    elif torch.backends.mps.is_available() and False: # not yet fully supported
         device = torch.device("mps")
-        no_gpu = True # not yet working for MPS
+        no_gpu = True
     else:
         device = torch.device("cpu")
         no_gpu = True
@@ -178,7 +181,7 @@ def run_segment():
     warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
 
     # Correct bias using label from deepmriprep
-    bias, brain_large = correct_bias_field(brain_large, p0_large)
+    bias, brain_large = correct_bias_field(brain_large, p0_large, steps=1000)
 
     # Conditional processing based on AMAP or lesion flag
     if (use_amap | save_lesions):
@@ -191,7 +194,7 @@ def run_segment():
         
         # Call AMAP and write GM and label map
         cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
-            ' -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 ' +
+            f' -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 ' +
             ' -write-seg 1 1 1 -label ' +
             f'{out_dir}/{out_name}_seg_large.{ext}' + ' ' +
             f'{out_dir}/{out_name}_brain_large.{ext}')
