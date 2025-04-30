@@ -46,7 +46,7 @@ def progress_bar(elapsed, total, name):
     it = elapsed * 100 // total
 
     # Create the progress bar
-    prog = '■' * elapsed
+    prog = '█' * elapsed
     remaining = ' ' * (total - elapsed)
     
     # Format the name with padding

@@ -82,7 +82,7 @@ multi=-1
 # run main
 ########################################################
 
-main ()
+main()
 {
   parse_args ${1+"$@"}
   check_python_cmd  
@@ -107,7 +107,7 @@ main ()
 # check arguments and files
 ########################################################
 
-parse_args ()
+parse_args()
 {
   local optname optarg
   
@@ -269,7 +269,7 @@ parse_args ()
 # check arguments
 ########################################################
 
-exit_if_empty ()
+exit_if_empty()
 {
   local desc val
 
@@ -287,7 +287,7 @@ exit_if_empty ()
 # logo
 ########################################################
 
-logo ()
+logo()
 {
 echo $BLUE
 cat <<__EOM__
@@ -307,7 +307,7 @@ echo $NC
 # check for python version
 ########################################################
 
-check_python_cmd ()
+check_python_cmd()
 {
   if [ -z "${python}" ]; then
     if command -v python3 &>/dev/null; then
@@ -325,7 +325,7 @@ check_python_cmd ()
 # check files
 ########################################################
 
-check_files ()
+check_files()
 {
   SIZE_OF_ARRAY="${#ARRAY[@]}"
   if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
@@ -358,7 +358,7 @@ check_files ()
 # check for python
 ########################################################
 
-check_python ()
+check_python()
 {
   if ! command -v "${python}" &>/dev/null; then
     echo "${RED}ERROR: $python not found${NC}" >&2
@@ -384,7 +384,7 @@ check_python_module() {
 # check for python libraries
 ########################################################
 
-check_python_libraries ()
+check_python_libraries()
 {
   # Remove T1pre-env if reinstallation is selected
   if [[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]]; then
@@ -407,7 +407,7 @@ check_python_libraries ()
 # install deepmriprep
 ########################################################
 
-install_deepmriprep ()
+install_deepmriprep()
 {
   echo "Install deepmriprep"
   $python -m venv ${T1prep_env}
@@ -434,7 +434,7 @@ install_deepmriprep ()
 # get OS
 ########################################################
 
-get_OS () 
+get_OS() 
 {
   # Determine CPU architecture
   cpu_arch=$(uname -m)
@@ -465,7 +465,7 @@ get_OS ()
 ########################################################
 # progress bar
 ########################################################
-progress_bar() 
+progress_bar_orig() 
 {
   # Usage: progress_bar 1 100 Name
   #      ^--------- Elapsed Percentage (0-100).
@@ -481,7 +481,7 @@ progress_bar()
   # Pad the name to 50 characters (using printf)
   printf -v padded_name "%-10s%-30s" "$3" " "
 
-  printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${padded_name}"
+  printf '%s %s\r' "${prog// /█}${total} ${elapsed}/${2}" "${padded_name}"
   
   # if end is reached print extra line
   if [ "${1}" -eq "${2}" ]; then
@@ -490,6 +490,25 @@ progress_bar()
   fi
 }
 
+# fixed length, but not fully deleted at the end 
+progress_bar() {
+  local current=$1 total=$2 label=$3
+  local width=40
+  local percent=$(( current * 100 / total ))
+  local filled=$(( width * current / total ))
+  local empty=$(( width - filled ))
+
+  local bar=$(printf "%${filled}s" | tr ' ' '█')
+  bar+=$(printf "%${empty}s")
+
+  printf "\r\033[0;32m%-${width}s %3d%%\033[0m %s" "$bar" "$percent" "$label"
+
+  if [ "$current" -eq "$total" ]; then
+    printf -v padded_name "%-${width}s" " "
+    printf '%s\r' "${padded_name}"
+    echo ""
+  fi
+}
 ########################################################
 # surface estimation
 ########################################################
@@ -662,7 +681,7 @@ filter_arguments() {
 # process data
 ########################################################
 
-process ()
+process()
 {
 
   SIZE_OF_ARRAY="${#ARRAY[@]}"

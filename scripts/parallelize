@@ -409,7 +409,7 @@ ${BOLD}EXAMPLES:${NC}
        memory-intensive, while the second command (surface creation) is single-threaded 
        and can benefit from parallelization.
        
-    NOTE: You can automatically enable parallelization by using the '--multi' flag.
+    NOTE: You can automatically enable parallelization in T1Prep by using the '--multi' flag.
 
 ${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
