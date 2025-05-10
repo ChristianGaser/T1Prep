@@ -27,40 +27,34 @@ from skimage import filters
 
 DATA_PATH = Path(__file__).resolve().parent.parent / 'data'
 
-def progress_bar(elapsed, total, name):
+def progress_bar(current, total, label="Progress", width=40, color=0):
     """
-    Displays a progress bar.
-
-    Args:
-        elapsed (int): Elapsed progress count.
-        total (int): Total count.
-        name (str): Name of the process.
-
-    Usage:
-        progress_bar(1, 100, "Name")
-        
-    Returns:
-        int: Elapsed progress count increased by 1.
+    Display a progress bar in the terminal.
+    
+    Parameters:
+    - current (int): Current progress.
+    - total (int): Total value to reach 100%.
+    - label (str): Label to display at the end of the bar.
+    - width (int): Width of the progress bar.
+    - color (int): ANSI color code (0–7 typical range).
     """
-    # Calculate percentage completion
-    it = elapsed * 100 // total
+    if total == 0:
+        raise ValueError("Total must be non-zero.")
+    percent = int(current * 100 / total)
+    filled = int(width * current / total)
+    empty = width - filled
 
-    # Create the progress bar
-    prog = '█' * elapsed
-    remaining = ' ' * (total - elapsed)
-    
-    # Format the name with padding
-    name = name.ljust(50)
-    
-    # Print the progress bar with percentage and name
-    print(f'{prog}{remaining} {elapsed}/{total} {name}\r', end='')
-    
-    if (elapsed == total):
-        spaces = ' ' * 100
-        print(f'{spaces}\r', end='')
-    
-    elapsed += 1
-    return elapsed
+    bar = '█' * filled + ' ' * empty
+    color_code = f"\033[3{color}m" if color in range(8) else ""
+    reset_code = "\033[0m"
+
+    sys.stdout.write(f"{color_code}{bar:<{width}} {percent:3d}%{reset_code} {label}\r")
+    sys.stdout.flush()
+
+    if current == total:
+        padded = " " * (width + len(label) + 6)
+        sys.stdout.write(f"{padded}\r")
+        sys.stdout.flush()
 
 def remove_file(name):
     """
