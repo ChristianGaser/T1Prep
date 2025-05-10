@@ -1,4 +1,11 @@
 #! /bin/bash
+# ______________________________________________________________________
+#
+# Christian Gaser
+# Structural Brain Mapping Group (https://neuro-jena.github.io)
+# Departments of Neurology and Psychiatry
+# Jena University Hospital
+# ______________________________________________________________________
 
 ########################################################
 # global parameters
@@ -22,6 +29,8 @@ BLUE=$(tput setaf 4)
 PINK=$(tput setaf 5)
 CYAN=$(tput setaf 6)
 WHITE=$(tput setaf 7)
+
+source "$(dirname "$0")/progress_bar.sh"
 
 ########################################################
 # run main
@@ -224,35 +233,6 @@ get_no_processes () {
 }
 
 ########################################################
-# progress bar
-########################################################
-bar() 
-{
-  # Usage: bar 1 100 Name
-  #      ^--------- Elapsed Percentage (0-100).
-  #       ^------ Total length in chars.
-  #         ^-- Name of process.
-  ((it=$1*100/$2))
-  ((elapsed=$1))
-
-  # Create the bar with spaces.
-  printf -v prog  "%${elapsed}s"
-  printf -v total "%$(($2-elapsed))s"
-
-  # Pad the name to 50 characters (using printf)
-  printf -v padded_name "%-10s%-30s" "$3" " "
-
-  #printf '%s %s\r' "${prog// /■}${total} ${it}%" "${3}"
-  printf '%s %s\r' "${prog// /■}${total} ${elapsed}/${2}" "${padded_name}" > /dev/tty
-  
-  # if end is reached print extra line
-  if [ "${1}" -eq "${2}" ]; then
-    printf -v padded_name "%-100s" " "
-    printf '%s\r' "${padded_name}" > /dev/tty
-  fi
-}
-
-########################################################
 # run parallelize
 ########################################################
  
@@ -313,7 +293,7 @@ do_parallelize ()
   fi
   
   i=0
-  export -f bar
+  export -f progress_bar
   while [ "$i" -lt "$NUMBER_OF_JOBS" ]; do
     if [ ! "${ARG_LIST[$i]}" == "" ]; then
       j=$(($i+1))
@@ -332,7 +312,7 @@ do_parallelize ()
             bn=\$(basename \"\$k\")
             dn=\$(dirname \"\$k\")
             dn=\$(basename \"\$dn\")
-            bar \$k_count \$total_k \"Processing ../\$dn/\$bn\"
+            progress_bar \$k_count \$total_k \"Processing ../\$dn/\$bn\"
             # Write to log
             echo \"\$msg\" >> $log            
             $COMMAND \$k

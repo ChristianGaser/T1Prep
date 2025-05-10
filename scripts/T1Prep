@@ -19,9 +19,15 @@
 # - check_python_module: Checks for python modules.
 # - check_python_libraries: Checks for python libraries.
 # - get_OS: Identifies operations system and folder of binaries.
-# - bar: Displays progress bar.
-# - get_no_of_cpus: Determines the number of available CPUs.
 # - process: Performs the preprocessing steps on each input file.
+#
+# ______________________________________________________________________
+#
+# Christian Gaser
+# Structural Brain Mapping Group (https://neuro-jena.github.io)
+# Departments of Neurology and Psychiatry
+# Jena University Hospital
+# ______________________________________________________________________
 
 ########################################################
 # global parameters
@@ -78,14 +84,16 @@ thresh=0.6
 debug=0
 multi=-1
 
+source "$(dirname "$0")/progress_bar.sh"
+
 ########################################################
 # run main
 ########################################################
 
 main()
 {
-  parse_args ${1+"$@"}
   check_python_cmd  
+  parse_args ${1+"$@"}
   if [[ "$multi" -ne -2 ]]; then
     logo
     check_python
@@ -462,53 +470,6 @@ get_OS()
   
 }
 
-########################################################
-# progress bar
-########################################################
-progress_bar_orig() 
-{
-  # Usage: progress_bar 1 100 Name
-  #      ^--------- Elapsed Percentage (0-100).
-  #       ^------ Total length in chars.
-  #         ^-- Name of process.
-  ((it=$1*100/$2))
-  ((elapsed=$1))
-
-  # Create the progress_bar with spaces.
-  printf -v prog  "%${elapsed}s"
-  printf -v total "%$(($2-elapsed))s"
-
-  # Pad the name to 50 characters (using printf)
-  printf -v padded_name "%-10s%-30s" "$3" " "
-
-  printf '%s %s\r' "${prog// /█}${total} ${elapsed}/${2}" "${padded_name}"
-  
-  # if end is reached print extra line
-  if [ "${1}" -eq "${2}" ]; then
-    printf -v padded_name "%-100s" " "
-    printf '%s\r' "${padded_name}"
-  fi
-}
-
-# fixed length, but not fully deleted at the end 
-progress_bar() {
-  local current=$1 total=$2 label=$3
-  local width=40
-  local percent=$(( current * 100 / total ))
-  local filled=$(( width * current / total ))
-  local empty=$(( width - filled ))
-
-  local bar=$(printf "%${filled}s" | tr ' ' '█')
-  bar+=$(printf "%${empty}s")
-
-  printf "\r\033[0;32m%-${width}s %3d%%\033[0m %s" "$bar" "$percent" "$label"
-
-  if [ "$current" -eq "$total" ]; then
-    printf -v padded_name "%-${width}s" " "
-    printf '%s\r' "${padded_name}"
-    echo ""
-  fi
-}
 ########################################################
 # surface estimation
 ########################################################
