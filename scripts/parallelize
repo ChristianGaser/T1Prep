@@ -296,22 +296,48 @@ do_parallelize ()
   if [ "$SIZE_OF_ARRAY"  -lt "$NUM_JOBS" ]; then
     NUM_JOBS=$SIZE_OF_ARRAY
   fi
-  
+
+  if [ -z "${TEST}" ]; then
+    if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
+      mkdir -p "$PROGRESS_DIR"
+      rm -f "$PROGRESS_DIR"/*.progress
+      
+      # Start progress monitor
+      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" &
+      progress_pid=$!
+    fi
+
+    # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
+    trap cleanup INT TERM
+  fi
+    
   # If NUM_JOBS is 0, execute commands serially
   if [ "$NUM_JOBS" -lt 2 ]; then
       echo "Executing serially..."
+      i=0
       for file in "${ARRAY[@]}"; do
+          ((i++))
+          if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
+            echo "$i/$SIZE_OF_ARRAY" > "$PROGRESS_DIR/job0.progress"
+          fi
           eval "$COMMAND \"$file\""  # Use eval to handle complex commands
+          pids=($!)
       done
 
       # get overall processing time
       end=$(date +%s)
       runtime=$((end - start))
-      runtime="Finished after: $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))sec"
+      hours=$(($runtime / 3600))
+      min=$((($runtime / 60) % 60))
+      s=$(($runtime % 60))
+      overall="Finished after: "
+      if [ $hours -gt 0 ]; then overall+="${hours}hrs "; fi
+      if [ $min -gt 0 ]; then overall+="${min}min "; fi
+      overall+="${s}sec"
       
       # Display the result
       echo "${GREEN}-------------------------------------------------------${NC}"
-      echo "${GREEN}${runtime}${NC}"
+      echo "${GREEN}${overall}${NC}"
       echo " "
 
       return
@@ -335,15 +361,6 @@ do_parallelize ()
   done
 
   if [ -z "${TEST}" ]; then
-    mkdir -p "$PROGRESS_DIR"
-    rm -f "$PROGRESS_DIR"/*.progress
-    
-    # Start progress monitor
-    $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" &
-    progress_pid=$!
-
-    # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
-    trap cleanup INT TERM
     echo "${GREEN}Check $log for logging information${NC}"
     echo > $log
     echo
@@ -389,11 +406,17 @@ do_parallelize ()
       # get overall processing time
       end=$(date +%s)
       runtime=$((end - start))
-      runtime="Finished after: $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))sec"
+      hours=$(($runtime / 3600))
+      min=$((($runtime / 60) % 60))
+      s=$(($runtime % 60))
+      overall="Finished after: "
+      if [ $hours -gt 0 ]; then overall+="${hours}hrs "; fi
+      if [ $min -gt 0 ]; then overall+="${min}min "; fi
+      overall+="${s}sec"
       
       # Display the result
       echo "${GREEN}-------------------------------------------------------${NC}"
-      echo "${GREEN}${runtime}${NC}"
+      echo "${GREEN}${overall}${NC}"
   fi
 }
 

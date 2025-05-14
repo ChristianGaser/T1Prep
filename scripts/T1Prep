@@ -771,7 +771,11 @@ process()
     fi
     ((i++))
   done
-
+  
+  if [ -n "${processed}" ]; then
+    echo ""
+  fi
+  
   i=0
   SIZE_OF_ARRAY="${#ARRAY2[@]}"
   
@@ -903,18 +907,18 @@ process()
 
     # print progress and filename
     j=$(expr $i + 1)
-    echo "${BOLD}-------------------------------------------------------${NC}"
-    if [ "${SIZE_OF_ARRAY}" -gt 1 ]; then
-      echo "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}Processing ${FILE}${NC}"
-    else
-      echo "${BOLD}Processing ${FILE}${NC}"
+    if [ "${multi}" -ne -2 ]; then
+      echo "${BOLD}-------------------------------------------------------${NC}"
+      if [ "${SIZE_OF_ARRAY}" -gt 1 ]; then
+        echo "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}Processing ${FILE}${NC}"
+      else
+        echo "${BOLD}Processing ${FILE}${NC}"
+      fi
     fi
 
     # 1. Call SANLM denoising filter
     # ----------------------------------------------------------------------
     if [ "${use_sanlm}" -eq 1 ]; then
-      #echo "${BLUE}---------------------------------------------${NC}"
-      #echo "${BLUE}SANLM denoising${NC}"
       ${bin_dir}/CAT_VolSanlm "${FILE}" "${outmridir}/${sanlm}"
       input="${outmridir}/${sanlm}"
     else
@@ -939,6 +943,7 @@ process()
       [ "${nii_ext}" == "nii.gz" ] && cmd+=" --gz"
       [ "${save_lesions}" -eq 1 ] && cmd+=" --lesions --amapdir ${bin_dir}"
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
+      [ "${multi}" -ne -2 ] && cmd+=" --verbose"
       [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
       
@@ -1010,8 +1015,10 @@ process()
     # print execution time per data set
     end=$(date +%s)
     runtime=$((end - start))
-    echo "${GREEN}-------------------------------------------------------${NC}"
-    echo "${GREEN}Finished after ${runtime}s${NC}"
+    if [[ "$multi" -ne -2 ]]; then
+      echo "${GREEN}-------------------------------------------------------${NC}"
+      echo "${GREEN}Finished after ${runtime}s${NC}"
+    fi
       
     ((i++))
   done
