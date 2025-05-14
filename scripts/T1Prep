@@ -772,10 +772,6 @@ process()
     ((i++))
   done
   
-  if [ -n "${processed}" ]; then
-    echo ""
-  fi
-  
   i=0
   SIZE_OF_ARRAY="${#ARRAY2[@]}"
   

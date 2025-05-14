@@ -24,7 +24,7 @@ width=$3
 color=$4
 BOLD=$(tput bold)
 NC=$(tput sgr0) # Reset all attributes
-REFRESH_INTERVAL=1.0
+REFRESH_INTERVAL=2.0
 JOB_ID="jobrun_$(date +%s%N)"
 
 ########################################################
@@ -110,7 +110,7 @@ ${BOLD}EXAMPLE:${NC}
   )
   
   # Start progress monitor
-  $(dirname "$0")/progress_bar_multi.sh "$n_jobs" &
+  $(dirname "$0")/progress_bar_multi.sh "$n_jobs" "$PROGRESS_DIR" &
   progress_pid=$!
   
   # Launch jobs
