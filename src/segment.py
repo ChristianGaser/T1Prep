@@ -37,48 +37,41 @@ def run_segment():
     Perform brain segmentation (either using deepmriprep or AMAP) on input T1w brain data using 
     preprocessing, affine registration, and segmentation techniques.
 
-    Command-line Arguments:
-    -i, --input : str (required)
-        Input file or folder containing the MRI data (.nii/.nii.gz format).
-    -o, --outdir : str (required)
-        Output directory to save the processed results.
-    -a, --amap : flag (optional)
-        Enable AMAP segmentation if specified. Default is False.
-    -d, --amapdir : str (optional)
-        Path to the AMAP binary folder if AMAP segmentation is enabled.
     """
     
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--input', 
+    parser.add_argument('--input', 
                         help='Input file', required=True, type=str)
-    parser.add_argument('-o', '--outdir', 
+    parser.add_argument('--outdir', 
                         help='Output folder', required=True, type=str)
-    parser.add_argument("-s", '--surf', action="store_true", 
+    parser.add_argument('--surf', action="store_true", 
                         help="(optional) Save partioned segmentation map for surface estimation.")
-    parser.add_argument("-c", '--csf', action="store_true", 
+    parser.add_argument('--csf', action="store_true", 
                         help="(optional) Save also CSF segmentations.")
-    parser.add_argument("-m", '--mwp', action="store_true", 
+    parser.add_argument('--mwp', action="store_true", 
                         help="(optional) Save modulated and warped segmentations.")
-    parser.add_argument("-w", '--wp', action="store_true", 
+    parser.add_argument('--wp', action="store_true", 
                         help="(optional) Save warped segmentations.")
-    parser.add_argument("-p", '--p', action="store_true", 
+    parser.add_argument('--p', action="store_true", 
                         help="(optional) Save native segmentations.")
-    parser.add_argument("-r", '--rp', action="store_true", 
+    parser.add_argument('--rp', action="store_true", 
                         help="(optional) Save affine registered segmentations.")
-    parser.add_argument("-l", '--lesions', action="store_true", 
+    parser.add_argument('--lesions', action="store_true", 
                         help="(optional) Save also WMH lesions.")
-    parser.add_argument("-b", '--bids', action="store_true", 
+    parser.add_argument('--bids', action="store_true", 
                         help="(optional) Use bids naming convention.")
-    parser.add_argument("-g", '--gz', action="store_true", 
+    parser.add_argument('--gz', action="store_true", 
                         help="(optional) Save nii.gz images.")
-    parser.add_argument("-a", '--amap', action="store_true", 
+    parser.add_argument('--amap', action="store_true", 
                         help="(optional) Use AMAP segmentation.")
-    parser.add_argument('-f', '--bias-fwhm', type=float, default=0, 
-                        help="(optional)FWHM value for the bias correction in AMAP.") 
-    parser.add_argument('-d', '--amapdir', 
+    parser.add_argument('--bias-fwhm', type=float, default=0, 
+                        help="(optional)FWHM value for the bias correction in AMAP.")
+    parser.add_argument('--amapdir', 
                         help='Amap binary folder', type=str)
-    parser.add_argument('-v', '--vessel', type=float, default=0.4, 
+    parser.add_argument('--verbose', action="store_true", 
+                        help="(optional) Be verbose.")
+    parser.add_argument('--vessel', type=float, default=0.4, 
                         help="Initial threshold to isolate WM for vessel removal") 
     args = parser.parse_args()
 
@@ -92,6 +85,7 @@ def run_segment():
     use_bids = args.bids
     vessel = args.vessel
     bias_fwhm = args.bias_fwhm
+    verbose=args.verbose
 
     # Save options
     save_mwp = args.mwp
@@ -148,21 +142,24 @@ def run_segment():
     t1 = nib.Nifti1Image(vol, affine2, header2)
     
     # Step 1: Skull-stripping
-    count = progress_bar(count, end_count, 'Skull-stripping               ')
+    if (verbose):
+        count = progress_bar(count, end_count, 'Skull-stripping               ')
     prep = Preprocess(no_gpu)
     output_bet = prep.run_bet(t1)
     brain = output_bet['brain']
     mask = output_bet['mask']
 
     # Step 2: Affine registration
-    count = progress_bar(count, end_count, 'Affine registration           ')
+    if (verbose):
+        count = progress_bar(count, end_count, 'Affine registration           ')
     output_aff = prep.run_affine_register(brain, mask)
     affine = output_aff['affine']
     brain_large = output_aff['brain_large']
     mask_large = output_aff['mask_large']
         
     # Step 3: Segmentation
-    count = progress_bar(count, end_count, 'DeepMriPrep segmentation                  ')    
+    if (verbose):
+        count = progress_bar(count, end_count, 'DeepMriPrep segmentation                  ')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
 
@@ -188,7 +185,8 @@ def run_segment():
         # AMAP segmentation pipeline
         amapdir = args.amapdir
         
-        count = progress_bar(count, end_count, 'Amap segmentation')
+        if (verbose):
+            count = progress_bar(count, end_count, 'Amap segmentation')
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.{ext}')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.{ext}')
         
@@ -207,7 +205,8 @@ def run_segment():
         p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}')        
     else:
         # Call deepmriprep refinement of deepmriprep label
-        count = progress_bar(count, end_count, 'Fine DeepMriPrep segmentation')
+        if (verbose):
+            count = progress_bar(count, end_count, 'Fine DeepMriPrep segmentation')
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 
         # Load probability maps for GM, WM, CSF
@@ -343,7 +342,8 @@ def run_segment():
     # Warping is necessary for surface creation and saving warped segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp)):
         # Step 5: Warping
-        count = progress_bar(count, end_count, 'Warping                          ')
+        if (verbose):
+            count = progress_bar(count, end_count, 'Warping                          ')
         output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
         warp_yx = output_reg['warp_yx']
         warp_xy = output_reg['warp_xy']
@@ -389,12 +389,14 @@ def run_segment():
     # Atlas is necessary for surface creation
     if (save_hemilabel):
         # Step 6: Atlas creation
-        count = progress_bar(count, end_count, 'Atlas creation                 ')
+        if (verbose):
+            count = progress_bar(count, end_count, 'Atlas creation                 ')
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'ibsr', warp_yx, device)
         lh, rh = get_partition(p0_large, atlas)
 
         # Step 7: Save hemisphere outputs
-        count = progress_bar(count, end_count, 'Resampling                     ')
+        if (verbose):
+            count = progress_bar(count, end_count, 'Resampling                     ')
         resample_and_save_nifti(
             nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, 
             affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.{ext}', True, True)
