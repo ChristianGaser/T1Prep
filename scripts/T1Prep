@@ -69,6 +69,8 @@ save_rp=0
 save_p=0
 nii_ext='nii'
 estimate_spherereg=1
+thickness_method=1
+correct_folding=1
 estimate_seg=1
 downsample=0.0
 vessel=0.5
@@ -202,6 +204,11 @@ parse_args()
         no_overwrite=$optarg
         shift
         ;;
+      --thickness-method)
+        exit_if_empty "$optname" "$optarg"
+        thickness_method=$optarg
+        shift
+        ;;
       --multi*)
         exit_if_empty "$optname" "$optarg"
         multi=$optarg
@@ -246,6 +253,9 @@ parse_args()
         ;;
       --bids)
         use_bids_naming=1
+        ;;
+      --no-correct-folding)
+        correct_folding=0
         ;;
       --debug)
         debug=1
@@ -547,7 +557,7 @@ surface_estimation()
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
     ${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
-    ${bin_dir}/CAT_SurfDistance ${verbose} -max 6.0 -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+    ${bin_dir}/CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
 
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
@@ -569,17 +579,30 @@ surface_estimation()
     # - '-isovalue' sets the isovalue for mesh generation.
     ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
     
-    # Updates progress to 'Refine $side thickness'
-    ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
-    # Estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
-    # - '-max' sets the maximum distance, where all values exceeding that will be cut.
-    # - '-mean' calculates mean of closest distance between surface 1 and 2 and vice versa.
-    ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${!pial} ${outsurfdir}/${!wm} ${outsurfdir}/${!thick}
-
+    thick_name=${outsurfdir}/${!thick}
+    
+    # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
+    if [ "${thickness_method}" -ne 1 ]; then
+      # Updates progress to 'Refine $side thickness'
+      ((count++))
+      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
+      
+      # Use different name for thickness file
+      if [ "${thickness_method}" -eq -2 ]; then
+        thick_name=$( echo ${thick_name} | sed -e 's/thickness/thickness_distance/g' )
+      fi
+      ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${!pial} ${outsurfdir}/${!wm} ${thick_name}
+    fi
+    
     # Get central surface by averaging pial and white matter surface
     ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
     
+    # Correct cortical thickness that is influenced by folding
+    if [ "${correct_folding}" -eq 1 ]; then
+      thick_name_corr=$( echo ${thick_name} | sed -e 's/thickness/thickness_corr/g' )
+      ${bin_dir}/CAT_SurfCorrectThicknessFolding ${outsurfdir}/${!mid} ${thick_name} ${thick_name_corr}
+    fi
+
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
     if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
       ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!mid} ${outmridir}/${mT1} ${outsurfdir}/${!intensity}
@@ -1020,50 +1043,55 @@ ${BOLD}DESCRIPTION:${NC}
 
 ${BOLD}OPTIONS:${NC}
   ${BOLD}${YELLOW}General Options:${NC}
-  --install                 Install the required Python libraries.
-  --re-install              Remove the existing installation and reinstall the required Python libraries.
-  --python <FILE>           Specify the Python interpreter to use (default: $python).
-  --multi <NUMBER>          Set the number of processes for parallelization. Use '-1' to automatically 
-                            detect the number of available processors (default: $multi).
-  --debug                   Enable verbose output, retain temporary files, and save additional 
-                            debugging information.
+  --install                   Install the required Python libraries.
+  --re-install                Remove the existing installation and reinstall the required Python libraries.
+  --python <FILE>             Specify the Python interpreter to use (default: $python).
+  --multi <NUMBER>            Set the number of processes for parallelization. Use '-1' to automatically 
+                              detect the number of available processors (default: $multi).
+  --debug                     Enable verbose output, retain temporary files, and save additional 
+                              debugging information.
   
   ${BOLD}${YELLOW}Save Options:${NC}
-  --out-dir <DIR>           Specify the output directory (default: current working directory).
-  --no-overwrite <STRING>   Avoid overwriting existing results by checking for the specified 
-                            filename pattern.
-  --gz                      Save images as nii.gz instead of nii.
-  --no-surf                 Skip surface and thickness estimation.
-  --no-seg                  Skip segmentation processing.
-  --no-sphere-reg           Skip spherical surface registration.
-  --no-mwp                  Skip the estimation of modulated and warped segmentations.
-  --hemisphere              Additionally save hemispheric partitions of the segmentation.
-  --wp                      Additionally save warped segmentations.
-  --rp                      Additionally save affine-registered segmentations.
-  --p                       Additionally save native space segmentations.
-  --csf                     Additionally save CSF segmentations (default: only GM/WM are saved).
-  --lesions                 Additionally save WMH lesions.
-  --bids                    Use BIDS (Brain Imaging Data Structure) standard for output file 
-                            naming conventions (not yet fully working!).
+  --out-dir <DIR>             Specify the output directory (default: current working directory).
+  --no-overwrite <STRING>     Avoid overwriting existing results by checking for the specified 
+                              filename pattern.
+  --gz                        Save images as nii.gz instead of nii.
+  --no-surf                   Skip surface and thickness estimation.
+  --no-seg                    Skip segmentation processing.
+  --no-sphere-reg             Skip spherical surface registration.
+  --no-mwp                    Skip the estimation of modulated and warped segmentations.
+  --hemisphere                Additionally save hemispheric partitions of the segmentation.
+  --wp                        Additionally save warped segmentations.
+  --rp                        Additionally save affine-registered segmentations.
+  --p                         Additionally save native space segmentations.
+  --csf                       Additionally save CSF segmentations (default: only GM/WM are saved).
+  --lesions                   Additionally save WMH lesions.
+  --bids                      Use BIDS (Brain Imaging Data Structure) standard for output file 
+                              naming conventions (not yet fully working!).
 
   ${BOLD}${YELLOW}Expert Options:${NC}
-  --amap                    Use AMAP segmentation instead of DeepMRIPrep.
-  --pre-fwhm <NUMBER>       Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
-  --post-fwhm <NUMBER>      Set the post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
-  --bias-fwhm <NUMBER>      Set the FWHM size for bias-correction in CAT_VolAmap (default: $bias_fwhm).
-  --thickness-fwhm <NUMBER> Set the FWHM size for volumetric thickness smoothing in 
-                            CAT_VolThicknessPbt (default: $thickness_fwhm).
-  --sharpening <NUMBER>     Set the sharpening level applied to the PPM map by enhancing differences
-                            between the unsmoothed and smoothed PPM maps (default: $sharpening).
-  --thresh <NUMBER>         Specify the isovalue threshold for surface creation in 
-                            CAT_VolMarchingCubes (default: $thresh).
-  --vessel <NUMBER>         Set the initial white matter (WM) threshold for vessel removal. 
-                            Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable 
-                            vessel removal (default: $vessel).
-  --downsample <NUMBER>     Specify the downsampling factor for PPM and GMT maps to reduce 
-                            surface intersections (default: $downsample).
-  --median-filter <NUMBER>  Specify the number of median filter applications to reduce topology 
-                            artifacts (default: $median_filter).
+  --amap                      Use AMAP segmentation instead of DeepMRIPrep.
+  --thickness-method <NUMBER> Set the thickness method (default: $thickness_method).
+                              Use 1 for PBT-based method and 2 for approach based on
+                              distance between pial and white matter surface (-2 additionally
+                              uses different thickness filename '*.thickness_distance').
+  --no-correct-folding        Do not correct for cortical thickness by folding effects.
+  --pre-fwhm <NUMBER>         Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
+  --post-fwhm <NUMBER>        Set the post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
+  --bias-fwhm <NUMBER>        Set the FWHM size for bias-correction in CAT_VolAmap (default: $bias_fwhm).
+  --thickness-fwhm <NUMBER>   Set the FWHM size for volumetric thickness smoothing in 
+                              CAT_VolThicknessPbt (default: $thickness_fwhm).
+  --sharpening <NUMBER>       Set the sharpening level applied to the PPM map by enhancing differences
+                              between the unsmoothed and smoothed PPM maps (default: $sharpening).
+  --thresh <NUMBER>           Specify the isovalue threshold for surface creation in 
+                              CAT_VolMarchingCubes (default: $thresh).
+  --vessel <NUMBER>           Set the initial white matter (WM) threshold for vessel removal. 
+                              Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable 
+                              vessel removal (default: $vessel).
+  --downsample <NUMBER>       Specify the downsampling factor for PPM and GMT maps to reduce 
+                              surface intersections (default: $downsample).
+  --median-filter <NUMBER>    Specify the number of median filter applications to reduce topology 
+                              artifacts (default: $median_filter).
   
   ${BOLD}${YELLOW}Examples:${NC}
 
@@ -1122,6 +1150,7 @@ ${BOLD}USED FUNCTIONS:${NC}
   - CAT_SurfWarp
   - CAT_Surf2Sphere
   - CAT_SurfDeform
+  - CAT_SurfCorrectThicknessFolding
   - ${src_dir}/segment.py
   - ${src_dir}/utils.py
   - ${src_dir}/parallelize
