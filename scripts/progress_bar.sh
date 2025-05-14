@@ -17,9 +17,6 @@
 # Jena University Hospital
 # ______________________________________________________________________
 
-########################################################
-# progress bar
-########################################################
 progress_bar() 
 {
   # Usage: progress_bar Current Total Name Width Color
@@ -41,7 +38,7 @@ progress_bar()
   local bar=$(printf "%${filled}s" | tr ' ' '█')
   bar+=$(printf "%${empty}s")
 
-  printf "${COLOR}%-${width}s %3d%%${NC} %s\r" "$bar" "$percent" "$label"
+  printf "[${COLOR}%-${width}s${NC}] %3d%% %s\r" "$bar" "$percent" "$label"
 
   if [ "$current" -eq "$total" ]; then
     printf -v padded_name "%-$(( width + size + 6))s" " "

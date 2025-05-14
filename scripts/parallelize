@@ -11,9 +11,13 @@
 # global parameters
 ########################################################
 time=$(date "+%Y%b%d_%H%M")
+JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
+PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
 MEM_LIMIT=0
 FG=1
 LOGDIR="/tmp"
+progress_pid= # This will hold the PID of the progress bar monitor
+pids=()
 
 # Text formatting
 BOLD=$(tput bold)
@@ -30,15 +34,13 @@ PINK=$(tput setaf 5)
 CYAN=$(tput setaf 6)
 WHITE=$(tput setaf 7)
 
-source "$(dirname "$0")/progress_bar.sh"
-
 ########################################################
 # run main
 ########################################################
 
 main ()
 {
-  get_no_of_cpus
+  #get_no_of_cpus
   parse_args "${@}"
   check_files
   if [ "$MEM_LIMIT" -gt 0 ]; then
@@ -72,7 +74,7 @@ parse_args () {
             ;;
         --processes* | -p*)
             exit_if_empty "$optname" "$optarg"
-            NUMBER_OF_JOBS="$optarg"
+            NUM_JOBS="$optarg"
             shift
             ;;
         --logdir* | -l*)
@@ -175,20 +177,42 @@ get_no_of_cpus () {
   CPUINFO=/proc/cpuinfo
   ARCH=`uname`
 
-  if [ -z "$NUMBER_OF_JOBS" ]; then
+  # Check whether a floating number < 1.0 was used for NUM_JOBS
+  if [ -n "$NUM_JOBS" ]; then
+    percent=$(echo 100*"$NUM_JOBS" | bc | cut -f1 -d'.')
+    digit=$(echo 100*"$NUM_JOBS" | bc | cut -f2 -d'.')
+
+    if [[ -n $digit && $percent -gt 100 ]]; then
+      echo "ERROR: Argument -p is a floating number > 1.0"
+      exit
+    fi
+    
+    # Only recognize percent values if NUM_JOBS < 1.0
+    if [ $percent -lt 100 ]; then
+      PERCENT=$percent
+      NUM_JOBS=""
+    fi
+  fi
+
+  if [ -z "$NUM_JOBS" ]; then
     if [ "$ARCH" == "Linux" ]; then
-      NUMBER_OF_JOBS=`grep ^processor $CPUINFO | wc -l`
+      NUM_JOBS=`grep ^processor $CPUINFO | wc -l`
   
     elif [ "$ARCH" == "Darwin" ]; then
-      NUMBER_OF_JOBS=`sysctl -a hw | grep -w "hw.logicalcpu" | awk '{ print $2 }'`
+      NUM_JOBS=`sysctl -a hw | grep -w "hw.logicalcpu" | awk '{ print $2 }'`
   
     elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]; then
-      NUMBER_OF_JOBS=`wmic cpu get NumberOfLogicalProcessors | grep -v NumberOfLogicalProcessors`
+      NUM_JOBS=`wmic cpu get NumberOfLogicalProcessors | grep -v NumberOfLogicalProcessors`
   
     else
-      NUMBER_OF_JOBS=`grep ^processor $CPUINFO | wc -l`
+      NUM_JOBS=`grep ^processor $CPUINFO | wc -l`
     fi
-  
+    
+    # Use percent value to relate NUM_JOBS
+    if [ -n "$PERCENT" ]; then
+      NUM_JOBS=$(echo "$PERCENT"*"$NUM_JOBS"/100 | bc)
+      NUM_JOBS=$(printf "%.0f" "$NUM_JOBS")  # rounds to 2 decimal places
+    fi
   fi  
 }
 
@@ -226,10 +250,34 @@ get_no_processes () {
   fi
     
   # Calculate number of processes (at least 1) and require 10GB memory for each process
-  NUMBER_OF_JOBS=$(echo "$mem_gb / $MEM_LIMIT" | bc)
-  if [ "$NUMBER_OF_JOBS" -lt 1 ]; then
-    NUMBER_OF_JOBS=1
+  NUM_JOBS=$(echo "$mem_gb / $MEM_LIMIT" | bc)
+  if [ "$NUM_JOBS" -lt 1 ]; then
+    NUM_JOBS=1
   fi
+}
+
+########################################################
+# Cleanup function
+########################################################
+
+cleanup() {
+  echo "🛑 Caught interrupt. Cleaning up..."
+  echo ""
+  echo "Please note that only new processes can be killed, but already started child processes hast to be manually interrupted."
+  if [ -n "$progress_pid" ]; then
+    kill "$progress_pid" 2>/dev/null
+  fi
+
+  # Kill all background jobs started with nohup
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+    fi
+  done
+
+  rm -rf "$PROGRESS_DIR"
+  exit 1
 }
 
 ########################################################
@@ -244,13 +292,13 @@ do_parallelize ()
 
   SIZE_OF_ARRAY="${#ARRAY[@]}"
 
-  # Correct if NUMBER_OF_JOBS > SIZE_OF_ARRAY
-  if [ "$SIZE_OF_ARRAY"  -lt "$NUMBER_OF_JOBS" ]; then
-    NUMBER_OF_JOBS=$SIZE_OF_ARRAY
+  # Correct if NUM_JOBS > SIZE_OF_ARRAY
+  if [ "$SIZE_OF_ARRAY"  -lt "$NUM_JOBS" ]; then
+    NUM_JOBS=$SIZE_OF_ARRAY
   fi
   
-  # If NUMBER_OF_JOBS is 0, execute commands serially
-  if [ "$NUMBER_OF_JOBS" -lt 2 ]; then
+  # If NUM_JOBS is 0, execute commands serially
+  if [ "$NUM_JOBS" -lt 2 ]; then
       echo "Executing serially..."
       for file in "${ARRAY[@]}"; do
           eval "$COMMAND \"$file\""  # Use eval to handle complex commands
@@ -269,7 +317,7 @@ do_parallelize ()
       return
   fi
 
-  BLOCK=$((10000* $SIZE_OF_ARRAY / $NUMBER_OF_JOBS ))
+  BLOCK=$((10000* $SIZE_OF_ARRAY / $NUM_JOBS ))
   i=0
   
   # Initialize logging
@@ -287,49 +335,57 @@ do_parallelize ()
   done
 
   if [ -z "${TEST}" ]; then
+    mkdir -p "$PROGRESS_DIR"
+    rm -f "$PROGRESS_DIR"/*.progress
+    
+    # Start progress monitor
+    $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" &
+    progress_pid=$!
+
+    # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
+    trap cleanup INT TERM
     echo "${GREEN}Check $log for logging information${NC}"
     echo > $log
     echo
   fi
   
-  i=0
-  export -f progress_bar
-  while [ "$i" -lt "$NUMBER_OF_JOBS" ]; do
+  for ((i=0; i<NUM_JOBS; i++)); do
     if [ ! "${ARG_LIST[$i]}" == "" ]; then
       j=$(($i+1))
-      echo "Job ${j}/${NUMBER_OF_JOBS}: ${ARG_LIST[$i]}"
+      echo "Job ${j}/${NUM_JOBS}: ${ARG_LIST[$i]}"
   
       if [ -z "${TEST}" ]; then
-        echo "Job ${j}/${NUMBER_OF_JOBS}: $COMMAND ${ARG_LIST[$i]}" >> "$log"
+        echo "Job ${j}/${NUM_JOBS}: $COMMAND ${ARG_LIST[$i]}" >> "$log"
         nohup bash -c "
           total_k=\$(echo ${ARG_LIST[$i]} | wc -w)
           k_count=0
           for k in ${ARG_LIST[$i]}; do
             ((k_count++))
-            # Print to terminal and log
-            msg=\"Processing \$k (\$k_count/\$total_k)\"
-            # Write to terminal
-            bn=\$(basename \"\$k\")
-            dn=\$(dirname \"\$k\")
-            dn=\$(basename \"\$dn\")
-            progress_bar \$k_count \$total_k \"Processing ../\$dn/\$bn\"
-            # Write to log
-            echo \"\$msg\" >> $log            
-            $COMMAND \$k
+            
+            # Update progress file (instead of printing progress)
+            echo \"\$k_count/\$total_k\" > \"$PROGRESS_DIR/job${i}.progress\"
+  
+            # Log message
+            echo \"Processing \$k (\$k_count/\$total_k)\" >> \"$log\"
+  
+            $COMMAND \$k >> \"$log\" 2>&1
           done
         " >> "$log" 2>&1 & pids+=($!)
       fi
     fi
-    ((i++))
   done
-  
+        
   # keep all processes in foreground
   if [ "${FG}" -eq 1 ]; then
       #echo "Waiting for jobs to complete..."
       for pid in "${pids[@]}"; do
         wait "$pid"
       done
-      
+
+      if [ -z "${TEST}" ]; then
+        rm -r "$PROGRESS_DIR"  
+      fi
+
       # get overall processing time
       end=$(date +%s)
       runtime=$((end - start))
@@ -350,16 +406,19 @@ help ()
 cat <<__EOM__
 
 ${BOLD}USAGE:${NC}
-  parallelize [options] -c <STRING> [filename|filepattern]
+  $(basename "$0") [options] -c <STRING> [filename|filepattern]
 
 ${BOLD}OPTIONS:${NC}
-  -p, --processes <NUMBER>  Specify the number of parallel jobs (default $NUMBER_OF_JOBS).
-  -m, --mem-limit <INT>     Memory limit for each process in GB (default is $MEM_LIMIT GB).
-  -c, --command <STRING>    Command to be executed in parallel.
-  -b, --bg                  Keep all processes in background.
-  -l, --logdir <DIR>        Directory to save the log file (default $LOGDIR).
-  -t, --test                Run in test mode: print the files to be processed without 
-                            executing the command.
+  -p, --processes <NUMBER> Specify the number of parallel jobs (default $NUM_JOBS).
+                           If <NUMBER> is a floating-point value between 0 and 1,
+                           it will be interpreted as a fraction of available CPU cores.
+                           For example, 0.7 means 70% of CPU cores will be used.
+  -m, --mem-limit <INT>    Memory limit for each process in GB (default is $MEM_LIMIT GB).
+  -c, --command <STRING>   Command to be executed in parallel.
+  -b, --bg                 Keep all processes in background.
+  -l, --logdir <DIR>       Directory to save the log file (default $LOGDIR).
+  -t, --test               Run in test mode: print the files to be processed without 
+                          executing the command.
 
 ${BOLD}DESCRIPTION:${NC}
   Execute commands in parallel across multiple files specified by filenames or a wildcard 
@@ -379,6 +438,10 @@ ${BOLD}EXAMPLES:${NC}
 
   ${BLUE}parallelize -m 20 -c "T1prep --no-surf" sTRIO*.nii${NC}
     Parallelizes 'T1prep' without surface estimation, setting a 10GB RAM limit per process.
+
+  ${BLUE}parallelize -p 0.7 -c "gunzip" *.zip${NC}
+    Parallelizes unzipping of all .zip files in the current directory by using 70% of the
+    available processors.
 
   ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
   ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
