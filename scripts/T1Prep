@@ -588,9 +588,6 @@ surface_estimation()
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
       
       # Use different name for thickness file
-      if [ "${thickness_method}" -eq -2 ]; then
-        thick_name=$( echo ${thick_name} | sed -e 's/thickness/thickness_distance/g' )
-      fi
       ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${!pial} ${outsurfdir}/${!wm} ${thick_name}
     fi
     
@@ -599,8 +596,7 @@ surface_estimation()
     
     # Correct cortical thickness that is influenced by folding
     if [ "${correct_folding}" -eq 1 ]; then
-      thick_name_corr=$( echo ${thick_name} | sed -e 's/thickness/thickness_corr/g' )
-      ${bin_dir}/CAT_SurfCorrectThicknessFolding ${outsurfdir}/${!mid} ${thick_name} ${thick_name_corr}
+      ${bin_dir}/CAT_SurfCorrectThicknessFolding ${outsurfdir}/${!mid} ${thick_name} ${thick_name}
     fi
 
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
@@ -1076,8 +1072,7 @@ ${BOLD}OPTIONS:${NC}
   --amap                      Use AMAP segmentation instead of DeepMRIPrep.
   --thickness-method <NUMBER> Set the thickness method (default: $thickness_method).
                               Use 1 for PBT-based method and 2 for approach based on
-                              distance between pial and white matter surface (-2 additionally
-                              uses different thickness filename '*.thickness_distance').
+                              distance between pial and white matter surface.
   --no-correct-folding        Do not correct for cortical thickness by folding effects.
   --pre-fwhm <NUMBER>         Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
   --post-fwhm <NUMBER>        Set the post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
