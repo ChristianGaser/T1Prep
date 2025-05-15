@@ -59,6 +59,7 @@ outmridir=''
 use_bids_naming=0
 thickness_fwhm=5
 median_filter=2
+save_pial_white=1
 save_lesions=0
 save_hemi=0
 save_surf=1
@@ -231,6 +232,9 @@ parse_args()
         ;;
       --no-mwp*)
         save_mwp=0
+        ;;
+      --no-pial-white)
+        save_pial_white=0
         ;;
       --lesion*)
         save_lesions=1
@@ -516,7 +520,9 @@ surface_estimation()
   else
     ((end_count=6))
   fi
-
+  if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -ne 1 ]]; then
+    ((end_count++))
+  fi
   if [ "${debug}" -eq 0 ]; then
     verbose=""
   else 
@@ -567,7 +573,10 @@ surface_estimation()
      
     # Updates progress to 'Deform $side surface'
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface"; fi
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side central surface"; fi
+
+    # Obtain more accurate central surface by surface deformation to PPM image
+    ${bin_dir}/CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!mid}    
 
     # Executes 'CAT_Surf2PialWhite' to estimate both pial and white matter surfaces.
     # - '-w1' sets the internal smoothness weight.
@@ -577,26 +586,28 @@ surface_estimation()
     # - '-sigma' sets the smoothing size for filtering the displacement field.
     # - '-iter' sets the number of iterations.
     # - '-isovalue' sets the isovalue for mesh generation.
-    ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
-    
-    thick_name=${outsurfdir}/${!thick}
-    
+    if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -ne 1 ]]; then
+      # Updates progress to 'Deform $side surface'
+      ((count++))
+      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface"; fi
+      ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
+
+      # Get central surface by averaging pial and white matter surface
+      ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}    
+    fi
+          
     # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
     if [ "${thickness_method}" -ne 1 ]; then
       # Updates progress to 'Refine $side thickness'
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
       
-      # Use different name for thickness file
-      ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${!pial} ${outsurfdir}/${!wm} ${thick_name}
+      ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${!pial} ${outsurfdir}/${!wm} ${outsurfdir}/${!thick}
     fi
-    
-    # Get central surface by averaging pial and white matter surface
-    ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
     
     # Correct cortical thickness that is influenced by folding
     if [ "${correct_folding}" -eq 1 ]; then
-      ${bin_dir}/CAT_SurfCorrectThicknessFolding ${outsurfdir}/${!mid} ${thick_name} ${thick_name}
+      ${bin_dir}/CAT_SurfCorrectThicknessFolding ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!thick}
     fi
 
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
@@ -1059,6 +1070,7 @@ ${BOLD}OPTIONS:${NC}
   --no-seg                    Skip segmentation processing.
   --no-sphere-reg             Skip spherical surface registration.
   --no-mwp                    Skip the estimation of modulated and warped segmentations.
+  --no-pial-white             Skip the estimation of pial and white matter surface.
   --hemisphere                Additionally save hemispheric partitions of the segmentation.
   --wp                        Additionally save warped segmentations.
   --rp                        Additionally save affine-registered segmentations.
