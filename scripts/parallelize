@@ -316,17 +316,21 @@ do_parallelize ()
   if [ "$NUM_JOBS" -lt 2 ]; then
       echo "Executing serially..."
       i=0
+      
+      # We have to call that before starting to already display the progress bar
+      # before the 1st process is finished.
+      if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
+        echo "$i/$SIZE_OF_ARRAY" > "$PROGRESS_DIR/job0.progress"
+      fi
+
       for file in "${ARRAY[@]}"; do
-          if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
-            echo "$i/$SIZE_OF_ARRAY" > "$PROGRESS_DIR/job0.progress"
-          fi
           eval "$COMMAND \"$file\""  # Use eval to handle complex commands
           ((i++))
-          pids=($!)
-
+          
           if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
             echo "$i/$SIZE_OF_ARRAY" > "$PROGRESS_DIR/job0.progress"
           fi
+          pids=($!)
       done
 
       # get overall processing time
@@ -340,6 +344,12 @@ do_parallelize ()
       if [ $min -gt 0 ]; then overall+="${min}min "; fi
       overall+="${s}sec"
       
+      # wait until progress bar is finished
+      wait $progress_pid
+      if [ -z "${TEST}" ]; then
+        rm -r "$PROGRESS_DIR"  
+      fi
+
       # Display the result
       echo "${GREEN}-------------------------------------------------------${NC}"
       echo "${GREEN}${overall}${NC}"
@@ -381,9 +391,8 @@ do_parallelize ()
         nohup bash -c "
           total_k=\$(echo ${ARG_LIST[$i]} | wc -w)
           k_count=0
+          echo \"\$k_count/\$total_k\" > \"$PROGRESS_DIR/job${i}.progress\"
           for k in ${ARG_LIST[$i]}; do
-
-            echo \"\$k_count/\$total_k\" > \"$PROGRESS_DIR/job${i}.progress\"
             ((k_count++))
               
             # Log message
@@ -406,11 +415,6 @@ do_parallelize ()
         wait "$pid"
       done
 
-      wait $progress_pid
-      if [ -z "${TEST}" ]; then
-        rm -r "$PROGRESS_DIR"  
-      fi
-
       # get overall processing time
       end=$(date +%s)
       runtime=$((end - start))
@@ -422,6 +426,12 @@ do_parallelize ()
       if [ $min -gt 0 ]; then overall+="${min}min "; fi
       overall+="${s}sec"
       
+      # wait until progress bar is finished
+      wait $progress_pid
+      if [ -z "${TEST}" ]; then
+        rm -r "$PROGRESS_DIR"  
+      fi
+
       # Display the result
       echo "${GREEN}-------------------------------------------------------${NC}"
       echo "${GREEN}${overall}${NC}"
