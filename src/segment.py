@@ -18,6 +18,7 @@ warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
 from deepbet.utils import reoriented_nifti
+from deepmriprep.segment import BrainSegmentation, scale_intensity
 from deepmriprep.preprocess import Preprocess
 from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import ATLASES, get_volumes
@@ -30,6 +31,29 @@ MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt',
                 'segmentation_nogm_model.pt'] +
                [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 
                'warp_model.pt'])
+
+# Custom class to override BrainSegmentation
+# Skip self.run_patch_models(x, p0) which takes a lot of time and is not needed 
+# for Amap segmentation
+class CustomBrainSegmentation(BrainSegmentation):
+    def __call__(self, x):
+        x = x[:, :, 1:-2, 15:-12, :-3]
+        x = scale_intensity(x)
+        p0 = self.run_model(x)  # Skip self.run_patch_models(x, p0)
+        if self.fill_holes:
+            mask = p0[0, 0].cpu().numpy() > .9
+            import fill_voids
+            mask_filled = fill_voids.fill(mask)
+            filled = (mask == 0) & (mask_filled == 1)
+            p0[0, 0][filled] = 1.
+        return F.pad(p0, (0, 3, 15, 12, 1, 2))
+
+
+# Subclass Preprocess to use our custom BrainSegmentation
+class CustomPreprocess(Preprocess):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.brain_segment = CustomBrainSegmentation(no_gpu=kwargs.get('no_gpu', False))
 
 def run_segment():
 
@@ -140,11 +164,16 @@ def run_segment():
     vol = np.squeeze(vol)
     vol, affine2, header2, ras_affine = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
     t1 = nib.Nifti1Image(vol, affine2, header2)
-    
+
+    # Use faster preprocessing and segmentation for Amap segmentation    
+    if (use_amap):
+        prep = CustomPreprocess(no_gpu=no_gpu)
+    else:
+        prep = Preprocess(no_gpu)
+
     # Step 1: Skull-stripping
     if (verbose):
         count = progress_bar(count, end_count, 'Skull-stripping               ')
-    prep = Preprocess(no_gpu)
     output_bet = prep.run_bet(t1)
     brain = output_bet['brain']
     mask = output_bet['mask']

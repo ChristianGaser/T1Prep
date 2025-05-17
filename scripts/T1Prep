@@ -233,7 +233,7 @@ parse_args()
       --no-mwp*)
         save_mwp=0
         ;;
-      --no-pial-white)
+      --no-pial*)
         save_pial_white=0
         ;;
       --lesion*)
