@@ -48,13 +48,6 @@ class CustomBrainSegmentation(BrainSegmentation):
             p0[0, 0][filled] = 1.
         return F.pad(p0, (0, 3, 15, 12, 1, 2))
 
-
-# Subclass Preprocess to use our custom BrainSegmentation
-class CustomPreprocess(Preprocess):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.brain_segment = CustomBrainSegmentation(no_gpu=kwargs.get('no_gpu', False))
-
 def run_segment():
 
     """
@@ -165,11 +158,11 @@ def run_segment():
     vol, affine2, header2, ras_affine = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
     t1 = nib.Nifti1Image(vol, affine2, header2)
 
+    prep = Preprocess(no_gpu)
+
     # Use faster preprocessing and segmentation for Amap segmentation    
     if (use_amap):
-        prep = CustomPreprocess(no_gpu=no_gpu)
-    else:
-        prep = Preprocess(no_gpu)
+        prep.brain_segment = CustomBrainSegmentation(no_gpu=True)
 
     # Step 1: Skull-stripping
     if (verbose):
