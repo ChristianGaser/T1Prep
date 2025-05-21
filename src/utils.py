@@ -201,7 +201,7 @@ def cleanup(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
 
     return label, gm, wm, csf
 
-def correct_bias_field(brain, seg, steps=1000):
+def correct_bias_field(brain, seg, steps=1000, spacing=0.75):
     """
     Applies bias field correction to an input brain image.
 
@@ -215,15 +215,13 @@ def correct_bias_field(brain, seg, steps=1000):
     
     # Defaults
     subdivide = True
-    accumulate = True
     bcl = True
     Z = 0.01
     Nbins = 256
     maxlevel = 4
-    fwhm = 0.05
+    fwhm = 0.1
     subsamp = 5
     stopthr = 1e-4
-    spacing = 1
 
     # Process voxel sizes and mask for brain segmentation
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
@@ -237,39 +235,42 @@ def correct_bias_field(brain, seg, steps=1000):
         print(_thresh)
         mask = np.logical_and(brain0 > _thresh, mask)
     else:
-        mask = (seg.get_fdata() > 2.5)
-
+        mask = (seg.get_fdata() >= 2.75)
+    
     # Subsampling for efficiency
     if subsamp:
         offset = 0
         dataSub = brain0[offset::subsamp,offset::subsamp,offset::subsamp]
-        mask = mask[offset::subsamp,offset::subsamp,offset::subsamp]
+        wm_mask = mask[offset::subsamp,offset::subsamp,offset::subsamp]
         dataSubVoxSize = dataVoxSize * subsamp
+    else:
+        dataSub = brain0
+        wm_mask = mask
     
     dataSubVoxSize = 1 / (np.array(dataSub.shape) -1)
     dataVoxSize = dataSubVoxSize / subsamp
 
     # Prepare data and parameters for bias correction
     datalog = dataSub.astype(np.float32)
-    datalog[mask] = np.log(datalog[mask])
-    datalog[np.logical_not(mask)] = 0
-    datalogmasked = datalog[mask]
-    datafill = np.zeros_like(datalog)    
+    datalog[wm_mask] = np.log(datalog[wm_mask])
+    datalog[np.logical_not(wm_mask)] = 0
+    datalogmasked = datalog[wm_mask]
+    fit_data = np.zeros_like(datalog)    
     datalogmaskedcur = np.copy(datalogmasked)
 
     # Descending FWHM scheme
     levels=[ lvl for lvl in range(maxlevel) for _ in range(steps) ]
+
     # At some point will have to generalise into fwhm and subdivision
     # level scheme, at the moment it's either or:
     levelfwhm = fwhm / (np.arange(maxlevel) + 1) if not subdivide else fwhm * np.ones(maxlevel)
     
     splsm3d = SplineSmooth3DUnregularized(
-        datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=mask)
+        datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=wm_mask)
     
     # Prediction interpolator
     predictor = SplineSmooth3D(
         brain0, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False)
-    lastinterpbc = np.zeros(datalogmasked.shape[0])
     datalogcur = np.copy(datalog)
     nextlevel = 0
     
@@ -292,42 +293,32 @@ def correct_bias_field(brain, seg, steps=1000):
     
         uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval, mfilt, hist)
         datalogmaskedupd = map_Eu_v(histval, uest, datalogmaskedcur)
-        if accumulate:
-          logbc = datalogmaskedcur - datalogmaskedupd
-        else:
-          logbc = datalogmasked - datalogmaskedupd
+        logbc = datalogmaskedcur - datalogmaskedupd
         meanadj=True
         if meanadj:
           logbc = logbc - np.mean(logbc)
         usegausspde=True
     
         # Need masking!
-        datafill[mask] = logbc
-        splsm3d.fit(datafill, reportingLevel=0)
-        logbcsmfull = splsm3d.predict()
-        logbcsm = logbcsmfull[mask]
+        fit_data[wm_mask] = logbc
+        splsm3d.fit(fit_data, reportingLevel=0)
+        log_bias_field = splsm3d.predict()
+        log_bias_masked = log_bias_field[wm_mask]
     
-        if accumulate:
-            logbcratio = logbcsm
-        else:
-            logbcratio = logbcsm - lastinterpbc
-            lastinterpbc = logbcsm
+        correction = log_bias_masked
             
-        bcratio = np.exp(logbcratio)
+        bcratio = np.exp(correction)
         ratiomean = bcratio.mean()
         ratiosd = bcratio.std()
         conv = ratiosd / ratiomean
     
-        if accumulate:
-            datalogmaskedcur = datalogmaskedcur - logbcsm
-            if controlField is None:
-                controlField  = splsm3d.P.copy()
-            else:
-                controlField += splsm3d.P
+        datalogmaskedcur = datalogmaskedcur - log_bias_masked
+        if controlField is None:
+            controlField  = splsm3d.P.copy()
         else:
-            datalogmaskedcur = datalogmasked - logbcsm
+            controlField += splsm3d.P
             
-        datalogcur[mask] = datalogmaskedcur
+        datalogcur[wm_mask] = datalogmaskedcur
         if (conv < stopthr):
             nextlevel = levels[N] + 1
             
@@ -338,14 +329,12 @@ def correct_bias_field(brain, seg, steps=1000):
             # to a finer mesh for the following updates.
             # In cumulative mode we first get the current cumulative
             # estimate before refining.
-            if accumulate:
-                splsm3d.P = controlField
+            splsm3d.P = controlField
             splsm3d = splsm3d.promote()
             predictor = predictor.promote()
             controlField = splsm3d.P
     
-    if accumulate:
-        splsm3d.P = controlField
+    splsm3d.P = controlField
     
     predictor.P = splsm3d.P
 
@@ -355,11 +344,85 @@ def correct_bias_field(brain, seg, steps=1000):
     # apply nu-correction
     tissue_idx = bias0 != 0
     brain0[tissue_idx] /= bias0[tissue_idx]
+    
+    brain0 = piecewise_linear_scaling(brain0, seg.get_fdata())
 
     brain = nib.Nifti1Image(brain0, brain.affine, brain.header)
     bias  = nib.Nifti1Image(bias0,  brain.affine, brain.header)
     
     return bias, brain
+
+def piecewise_linear_scaling(input_img, label_img):
+    """
+    Piecewise linear scaling of an intensity image based on reference label regions.
+    
+    This function performs a piecewise linear transformation of the input image,
+    using median intensity values from regions defined by a label image as breakpoints.
+    Each segment between breakpoints is mapped linearly to a corresponding interval 
+    in the `target_values` array. The final result is normalized by dividing by 3.
+    
+    Parameters
+    ----------
+    input_img : np.ndarray
+        Input image (e.g., intensity or probability map), 1D or ND.
+    label_img : np.ndarray
+        Label image of same shape as input_img, with integer class labels 
+        (0=background, 1=CSF, 2=GM, 3=WM).
+
+    Returns
+    -------
+    Ym : np.ndarray
+        Piecewise linearly scaled image, normalized to the range [0, 1] (if input covers full range).
+    
+    Notes
+    -----
+    - Median intensities of input_img are computed within regions defined by the labels:
+        - label==0 and intensity < 0.9*median(CSF): Background (BG)
+        - label==1: CSF
+        - label==2: GM
+        - label==3: WM
+        - label==4: WM+ (extrapolated as median_WM + (median_WM - median_GM))
+    - The breakpoints for piecewise scaling are set to these median values.
+    - Each interval [median_i-1, median_i] is mapped linearly to [target_i-1, target_i].
+    - For values above the last median (WM+), the mapping continues linearly.
+    - Output is normalized by dividing by 3, so that the range maps to [0, 1.33].
+    """
+    
+    # Define output target values for each class interval (BG, CSF, GM, WM, WM+)
+    target_values = np.arange(0, 5)  # [0, 1, 2, 3, 4]
+    Ym = input_img.copy().astype(float)
+    N = len(target_values)
+    
+    # Compute medians for class-specific reference regions
+    median_input = {}
+    # CSF, GM, WM peaks
+    for k in [1, 2, 3]:
+        mask = (np.abs(label_img - k) < 0.01)
+        median_input[k] = np.median(input_img[mask])
+    # BG peak: label==0 and much lower than CSF
+    mask = (label_img == 0) & (input_img < 0.9*median_input[1]) # BG mask
+    median_input[0] = np.median(input_img[mask])
+    # Extrapolated "WM+" for values beyond WM (e.g., fat, vessels)
+    median_input[4] = median_input[3] + (median_input[3] - median_input[2])
+    
+    # Piecewise linear mapping for each interval [median_input[i-1], median_input[i]]
+    for i in range(1, N):
+        mask = (input_img > median_input[i-1]) & (input_img <= median_input[i])
+        Ym[mask] = (
+            target_values[i-1]
+            + (input_img[mask] - median_input[i-1])
+              / (median_input[i] - median_input[i-1])
+              * (target_values[i] - target_values[i-1])
+        )
+    # For outliers above the last median, extrapolate linearly using last segment's slope
+    mask = input_img >= median_input[4]
+    offset = N / 6  # == 5/6
+    slope = (target_values[4] - target_values[3]) / (median_input[4] - median_input[3])
+    Ym[mask] = offset + (input_img[mask] - median_input[4]) * slope
+    
+    # Normalize so WM (target 3) maps to 1.0
+    Ym = Ym / 3
+    return Ym
 
 def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None, device='cpu'):
     """

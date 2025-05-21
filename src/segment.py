@@ -162,7 +162,7 @@ def run_segment():
 
     # Use faster preprocessing and segmentation for Amap segmentation    
     if (use_amap):
-        prep.brain_segment = CustomBrainSegmentation(no_gpu=True)
+        prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
 
     # Step 1: Skull-stripping
     if (verbose):
@@ -209,9 +209,15 @@ def run_segment():
         
         if (verbose):
             count = progress_bar(count, end_count, 'Amap segmentation')
-        nib.save(brain_large, f'{out_dir}/{out_name}_brain_large.{ext}')
+        nib.save(brain_large, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.{ext}')
         
+        # Call SANLM filter and rename output to original name
+        cmd = (os.path.join(amapdir, 'CAT_VolSanlm') + ' ' +
+            f'{out_dir}/{out_name}_brain_large_tmp.{ext}' + ' ' +
+            f'{out_dir}/{out_name}_brain_large.{ext}')
+        os.system(cmd)
+
         # Call AMAP and write GM and label map
         cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
             f' -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 ' +
@@ -427,10 +433,9 @@ def run_segment():
             affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.{ext}', True, True)
 
     # remove temporary AMAP files
-#    if use_amap | save_lesions:
-    if 0:
-        remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
-        remove_file(f'{out_dir}/{out_name}_brain_large_seg.{ext}')
+    if (use_amap | save_lesions):
+        remove_file(f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
+        #remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}')
