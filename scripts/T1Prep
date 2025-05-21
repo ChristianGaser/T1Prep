@@ -19,6 +19,8 @@
 # - check_python_module: Checks for python modules.
 # - check_python_libraries: Checks for python libraries.
 # - get_OS: Identifies operations system and folder of binaries.
+# - surface_estimation: Create cortical surfaces
+# - get_output_names: Get output filenames
 # - process: Performs the preprocessing steps on each input file.
 #
 # ______________________________________________________________________
@@ -77,10 +79,9 @@ downsample=0.0
 vessel=0.5
 sharpening=0.0
 bias_fwhm=0
-post_fwhm=1.0
+post_fwhm=1.75
 pre_fwhm=2
 re_install=0
-use_sanlm=0
 use_amap=0
 isoval=0.5
 thresh=0.6
@@ -253,7 +254,6 @@ parse_args()
         ;;
       --amap)
         use_amap=1
-        use_sanlm=1
         ;;
       --bids)
         use_bids_naming=1
@@ -392,7 +392,6 @@ check_python()
 # check for python modules (e.g. pip)
 ########################################################
 
-# Function to check if a Python module is available
 check_python_module() {
     ${python} -c "import $1" 2>/dev/null
     if [ $? -ne 0 ]; then
@@ -453,7 +452,7 @@ install_deepmriprep()
 }
 
 ########################################################
-# get OS
+# get operation system
 ########################################################
 
 get_OS() 
@@ -485,8 +484,91 @@ get_OS()
 }
 
 ########################################################
+# get output filenames 
+########################################################
+
+get_output_names()
+{
+
+  outdir0=$1
+  bname=$2
+  nii_ext=$3
+
+  # get output names
+  sanlm="${bname}_desc-sanlm.${nii_ext}"
+  seg="${bname}_seg.${nii_ext}"
+  p0="p0${bname}.${nii_ext}"
+  mT1="m${bname}.${nii_ext}"
+
+  hemi_left="${bname}_seg_hemi-L.${nii_ext}"
+  hemi_right="${bname}_seg_hemi-R.${nii_ext}"
+  gmt_left="${bname}_hemi-L_thickness.${nii_ext}"
+  gmt_right="${bname}_hemi-R_thickness.${nii_ext}"
+
+  # for the following filenames we have to remove the potential .gz from name
+  ppm_left="${bname}_hemi-L_ppm.${nii_ext}"
+  ppm_right="${bname}_hemi-R_ppm.${nii_ext}"
+
+  if [ "${use_bids_naming}" -eq 1 ]; then
+
+    echo "${RED}BIDS names for volumes not yet supported.${NC}"
+
+    ppm_left="${bname}_hemi-L_ppm.${nii_ext}"
+    ppm_right="${bname}_hemi-R_ppm.${nii_ext}"
+    mid_left="${bname}_hemi-L_midthickness.surf.gii"
+    mid_right="${bname}_hemi-R_midthickness.surf.gii"
+    pial_left="${bname}_hemi-L_pial.surf.gii"
+    pial_right="${bname}_hemi-R_pial.surf.gii"
+    wm_left="${bname}_hemi-L_wm.surf.gii"
+    wm_right="${bname}_hemi-R_wm.surf.gii"
+    thick_left="${bname}_hemi-L_thickness.txt"
+    thick_right="${bname}_hemi-R_thickness.txt"
+    pbt_left="${bname}_hemi-L_pbt.txt"
+    pbt_right="${bname}_hemi-R_pbt.txt"
+    sphere_left="${bname}_hemi-L_sphere.surf.gii"
+    sphere_right="${bname}_hemi-R_sphere.surf.gii"
+    spherereg_left="${bname}_hemi-L_sphere.reg.surf.gii"
+    spherereg_right="${bname}_hemi-R_sphere.reg.surf.gii"
+    intensity_left="${bname}_hemi-L_intensity.txt"
+    intensity_right="${bname}_hemi-R_intensity.txt"
+    intensity_pial_left="${bname}_hemi-L_intensity_pial.txt"
+    intensity_pial_right="${bname}_hemi-R_intensity_pial.txt"
+    intensity_white_left="${bname}_hemi-L_intensity_white.txt"
+    intensity_white_right="${bname}_hemi-R_intensity_white.txt"
+
+    outmridir=${outdir0}
+    outsurfdir=${outdir0}
+  else
+    mid_left="lh.central.${bname}.gii"
+    mid_right="rh.central.${bname}.gii"
+    pial_left="lh.pial.${bname}.gii"
+    pial_right="rh.pial.${bname}.gii"
+    wm_left="lh.white.${bname}.gii"
+    wm_right="rh.white.${bname}.gii"
+    thick_left="lh.thickness.${bname}"
+    thick_right="rh.thickness.${bname}"
+    pbt_left="lh.pbt.${bname}"
+    pbt_right="rh.pbt.${bname}"
+    sphere_left="lh.sphere.${bname}.gii"
+    sphere_right="rh.sphere.${bname}.gii"
+    spherereg_left="lh.sphere.reg.${bname}.gii"
+    spherereg_right="rh.sphere.reg.${bname}.gii"
+    intensity_left="lh.intensity_${bname}.txt"
+    intensity_right="rh.intensity_${bname}.txt"
+    intensity_pial_left="lh.intensity_pial_${bname}.txt"
+    intensity_pial_right="rh.intensity_pial_${bname}.txt"
+    intensity_white_left="lh.intensity_white_${bname}.txt"
+    intensity_white_right="rh.intensity_white_${bname}.txt"
+
+    outmridir=${outdir0}/mri
+    outsurfdir=${outdir0}/surf
+  fi
+}
+
+########################################################
 # surface estimation
 ########################################################
+
 surface_estimation() 
 {  
   side=$1
@@ -593,11 +675,11 @@ surface_estimation()
       ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
 
       # Get central surface by averaging pial and white matter surface
-      ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}    
+      #${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}    
     fi
           
     # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
-    if [ "${thickness_method}" -ne 1 ]; then
+    if [ "${thickness_method}" -eq 2 ]; then
       # Updates progress to 'Refine $side thickness'
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
@@ -711,6 +793,7 @@ process()
     cmd=(
       "$(dirname "$0")/parallelize"
       -l "/tmp"
+      -p 0.5
       "${arg_parallelize}"
       -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-seg --multi -2)"
       "${ARRAY[@]}"
@@ -830,76 +913,9 @@ process()
       mkdir -p "$outdir0"
     fi
 
-    # get output names
-    sanlm="${bname}_desc-sanlm.${nii_ext}"
-    seg="${bname}_seg.${nii_ext}"
-    p0="p0${bname}.${nii_ext}"
-    mT1="m${bname}.${nii_ext}"
-
-    hemi_left="${bname}_seg_hemi-L.${nii_ext}"
-    hemi_right="${bname}_seg_hemi-R.${nii_ext}"
-    gmt_left="${bname}_hemi-L_thickness.${nii_ext}"
-    gmt_right="${bname}_hemi-R_thickness.${nii_ext}"
-
-    # for the following filenames we have to remove the potential .gz from name
-    ppm_left="${bname}_hemi-L_ppm.${nii_ext}"
-    ppm_right="${bname}_hemi-R_ppm.${nii_ext}"
-
-    if [ "${use_bids_naming}" -eq 1 ]; then
-
-      echo "${RED}BIDS names for volumes not yet supported.${NC}"
-
-      ppm_left="${bname}_hemi-L_ppm.${nii_ext}"
-      ppm_right="${bname}_hemi-R_ppm.${nii_ext}"
-      mid_left="${bname}_hemi-L_midthickness.surf.gii"
-      mid_right="${bname}_hemi-R_midthickness.surf.gii"
-      pial_left="${bname}_hemi-L_pial.surf.gii"
-      pial_right="${bname}_hemi-R_pial.surf.gii"
-      wm_left="${bname}_hemi-L_wm.surf.gii"
-      wm_right="${bname}_hemi-R_wm.surf.gii"
-      thick_left="${bname}_hemi-L_thickness.txt"
-      thick_right="${bname}_hemi-R_thickness.txt"
-      pbt_left="${bname}_hemi-L_pbt.txt"
-      pbt_right="${bname}_hemi-R_pbt.txt"
-      sphere_left="${bname}_hemi-L_sphere.surf.gii"
-      sphere_right="${bname}_hemi-R_sphere.surf.gii"
-      spherereg_left="${bname}_hemi-L_sphere.reg.surf.gii"
-      spherereg_right="${bname}_hemi-R_sphere.reg.surf.gii"
-      intensity_left="${bname}_hemi-L_intensity.txt"
-      intensity_right="${bname}_hemi-R_intensity.txt"
-      intensity_pial_left="${bname}_hemi-L_intensity_pial.txt"
-      intensity_pial_right="${bname}_hemi-R_intensity_pial.txt"
-      intensity_white_left="${bname}_hemi-L_intensity_white.txt"
-      intensity_white_right="${bname}_hemi-R_intensity_white.txt"
-
-      outmridir=${outdir0}
-      outsurfdir=${outdir0}
-    else
-      mid_left="lh.central.${bname}.gii"
-      mid_right="rh.central.${bname}.gii"
-      pial_left="lh.pial.${bname}.gii"
-      pial_right="rh.pial.${bname}.gii"
-      wm_left="lh.white.${bname}.gii"
-      wm_right="rh.white.${bname}.gii"
-      thick_left="lh.thickness.${bname}"
-      thick_right="rh.thickness.${bname}"
-      pbt_left="lh.pbt.${bname}"
-      pbt_right="rh.pbt.${bname}"
-      sphere_left="lh.sphere.${bname}.gii"
-      sphere_right="rh.sphere.${bname}.gii"
-      spherereg_left="lh.sphere.reg.${bname}.gii"
-      spherereg_right="rh.sphere.reg.${bname}.gii"
-      intensity_left="lh.intensity_${bname}.txt"
-      intensity_right="rh.intensity_${bname}.txt"
-      intensity_pial_left="lh.intensity_pial_${bname}.txt"
-      intensity_pial_right="rh.intensity_pial_${bname}.txt"
-      intensity_white_left="lh.intensity_white_${bname}.txt"
-      intensity_white_right="rh.intensity_white_${bname}.txt"
-
-      outmridir=${outdir0}/mri
-      outsurfdir=${outdir0}/surf
-    fi
-        
+    # get output filenames for surface processing
+    get_output_names ${outdir0} ${bname} ${nii_ext}
+            
     # create output folders if needed
     if [ ! -d "$outmridir" ]; then
       mkdir -p "$outmridir"
@@ -919,16 +935,9 @@ process()
       fi
     fi
 
-    # 1. Call SANLM denoising filter
-    # ----------------------------------------------------------------------
-    if [ "${use_sanlm}" -eq 1 ]; then
-      ${bin_dir}/CAT_VolSanlm "${FILE}" "${outmridir}/${sanlm}"
-      input="${outmridir}/${sanlm}"
-    else
-      input="${FILE}"
-    fi
+    input="${FILE}"
     
-    # 2. Call deepmriprep segmentation 
+    # 1. Call deepmriprep segmentation 
     # ----------------------------------------------------------------------
     # check for outputs from previous step
     if [ -f "${input}" ]; then
@@ -957,20 +966,15 @@ process()
       [ "${estimate_seg}" -eq 1 ] && eval "${cmd}"
   
     else
-      echo "${RED}ERROR: CAT_VolSanlm failed${NC}" >&2
+      echo "${RED}ERROR: ${input} could not be found.${NC}" >&2
       ((i++))
       continue
-    fi
-    
-    # remove denoised image
-    if [ "${use_sanlm}" -eq 1 ]; then
-      [ -f "${outmridir}/${sanlm}" ] && rm "${outmridir}/${sanlm}"
     fi
     
     # optionally extract surface
     if [ "${save_surf}" -eq 1 ]; then
         
-      # 3. Create hemispheric label maps for cortical surface extraction
+      # 2. Create hemispheric label maps for cortical surface extraction
       # ----------------------------------------------------------------------
       # check for outputs from previous step
       if [ ! -f "${outmridir}/${hemi_right}" ]; then
@@ -980,17 +984,13 @@ process()
         continue
       fi
 
-      # 4. Estimate thickness and percentage position maps for each hemisphere
+      # 3. Estimate thickness and percentage position maps for each hemisphere
       #  and extract cortical surface and call it as background process to
       # allow parallelization
       # ----------------------------------------------------------------------
       # check for outputs from previous step
       for side in left right; do
-        if [[ "$multi" -ne -2 ]]; then
-          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg $multi &
-        else
-          surface_estimation $side $outmridir $outsurfdir $estimate_spherereg $multi
-        fi
+        surface_estimation $side $outmridir $outsurfdir $estimate_spherereg $multi &
       done
       
       # use wait to check finishing the background processes
@@ -1018,9 +1018,17 @@ process()
     # print execution time per data set
     end=$(date +%s)
     runtime=$((end - start))
+    hours=$(($runtime / 3600))
+    min=$((($runtime / 60) % 60))
+    s=$(($runtime % 60))
+    overall="Finished after: "
+    if [ $hours -gt 0 ]; then overall+="${hours}hrs "; fi
+    if [ $min -gt 0 ]; then overall+="${min}min "; fi
+    overall+="${s}sec"
+
     if [[ "$multi" -ne -2 ]]; then
       echo "${GREEN}-------------------------------------------------------${NC}"
-      echo "${GREEN}Finished after ${runtime}s${NC}"
+      echo "${GREEN}${overall}${NC}"
     fi
       
     ((i++))
@@ -1070,7 +1078,6 @@ ${BOLD}OPTIONS:${NC}
   --no-seg                    Skip segmentation processing.
   --no-sphere-reg             Skip spherical surface registration.
   --no-mwp                    Skip the estimation of modulated and warped segmentations.
-  --no-pial-white             Skip the estimation of pial and white matter surface.
   --hemisphere                Additionally save hemispheric partitions of the segmentation.
   --wp                        Additionally save warped segmentations.
   --rp                        Additionally save affine-registered segmentations.
