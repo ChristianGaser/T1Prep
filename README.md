@@ -10,11 +10,15 @@
 > This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
 
 # T1Prep: T1 PREProcessing Pipeline (aka PyCAT)
-T1Prep is a pipeline designed for the preprocessing of T1-weighted MRI images, facilitating segmentation and cortical surface extraction. This tool provides a comprehensive suite of utilities to efficiently manage and process MRI data.
 
-The segmentation leverages [deepmriprep](https://github.com/wwu-mmll/deepmriprep), which employs deep-learning techniques to mimic the capabilities of CAT12 in processing MRI data. For more details, see: Lukas Fisch et al., "deepmriprep: Voxel-based Morphometry (VBM) Preprocessing via Deep Neural Networks," available on arXiv at https://doi.org/10.48550/arXiv.2408.10656.
+T1Prep is a pipeline that preprocesses T1-weighted MRI data and supports segmentation and cortical surface reconstruction. It provides a complete set of tools for efficiently processing structural MRI scans.
 
-Surface creation and thickness estimation are performed using the [Cortex Analysis Tools for Surface](https://github.com/ChristianGaser/CAT-Surface), also integral to the [CAT12 toolbox](https://github.com/ChristianGaser/cat12).
+T1Prep partially integrates [DeepMriPrep](https://github.com/wwu-mmll/deepmriprep), which uses deep learning (DL) techniques to mimic CAT12's functionality for processing structural MRIs. For details, see:
+Lukas Fisch et al., "deepmriprep: Voxel-based Morphometry (VBM) Preprocessing via Deep Neural Networks," available on arXiv at https://doi.org/10.48550/arXiv.2408.10656.
+
+As with other DL-based methods, DeepMriPrep slightly underestimates gray matter in cases of significant atrophy. Therefore, it is primarily used for bias field correction, lesion detection, and as an initial estimate for the subsequent AMAP segmentation from CAT12. The skull-stripping and nonlinear spatial registration steps provided by DeepMriPrep are unaffected by this bias and are fully utilized in T1Prep.
+
+Cortical surface reconstruction and thickness estimation are performed using [Cortex Analysis Tools for Surface](https://github.com/ChristianGaser/CAT-Surface), a core component of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12).
 
 ## Requirements
 Python 3.8 (or higher) is required, and all necessary libraries are automatically installed the first time T1Prep is run.
@@ -22,7 +26,7 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 ## Main Differences to CAT12
 - Implemented entirely in Python and C, eliminating the need for a Matlab license.
 - New pipeline to estimate cortical surface and thickness.
-- Does not currently support longitudinal pipelines.
+- Does not yet support longitudinal pipelines.
 - No quality assessment implemented yet.
 - Only T1 MRI data supported.
 
@@ -61,7 +65,6 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 `--sharpening <NUMBER>` |Specify the amount of sharpening applied to the PPM map by adding the difference between the unsmoothed and smoothed PPM map 
 `--thresh <NUMBER>` |Specify the isovalue threshold for surface creation in CAT_VolMarchingCubes
 `--vessel <NUMBER>` |Set the initial white matter (WM) threshold for vessel removal. Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable vessel removal.
-`--downsample <NUMBER>` |Specify the downsampling factor for PPM and GMT maps to reduce surface intersections (default: $downsample).
 `--median-filter <NUMBER>` |Specify the number of median filter applications to reduce topology artifacts.
 
 ## Examples
