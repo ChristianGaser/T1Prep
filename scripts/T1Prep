@@ -51,7 +51,8 @@ CYAN=$(tput setaf 6)
 WHITE=$(tput setaf 7)
 
 # defaults
-T1prep_dir=$(dirname $(dirname "$0"))
+script_dir=$(dirname "$0")
+T1prep_dir=$(dirname $script_dir)
 surf_templates_dir=${T1prep_dir}/data/templates_surfaces_32k
 T1prep_env=${T1prep_dir}/env
 src_dir=${T1prep_dir}/src
@@ -82,13 +83,13 @@ bias_fwhm=0
 post_fwhm=1.75
 pre_fwhm=2
 re_install=0
-use_amap=0
+use_amap=1
 isoval=0.5
 thresh=0.6
 debug=0
 multi=-1
 
-source "$(dirname "$0")/progress_bar.sh"
+source "${script_dir}/progress_bar.sh"
 
 ########################################################
 # run main
@@ -252,8 +253,8 @@ parse_args()
       --csf*)
         save_csf=1
         ;;
-      --amap)
-        use_amap=1
+      --no-amap)
+        use_amap=0
         ;;
       --bids)
         use_bids_naming=1
@@ -1057,7 +1058,21 @@ ${BOLD}USAGE:${NC}
   ${GREEN}T1Prep [options] <filename(s)>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
-  Processes T1-weighted brain data for computational anatomy analysis, including segmentation and surface extraction.
+T1Prep is a pipeline that preprocesses T1-weighted MRI data and supports segmentation 
+and cortical surface reconstruction. It provides a complete set of tools for efficiently 
+processing structural MRI scans.
+
+T1Prep partially integrates DeepMriPrep, which uses deep learning (DL) techniques to 
+mimic CAT12''s functionality for processing structural MRIs.
+
+As with other DL-based methods, DeepMriPrep slightly underestimates gray matter in 
+cases of significant atrophy. Therefore, it is primarily used for bias field correction, 
+lesion detection, and as an initial estimate for the subsequent AMAP segmentation from CAT12. 
+The skull-stripping and nonlinear spatial registration steps provided by DeepMriPrep are 
+unaffected by this bias and are fully utilized in T1Prep.
+
+Cortical surface reconstruction and thickness estimation are performed using Cortex 
+Analysis Tools for Surface, a core component of the CAT12 toolbox.
 
 ${BOLD}OPTIONS:${NC}
   ${BOLD}${YELLOW}General Options:${NC}
@@ -1088,7 +1103,9 @@ ${BOLD}OPTIONS:${NC}
                               naming conventions (not yet fully working!).
 
   ${BOLD}${YELLOW}Expert Options:${NC}
-  --amap                      Use AMAP segmentation instead of DeepMRIPrep.
+  --no-amap                   Use DeepMRIPrep instead of AMAP for segmentation. Please note 
+                              that this might lead to an underestimation of gray matter (GM) 
+                              in cases of significant atrophy.
   --thickness-method <NUMBER> Set the thickness method (default: $thickness_method).
                               Use 1 for PBT-based method and 2 for approach based on
                               distance between pial and white matter surface.
@@ -1105,8 +1122,6 @@ ${BOLD}OPTIONS:${NC}
   --vessel <NUMBER>           Set the initial white matter (WM) threshold for vessel removal. 
                               Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable 
                               vessel removal (default: $vessel).
-  --downsample <NUMBER>       Specify the downsampling factor for PPM and GMT maps to reduce 
-                              surface intersections (default: $downsample).
   --median-filter <NUMBER>    Specify the number of median filter applications to reduce topology 
                               artifacts (default: $median_filter).
   
@@ -1129,16 +1144,20 @@ ${BLUE}${T1prep_dir}/T1Prep --lesions --no-sphere-reg sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Skip processing of spherical
   registration, but additionally save lesion map (named p7sTRIO*.nii).
    
+${BLUE}${T1prep_dir}/T1Prep --no-amap sTRIO*.nii${NC}
+  Process all files matching the pattern 'sTRIO*.nii' and use DeppMriPrep instead of AMAP
+  segmentation.
+
 ${BLUE}${T1prep_dir}/T1Prep --multi -1 --p --csf sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
   in native space, including CSF segmentation. The processing pipeline involves two stages 
   of parallelization:
   
-  1. **Segmentation (Python-based)**: Runs best with about 24GB of memory per process. 
+  1. Segmentation (Python-based): Runs best with about 24GB of memory per process. 
      The number of processes is automatically estimated based on available memory to 
      optimize resource usage.
 
-  2. **Surface Extraction**: This stage does not require significant memory and is fully 
+  2. Surface Extraction: This stage does not require significant memory and is fully 
      distributed across all available processors.
 
   If "--multi" is set to a specific number (e.g., 8), the system still estimates memory-based 
@@ -1157,20 +1176,22 @@ ${BOLD}OUTPUT:${NC}
   Produces segmented images and surface extractions.
 
 ${BOLD}USED FUNCTIONS:${NC}
-  - CAT_VolAmap
-  - CAT_VolSanlm
-  - CAT_VolThicknessPbt
-  - CAT_VolMarchingCubes
-  - CAT_Vol2Surf
-  - CAT_Surf2PialWhite
-  - CAT_SurfDistance
-  - CAT_SurfWarp
-  - CAT_Surf2Sphere
-  - CAT_SurfDeform
-  - CAT_SurfCorrectThicknessFolding
-  - ${src_dir}/segment.py
-  - ${src_dir}/utils.py
-  - ${src_dir}/parallelize
+  CAT_VolAmap
+  CAT_VolSanlm
+  CAT_VolThicknessPbt
+  CAT_VolMarchingCubes
+  CAT_Vol2Surf
+  CAT_Surf2PialWhite
+  CAT_SurfDistance
+  CAT_SurfWarp
+  CAT_Surf2Sphere
+  CAT_SurfDeform
+  CAT_SurfCorrectThicknessFolding
+  ${src_dir}/segment.py
+  ${src_dir}/utils.py
+  ${script_dir}/progress_bar_multi.sh
+  ${script_dir}/progress_bar.sh
+  ${script_dir}/parallelize
 
 ${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
