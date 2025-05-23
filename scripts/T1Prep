@@ -602,7 +602,7 @@ surface_estimation()
   else
     ((end_count=6))
   fi
-  if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -ne 1 ]]; then
+  if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
     ((end_count++))
   fi
   if [ "${debug}" -eq 0 ]; then
@@ -668,14 +668,14 @@ surface_estimation()
     # - '-sigma' sets the smoothing size for filtering the displacement field.
     # - '-iter' sets the number of iterations.
     # - '-isovalue' sets the isovalue for mesh generation.
-    if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -ne 1 ]]; then
+    if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
       # Updates progress to 'Deform $side surface'
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface"; fi
       ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
 
       # Get central surface by averaging pial and white matter surface
-      #${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}    
+      ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}    
     fi
           
     # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
