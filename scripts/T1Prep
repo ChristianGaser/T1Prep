@@ -265,7 +265,7 @@ parse_args()
       --debug)
         debug=1
         ;;
-      -h | --help | -v | --version | -V)
+      -h | --help | --h | -v | --version | -V)
         help
         exit 1
         ;;
@@ -1085,7 +1085,7 @@ ${BOLD}OPTIONS:${NC}
                               debugging information.
   
   ${BOLD}${YELLOW}Save Options:${NC}
-  --out-dir <DIR>             Specify the output directory (default: current working directory).
+  --out-dir <DIR>             Specify the relative output directory (default: current working directory).
   --no-overwrite <STRING>     Avoid overwriting existing results by checking for the specified 
                               filename pattern.
   --gz                        Save images as nii.gz instead of nii.
@@ -1142,13 +1142,13 @@ ${BLUE}${T1prep_dir}/T1Prep --python python3.8 --no-overwrite "surf/lh.thickness
 
 ${BLUE}${T1prep_dir}/T1Prep --lesions --no-sphere-reg sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Skip processing of spherical
-  registration, but additionally save lesion map (named p7sTRIO*.nii).
+  registration, but additionally save lesion map (named p7sTRIO*.nii) in native space.
    
 ${BLUE}${T1prep_dir}/T1Prep --no-amap sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii' and use DeppMriPrep instead of AMAP
   segmentation.
 
-${BLUE}${T1prep_dir}/T1Prep --multi -1 --p --csf sTRIO*.nii${NC}
+${BLUE}${T1prep_dir}/T1Prep --multi 8 --p --csf sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
   in native space, including CSF segmentation. The processing pipeline involves two stages 
   of parallelization:
@@ -1158,12 +1158,13 @@ ${BLUE}${T1prep_dir}/T1Prep --multi -1 --p --csf sTRIO*.nii${NC}
      optimize resource usage.
 
   2. Surface Extraction: This stage does not require significant memory and is fully 
-     distributed across all available processors.
+     distributed across all available processors or limited to the defined number.
 
   If "--multi" is set to a specific number (e.g., 8), the system still estimates memory-based 
   constraints for segmentation parallelization. However, the specified number of processes 
   (e.g., 8) will be used for surface extraction, ensuring efficient parallelization across 
-  the two stages.
+  the two stages. The default setting is -1, whic automatically estimates the number of
+  available processors.
     
 ${BOLD}PURPOSE:${NC}
   This script facilitates the analysis of T1-weighted brain images by providing tools for 

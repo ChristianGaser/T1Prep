@@ -7,5 +7,6 @@ env
 bin
 test
 
+*.webloc
 BIDS-Naming.txt
 *.m
