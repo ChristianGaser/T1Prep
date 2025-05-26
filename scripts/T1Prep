@@ -20,7 +20,8 @@
 # - check_python_libraries: Checks for python libraries.
 # - get_OS: Identifies operations system and folder of binaries.
 # - surface_estimation: Create cortical surfaces
-# - get_output_names: Get output filenames
+# - get_pattern: Get the pattern from the desired column in namefile
+# - substitute_pattern: Substitute variables in the pattern
 # - process: Performs the preprocessing steps on each input file.
 #
 # ______________________________________________________________________
@@ -52,10 +53,11 @@ WHITE=$(tput setaf 7)
 
 # defaults
 script_dir=$(dirname "$0")
-T1prep_dir=$(dirname $script_dir)
-surf_templates_dir=${T1prep_dir}/data/templates_surfaces_32k
-T1prep_env=${T1prep_dir}/env
-src_dir=${T1prep_dir}/src
+root_dir=$(dirname $script_dir)
+name_file=${root_dir}/Names.tsv
+surf_templates_dir=${root_dir}/data/templates_surfaces_32k
+T1prep_env=${root_dir}/env
+src_dir=${root_dir}/src
 os_type=$(uname -s) # Determine OS type
 outsurfdir=''
 outmridir=''
@@ -232,22 +234,22 @@ parse_args()
       --no-sphere*)
         estimate_spherereg=0
         ;;
-      --no-mwp*)
-        save_mwp=0
-        ;;
       --no-pial*)
         save_pial_white=0
         ;;
       --lesion*)
         save_lesions=1
         ;;
-      --wp*)
+      --no-mwp* | --no-warped-seg*)
+        save_mwp=0
+        ;;
+      --wp* | --warped-seg-nomod)
         save_wp=1
         ;;
-      --rp*)
+      --rp* | --affine-seg)
         save_rp=1
         ;;
-      --p*)
+      --p* | --native-seg)
         save_p=1
         ;;
       --csf*)
@@ -463,18 +465,18 @@ get_OS()
 
   case "$os_type" in
     Linux*)   
-      bin_dir="${T1prep_dir}/bin/Linux"
+      bin_dir="${root_dir}/bin/Linux"
       ;;
     Darwin*)  
       if [[ "$cpu_arch" == arm64 ]]; then 
-        bin_dir="${T1prep_dir}/bin/MacOS"
+        bin_dir="${root_dir}/bin/MacOS"
       else 
         echo "MacOS Intel not supported anymore"
         exit 1
       fi
       ;;
     CYGWIN*|MINGW32*|MSYS*|MINGW*) 
-      bin_dir="${T1prep_dir}/bin/Windows"
+      bin_dir="${root_dir}/bin/Windows"
       ;;
     *)
       echo "Unknown OS system"
@@ -485,85 +487,30 @@ get_OS()
 }
 
 ########################################################
-# get output filenames 
+# Get the pattern from the desired column in name_file
 ########################################################
 
-get_output_names()
-{
+get_pattern() {
+  local code="$1"
+  local colnum="$2"
+  awk -v c="$code" -v n="$colnum" '$1 == c {print $n}' ${name_file}
+}
 
-  outdir0=$1
-  bname=$2
-  nii_ext=$3
+########################################################
+# Substitute variables in the pattern
+########################################################
 
-  # get output names
-  sanlm="${bname}_desc-sanlm.${nii_ext}"
-  seg="${bname}_seg.${nii_ext}"
-  p0="p0${bname}.${nii_ext}"
-  mT1="m${bname}.${nii_ext}"
-
-  hemi_left="${bname}_seg_hemi-L.${nii_ext}"
-  hemi_right="${bname}_seg_hemi-R.${nii_ext}"
-  gmt_left="${bname}_hemi-L_thickness.${nii_ext}"
-  gmt_right="${bname}_hemi-R_thickness.${nii_ext}"
-
-  # for the following filenames we have to remove the potential .gz from name
-  ppm_left="${bname}_hemi-L_ppm.${nii_ext}"
-  ppm_right="${bname}_hemi-R_ppm.${nii_ext}"
-
-  if [ "${use_bids_naming}" -eq 1 ]; then
-
-    echo "${RED}BIDS names for volumes not yet supported.${NC}"
-
-    ppm_left="${bname}_hemi-L_ppm.${nii_ext}"
-    ppm_right="${bname}_hemi-R_ppm.${nii_ext}"
-    mid_left="${bname}_hemi-L_midthickness.surf.gii"
-    mid_right="${bname}_hemi-R_midthickness.surf.gii"
-    pial_left="${bname}_hemi-L_pial.surf.gii"
-    pial_right="${bname}_hemi-R_pial.surf.gii"
-    wm_left="${bname}_hemi-L_wm.surf.gii"
-    wm_right="${bname}_hemi-R_wm.surf.gii"
-    thick_left="${bname}_hemi-L_thickness.txt"
-    thick_right="${bname}_hemi-R_thickness.txt"
-    pbt_left="${bname}_hemi-L_pbt.txt"
-    pbt_right="${bname}_hemi-R_pbt.txt"
-    sphere_left="${bname}_hemi-L_sphere.surf.gii"
-    sphere_right="${bname}_hemi-R_sphere.surf.gii"
-    spherereg_left="${bname}_hemi-L_sphere.reg.surf.gii"
-    spherereg_right="${bname}_hemi-R_sphere.reg.surf.gii"
-    intensity_left="${bname}_hemi-L_intensity.txt"
-    intensity_right="${bname}_hemi-R_intensity.txt"
-    intensity_pial_left="${bname}_hemi-L_intensity_pial.txt"
-    intensity_pial_right="${bname}_hemi-R_intensity_pial.txt"
-    intensity_white_left="${bname}_hemi-L_intensity_white.txt"
-    intensity_white_right="${bname}_hemi-R_intensity_white.txt"
-
-    outmridir=${outdir0}
-    outsurfdir=${outdir0}
-  else
-    mid_left="lh.central.${bname}.gii"
-    mid_right="rh.central.${bname}.gii"
-    pial_left="lh.pial.${bname}.gii"
-    pial_right="rh.pial.${bname}.gii"
-    wm_left="lh.white.${bname}.gii"
-    wm_right="rh.white.${bname}.gii"
-    thick_left="lh.thickness.${bname}"
-    thick_right="rh.thickness.${bname}"
-    pbt_left="lh.pbt.${bname}"
-    pbt_right="rh.pbt.${bname}"
-    sphere_left="lh.sphere.${bname}.gii"
-    sphere_right="rh.sphere.${bname}.gii"
-    spherereg_left="lh.sphere.reg.${bname}.gii"
-    spherereg_right="rh.sphere.reg.${bname}.gii"
-    intensity_left="lh.intensity_${bname}.txt"
-    intensity_right="rh.intensity_${bname}.txt"
-    intensity_pial_left="lh.intensity_pial_${bname}.txt"
-    intensity_pial_right="rh.intensity_pial_${bname}.txt"
-    intensity_white_left="lh.intensity_white_${bname}.txt"
-    intensity_white_right="rh.intensity_white_${bname}.txt"
-
-    outmridir=${outdir0}/mri
-    outsurfdir=${outdir0}/surf
-  fi
+substitute_pattern() {
+  local pattern="$1"
+  local hemi="$2"
+  local desc="$3"
+  local space="$4"
+  pattern="${pattern//\{bname\}/$bname}"
+  pattern="${pattern//\{side\}/$hemi}"
+  pattern="${pattern//\{space\}/$space}"
+  pattern="${pattern//\{desc\}/$desc}"
+  pattern="${pattern//\{nii_ext\}/$nii_ext}"
+  echo $pattern
 }
 
 ########################################################
@@ -572,31 +519,40 @@ get_output_names()
 
 surface_estimation() 
 {  
-  side=$1
-  outmridir=$2
-  outsurfdir=$3
-  estimate_spherereg=$4
-  multi=$5
+  local bname=$1
+  local side=$2
+  local outmridir=$3
+  local outsurfdir=$4
+  local estimate_spherereg=$5
+  local multi=$6
+  local nii_ext=$7
 
-  # create dynamic variables
-  pbt=pbt_$side
-  thick=thick_$side
-  hemi=hemi_$side
-  ppm=ppm_$side
-  gmt=gmt_$side
-  mid=mid_$side
-  pial=pial_$side
-  wm=wm_$side
-  sphere=sphere_$side
-  spherereg=spherereg_$side
-  intensity=intensity_$side
-  intensity_pial=intensity_pial_$side
-  intensity_white=intensity_white_$side
+  # Freesurfer templates
   fshemi="${side/left/lh}"
   fshemi="${fshemi/right/rh}"
   Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
   Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
-  
+
+  # BIDS dependent parameters for coding hemispheres and column in Names.tsv
+  if [[ $use_bids_naming -eq 1 ]]; then
+    name_columns=3  # 3rd column in Names.tsv
+    hemi="${side/left/L}"
+    hemi="${hemi/right/R}"
+  else
+    name_columns=2  # 2nd column in Names.tsv
+    hemi="${side/left/lh}"
+    hemi="${hemi/right/rh}"
+  fi
+
+  # Create dynamic variables for filenames
+  for code in "PBT_shape" "GMT_shape" "Hemi_volume" "mT1_volume" "PPM_volume" "GMT_volume" "Mid_surface" "Pial_surface" "WM_surface" "Sphere_surface" "Spherereg_surface" "Intensity_Mid" "Intensity_Pial" "Intensity_WM"; do
+    pattern=$(get_pattern "$code" "$name_columns")
+    value=$(substitute_pattern "$pattern" "$hemi""" "")
+
+    # Use eval to assign the result to a variable named after the code
+    eval "${code}=\"\$value\""
+  done
+    
   # Change number of commands if spherical registration is disabled
   if [ "${estimate_spherereg}" -eq 1 ]; then
     ((end_count=8))
@@ -614,7 +570,7 @@ surface_estimation()
 
   # This section of the script checks if a specific hemisphere file exists within a given directory.
   count=0
-  if [ -f "${outmridir}/${!hemi}" ]; then
+  if [ -f "${outmridir}/${Hemi_volume}" ]; then
 
     # Progress indication
     ((count++))
@@ -625,7 +581,7 @@ surface_estimation()
     # - '-n-avgs 4' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize 0.5 -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${!hemi} ${outmridir}/${!gmt} ${outmridir}/${!ppm}
+    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize 0.5 -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${outmridir}/${Hemi_volume} ${outmridir}/${GMT_volume} ${outmridir}/${PPM_volume}
 
     # Updates progress to 'Extract $side surface'.
     ((count++))
@@ -637,7 +593,7 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${outmridir}/${!ppm} ${outsurfdir}/${!mid}      
+    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${outmridir}/${PPM_volume} ${outsurfdir}/${Mid_surface}      
 
     # Updates progress to 'Map $side thickness values'.
     ((count++))
@@ -645,13 +601,13 @@ surface_estimation()
 
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
-    ${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${!mid} ${outmridir}/${!gmt} ${outsurfdir}/${!pbt}
-    ${bin_dir}/CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${outsurfdir}/${!thick}
+    ${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${Mid_surface} ${outmridir}/${GMT_volume} ${outsurfdir}/${PBT_shape}
+    ${bin_dir}/CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${outsurfdir}/${PBT_shape} ${outsurfdir}/${Mid_surface} ${outsurfdir}/${GMT_shape}
 
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
     if (( $(echo "$shift != 0" | bc) )); then
-      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} ${outsurfdir}/${!mid} ${outsurfdir}/${!pbt} ${outsurfdir}/${!mid} ${shift}
+      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} ${outsurfdir}/${Mid_surface} ${outsurfdir}/${PBT_shape} ${outsurfdir}/${Mid_surface} ${shift}
     fi    
      
     # Updates progress to 'Deform $side surface'
@@ -659,7 +615,7 @@ surface_estimation()
     if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side central surface"; fi
 
     # Obtain more accurate central surface by surface deformation to PPM image
-    ${bin_dir}/CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${outmridir}/${!ppm} ${outsurfdir}/${!mid} ${outsurfdir}/${!mid}    
+    ${bin_dir}/CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${outmridir}/${PPM_volume} ${outsurfdir}/${Mid_surface} ${outsurfdir}/${Mid_surface}    
 
     # Executes 'CAT_Surf2PialWhite' to estimate both pial and white matter surfaces.
     # - '-w1' sets the internal smoothness weight.
@@ -673,10 +629,10 @@ surface_estimation()
       # Updates progress to 'Deform $side surface'
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface"; fi
-      ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outmridir}/${!hemi} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}
+      ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${Mid_surface} ${outsurfdir}/${GMT_shape} ${outmridir}/${Hemi_volume} ${outsurfdir}/${Pial_surface} ${outsurfdir}/${WM_surface}
 
       # Get central surface by averaging pial and white matter surface
-      ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${!mid} ${outsurfdir}/${!pial} ${outsurfdir}/${!wm}    
+      ${bin_dir}/CAT_AverageSurfaces -avg ${outsurfdir}/${Mid_surface} ${outsurfdir}/${Pial_surface} ${outsurfdir}/${WM_surface}    
     fi
           
     # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
@@ -685,19 +641,19 @@ surface_estimation()
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
       
-      ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${!pial} ${outsurfdir}/${!wm} ${outsurfdir}/${!thick}
+      ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${Pial_surface} ${outsurfdir}/${WM_surface} ${outsurfdir}/${GMT_shape}
     fi
     
     # Correct cortical thickness that is influenced by folding
     if [ "${correct_folding}" -eq 1 ]; then
-      ${bin_dir}/CAT_SurfCorrectThicknessFolding ${outsurfdir}/${!mid} ${outsurfdir}/${!thick} ${outsurfdir}/${!thick}
+      ${bin_dir}/CAT_SurfCorrectThicknessFolding ${outsurfdir}/${Mid_surface} ${outsurfdir}/${GMT_shape} ${outsurfdir}/${GMT_shape}
     fi
 
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
-    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1} ]]; then
-      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!mid} ${outmridir}/${mT1} ${outsurfdir}/${!intensity}
-      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!pial} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_pial}
-      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${!wm} ${outmridir}/${mT1} ${outsurfdir}/${!intensity_white}
+    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1_volume} ]]; then
+      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Mid_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Mid}
+      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Pial_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Pial}
+      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${WM_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_WM}
     fi
   
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
@@ -706,19 +662,19 @@ surface_estimation()
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical inflation $side hemisphere"; fi
       # Inflates the surface to a sphere with additional areal smoothing.
-      ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${!mid} ${outsurfdir}/${!sphere} 6
+      ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${Mid_surface} ${outsurfdir}/${Sphere_surface} 6
   
       # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical estimate_spherereg $side hemisphere"; fi
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
-      ${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${outsurfdir}/${!mid} -is ${outsurfdir}/${!sphere} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${!spherereg}
+      ${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${outsurfdir}/${Mid_surface} -is ${outsurfdir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${Spherereg_surface}
     fi
   else
     if [ "${estimate_seg}" -eq 0 ]; then    
-      echo "${RED}ERROR: Could not find ${outmridir}/${!hemi}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
+      echo "${RED}ERROR: Could not find ${outmridir}/${Hemi_volume}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
     else
-      echo "${RED}ERROR: ${python} ${src_dir}/segment.py failed (file ${outmridir}/${!hemi} not found)${NC}" >&2
+      echo "${RED}ERROR: ${python} ${src_dir}/segment.py failed (file ${outmridir}/${Hemi_volume} not found)${NC}" >&2
     fi
   fi
 }
@@ -914,9 +870,15 @@ process()
       mkdir -p "$outdir0"
     fi
 
-    # get output filenames for surface processing
-    get_output_names ${outdir0} ${bname} ${nii_ext}
-            
+    # get output folders for surfaces and volumes
+    if [ "${use_bids_naming}" -eq 1 ]; then  
+      outmridir=${outdir0}
+      outsurfdir=${outdir0}
+    else
+      outmridir=${outdir0}/mri
+      outsurfdir=${outdir0}/surf
+    fi
+              
     # create output folders if needed
     if [ ! -d "$outmridir" ]; then
       mkdir -p "$outmridir"
@@ -975,23 +937,13 @@ process()
     # optionally extract surface
     if [ "${save_surf}" -eq 1 ]; then
         
-      # 2. Create hemispheric label maps for cortical surface extraction
-      # ----------------------------------------------------------------------
-      # check for outputs from previous step
-      if [ ! -f "${outmridir}/${hemi_right}" ]; then
-        echo "${RED}ERROR: ${src_dir}/segment.py failed (file ${outmridir}/${hemi_right} not found)${NC}" >&2
-        exit 1
-        ((i++))
-        continue
-      fi
-
-      # 3. Estimate thickness and percentage position maps for each hemisphere
+      # 2. Estimate thickness and percentage position maps for each hemisphere
       #  and extract cortical surface and call it as background process to
       # allow parallelization
       # ----------------------------------------------------------------------
       # check for outputs from previous step
       for side in left right; do
-        surface_estimation $side $outmridir $outsurfdir $estimate_spherereg $multi &
+        surface_estimation $bname $side $outmridir $outsurfdir $estimate_spherereg $multi $nii_ext &
       done
       
       # use wait to check finishing the background processes
@@ -1127,28 +1079,28 @@ ${BOLD}OPTIONS:${NC}
   
   ${BOLD}${YELLOW}Examples:${NC}
 
-${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}
+${BLUE}${root_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation and 
   surface maps, saving the results in the 'test_folder' directory.
 
-${BLUE}${T1prep_dir}/T1Prep --no-surf sTRIO*.nii${NC}
+${BLUE}${root_dir}/T1Prep --no-surf sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii', but skip surface creation. 
   Only segmentation maps are generated and saved in the same directory as the input files.
 
-${BLUE}${T1prep_dir}/T1Prep --python python3.8 --no-overwrite "surf/lh.thickness." sTRIO*.nii${NC}
+${BLUE}${root_dir}/T1Prep --python python3.8 --no-overwrite "surf/lh.thickness." sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii' and use python3.8. Skip processing 
   for files where 'surf/lh.thickness.*' already exists, and save new results in the same 
   directory as the input files.
 
-${BLUE}${T1prep_dir}/T1Prep --lesions --no-sphere-reg sTRIO*.nii${NC}
+${BLUE}${root_dir}/T1Prep --lesions --no-sphere-reg sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Skip processing of spherical
   registration, but additionally save lesion map (named p7sTRIO*.nii) in native space.
    
-${BLUE}${T1prep_dir}/T1Prep --no-amap sTRIO*.nii${NC}
+${BLUE}${root_dir}/T1Prep --no-amap sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii' and use DeppMriPrep instead of AMAP
   segmentation.
 
-${BLUE}${T1prep_dir}/T1Prep --multi 8 --p --csf sTRIO*.nii${NC}
+${BLUE}${root_dir}/T1Prep --multi 8 --p --csf sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
   in native space, including CSF segmentation. The processing pipeline involves two stages 
   of parallelization:
