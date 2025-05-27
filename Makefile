@@ -1,7 +1,7 @@
 .PHONY: help docker clean zip cp_binaries
 .DEFAULT: help
 
-VERSION='0.9'
+VERSION='0.1.0'
 
 FILES=scripts src data bin LICENSE README.md requirements.txt
 
