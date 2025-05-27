@@ -38,19 +38,20 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 ## Options
 **General Options** ||
 :-------- | --------
-`--re-install` |Remove the old installation and reinstall the required Python libraries.
-`--python <FILE>` |Specify the Python interpreter to use (default: $python).
-`--multi <NUMBER>` |Specify the number of processes for parallelization. Use '-1' to automatically estimate the number of available processors 
+`--install` |Install the required Python libraries.
+`--re-install` |Remove the existing installation and reinstall the required Python libraries.
+`--python <FILE>` |Set the Python interpreter to use.
+`--multi <NUMBER>` |Set the number of processes for parallelization. Use '-1' to automatically estimate the number of available processors 
 `--debug` | Enable verbose output, retain temporary files, and save additional debugging information.
 **Save Options** ||
-`--out-dir <DIR>` |Specify the output directory (default: current working directory).
-`--no-overwrite <STRING>` |Prevent overwriting existing results by checking for the specified filename pattern.
+`--out-dir <DIR>` |Set the relative output directory (default: current working directory).
+`--no-overwrite <STRING>` |Avoid overwriting existing results by checking for the specified filename pattern.
+`--gz' |Save images as nii.gz instead of nii.
 `--no-surf` |Skip surface and thickness estimation.
 `--no-seg` |Skip segmentation processing.
-`--no-sphere` |Skip spherical surface registration.
+`--no-sphere-reg` |Skip spherical surface registration.
 `--no-mwp` |Skip the estimation of modulated and warped segmentations.
 `--hemisphere` |Additionally save hemispheric partitions of the segmentation.
-`--pial-white` |Additionally extract the pial and white surface.
 `--wp` |Additionally save warped segmentations.
 `--rp` |Additionally save affine-registered segmentations.
 `--p` |Additionally save native space segmentations.
@@ -58,14 +59,16 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 `--lesions` |Additionally save WMH lesions.
 `--bids` |Use BIDS (Brain Imaging Data Structure) standard for output file naming conventions.
 **Expert Options** ||
-`--amap` | Use AMAP segmentation instead of DeepMRIPrep.
-`--pre-fwhm <NUMBER>` |Specify the pre-smoothing FWHM size in CAT_VolMarchingCubes 
-`--post-fwhm <NUMBER>` |Specify the post-smoothing FWHM size in CAT_VolMarchingCubes 
-`--thickness-fwhm <NUMBER>` |Specify the FWHM size for volumetric thickness smoothing in CAT_VolThicknessPbt
-`--sharpening <NUMBER>` |Specify the amount of sharpening applied to the PPM map by adding the difference between the unsmoothed and smoothed PPM map 
-`--thresh <NUMBER>` |Specify the isovalue threshold for surface creation in CAT_VolMarchingCubes
+`--no-amap` | Use DeepMRIPrep instead of AMAP for segmentation.
+`--thickness-method` <NUMBER> |Set the thickness method (default: $thickness_method). Use 1 for PBT-based method and 2 for approach based on distance between pial and white matter surface.
+`--no-correct-folding` |Do not correct for cortical thickness by folding effects.
+`--pre-fwhm <NUMBER>` |Set the pre-smoothing FWHM size in CAT_VolMarchingCubes 
+`--post-fwhm <NUMBER>` |Set the post-smoothing FWHM size in CAT_VolMarchingCubes 
+`--thickness-fwhm <NUMBER>` |Set the FWHM size for volumetric thickness smoothing in CAT_VolThicknessPbt
+`--sharpening <NUMBER>` |Set the sharpening level applied to the PPM map by enhancing differences between the unsmoothed and smoothed PPM maps 
+`--thresh <NUMBER>` |Set the isovalue threshold for surface creation in CAT_VolMarchingCubes
 `--vessel <NUMBER>` |Set the initial white matter (WM) threshold for vessel removal. Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable vessel removal.
-`--median-filter <NUMBER>` |Specify the number of median filter applications to reduce topology artifacts.
+`--median-filter <NUMBER>` |Set the number of median filter applications to reduce topology artifacts.
 
 ## Examples
 ```bash
@@ -88,33 +91,55 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
     directory as the input files.
 
 ```bash
-  ./scripts/T1Prep --pial-white --lesion --no-sphere sTRIO*.nii
+  ./scripts/T1Prep --lesion --no-sphere sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii'. Skip processing of spherical
-    registration, but additionally save lesion map (named p7sTRIO*.nii) and pial
-    and white surface.
+   Process all files matching the pattern 'sTRIO*.nii'. Skip processing of spherical
+   registration, but additionally save lesion map (named p7sTRIO*.nii) in native space.
+
+```bash
+  ./scripts/T1Prep --no-amap sTRIO*.nii
+```
+   Process all files matching the pattern 'sTRIO*.nii' and use DeppMriPrep instead of AMAP
+   segmentation.
+
   
 ```bash
-  ./scripts/T1Prep --multi -1 --p --csf sTRIO*.nii
+  ./scripts/T1Prep --multi 8 --p --csf sTRIO*.nii
 ```
     Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
     in native space, including CSF segmentation. The processing pipeline involves two stages 
     of parallelization:
     
-    1. **Segmentation (Python-based)**: Runs best with about 24GB of memory per process. 
+    1. Segmentation (Python-based): Runs best with about 24GB of memory per process. 
        The number of processes is automatically estimated based on available memory to 
        optimize resource usage.
   
-    2. **Surface Extraction**: This stage does not require significant memory and is fully 
+    2. Surface Extraction: This stage does not require significant memory and is fully 
        distributed across all available processors.
   
     If "--multi" is set to a specific number (e.g., 8), the system still estimates memory-based 
     constraints for segmentation parallelization. However, the specified number of processes 
     (e.g., 8) will be used for surface extraction, ensuring efficient parallelization across 
-    the two stages.
+    the two stages. The default setting is -1, which automatically estimates the number of
+    available processors.
+
 
 ## Input
 Files: T1-weighted MRI images in NIfTI format.
+
+## Installation
+Download T1Prep_$version.zip
+```bash
+  unzip T1Prep_$version.zip -d your_installation_folder
+```
+Download T1Prep_Models.zip
+```bash
+  unzip T1Prep_Models.zip -d your_installation_folder
+```
+Install required Python packages:
+```bash
+./scripts/T1Prep --install
+```
 
 ## Support
 For issues and inquiries, contact christian.gaser@uni-jena.de.
