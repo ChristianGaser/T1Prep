@@ -25,7 +25,7 @@ from deepmriprep.atlas import ATLASES, get_volumes
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from scipy.ndimage import grey_opening
-from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum
+from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum, get_filenames
 DATA_PATH0 = Path(__file__).resolve().parent.parent / 'data/'
 MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 
                 'segmentation_nogm_model.pt'] +
@@ -199,6 +199,21 @@ def run_segment():
         
     warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
 
+    # Get filenames for different spaces and sides w.r.t. BIDS flag
+    code_vars = get_filenames(use_bids, out_name, '', '','', ext)
+    space_affine = code_vars.get("Affine_space", "")
+    space_warp = code_vars.get("Warp_space", "")
+    space_warp_modulated = code_vars.get("Warp_modulated_space", "")
+
+    if (use_bids):
+        code_vars_affine = get_filenames(use_bids, out_name, '', '', space_affine, ext)
+    else:
+        code_vars_affine = get_filenames(use_bids, out_name, '', '_affine', space_affine, ext)
+    code_vars_warped_modulated = get_filenames(use_bids, out_name, '', '', space_warp_modulated, ext)
+    code_vars_warped = get_filenames(use_bids, out_name, '', '', space_warp, ext)
+    code_vars_left = get_filenames(use_bids, out_name, 'left', '', '', ext)
+    code_vars_right = get_filenames(use_bids, out_name, 'right', '', '', ext)
+    
     # Correct bias using label from deepmriprep
     bias, brain_large = correct_bias_field(brain_large, p0_large, steps=1000)
 
@@ -209,6 +224,7 @@ def run_segment():
         
         if (verbose):
             count = progress_bar(count, end_count, 'Amap segmentation')
+        
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
         nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.{ext}')
         
@@ -286,10 +302,10 @@ def run_segment():
         # Convert back to nifti            
         wm_lesions_large = nib.Nifti1Image(wm_lesions_large, affine2, header2)
                 
-    else:
-        p1_large = output_nogm['p1_large']
-        p2_large = output_nogm['p2_large']
-        p3_large = output_nogm['p3_large']
+    #else:
+    #    p1_large = output_nogm['p1_large']
+    #    p2_large = output_nogm['p2_large']
+    #    p3_large = output_nogm['p3_large']
 
     wj_affine = np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
     wj_affine = pd.Series([wj_affine])
@@ -341,31 +357,40 @@ def run_segment():
     
     # Save affine registration
     if (save_rp):
-        nib.save(p1_affine, f'{out_dir}/rp1{out_name}_affine.{ext}')
-        nib.save(p2_affine, f'{out_dir}/rp2{out_name}_affine.{ext}')
+        gm_name = code_vars_affine.get("GM_volume", "")
+        wm_name = code_vars_affine.get("WM_volume", "")
+        nib.save(p1_affine, f'{out_dir}/{gm_name}')
+        nib.save(p2_affine, f'{out_dir}/{wm_name}')
         if (save_csf):
-            nib.save(p3_affine, f'{out_dir}/rp3{out_name}_affine.{ext}')
+            csf_name = code_vars_affine.get("CSF_volume", "")
+            nib.save(p3_affine, f'{out_dir}/{csf_name}')
 
     # Save native registration
+    label_name = code_vars.get("Label_volume", "")
+    mT1_name = code_vars.get("mT1_volume", "")
     resample_and_save_nifti(p0_large, grid_native, mask.affine, mask.header, 
-        f'{out_dir}/p0{out_name}.{ext}')
+        f'{out_dir}/{label_name}')
     resample_and_save_nifti(brain_large, grid_native, mask.affine, mask.header, 
-        f'{out_dir}/m{out_name}.{ext}')
+        f'{out_dir}/{mT1_name}')
     if (save_p):
+        gm_name = code_vars.get("GM_volume", "")
+        wm_name = code_vars.get("WM_volume", "")
         resample_and_save_nifti(
             p1_large, grid_native, mask.affine, mask.header, 
-            f'{out_dir}/p1{out_name}.{ext}')
+            f'{out_dir}/{gm_name}')
         resample_and_save_nifti(
             p2_large, grid_native, mask.affine, mask.header, 
-            f'{out_dir}/p2{out_name}.{ext}')
+            f'{out_dir}/{wm_name}')
         if (save_csf):
+            csf_name = code_vars.get("CSF_volume", "")
             resample_and_save_nifti(
                 p3_large, grid_native, mask.affine, mask.header, 
-                f'{out_dir}/p3{out_name}.{ext}')
+                f'{out_dir}/{csf_name}')
     if (save_lesions):
+        wmh_name = code_vars.get("WMH_volume", "")
         resample_and_save_nifti(
             wm_lesions_large, grid_native, mask.affine, mask.header, 
-            f'{out_dir}/p7{out_name}.{ext}')
+            f'{out_dir}/{wmh_name}')
 
     # Warping is necessary for surface creation and saving warped segmentations
     if ((save_hemilabel) | (save_mwp) | (save_wp)):
@@ -377,19 +402,33 @@ def run_segment():
         warp_xy = output_reg['warp_xy']
         
         if (save_mwp):
+            gm_name = code_vars_warped_modulated.get("GM_volume", "")
+            wm_name = code_vars_warped_modulated.get("WM_volume", "")
             mwp1 = output_reg['mwp1']
             mwp2 = output_reg['mwp2']
-            nib.save(mwp1, f'{out_dir}/mwp1{out_name}.{ext}')
-            nib.save(mwp2, f'{out_dir}/mwp2{out_name}.{ext}')
+            nib.save(mwp1, f'{out_dir}/{gm_name}.{ext}')
+            nib.save(mwp2, f'{out_dir}/{wm_name}.{ext}')
+            if (save_csf):
+                csf_name = code_vars_warped_modulated.get("CSF_volume", "")
+                mwp3 = output_reg['mwp3']
+                nib.save(mwp1, f'{out_dir}/{csf_name}')
             
         if (save_wp):
+            gm_name = code_vars_warped.get("GM_volume", "")
+            wm_name = code_vars_warped.get("WM_volume", "")
             wp1 = output_reg['mwp1']
             wp2 = output_reg['mwp2']
-            nib.save(wp1, f'{out_dir}/wp1{out_name}.{ext}')
-            nib.save(wp2, f'{out_dir}/wp2{out_name}.{ext}')
+            nib.save(wp1, f'{out_dir}/{gm_name}')
+            nib.save(wp2, f'{out_dir}/{wm_name}')
+            if (save_csf):
+                csf_name = code_vars_warped.get("CSF_volume", "")
+                wp3 = output_reg['wp3']
+                nib.save(mwp1, f'{out_dir}/{csf_name}')
 
-        nib.save(warp_xy, f'{out_dir}/y_{out_name}.{ext}')
-        #nib.save(warp_yx, f'{out_dir}/iy_{out_name}.{ext}')
+        def_name = code_vars.get("Def_volume", "")
+        nib.save(warp_xy, f'{out_dir}/{def_name}')
+        invdef_name = code_vars.get("invDef_volume", "")
+        #nib.save(warp_yx, f'{out_dir}/{invdef_name}')
 
         """
         # write atlas ROI volumes to csv files
@@ -425,17 +464,22 @@ def run_segment():
         # Step 7: Save hemisphere outputs
         if (verbose):
             count = progress_bar(count, end_count, 'Resampling                     ')
+        
+        hemileft_name = code_vars_left.get("Hemi_volume", "")
+        hemiright_name = code_vars_right.get("Hemi_volume", "")
+
         resample_and_save_nifti(
             nib.Nifti1Image(lh, p0_large.affine, p0_large.header), grid_target_res, 
-            affine2, header2, f'{out_dir}/{out_name}_seg_hemi-L.{ext}', True, True)
+            affine2, header2, f'{out_dir}/{hemileft_name}', True, True)
         resample_and_save_nifti(
             nib.Nifti1Image(rh, p0_large.affine, p0_large.header), grid_target_res, 
-            affine2, header2, f'{out_dir}/{out_name}_seg_hemi-R.{ext}', True, True)
+            affine2, header2, f'{out_dir}/{hemiright_name}', True, True)
 
     # remove temporary AMAP files
     if (use_amap | save_lesions):
         remove_file(f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
-        #remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
+        remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
+        remove_file(f'{out_dir}/{out_name}_seg_large.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}')
