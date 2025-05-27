@@ -200,7 +200,7 @@ def run_segment():
     warp_template = nib.load(f'{DATA_PATH}/templates/Template_4_GS.nii.gz')
 
     # Get filenames for different spaces and sides w.r.t. BIDS flag
-    code_vars = get_filenames(use_bids, out_name, '', '','', ext)
+    code_vars = get_filenames(use_bids, out_name, '', '', '', ext)
     space_affine = code_vars.get("Affine_space", "")
     space_warp = code_vars.get("Warp_space", "")
     space_warp_modulated = code_vars.get("Warp_modulated_space", "")
@@ -406,8 +406,8 @@ def run_segment():
             wm_name = code_vars_warped_modulated.get("WM_volume", "")
             mwp1 = output_reg['mwp1']
             mwp2 = output_reg['mwp2']
-            nib.save(mwp1, f'{out_dir}/{gm_name}.{ext}')
-            nib.save(mwp2, f'{out_dir}/{wm_name}.{ext}')
+            nib.save(mwp1, f'{out_dir}/{gm_name}')
+            nib.save(mwp2, f'{out_dir}/{wm_name}')
             if (save_csf):
                 csf_name = code_vars_warped_modulated.get("CSF_volume", "")
                 mwp3 = output_reg['mwp3']
