@@ -670,11 +670,17 @@ surface_estimation()
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
       ${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${outsurfdir}/${Mid_surface} -is ${outsurfdir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${outsurfdir}/${Spherereg_surface}
     fi
+
+    # remove temporary files if not debugging
+    if [ "${debug}" -eq 0 ]; then
+      rm ${outmridir}/${GMT_volume} ${outmridir}/${PPM_volume}
+    fi
+    
   else
     if [ "${estimate_seg}" -eq 0 ]; then    
       echo "${RED}ERROR: Could not find ${outmridir}/${Hemi_volume}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
     else
-      echo "${RED}ERROR: ${python} ${src_dir}/segment.py failed (file ${outmridir}/${Hemi_volume} not found)${NC}" >&2
+      echo "${RED}ERROR: ${python} ${src_dir}/segment.py failed.${NC}" >&2
     fi
   fi
 }
@@ -865,11 +871,6 @@ process()
       fi
     fi
     
-    # create outdir if not exists
-    if [ ! -d "$outdir0" ]; then
-      mkdir -p "$outdir0"
-    fi
-
     # get output folders for surfaces and volumes
     if [ "${use_bids_naming}" -eq 1 ]; then  
       outmridir=${outdir0}
@@ -950,23 +951,6 @@ process()
       wait
       
     fi # save_surf
-
-    # remove temporary files if not debugging
-    if [ "${debug}" -eq 0 ]; then
-      [ -f "${outmridir}/${seg}" ] && rm "${outmridir}/${seg}"
-      
-      # only remove temporary files if surfaces exist
-      if  [[ -f "${outsurfdir}/${mid_left}"  &&  -f "${outsurfdir}/${mid_right}" ]]; then
-
-        file_list='ppm gmt thick'
-        for files in ${file_list}t; do
-          for side in left right; do
-            rm_file=${files}_${side}
-            [ -f "${outmridir}/${!rm_file}" ] && rm "${outmridir}/${!rm_file}"
-          done
-        done
-      fi
-    fi
 
     # print execution time per data set
     end=$(date +%s)
