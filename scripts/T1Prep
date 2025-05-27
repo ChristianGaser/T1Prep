@@ -90,7 +90,7 @@ isoval=0.5
 thresh=0.6
 debug=0
 multi=-1
-
+version=0.1.0
 source "${script_dir}/progress_bar.sh"
 
 ########################################################
@@ -260,6 +260,7 @@ parse_args()
         ;;
       --bids)
         use_bids_naming=1
+        nii_ext='nii.gz'
         ;;
       --no-correct-folding)
         correct_folding=0
@@ -713,6 +714,40 @@ filter_arguments() {
   echo "${filtered[@]}"  # Return the filtered arguments
 }
 
+
+########################################################
+# get output folder depending on BIDS structure
+########################################################
+
+get_output_folder()
+{
+  local FILE=$1
+  bname=$(basename "$FILE")
+  bname="${bname%.nii.gz}"
+  bname="${bname%.nii}"
+
+  local dname=$(dirname "$FILE")
+  local dname=$(cd "$dname" && pwd) # get absolute path
+  
+  # check for BIDS folder structure, where the upper folder is "anat"
+  local upper_dname=$(basename "$dname") # get upper directory
+  if [ "${upper_dname}" == "anat" ]; then
+    use_subfolder=0
+    subj_folder=$(dirname "$dname")
+    subj_folder=$(basename "$subj_folder")
+    bids_folder="/derivatives/T1Prep${amap_string}-v${version}/${subj_folder}/anat/"
+  else
+    use_subfolder=1
+    bids_folder=""
+  fi
+  
+  if [ -z "${outdir}" ]; then
+    outdir0=${dname}${bids_folder}
+  else
+    outdir0=${outdir}${bids_folder}
+  fi  
+} 
+
 ########################################################
 # process data
 ########################################################
@@ -785,6 +820,13 @@ process()
     BLACK=""
   fi
   
+  # later add string that indicates use of AMAP
+  if [[ "${use_amap}" -eq 1 ]]; then
+    amap_string=""
+  else
+    amap_string="-no-amap"
+  fi
+  
   i=0
   j=0
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
@@ -803,17 +845,14 @@ process()
 
     # check whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
-      dname=$(dirname "$FILE")
-      bname=$(basename "$FILE")
-      bname="${bname%.nii.gz}"
-      bname="${bname%.nii}"
-
-      if [ -z "${outdir}" ]; then
-        outdir0=${dname}
+      
+      get_output_folder $FILE
+      
+      if [ "${use_bids_naming}" -eq 1 ]; then  
+        processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
       else
-        outdir0=${outdir}
+        processed=$(ls "${outdir0}/${bname}"*"${no_overwrite}"* 2>/dev/null)
       fi
-      processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
     fi
 
     if [ -z "${processed}" ]; then
@@ -847,23 +886,16 @@ process()
 
     FILE="${ARRAY2[$i]}"
 
-    # get directory and basename
-    dname=$(dirname "$FILE")
-    bname=$(basename "$FILE")
-    bname="${bname%.nii.gz}"
-    bname="${bname%.nii}"
-    
-    # if defined use output dir otherwise use the folder of input files
-    if [ -z "${outdir}" ]; then
-      outdir0=${dname}
-    else
-      outdir0=${outdir}
-    fi
+    get_output_folder $FILE
 
     # check again whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
-      processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
-      
+      if [ "${use_bids_naming}" -eq 1 ]; then  
+        processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
+      else
+        processed=$(ls "${outdir0}/${bname}"*"${no_overwrite}"* 2>/dev/null)
+      fi
+
       # Check if $processed is empty
       if [ -n "$processed" ]; then
         echo Skip processing of ${FILE}
@@ -872,7 +904,7 @@ process()
     fi
     
     # get output folders for surfaces and volumes
-    if [ "${use_bids_naming}" -eq 1 ]; then  
+    if [[ "${use_bids_naming}" -eq 1 || "${use_subfolder}" -eq 0 ]]; then  
       outmridir=${outdir0}
       outsurfdir=${outdir0}
     else
