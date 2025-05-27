@@ -25,7 +25,70 @@ from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregula
 from pathlib import Path
 from skimage import filters
 
-DATA_PATH = Path(__file__).resolve().parent.parent / 'data'
+ROOT_PATH = Path(__file__).resolve().parent.parent
+DATA_PATH = ROOT_PATH / 'data'
+name_file = ROOT_PATH / 'Names.tsv'
+
+codes = [
+    "Hemi_volume", "mT1_volume", "GM_volume",
+    "WM_volume", "CSF_volume", "WMH_volume",
+    "Label_volume", "Affine_space", "Warp_space",
+    "Def_volume", "invDef_volume"
+]
+
+def load_namefile(filename):
+    name_dict = {}
+    with open(filename) as f:
+        for line in f:
+            if not line.strip() or line.startswith("#"):
+                continue
+            parts = line.strip().split(None, 2)  # split on whitespace, max 3 fields
+            while len(parts) < 3:
+                parts.append('')
+            code, col2, col3 = parts
+            name_dict[code] = (col2, col3)
+    return name_dict
+
+def substitute_pattern(pattern, bname, side, desc, space, nii_ext):
+    if not pattern:
+        return ""
+    result = pattern
+    replacements = {
+        'bname': bname,
+        'side': side,
+        'desc': desc,
+        'space': space,
+        'nii_ext': nii_ext
+    }
+    for key, val in replacements.items():
+        result = result.replace('{' + key + '}', val if val is not None else '')
+    return result
+
+def get_filenames(use_bids_naming, bname, side, desc, space, nii_ext):
+    name_dict = load_namefile(name_file)
+
+    # BIDS/naming logic
+    if use_bids_naming:
+        name_columns = 1  # 0=old, 1=new
+        hemi = 'L' if side == 'left' else 'R'
+    else:
+        name_columns = 0
+        hemi = 'lh' if side == 'left' else 'rh'
+
+    code_vars = {}
+    for code in codes:
+        patterns = name_dict.get(code)
+        if not patterns:
+            continue
+        if name_columns >= len(patterns):
+            continue
+        pattern = patterns[name_columns]
+        if not pattern:
+            continue
+        value = substitute_pattern(pattern, bname, hemi, desc, space, nii_ext)
+        code_vars[code] = value
+        
+    return code_vars
 
 def progress_bar(elapsed, total, name):
     """
