@@ -33,7 +33,7 @@ codes = [
     "Hemi_volume", "mT1_volume", "GM_volume",
     "WM_volume", "CSF_volume", "WMH_volume",
     "Label_volume", "Affine_space", "Warp_space",
-    "Def_volume", "invDef_volume"
+    "Warp_modulated_space", "Def_volume", "invDef_volume"
 ]
 
 def load_namefile(filename):
