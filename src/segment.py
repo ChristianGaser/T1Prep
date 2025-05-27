@@ -156,12 +156,10 @@ def run_segment():
         os.path.basename(t1_name).replace('_desc-sanlm', '')).replace('.nii', '').replace('.gz','')
     t1 = nib.load(t1_name)
     
-    # copy necessary model files from local folder to install it, since often the API rate limit is exceeded
+    # Copy necessary model files from local folder to install it, since often the API rate limit is exceeded
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     
-    def all_models_present():
-        return all((MODEL_DIR / f).exists() for f in MODEL_FILES)
-    
+    # Download required model files from Github as zip-file and unzip it to DATA_PATH
     if not all_models_present():
         print("One or more model files are missing. Downloading zip archive...")
         # Download the zip file if not already present
