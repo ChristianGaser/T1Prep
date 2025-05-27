@@ -3,9 +3,11 @@
 
 VERSION='0.1.0'
 
-FILES=scripts src data bin LICENSE README.md requirements.txt
+FILES=scripts src bin data LICENSE README.md requirements.txt
+DATA_FILES=data
 
 ZIPFILE=T1Prep_${VERSION}.zip
+DATA_ZIPFILE=T1Prep_Models.zip
 
 # print available commands
 help:
@@ -30,7 +32,12 @@ zip: clean
 	-@test ! -d T1Prep || rm -r T1Prep
 	-@mkdir T1Prep
 	-@cp -rp ${FILES} T1Prep
+	-@rm -r T1Prep/data/models
 	-@zip ${ZIPFILE} -rm T1Prep
+	-@mkdir T1Prep
+	-@cp -rp ${DATA_FILES} T1Prep
+	-@rm -r T1Prep/data/templates*
+	-@zip ${DATA_ZIPFILE} -rm T1Prep
 
 # copy binaries after cross-compiling
 cp_binaries: 
