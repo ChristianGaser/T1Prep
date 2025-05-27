@@ -128,11 +128,11 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
 Files: T1-weighted MRI images in NIfTI format.
 
 ## Installation
-Download T1Prep_$version.zip
+Download T1Prep_$version.zip from Github and unzip:
 ```bash
   unzip T1Prep_$version.zip -d your_installation_folder
 ```
-Download T1Prep_Models.zip
+Download T1Prep_Models.zip from Github and unzip:
 ```bash
   unzip T1Prep_Models.zip -d your_installation_folder
 ```
