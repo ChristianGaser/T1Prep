@@ -12,6 +12,8 @@ import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
+import urllib.request
+import zipfile
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -26,11 +28,16 @@ from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from scipy.ndimage import grey_opening
 from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum, get_filenames
-DATA_PATH0 = Path(__file__).resolve().parent.parent / 'data/'
+ROOT_PATH = Path(__file__).resolve().parent.parent
+TMP_PATH = ROOT_PATH / 'tmp_models/'
+DATA_PATH0 = ROOT_PATH / 'data/'
+MODEL_DIR = Path(DATA_PATH) / 'models/'
 MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 
                 'segmentation_nogm_model.pt'] +
                [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 
                'warp_model.pt'])
+MODEL_ZIP_URL = "https://github.com/ChristianGaser/T1Prep/releases/download/v0.1.0-alpha/T1Prep_Models.zip"
+MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
 
 # Custom class to override BrainSegmentation
 # Skip self.run_patch_models(x, p0) which takes a lot of time and is not needed 
@@ -48,6 +55,9 @@ class CustomBrainSegmentation(BrainSegmentation):
             p0[0, 0][filled] = 1.
         return F.pad(p0, (0, 3, 15, 12, 1, 2))
 
+def all_models_present():
+    return all((MODEL_DIR / f).exists() for f in MODEL_FILES)
+    
 def run_segment():
 
     """
@@ -147,7 +157,30 @@ def run_segment():
     t1 = nib.load(t1_name)
     
     # copy necessary model files from local folder to install it, since often the API rate limit is exceeded
-    Path(f'{DATA_PATH}/models').mkdir(exist_ok=True)
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def all_models_present():
+        return all((MODEL_DIR / f).exists() for f in MODEL_FILES)
+    
+    if not all_models_present():
+        print("One or more model files are missing. Downloading zip archive...")
+        # Download the zip file if not already present
+        if not MODEL_ZIP_LOCAL.exists():
+            print(f"Downloading {MODEL_ZIP_URL} ...")
+            urllib.request.urlretrieve(MODEL_ZIP_URL, MODEL_ZIP_LOCAL)
+            print("Download complete.")
+    
+        # Extract zip
+        with zipfile.ZipFile(MODEL_ZIP_LOCAL, "r") as zip_ref:
+            zip_ref.extractall(TMP_PATH)
+        print(f"Unzipped models to {TMP_PATH}")
+        for file in MODEL_FILES:
+            shutil.copy(f'{TMP_PATH}/T1Prep/data/models/{file}', f'{DATA_PATH}/models/{file}')
+        shutil.rmtree(TMP_PATH)
+
+        # Optionally, delete the zip to save space
+        MODEL_ZIP_LOCAL.unlink()
+
     for file in MODEL_FILES:
         if not Path(f'{DATA_PATH}/models/{file}').exists():
             shutil.copy(f'{DATA_PATH0}/models/{file}', f'{DATA_PATH}/models/{file}') 
