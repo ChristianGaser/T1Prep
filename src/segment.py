@@ -268,7 +268,7 @@ def run_segment():
         # Call AMAP and write GM and label map
         cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
             f' -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 ' +
-            ' -write-seg 1 1 1 -label ' +
+            '-alpha 0.25 -write-seg 1 1 1 -label ' +
             f'{out_dir}/{out_name}_seg_large.{ext}' + ' ' +
             f'{out_dir}/{out_name}_brain_large.{ext}')
         os.system(cmd)
@@ -507,8 +507,9 @@ def run_segment():
             affine2, header2, f'{out_dir}/{hemiright_name}', True, True)
 
     # remove temporary AMAP files
-    if (use_amap | save_lesions):
+    if ((use_amap | save_lesions) & ~verbose):
         remove_file(f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
+        remove_file(f'{out_dir}/{out_name}_brain_large_seg.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
         remove_file(f'{out_dir}/{out_name}_seg_large.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
