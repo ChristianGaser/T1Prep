@@ -8,12 +8,12 @@ import argparse
 import warnings
 import math
 import shutil
+import zipfile
+import urllib.request
 import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
-import urllib.request
-import zipfile
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -34,8 +34,8 @@ DATA_PATH0 = ROOT_PATH / 'data/'
 MODEL_DIR = Path(DATA_PATH) / 'models/'
 MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt', 
                 'segmentation_nogm_model.pt'] +
-               [f'segmentation_patch_{i}_model.pt' for i in range(18)] + ['segmentation_model.pt', 
-               'warp_model.pt'])
+               [f'segmentation_patch_{i}_model.pt' for i in range(18)] + 
+               ['segmentation_model.pt', 'warp_model.pt'])
 MODEL_ZIP_URL = "https://github.com/ChristianGaser/T1Prep/releases/download/v0.1.0-alpha/T1Prep_Models.zip"
 MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
 
