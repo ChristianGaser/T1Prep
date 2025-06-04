@@ -143,7 +143,7 @@ def run_segment():
         end_count += 1
     if save_hemilabel:
         end_count += 2
-    if (save_lesions):
+    if save_lesions:
         end_count += 1
         
     if save_gz:
@@ -192,18 +192,18 @@ def run_segment():
     prep = Preprocess(no_gpu)
 
     # Use faster preprocessing and segmentation for Amap segmentation    
-    if (use_amap):
+    if use_amap:
         prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
 
     # Step 1: Skull-stripping
-    if (verbose):
+    if verbose:
         count = progress_bar(count, end_count, 'Skull-stripping               ')
     output_bet = prep.run_bet(t1)
     brain = output_bet['brain']
     mask = output_bet['mask']
 
     # Step 2: Affine registration
-    if (verbose):
+    if verbose:
         count = progress_bar(count, end_count, 'Affine registration           ')
     output_aff = prep.run_affine_register(brain, mask)
     affine = output_aff['affine']
@@ -211,7 +211,7 @@ def run_segment():
     mask_large = output_aff['mask_large']
         
     # Step 3: Segmentation
-    if (verbose):
+    if verbose:
         count = progress_bar(count, end_count, 'DeepMriPrep segmentation                  ')    
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg['p0_large']
@@ -236,7 +236,7 @@ def run_segment():
     space_warp = code_vars.get("Warp_space", "")
     space_warp_modulated = code_vars.get("Warp_modulated_space", "")
 
-    if (use_bids):
+    if use_bids:
         code_vars_affine = get_filenames(use_bids, out_name, '', '', space_affine, ext)
     else:
         code_vars_affine = get_filenames(use_bids, out_name, '', '_affine', space_affine, ext)
@@ -249,11 +249,11 @@ def run_segment():
     bias, brain_large = correct_bias_field(brain_large, p0_large, steps=1000)
 
     # Conditional processing based on AMAP or lesion flag
-    if (use_amap | save_lesions):
+    if use_amap or save_lesions:
         # AMAP segmentation pipeline
         amapdir = args.amapdir
         
-        if (verbose):
+        if verbose:
             count = progress_bar(count, end_count, 'Amap segmentation')
         
         nib.save(brain_large, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
@@ -273,14 +273,14 @@ def run_segment():
             f'{out_dir}/{out_name}_brain_large.{ext}')
         os.system(cmd)
       
-    if (use_amap):
+    if use_amap:
         # Load Amap label
         p1_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
         p2_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}')
         p3_large = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}')        
     else:
         # Call deepmriprep refinement of deepmriprep label
-        if (verbose):
+        if verbose:
             count = progress_bar(count, end_count, 'Fine DeepMriPrep segmentation')
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 
@@ -292,12 +292,12 @@ def run_segment():
         gmv = output_nogm['gmv']
         tiv = output_nogm['tiv']
         
-    if (use_amap | save_lesions):
+    if use_amap or save_lesions:
         # Get original WM mask from deepmriprep label (without any lesions)
         wm = p0_large.get_fdata() > 2.5
 
         # Get uncorrected GM/WM maps from Amap
-        if (use_amap):
+        if use_amap:
             p1_large_uncorr = p1_large
             p2_large_uncorr = p2_large
             
@@ -319,7 +319,7 @@ def run_segment():
         wm_lesions_large[~ind_wm_lesions] = 0
         
         # Correct GM/WM segmentation + Label
-        if (use_amap):
+        if use_amap:
             tmp_p1 = p1_large_uncorr.get_fdata()
             tmp_p1[ind_wm_lesions] -= wm_lesions_large[ind_wm_lesions]
             tmp_p1[tmp_p1 < 0] = 0
@@ -342,7 +342,7 @@ def run_segment():
     wj_affine = pd.Series([wj_affine])
 
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) to refine segmentation
-    if (vessel > 0):
+    if vessel > 0:
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'ibsr', None, device)
         cerebellum = get_cerebellum(atlas)
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'csf_TPM', None, device)
@@ -354,14 +354,14 @@ def run_segment():
         p0_large = nib.Nifti1Image(tmp, affine2, header2)
     
     # Get affine segmentations
-    if ((save_hemilabel) | (save_mwp) | (save_wp) | (save_rp)):
+    if save_hemilabel or save_mwp or save_wp or save_rp:
         p1_affine = F.interpolate(
             nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p1_affine = reoriented_nifti(p1_affine, warp_template.affine, warp_template.header)
         p2_affine = F.interpolate(
             nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
         p2_affine = reoriented_nifti(p2_affine, warp_template.affine, warp_template.header)
-        if ((save_csf) and (save_rp)):
+        if save_csf and save_rp:
             p3_affine = F.interpolate(
                 nifti_to_tensor(p3_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS)[0, 0]
             p3_affine = reoriented_nifti(p3_affine, warp_template.affine, warp_template.header)
@@ -387,12 +387,12 @@ def run_segment():
     #tiv = pd.Series([vol.sum()], name='tiv_cm3')
     
     # Save affine registration
-    if (save_rp):
+    if save_rp:
         gm_name = code_vars_affine.get("GM_volume", "")
         wm_name = code_vars_affine.get("WM_volume", "")
         nib.save(p1_affine, f'{out_dir}/{gm_name}')
         nib.save(p2_affine, f'{out_dir}/{wm_name}')
-        if (save_csf):
+        if save_csf:
             csf_name = code_vars_affine.get("CSF_volume", "")
             nib.save(p3_affine, f'{out_dir}/{csf_name}')
 
@@ -403,7 +403,7 @@ def run_segment():
         f'{out_dir}/{label_name}')
     resample_and_save_nifti(brain_large, grid_native, mask.affine, mask.header, 
         f'{out_dir}/{mT1_name}')
-    if (save_p):
+    if save_p:
         gm_name = code_vars.get("GM_volume", "")
         wm_name = code_vars.get("WM_volume", "")
         resample_and_save_nifti(
@@ -412,46 +412,46 @@ def run_segment():
         resample_and_save_nifti(
             p2_large, grid_native, mask.affine, mask.header, 
             f'{out_dir}/{wm_name}')
-        if (save_csf):
+        if save_csf:
             csf_name = code_vars.get("CSF_volume", "")
             resample_and_save_nifti(
                 p3_large, grid_native, mask.affine, mask.header, 
                 f'{out_dir}/{csf_name}')
-    if (save_lesions):
+    if save_lesions:
         wmh_name = code_vars.get("WMH_volume", "")
         resample_and_save_nifti(
             wm_lesions_large, grid_native, mask.affine, mask.header, 
             f'{out_dir}/{wmh_name}')
 
     # Warping is necessary for surface creation and saving warped segmentations
-    if ((save_hemilabel) | (save_mwp) | (save_wp)):
+    if save_hemilabel or save_mwp or save_wp:
         # Step 5: Warping
-        if (verbose):
+        if verbose:
             count = progress_bar(count, end_count, 'Warping                          ')
         output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
         warp_yx = output_reg['warp_yx']
         warp_xy = output_reg['warp_xy']
         
-        if (save_mwp):
+        if save_mwp:
             gm_name = code_vars_warped_modulated.get("GM_volume", "")
             wm_name = code_vars_warped_modulated.get("WM_volume", "")
             mwp1 = output_reg['mwp1']
             mwp2 = output_reg['mwp2']
             nib.save(mwp1, f'{out_dir}/{gm_name}')
             nib.save(mwp2, f'{out_dir}/{wm_name}')
-            if (save_csf):
+            if save_csf:
                 csf_name = code_vars_warped_modulated.get("CSF_volume", "")
                 mwp3 = output_reg['mwp3']
                 nib.save(mwp1, f'{out_dir}/{csf_name}')
             
-        if (save_wp):
+        if save_wp:
             gm_name = code_vars_warped.get("GM_volume", "")
             wm_name = code_vars_warped.get("WM_volume", "")
             wp1 = output_reg['mwp1']
             wp2 = output_reg['mwp2']
             nib.save(wp1, f'{out_dir}/{gm_name}')
             nib.save(wp2, f'{out_dir}/{wm_name}')
-            if (save_csf):
+            if save_csf:
                 csf_name = code_vars_warped.get("CSF_volume", "")
                 wp3 = output_reg['wp3']
                 nib.save(mwp1, f'{out_dir}/{csf_name}')
@@ -485,15 +485,15 @@ def run_segment():
         """    
                 
     # Atlas is necessary for surface creation
-    if (save_hemilabel):
+    if save_hemilabel:
         # Step 6: Atlas creation
-        if (verbose):
+        if verbose:
             count = progress_bar(count, end_count, 'Atlas creation                 ')
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'ibsr', warp_yx, device)
         lh, rh = get_partition(p0_large, atlas)
 
         # Step 7: Save hemisphere outputs
-        if (verbose):
+        if verbose:
             count = progress_bar(count, end_count, 'Resampling                     ')
         
         hemileft_name = code_vars_left.get("Hemi_volume", "")
@@ -507,7 +507,7 @@ def run_segment():
             affine2, header2, f'{out_dir}/{hemiright_name}', True, True)
 
     # remove temporary AMAP files
-    if ((use_amap | save_lesions) & ~verbose):
+    if (use_amap or save_lesions) and not verbose:
         remove_file(f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_seg.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
