@@ -952,6 +952,7 @@ process()
       [ "${save_lesions}" -eq 1 ] && cmd+=" --lesions --amapdir ${bin_dir}"
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
       [ "${multi}" -ne -2 ] && cmd+=" --verbose"
+      [ "${debug}" -eq 1 ] && cmd+=" --debug"
       [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
       

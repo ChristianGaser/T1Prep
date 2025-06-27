@@ -63,7 +63,9 @@ main ()
         unfilled=$((width - filled))
         bar=$(printf "%${filled}s" | tr ' ' '█')
         bar+=$(printf "%${unfilled}s")
-        echo -ne "Job $((i+1)): [${COLOR}${bar}${NC}] (${percent}%)\n"
+        jobnumber=$((i+1))
+        printf -v jobstr "%2d" "$jobnumber"
+        echo -ne "Job ${jobstr}: [${COLOR}${bar}${NC}] (${percent}%)\n"
         [[ "$done_items" -lt "$total_items" ]] && all_done=false
       else
         echo -ne "Job $((i+1)): [waiting...]\n"
