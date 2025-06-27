@@ -442,19 +442,19 @@ def run_segment():
             if save_csf:
                 csf_name = code_vars_warped_modulated.get("CSF_volume", "")
                 mwp3 = output_reg['mwp3']
-                nib.save(mwp1, f'{out_dir}/{csf_name}')
+                nib.save(mwp3, f'{out_dir}/{csf_name}')
             
         if save_wp:
             gm_name = code_vars_warped.get("GM_volume", "")
             wm_name = code_vars_warped.get("WM_volume", "")
-            wp1 = output_reg['mwp1']
-            wp2 = output_reg['mwp2']
+            wp1 = output_reg['wp1']
+            wp2 = output_reg['wp2']
             nib.save(wp1, f'{out_dir}/{gm_name}')
             nib.save(wp2, f'{out_dir}/{wm_name}')
             if save_csf:
                 csf_name = code_vars_warped.get("CSF_volume", "")
                 wp3 = output_reg['wp3']
-                nib.save(mwp1, f'{out_dir}/{csf_name}')
+                nib.save(wp3, f'{out_dir}/{csf_name}')
 
         def_name = code_vars.get("Def_volume", "")
         nib.save(warp_xy, f'{out_dir}/{def_name}')
