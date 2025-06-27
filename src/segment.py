@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import os
 import sys
 import platform
@@ -26,8 +24,8 @@ from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import ATLASES, get_volumes
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
-from scipy.ndimage import grey_opening
-from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum, get_filenames
+from scipy.ndimage import grey_opening, median_filter, binary_closing, generate_binary_structure
+from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum, get_filenames, correct_label_map
 ROOT_PATH = Path(__file__).resolve().parent.parent
 TMP_PATH = ROOT_PATH / 'tmp_models/'
 DATA_PATH0 = ROOT_PATH / 'data/'
@@ -38,7 +36,7 @@ MODEL_FILES = (['brain_extraction_bbox_model.pt', 'brain_extraction_model.pt',
                ['segmentation_model.pt', 'warp_model.pt'])
 MODEL_ZIP_URL = "https://github.com/ChristianGaser/T1Prep/releases/download/v0.1.0-alpha/T1Prep_Models.zip"
 MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
-
+    
 # Custom class to override BrainSegmentation
 # Skip self.run_patch_models(x, p0) which takes a lot of time and is not needed 
 # for Amap segmentation
@@ -98,6 +96,8 @@ def run_segment():
                         help='Amap binary folder', type=str)
     parser.add_argument('--verbose', action="store_true", 
                         help="(optional) Be verbose.")
+    parser.add_argument('--debug', action="store_true", 
+                        help="(optional) Do not delete temporary files.")
     parser.add_argument('--vessel', type=float, default=0.4, 
                         help="Initial threshold to isolate WM for vessel removal") 
     args = parser.parse_args()
@@ -113,6 +113,7 @@ def run_segment():
     vessel = args.vessel
     bias_fwhm = args.bias_fwhm
     verbose=args.verbose
+    debug=args.debug
 
     # Save options
     save_mwp = args.mwp
@@ -130,7 +131,7 @@ def run_segment():
         no_gpu = False
     elif torch.backends.mps.is_available() and False: # not yet fully supported
         device = torch.device("mps")
-        no_gpu = True
+        no_gpu = False
     else:
         device = torch.device("cpu")
         no_gpu = True
@@ -184,7 +185,7 @@ def run_segment():
             shutil.copy(f'{DATA_PATH0}/models/{file}', f'{DATA_PATH}/models/{file}') 
 
     # Preprocess the input volume
-    vol = t1.get_fdata()
+    vol = t1.get_fdata().copy()
     vol = np.squeeze(vol)
     vol, affine2, header2, ras_affine = align_brain(vol, t1.affine, t1.header, np.eye(4), 0)
     t1 = nib.Nifti1Image(vol, affine2, header2)
@@ -246,29 +247,38 @@ def run_segment():
     code_vars_right = get_filenames(use_bids, out_name, 'right', '', '', ext)
     
     # Correct bias using label from deepmriprep
-    bias, brain_large = correct_bias_field(brain_large, p0_large, steps=1000)
+    brain_large, brain_large_norm = correct_bias_field(brain_large, p0_large, steps=1000)
 
     # Conditional processing based on AMAP or lesion flag
     if use_amap or save_lesions:
         # AMAP segmentation pipeline
         amapdir = args.amapdir
-        
+
         if verbose:
             count = progress_bar(count, end_count, 'Amap segmentation')
         
-        nib.save(brain_large, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
-        nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.{ext}')
+        if True:
+            if verbose:
+                print("Label correction")
+            p0_large_corr, brain_large_corr = correct_label_map(brain_large_norm, p0_large)
+            nib.save(brain_large_corr, f'{out_dir}/{out_name}_brain_large.{ext}')
+            #nib.save(brain_large_corr, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
+            nib.save(p0_large_corr, f'{out_dir}/{out_name}_seg_large.{ext}')
+        else:
+            nib.save(brain_large_norm, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
+            nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.{ext}')
         
         # Call SANLM filter and rename output to original name
-        cmd = (os.path.join(amapdir, 'CAT_VolSanlm') + ' ' +
-            f'{out_dir}/{out_name}_brain_large_tmp.{ext}' + ' ' +
-            f'{out_dir}/{out_name}_brain_large.{ext}')
-        os.system(cmd)
+        if False:
+            cmd = (os.path.join(amapdir, 'CAT_VolSanlm') + ' ' +
+                f'{out_dir}/{out_name}_brain_large_tmp.{ext}' + ' ' +
+                f'{out_dir}/{out_name}_brain_large.{ext}')
+            os.system(cmd)
 
         # Call AMAP and write GM and label map
         cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
-            f' -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 ' +
-            '-alpha 0.25 -write-seg 1 1 1 -label ' +
+            f' -verbose -use-bmap -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 ' +
+            '-write-seg 1 1 1 -label ' +
             f'{out_dir}/{out_name}_seg_large.{ext}' + ' ' +
             f'{out_dir}/{out_name}_brain_large.{ext}')
         os.system(cmd)
@@ -293,41 +303,72 @@ def run_segment():
         tiv = output_nogm['tiv']
         
     if use_amap or save_lesions:
-        # Get original WM mask from deepmriprep label (without any lesions)
-        wm = p0_large.get_fdata() > 2.5
+    
+        if debug:
+            p0_large_diff = p3_large.get_fdata().copy() + 2*p1_large.get_fdata().copy() + 3*p2_large.get_fdata().copy() - p0_large.get_fdata().copy()
+            p0_large_diff = median_filter(p0_large_diff, size=3)
+            p0_large_diff = nib.Nifti1Image(p0_large_diff, p0_large.affine, p0_large.header)
+            nib.save(p0_large_diff, f'{out_dir}/{out_name}_brain_large_label-discrepancy.{ext}')
+
+        # Get original WM and CSF mask from deepmriprep label (without any lesions)
+        p0_tmp = p0_large.get_fdata().copy()
+        wm = p0_tmp > 2.5
+        csf = (p0_tmp < 1.5) & (p0_tmp > 0)
 
         # Get uncorrected GM/WM maps from Amap
         if use_amap:
             p1_large_uncorr = p1_large
             p2_large_uncorr = p2_large
+            p3_large_uncorr = p3_large
             
             # We have to extract the corrected GM from deepmriprep p0 map to identify lesions
-            tmp_p0 = p0_large.get_fdata()
+            tmp_p0 = p0_large.get_fdata().copy()
             tmp_p0[(tmp_p0 < 1.5) | (tmp_p0 > 2.5)] = 1.5;
             tmp_p0 -= 1.5
             p1_large = nib.Nifti1Image(tmp_p0, affine3, header3)
+
+            tmp_p0 = p0_large.get_fdata().copy()
+            tmp_p0[~csf] = 0;
+            p3_large = nib.Nifti1Image(tmp_p0, affine3, header3)
             
         else:
             p1_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}')
             p2_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}')
+            p3_large_uncorr = nib.load(f'{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}')
             
         # Use difference between corrected and uncorrected GM after correction as lesion map and 
         # restrict it to WM areas
-        wm_lesions_large = p1_large_uncorr.get_fdata() - p1_large.get_fdata()
-        wm_lesions_large = grey_opening(wm_lesions_large, size=[3, 3, 3])
+        wm_lesions_large = p1_large_uncorr.get_fdata().copy() - p1_large.get_fdata().copy()
+        wm_lesions_large = median_filter(wm_lesions_large, size=3)
         ind_wm_lesions = (wm & (wm_lesions_large > 0))
         wm_lesions_large[~ind_wm_lesions] = 0
         
+        csf = binary_closing(csf, generate_binary_structure(3, 3), 2)
+        csf_discrep_large = p3_large_uncorr.get_fdata().copy() - p3_large.get_fdata().copy()
+        csf_discrep_large = median_filter(csf_discrep_large, size=3)
+        ind_csf_discrep = (csf_discrep_large < 0)
+
+        if False:
+            nib.save(nib.Nifti1Image(csf_discrep_large, p0_large.affine, p0_large.header), f'{out_dir}/csf_discrep.{ext}')
+            nib.save(nib.Nifti1Image(csf, p0_large.affine, p0_large.header), f'{out_dir}/csf.{ext}')        
+            nib.save(nib.Nifti1Image(ind_csf_discrep, p0_large.affine, p0_large.header), f'{out_dir}/csf_ind.{ext}')
+
         # Correct GM/WM segmentation + Label
         if use_amap:
-            tmp_p1 = p1_large_uncorr.get_fdata()
+            tmp_p3 = p3_large_uncorr.get_fdata().copy()
+            tmp_p3[ind_csf_discrep] += csf_discrep_large[ind_csf_discrep]
+            np.clip(tmp_p3, 0, 1)
+            p3_large = nib.Nifti1Image(tmp_p3, affine3, header3)
+
+            tmp_p1 = p1_large_uncorr.get_fdata().copy()
             tmp_p1[ind_wm_lesions] -= wm_lesions_large[ind_wm_lesions]
-            tmp_p1[tmp_p1 < 0] = 0
+            tmp_p1[ind_csf_discrep] -= csf_discrep_large[ind_csf_discrep]
+            np.clip(tmp_p1, 0, 1)
             p1_large = nib.Nifti1Image(tmp_p1, affine3, header3)
     
-            tmp_p2 = p2_large_uncorr.get_fdata()
+            tmp_p2 = p2_large_uncorr.get_fdata().copy()
             tmp_p2[ind_wm_lesions] += wm_lesions_large[ind_wm_lesions]
-            tmp_p2[tmp_p2 > 1] = 1
+            np.clip(tmp_p2, 0, 1)
             p2_large = nib.Nifti1Image(tmp_p2, affine3, header3)
             
         # Convert back to nifti            
@@ -346,11 +387,11 @@ def run_segment():
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'ibsr', None, device)
         cerebellum = get_cerebellum(atlas)
         atlas = get_atlas(t1, affine, p1_large, p2_large, p3_large, 'csf_TPM', None, device)
-        csf_TPM = atlas.get_fdata()
+        csf_TPM = atlas.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup(
             p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM)
     else:
-        tmp = p3_large.get_fdata() + 2*p1_large.get_fdata() + 3*p2_large.get_fdata()
+        tmp = p3_large.get_fdata().copy() + 2*p1_large.get_fdata().copy() + 3*p2_large.get_fdata().copy()
         p0_large = nib.Nifti1Image(tmp, affine2, header2)
     
     # Get affine segmentations
@@ -375,9 +416,9 @@ def run_segment():
     vol_abs_CGW = []
     mean_CGW = []
     for label in (1, 2, 3):
-        mask_label = p0_large.get_fdata() == label
-        mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
-        vol_abs_CGW.append(brain_large.get_fdata()[mask_label].mean())
+        mask_label = p0_large.get_fdata().copy() == label
+        mean_CGW.append(brain_large.get_fdata().copy()[mask_label].mean())
+        vol_abs_CGW.append(brain_large.get_fdata().copy()[mask_label].mean())
         
     #print(vol_abs_CGW)
         
@@ -507,8 +548,8 @@ def run_segment():
             affine2, header2, f'{out_dir}/{hemiright_name}', True, True)
 
     # remove temporary AMAP files
-    if (use_amap or save_lesions) and not verbose:
-        remove_file(f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
+    if (use_amap or save_lesions) and not debug:
+        #remove_file(f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large_seg.{ext}')
         remove_file(f'{out_dir}/{out_name}_brain_large.{ext}')
         remove_file(f'{out_dir}/{out_name}_seg_large.{ext}')
