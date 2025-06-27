@@ -19,7 +19,7 @@ from deepbet.utils import reoriented_nifti
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
 from torchreg.utils import INTERP_KWARGS
-from scipy.ndimage import binary_opening, binary_dilation, grey_opening, binary_closing, generate_binary_structure, label
+from scipy.ndimage import binary_opening, binary_dilation, grey_opening, binary_closing, binary_erosion, generate_binary_structure, median_filter, label
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
 from pathlib import Path
@@ -216,9 +216,9 @@ def cleanup(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
         6. Retain only the largest cluster in the GM-WM map and correct the GM map.
     """
 
-    gm  = gm0.get_fdata()
-    wm  = wm0.get_fdata()
-    csf = csf0.get_fdata()
+    gm  = gm0.get_fdata().copy()
+    wm  = wm0.get_fdata().copy()
+    csf = csf0.get_fdata().copy()
 
     # Identify the largest WM cluster to isolate the main WM structure
     wm_morph = find_largest_cluster(wm > threshold_wm)
@@ -264,7 +264,7 @@ def cleanup(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
 
     return label, gm, wm, csf
 
-def correct_bias_field(brain, seg, steps=1000, spacing=0.75):
+def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=False):
     """
     Applies bias field correction to an input brain image.
 
@@ -288,17 +288,11 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75):
 
     # Process voxel sizes and mask for brain segmentation
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
-    brain0 = brain.get_fdata()
+    brain0 = brain.get_fdata().copy()
+    seg0 = seg.get_fdata().copy()
     
     # Generate mask based on segmentation or brain data
-    if (seg is None) :
-        print("No mask")
-        mask = np.ones(brain0.shape) > 0
-        _thresh = filters.threshold_otsu(brain0[mask])
-        print(_thresh)
-        mask = np.logical_and(brain0 > _thresh, mask)
-    else:
-        mask = (seg.get_fdata() >= 2.75)
+    mask = (seg0 >= 2.75)
     
     # Subsampling for efficiency
     if subsamp:
@@ -408,12 +402,36 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75):
     tissue_idx = bias0 != 0
     brain0[tissue_idx] /= bias0[tissue_idx]
     
-    brain0 = piecewise_linear_scaling(brain0, seg.get_fdata())
-
     brain = nib.Nifti1Image(brain0, brain.affine, brain.header)
-    bias  = nib.Nifti1Image(bias0,  brain.affine, brain.header)
     
-    return bias, brain
+    brain0 = piecewise_linear_scaling(brain0, seg0)        
+    brain_normalized = nib.Nifti1Image(brain0, brain.affine, brain.header)
+    
+    return brain, brain_normalized
+
+def correct_label_map(brain, seg):
+
+    # We have to explicitly copy the get_fdata structure due to
+    # caching, which could otherwise alter the input.
+    brain0 = brain.get_fdata().copy()
+    seg0 = seg.get_fdata().copy()
+            
+    discrepancy0 = (1 + brain0*3)/(1 + seg0) 
+    discrepancy0 = median_filter(discrepancy0, size=3)
+    
+    wm_mask = (seg0 > 2.5) & (discrepancy0 < 1)
+    seg0[wm_mask] *= discrepancy0[wm_mask]*discrepancy0[wm_mask]
+
+    mask_rim = seg0 > 0
+    mask_rim = mask_rim & ~binary_erosion(mask_rim, generate_binary_structure(3, 3), 5)
+
+    csf_mask = mask_rim & (seg0 < 1.5) & (discrepancy0 > 1)
+    brain0[csf_mask] /= discrepancy0[csf_mask]
+
+    seg_corrected = nib.Nifti1Image(seg0, seg.affine, seg.header)
+    brain_corrected = nib.Nifti1Image(brain0, brain.affine, brain.header)
+    
+    return seg_corrected, brain_corrected
 
 def piecewise_linear_scaling(input_img, label_img):
     """
@@ -479,9 +497,8 @@ def piecewise_linear_scaling(input_img, label_img):
         )
     # For outliers above the last median, extrapolate linearly using last segment's slope
     mask = input_img >= median_input[4]
-    offset = N / 6  # == 5/6
     slope = (target_values[4] - target_values[3]) / (median_input[4] - median_input[3])
-    Ym[mask] = offset + (input_img[mask] - median_input[4]) * slope
+    Ym[mask] = target_values[4] + (input_img[mask] - median_input[4]) * slope
     
     # Normalize so WM (target 3) maps to 1.0
     Ym = Ym / 3
@@ -555,7 +572,7 @@ def crop_nifti_image_with_border(img, border=5, threshold=0):
     nib.Nifti1Image: Cropped and padded NIfTI image with updated affine and header
     """
     # Load image data, affine, and header
-    data = img.get_fdata()
+    data = img.get_fdata().copy()
     affine = img.affine
     header = img.header
 
@@ -699,7 +716,7 @@ def get_cerebellum(atlas):
     rois = pd.read_csv(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
     regions = dict(zip(rois.ROIabbr,rois.ROIid))
 
-    atlas = atlas.get_fdata()
+    atlas = atlas.get_fdata().copy()
 
     # get ceerebellum
     cerebellum = ((atlas == regions["lCbeWM"]) | (atlas == regions["lCbeGM"]) |
@@ -726,8 +743,8 @@ def get_partition(p0_large, atlas):
     rois = pd.read_csv(f'{DATA_PATH}/templates_MNI152NLin2009cAsym/ibsr.csv', sep=';')[['ROIid', 'ROIabbr']]
     regions = dict(zip(rois.ROIabbr,rois.ROIid))
 
-    atlas_data = atlas.get_fdata()
-    p0_data = p0_large.get_fdata()
+    atlas_data = atlas.get_fdata().copy()
+    p0_data = p0_large.get_fdata().copy()
     gm = (p0_data > 1.5) & (p0_data < 2.5)
     gm_regions = ["lCbrGM","rCbrGM","lAmy", "lHip", "rAmy", "rHip"]
 
