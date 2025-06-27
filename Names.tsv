@@ -1,7 +1,7 @@
 Name  CAT12_filename  BIDS_filename
 Affine_space r _space-MNI152NLin2009cAsym-affine
 Warp_space w _space-MNI152NLin2009cAsym-nonlinear
-Warp_modulated_space wm _space-MNI152NLin2009cAsym-nonlinear-modulated
+Warp_modulated_space mw _space-MNI152NLin2009cAsym-nonlinear-modulated
 Def_volume y_{bname}{desc}.{nii_ext}  {bname}_from-T1w_to_MNI152NLin2009cAsym.{nii_ext}
 invDef_volume iy_{bname}{desc}.{nii_ext} {bname}_from-MNI152NLin2009cAsym_to-T1w.{nii_ext}
 PPM_volume {side}.ppm.{bname}{desc}.{nii_ext} {bname}_hemi-{side}{desc}_ppm.{nii_ext}
