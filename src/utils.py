@@ -406,8 +406,122 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
     
     brain0 = piecewise_linear_scaling(brain0, seg0)        
     brain_normalized = nib.Nifti1Image(brain0, brain.affine, brain.header)
-    
+
     return brain, brain_normalized
+
+def fit_intensity_field(brain, seg, steps=1000, spacing=0.75):
+    """Estimate a smooth intensity field within a mask.
+
+    This function follows the structure of :func:`correct_bias_field` but it
+    does not perform any bias correction. Instead, the voxel intensities of
+    ``brain`` inside the mask defined by ``seg`` are used to fit a smooth field
+    using :class:`SplineSmooth3D`. The iterative smoothing scheme relies on the
+    utilities provided by the :mod:`nxbc` package.
+
+    Parameters
+    ----------
+    brain : nibabel.Nifti1Image
+        Input brain image.
+    seg : nibabel.Nifti1Image
+        Segmentation mask. Voxels with values ``>= 2.75`` are considered part of
+        the mask (white matter by default).
+    steps : int, optional
+        Number of iterations of the smoothing loop.
+    spacing : float, optional
+        Knot spacing for the spline representation.
+
+    Returns
+    -------
+    nibabel.Nifti1Image
+        The smooth intensity field fitted to the data within the mask.
+    """
+
+    subdivide = True
+    Z = 0.01
+    Nbins = 256
+    maxlevel = 4
+    fwhm = 0.1
+    subsamp = 5
+
+    dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
+    brain0 = brain.get_fdata().copy()
+    seg0 = seg.get_fdata().copy()
+
+    mask = seg0 >= 2.75
+
+    if subsamp:
+        offset = 0
+        dataSub = brain0[offset::subsamp, offset::subsamp, offset::subsamp]
+        maskSub = mask[offset::subsamp, offset::subsamp, offset::subsamp]
+        dataSubVoxSize = dataVoxSize * subsamp
+    else:
+        dataSub = brain0
+        maskSub = mask
+
+    dataSubVoxSize = 1 / (np.array(dataSub.shape) - 1)
+    dataVoxSize = dataSubVoxSize / subsamp
+
+    data = dataSub.astype(np.float32)
+    data[np.logical_not(maskSub)] = 0
+    datamasked = data[maskSub]
+    fit_data = np.zeros_like(data)
+    datamaskedcur = np.copy(datamasked)
+
+    levels = [lvl for lvl in range(maxlevel) for _ in range(steps)]
+    levelfwhm = fwhm / (np.arange(maxlevel) + 1) if not subdivide else fwhm * np.ones(maxlevel)
+
+    splsm3d = SplineSmooth3DUnregularized(
+        data, dataSubVoxSize, spacing, domainMethod="minc", mask=maskSub)
+    predictor = SplineSmooth3D(
+        brain0, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False)
+
+    nextlevel = 0
+    controlField = None
+    chosenkernelfn = kernelfntri
+
+    for N in range(len(levels)):
+        if levels[N] < nextlevel:
+            continue
+
+        hist, histvaledge, histval, histbinwidth = (
+            distrib_kde(datamaskedcur, Nbins, kernfn=chosenkernelfn, binCentreLimits=True))
+        thisFWHM = levelfwhm[levels[N]]
+        thisSD = thisFWHM / math.sqrt(8 * math.log(2))
+        mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
+
+        histfilt = wiener_filter_withpad(hist, mfilt, mfiltmid, Z)
+        histfiltclip = np.clip(histfilt, 0, None)
+
+        uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval, mfilt, hist)
+        datamaskedupd = map_Eu_v(histval, uest, datamaskedcur)
+        diff = datamaskedcur - datamaskedupd
+
+        fit_data[maskSub] = diff
+        splsm3d.fit(fit_data, reportingLevel=0)
+        diff_field = splsm3d.predict()
+        diff_masked = diff_field[maskSub]
+
+        datamaskedcur = datamaskedcur - diff_masked
+        if controlField is None:
+            controlField = splsm3d.P.copy()
+        else:
+            controlField += splsm3d.P
+
+        if np.std(datamaskedcur) < 1e-4:
+            nextlevel = levels[N] + 1
+
+        if (subdivide and (N + 1) < len(levels) and (nextlevel > levels[N] or levels[N + 1] != levels[N])):
+            splsm3d.P = controlField
+            splsm3d = splsm3d.promote()
+            predictor = predictor.promote()
+            controlField = splsm3d.P
+
+    splsm3d.P = controlField
+    predictor.P = splsm3d.P
+
+    field = predictor.predict()
+    field_img = nib.Nifti1Image(field, brain.affine, brain.header)
+    return field_img
 
 def correct_label_map(brain, seg):
 
