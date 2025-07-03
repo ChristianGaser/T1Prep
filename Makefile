@@ -3,7 +3,7 @@
 
 VERSION='0.1.0'
 
-FILES=scripts src bin data LICENSE README.md requirements.txt
+FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py
 DATA_FILES=data
 
 ZIPFILE=T1Prep_${VERSION}.zip
