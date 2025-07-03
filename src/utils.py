@@ -409,7 +409,7 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
 
     return brain, brain_normalized
 
-def fit_intensity_field(brain, seg, steps=1000, spacing=0.75):
+def fit_intensity_field(brain, seg, limit=[2.5 3], steps=1000, spacing=0.75):
     """Estimate a smooth intensity field within a mask.
 
     This function follows the structure of :func:`correct_bias_field` but it
@@ -447,7 +447,7 @@ def fit_intensity_field(brain, seg, steps=1000, spacing=0.75):
     brain0 = brain.get_fdata().copy()
     seg0 = seg.get_fdata().copy()
 
-    mask = seg0 >= 2.75
+    mask = (seg0 >= limit[0]) & (seg0 < limit[1])
 
     if subsamp:
         offset = 0
