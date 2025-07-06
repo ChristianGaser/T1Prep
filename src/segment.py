@@ -25,7 +25,7 @@ from deepmriprep.atlas import ATLASES, get_volumes
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from scipy.ndimage import grey_opening, median_filter, binary_closing, generate_binary_structure
-from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum, get_filenames, correct_label_map
+from utils import progress_bar, remove_file, correct_bias_field, get_atlas, resample_and_save_nifti, get_resampled_header, get_partition, align_brain, cleanup, get_cerebellum, get_filenames, correct_label_map, apply_LAS
 ROOT_PATH = Path(__file__).resolve().parent.parent
 TMP_PATH = ROOT_PATH / 'tmp_models/'
 DATA_PATH0 = ROOT_PATH / 'data/'
@@ -247,7 +247,7 @@ def run_segment():
     code_vars_right = get_filenames(use_bids, out_name, 'right', '', '', ext)
     
     # Correct bias using label from deepmriprep
-    brain_large, brain_large_norm = correct_bias_field(brain_large, p0_large, steps=1000)
+    brain_large, brain_large_norm = correct_bias_field(brain_large, p0_large)
 
     # Conditional processing based on AMAP or lesion flag
     if use_amap or save_lesions:
@@ -261,26 +261,27 @@ def run_segment():
             if verbose:
                 print("Label correction")
             p0_large_corr, brain_large_corr = correct_label_map(brain_large_norm, p0_large)
-            nib.save(brain_large_corr, f'{out_dir}/{out_name}_brain_large.{ext}')
-            #nib.save(brain_large_corr, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
+            brain_large_corr = apply_LAS(brain_large_corr, p0_large_corr)
+            nib.save(brain_large_corr, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
             nib.save(p0_large_corr, f'{out_dir}/{out_name}_seg_large.{ext}')
         else:
             nib.save(brain_large_norm, f'{out_dir}/{out_name}_brain_large_tmp.{ext}')
             nib.save(p0_large, f'{out_dir}/{out_name}_seg_large.{ext}')
         
         # Call SANLM filter and rename output to original name
-        if False:
-            cmd = (os.path.join(amapdir, 'CAT_VolSanlm') + ' ' +
-                f'{out_dir}/{out_name}_brain_large_tmp.{ext}' + ' ' +
-                f'{out_dir}/{out_name}_brain_large.{ext}')
-            os.system(cmd)
+        cmd = (os.path.join(amapdir, 'CAT_VolSanlm') + ' ' +
+            f'{out_dir}/{out_name}_brain_large_tmp.{ext}' + ' ' +
+            f'{out_dir}/{out_name}_brain_large.{ext}')
+        os.system(cmd)
 
         # Call AMAP and write GM and label map
         cmd = (os.path.join(amapdir, 'CAT_VolAmap') +
-            f' -verbose -use-bmap -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 ' +
-            '-write-seg 1 1 1 -label ' +
+            f' -use-bmap -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 ' +
+            '-h-ornlm 0.025 -write-seg 1 1 1 -label ' +
             f'{out_dir}/{out_name}_seg_large.{ext}' + ' ' +
             f'{out_dir}/{out_name}_brain_large.{ext}')
+        if verbose:
+          cmd += ' -verbose'
         os.system(cmd)
       
     if use_amap:

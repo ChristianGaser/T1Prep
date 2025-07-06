@@ -316,7 +316,7 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
     datalogmaskedcur = np.copy(datalogmasked)
 
     # Descending FWHM scheme
-    levels=[ lvl for lvl in range(maxlevel) for _ in range(steps) ]
+    levels = [ lvl for lvl in range(maxlevel) for _ in range(steps) ]
 
     # At some point will have to generalise into fwhm and subdivision
     # level scheme, at the moment it's either or:
@@ -331,12 +331,12 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
     datalogcur = np.copy(datalog)
     nextlevel = 0
     
-    controlField=None
+    controlField = None
     chosenkernelfn = kernelfntri
     
     for N in range(len(levels)):
         if levels[N] < nextlevel:
-          continue
+            continue
         
         hist, histvaledge, histval, histbinwidth = (
           distrib_kde(datalogmaskedcur, Nbins, kernfn=chosenkernelfn,
@@ -353,7 +353,7 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
         logbc = datalogmaskedcur - datalogmaskedupd
         meanadj=True
         if meanadj:
-          logbc = logbc - np.mean(logbc)
+            logbc = logbc - np.mean(logbc)
         usegausspde=True
     
         # Need masking!
@@ -409,33 +409,48 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
 
     return brain, brain_normalized
 
-def fit_intensity_field(brain, seg, limit=[2.5 3], steps=1000, spacing=0.75):
-    """Estimate a smooth intensity field within a mask.
-
-    This function follows the structure of :func:`correct_bias_field` but it
-    does not perform any bias correction. Instead, the voxel intensities of
-    ``brain`` inside the mask defined by ``seg`` are used to fit a smooth field
-    using :class:`SplineSmooth3D`. The iterative smoothing scheme relies on the
-    utilities provided by the :mod:`nxbc` package.
+def fit_intensity_field(
+    brain, seg, limit=None, steps=1000, spacing=0.75, stopthr=1e-4, use_prctile=3
+):
+    """
+    Estimate a smooth, bias-like intensity field in a specified tissue mask using log-domain smoothing
+    and optional robust percentile-based outlier exclusion.
 
     Parameters
     ----------
     brain : nibabel.Nifti1Image
         Input brain image.
     seg : nibabel.Nifti1Image
-        Segmentation mask. Voxels with values ``>= 2.75`` are considered part of
-        the mask (white matter by default).
+        Segmentation mask. Voxels with values in the interval ``(limit[0], limit[1]]``
+        are considered part of the mask (e.g., white matter by default).
+    limit : list or tuple of float, optional
+        Lower and upper thresholds for the segmentation mask (default: [2.75, 3]).
     steps : int, optional
-        Number of iterations of the smoothing loop.
+        Number of iterations per mesh level (default: 1000).
     spacing : float, optional
-        Knot spacing for the spline representation.
+        Knot spacing for the spline representation (default: 0.75).
+    stopthr : float, optional
+        Stopping threshold for convergence, defined as ratio of std/mean (default: 1e-4).
+    use_prctile : int, optional
+        How to restrict the mask based on data percentiles:
+        0 = no restriction,
+        1 = remove values below 5th percentile,
+        2 = remove values above 95th percentile,
+        3 = restrict to 5th-95th percentile (default: 3).
 
     Returns
     -------
-    nibabel.Nifti1Image
-        The smooth intensity field fitted to the data within the mask.
+    field : np.ndarray
+        3D array of the smooth intensity field (same shape as input image).
+        The field is on the same scale as the median intensity in the original mask.
     """
 
+    if limit is None:
+        limit = [2.75, 3]
+    if not (isinstance(limit, (list, tuple)) and len(limit) == 2):
+        raise ValueError("limit must be a 2-element list or tuple")
+
+    # Parameters
     subdivide = True
     Z = 0.01
     Nbins = 256
@@ -443,12 +458,13 @@ def fit_intensity_field(brain, seg, limit=[2.5 3], steps=1000, spacing=0.75):
     fwhm = 0.1
     subsamp = 5
 
+    # Prepare data and mask
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
     brain0 = brain.get_fdata().copy()
     seg0 = seg.get_fdata().copy()
+    mask = (seg0 > limit[0]) & (seg0 <= limit[1])
 
-    mask = (seg0 >= limit[0]) & (seg0 < limit[1])
-
+    # Subsampling for efficiency
     if subsamp:
         offset = 0
         dataSub = brain0[offset::subsamp, offset::subsamp, offset::subsamp]
@@ -461,20 +477,43 @@ def fit_intensity_field(brain, seg, limit=[2.5 3], steps=1000, spacing=0.75):
     dataSubVoxSize = 1 / (np.array(dataSub.shape) - 1)
     dataVoxSize = dataSubVoxSize / subsamp
 
-    data = dataSub.astype(np.float32)
-    data[np.logical_not(maskSub)] = 0
-    datamasked = data[maskSub]
-    fit_data = np.zeros_like(data)
-    datamaskedcur = np.copy(datamasked)
+    # Percentile-based mask refinement (optional, robust outlier rejection)
+    if use_prctile == 3:
+        p5, p95 = np.percentile(dataSub[maskSub], [5, 95])
+        maskSub = maskSub & (dataSub > p5) & (dataSub < p95)
+    elif use_prctile == 2:
+        p95 = np.percentile(dataSub[maskSub], 95)
+        maskSub = maskSub & (dataSub < p95)
+    elif use_prctile == 1:
+        p5 = np.percentile(dataSub[maskSub], 5)
+        maskSub = maskSub & (dataSub > p5)
+    # If use_prctile==0, use maskSub as is.
 
+    datalog = dataSub.astype(np.float32)
+
+    # Sanity check: Ensure no nonpositive values inside mask before log
+    if np.any(datalog[maskSub] <= 0):
+        raise ValueError(
+            "Non-positive values found in the masked data. Adjust mask or preprocess the image."
+        )
+
+    datalog[maskSub] = np.log(datalog[maskSub])
+    datalog[np.logical_not(maskSub)] = 0
+    datalogmasked = datalog[maskSub]
+    fit_data = np.zeros_like(datalog)
+    datalogmaskedcur = np.copy(datalogmasked)
+
+    # Level and smoothing schedule
     levels = [lvl for lvl in range(maxlevel) for _ in range(steps)]
     levelfwhm = fwhm / (np.arange(maxlevel) + 1) if not subdivide else fwhm * np.ones(maxlevel)
 
+    # Initialize spline field
     splsm3d = SplineSmooth3DUnregularized(
-        data, dataSubVoxSize, spacing, domainMethod="minc", mask=maskSub)
+        datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=maskSub)
     predictor = SplineSmooth3D(
         brain0, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False)
 
+    datalogcur = np.copy(datalog)
     nextlevel = 0
     controlField = None
     chosenkernelfn = kernelfntri
@@ -484,67 +523,180 @@ def fit_intensity_field(brain, seg, limit=[2.5 3], steps=1000, spacing=0.75):
             continue
 
         hist, histvaledge, histval, histbinwidth = (
-            distrib_kde(datamaskedcur, Nbins, kernfn=chosenkernelfn, binCentreLimits=True))
+            distrib_kde(datalogmaskedcur, Nbins, kernfn=chosenkernelfn, binCentreLimits=True))
         thisFWHM = levelfwhm[levels[N]]
-        thisSD = thisFWHM / math.sqrt(8 * math.log(2))
+        thisSD = thisFWHM / np.sqrt(8 * np.log(2))
         mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
 
         histfilt = wiener_filter_withpad(hist, mfilt, mfiltmid, Z)
         histfiltclip = np.clip(histfilt, 0, None)
 
         uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval, mfilt, hist)
-        datamaskedupd = map_Eu_v(histval, uest, datamaskedcur)
-        diff = datamaskedcur - datamaskedupd
+        datalogmaskedupd = map_Eu_v(histval, uest, datalogmaskedcur)
+        diff = datalogmaskedcur - datalogmaskedupd
 
         fit_data[maskSub] = diff
         splsm3d.fit(fit_data, reportingLevel=0)
         diff_field = splsm3d.predict()
         diff_masked = diff_field[maskSub]
 
-        datamaskedcur = datamaskedcur - diff_masked
+        # Convergence: as in bias field correction
+        correction = diff_masked
+        bcratio = np.exp(correction)
+        ratiomean = bcratio.mean()
+        ratiosd = bcratio.std()
+        conv = ratiosd / ratiomean
+
+        datalogmaskedcur = datalogmaskedcur - diff_masked
         if controlField is None:
             controlField = splsm3d.P.copy()
         else:
             controlField += splsm3d.P
 
-        if np.std(datamaskedcur) < 1e-4:
+        if conv < stopthr:
             nextlevel = levels[N] + 1
 
-        if (subdivide and (N + 1) < len(levels) and (nextlevel > levels[N] or levels[N + 1] != levels[N])):
+        if (
+            subdivide
+            and (N + 1) < len(levels)
+            and (nextlevel > levels[N] or levels[N + 1] != levels[N])
+        ):
             splsm3d.P = controlField
             splsm3d = splsm3d.promote()
             predictor = predictor.promote()
             controlField = splsm3d.P
 
+    # Final field in original intensity space
     splsm3d.P = controlField
     predictor.P = splsm3d.P
+    field = np.exp(predictor.predict())
 
-    field = predictor.predict()
-    field_img = nib.Nifti1Image(field, brain.affine, brain.header)
-    return field_img
+    # Rescale field to match the original mask's median intensity
+    mean_raw = np.median(brain0[mask])
+    mean_field = np.median(field[mask])
+    field = field * (mean_raw / mean_field)
+
+    return field
+
+def apply_LAS(t1, label):
+    """
+    Apply Local Adaptive Segmentation (LAS) to a brain MRI image.
+    
+    This method estimates local intensity fields for CSF, GM, and WM,
+    then assigns each voxel a normalized, continuous tissue class value 
+    based on the local intensities. Output values are in the range [0, 1].
+
+    Parameters
+    ----------
+    t1 : nibabel.Nifti1Image
+        Input T1-weighted MRI image.
+    label : nibabel.Nifti1Image
+        Segmentation map for defining tissue-specific masks.
+
+    Returns
+    -------
+    brain_normalized : nibabel.Nifti1Image
+        LAS-normalized image, with values in [0, 1].
+        - 0 = background, 1 = white matter, intermediate values = CSF/GM.
+    """
+
+    Ysrc = t1.get_fdata().copy()
+
+    stopthr = 2e-4
+    spacing = 1.0
+
+    # Fit smooth intensity fields for each tissue
+    fit_csf = fit_intensity_field(
+        t1, label, limit=[0.5, 1.25], spacing=spacing, stopthr=stopthr, use_prctile=2
+    )
+    fit_gm = fit_intensity_field(
+        t1, label, limit=[1.5, 2.85], spacing=spacing, stopthr=stopthr, use_prctile=1
+    )
+    fit_wm = fit_intensity_field(
+        t1, label, limit=[2.75, 3], spacing=spacing, stopthr=stopthr, use_prctile=1
+    )
+
+    eps = np.finfo(float).eps  # machine epsilon for float
+
+    minYsrc = np.min(Ysrc)
+    Yml = np.zeros_like(Ysrc, dtype=np.float32)
+
+    # Ensure shapes match
+    if not (fit_csf.shape == fit_gm.shape == fit_wm.shape == Ysrc.shape):
+        raise ValueError("All fitted fields and source image must have the same shape.")
+
+    # WM: scale highest tissue (WM in T1w)
+    mask_wm = (Ysrc >= fit_wm)
+    Yml += mask_wm * (3 + (Ysrc - fit_wm) / np.maximum(eps, fit_wm - fit_csf))
+
+    # GM: scale second highest tissue (GM in T1w)
+    mask_gm = (Ysrc >= fit_gm) & (Ysrc < fit_wm)
+    Yml += mask_gm * (2 + (Ysrc - fit_gm) / np.maximum(eps, fit_wm - fit_gm))
+
+    # CSF: scale third highest tissue (CSF in T1w)
+    mask_csf = (Ysrc >= fit_csf) & (Ysrc < fit_gm)
+    Yml += mask_csf * (1 + (Ysrc - fit_csf) / np.maximum(eps, fit_gm - fit_csf))
+
+    # Background: scale below CSF
+    mask_bg = (Ysrc < fit_csf)
+    Yml += mask_bg * ((Ysrc - minYsrc) / np.maximum(eps, fit_csf - minYsrc))
+
+    # Normalize to [0, 1]
+    brain_normalized = nib.Nifti1Image(Yml / 3, t1.affine, t1.header)
+
+    return brain_normalized
 
 def correct_label_map(brain, seg):
+    """
+    Apply local corrections to a label map and its associated brain image 
+    based on local intensity/label discrepancies.
 
-    # We have to explicitly copy the get_fdata structure due to
-    # caching, which could otherwise alter the input.
+    This function performs two main corrections:
+      1. For white matter voxels (seg > 2.5) where the intensity is unexpectedly low,
+         the label value is downscaled to match intensity.
+      2. For rim (boundary) voxels labeled as CSF (seg < 1.5) but with intensity higher than expected,
+         the brain intensity is downscaled in these rim areas.
+
+    Parameters
+    ----------
+    brain : nibabel.Nifti1Image
+        Input brain image (3D).
+    seg : nibabel.Nifti1Image
+        Segmentation label map (3D, integer or float).
+
+    Returns
+    -------
+    seg_corrected : nibabel.Nifti1Image
+        Corrected segmentation image.
+    brain_corrected : nibabel.Nifti1Image
+        Corrected brain image.
+    """
+
+    # Defensive copies to avoid mutating input data
     brain0 = brain.get_fdata().copy()
     seg0 = seg.get_fdata().copy()
-            
-    discrepancy0 = (1 + brain0*3)/(1 + seg0) 
+
+    # Compute a local discrepancy map between intensity and label value
+    discrepancy0 = (1 + brain0 * 3) / (1 + seg0)
     discrepancy0 = median_filter(discrepancy0, size=3)
-    
+
+    # 1. For WM: If intensity is low for a high label, reduce the label value
     wm_mask = (seg0 > 2.5) & (discrepancy0 < 1)
-    seg0[wm_mask] *= discrepancy0[wm_mask]*discrepancy0[wm_mask]
+    seg0[wm_mask] *= (discrepancy0[wm_mask] ** 2)  # consistent with original (*discrepancy*discrepancy)
 
+    # 2. Find rim (edge) voxels in the label map
     mask_rim = seg0 > 0
-    mask_rim = mask_rim & ~binary_erosion(mask_rim, generate_binary_structure(3, 3), 5)
+    rim_struct = generate_binary_structure(3, 3)
+    rim = mask_rim & ~binary_erosion(mask_rim, rim_struct, 5)
 
-    csf_mask = mask_rim & (seg0 < 1.5) & (discrepancy0 > 1)
+    # For rim voxels labeled CSF but intensity is high, scale down brain intensity
+    csf_mask = rim & (seg0 < 1.5) & (discrepancy0 > 1)
     brain0[csf_mask] /= discrepancy0[csf_mask]
 
+    # Wrap outputs in Nifti images
     seg_corrected = nib.Nifti1Image(seg0, seg.affine, seg.header)
     brain_corrected = nib.Nifti1Image(brain0, brain.affine, brain.header)
-    
+
     return seg_corrected, brain_corrected
 
 def piecewise_linear_scaling(input_img, label_img):
