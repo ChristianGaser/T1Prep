@@ -12,7 +12,7 @@ Label_volume {space}p0{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-seg.{ni
 GM_volume {space}p1{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-GM_probseg.{nii_ext}
 WM_volume {space}p2{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-WM_probseg.{nii_ext}
 CSF_volume {space}p3{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-CSF_probseg.{nii_ext}
-WMH_volume {space}p7{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-WMH_probseg.{nii_ext}
+WMH_volume {space}p4{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-WMH_probseg.{nii_ext}
 Mid_surface {side}.central.{bname}.gii {bname}_hemi-{side}{space}{desc}_midthickness.surf.gii
 Pial_surface {side}.pial.{bname}.gii {bname}_hemi-{side}{space}{desc}_pial.surf.gii
 WM_surface {side}.white.{bname}.gii {bname}_hemi-{side}{space}{desc}_wm.surf.gii
