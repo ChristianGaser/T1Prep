@@ -75,7 +75,7 @@ save_rp=0
 save_p=0
 nii_ext='nii'
 estimate_spherereg=1
-thickness_method=1
+thickness_method=3
 correct_folding=1
 estimate_seg=1
 downsample=0.0
@@ -603,7 +603,13 @@ surface_estimation()
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
     ${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${outsurfdir}/${Mid_surface} ${outmridir}/${GMT_volume} ${outsurfdir}/${PBT_shape}
-    ${bin_dir}/CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${outsurfdir}/${PBT_shape} ${outsurfdir}/${Mid_surface} ${outsurfdir}/${GMT_shape}
+    
+    # For thickness_method==3 we use the pure PBT-measure
+    if [ "${thickness_method}" -eq 3 ]; then
+      cp ${outsurfdir}/${PBT_shape} ${outsurfdir}/${GMT_shape}
+    else
+      ${bin_dir}/CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${outsurfdir}/${PBT_shape} ${outsurfdir}/${Mid_surface} ${outsurfdir}/${GMT_shape}
+    fi
 
     # Estimate the necessary shift if the threshold is not 0.5
     shift=$(echo "$thresh - $isoval" | bc)
@@ -641,13 +647,12 @@ surface_estimation()
       # Updates progress to 'Refine $side thickness'
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
-      
       ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${Pial_surface} ${outsurfdir}/${WM_surface} ${outsurfdir}/${GMT_shape}
     fi
     
     # Correct cortical thickness that is influenced by folding
     if [ "${correct_folding}" -eq 1 ]; then
-      ${bin_dir}/CAT_SurfCorrectThicknessFolding ${outsurfdir}/${Mid_surface} ${outsurfdir}/${GMT_shape} ${outsurfdir}/${GMT_shape}
+      ${bin_dir}/CAT_SurfCorrectThicknessFolding -max 6.0 ${outsurfdir}/${Mid_surface} ${outsurfdir}/${GMT_shape} ${outsurfdir}/${GMT_shape}
     fi
 
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
@@ -1076,8 +1081,9 @@ ${BOLD}OPTIONS:${NC}
                               that this might lead to an underestimation of gray matter (GM) 
                               in cases of significant atrophy.
   --thickness-method <NUMBER> Set the thickness method (default: $thickness_method).
-                              Use 1 for PBT-based method and 2 for approach based on
-                              distance between pial and white matter surface.
+                              Use 1 for the Tfs-distance from Freesurfer for PBT-based measure,
+                              2 for the Tfs-distance from Freesurfer based on distance between 
+                              pial and white matter surfaces, and 3 for the pure PBT-based approach
   --no-correct-folding        Do not correct for cortical thickness by folding effects.
   --pre-fwhm <NUMBER>         Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
   --post-fwhm <NUMBER>        Set the post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
