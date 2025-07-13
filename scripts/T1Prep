@@ -62,7 +62,7 @@ os_type=$(uname -s) # Determine OS type
 outsurfdir=''
 outmridir=''
 use_bids_naming=0
-thickness_fwhm=5
+thickness_fwhm=-1
 median_filter=2
 save_pial_white=1
 save_lesions=0
@@ -656,7 +656,7 @@ surface_estimation()
     fi
 
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
-    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1_volume} ]]; then
+    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1_volume}  && "${save_pial_white}" -eq 1 ]]; then
       ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Mid_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Mid}
       ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Pial_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Pial}
       ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${WM_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_WM}
@@ -1090,7 +1090,7 @@ ${BOLD}OPTIONS:${NC}
   --bias-fwhm <NUMBER>        Set the FWHM size for bias-correction in CAT_VolAmap (default: $bias_fwhm).
   --thickness-fwhm <NUMBER>   Set the FWHM size for volumetric thickness smoothing in 
                               CAT_VolThicknessPbt (default: $thickness_fwhm).
-  --sharpening <NUMBER>       Set the sharpening level applied to the PPM map by enhancing differences
+  --sharpening <NUMBER>       Set the sharpening amount applied to the PPM map by enhancing differences
                               between the unsmoothed and smoothed PPM maps (default: $sharpening).
   --thresh <NUMBER>           Set the isovalue threshold for surface creation in 
                               CAT_VolMarchingCubes (default: $thresh).
