@@ -5,15 +5,17 @@ This repository contains **T1Prep**, a Python-based pipeline for preprocessing a
 
 ## Project Structure for OpenAI Codex Navigation
 
+```
 T1Prep/
 ├── src/
 ├── scripts/
 ├── ...
-└── Makefile
-└── requirements.txt
-└── README.md
-└── pyproject.toml
+├── Makefile
+├── requirements.txt
+├── README.md
+├── pyproject.toml
 └── setup.py
+```
 
 ## Development Guidelines
 - Use Python 3.8 or newer.
@@ -31,7 +33,7 @@ T1Prep/
 
 ## Performance Optimization
 - Prefer GPU-based libraries such as pytorch (over numpy)
-- Use vectorization such as numba
+- Try to use vectorization such as numba
 
 ## Commit Guidance
 - Break up work into small, logically separate commits.
