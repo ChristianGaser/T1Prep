@@ -159,36 +159,49 @@ def get_ras(aff, dim):
     
     return aff_ras, directions
 
-def find_largest_cluster(binary_volume):
+def find_largest_cluster(binary_volume, min_size=None, max_n_cluster=1):
     """
-    Finds the largest connected cluster in a binary 3D volume.
-
+    Finds up to max_n_cluster largest connected clusters in a binary 3D volume, optionally above min_size.
+    
     Parameters:
         binary_volume (numpy.ndarray): A 3D binary numpy array (0 and 1).
-
+        min_size (int, optional): Minimum cluster size to include (in voxels). If None, no threshold.
+        max_n_cluster (int, optional): Maximum number of clusters to include. If None, all clusters above min_size.
+        
     Returns:
-        largest_cluster (numpy.ndarray): A binary 3D numpy array containing only the largest cluster.
+        cluster_mask (numpy.ndarray): Binary 3D numpy array containing selected clusters.
     """
     # Label connected components
     labeled_volume, num_features = label(binary_volume)
-    
     if num_features == 0:
         raise ValueError("No clusters found in the binary volume.")
-    
-    # Find the sizes of each connected component
+        
+    # Get sizes of all components
     component_sizes = np.bincount(labeled_volume.ravel())
+    component_sizes[0] = 0  # background
     
-    # The background (label 0) is not a cluster, so ignore it
-    component_sizes[0] = 0
+    # Filter by min_size if specified
+    valid_labels = np.arange(len(component_sizes))
+    if min_size is not None:
+        keep = component_sizes >= min_size
+        keep[0] = False  # never keep background
+        valid_labels = valid_labels[keep]
+    else:
+        valid_labels = valid_labels[component_sizes > 0]
     
-    # Identify the largest component by size
-    largest_component_label = component_sizes.argmax()
+    # Sort clusters by size, descending
+    sorted_labels = valid_labels[np.argsort(component_sizes[valid_labels])[::-1]]
     
-    # Create a binary mask for the largest component
-    largest_cluster = labeled_volume == largest_component_label
+    # Apply max_n_cluster if set
+    if max_n_cluster is not None:
+        sorted_labels = sorted_labels[:max_n_cluster]
+    if sorted_labels.size == 0:
+        raise ValueError("No clusters meet the min_size/max_n_cluster criteria.")
+        
+    # Build output mask
+    cluster_mask = np.isin(labeled_volume, sorted_labels)
+    return cluster_mask
     
-    return largest_cluster
-
 def cleanup(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
     """
     Perform cleanup operations on CSF (Cerebrospinal Fluid), GM (Gray Matter),
@@ -264,7 +277,78 @@ def cleanup(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
 
     return label, gm, wm, csf
 
-def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=False):
+def piecewise_linear_scaling(input_img, label_img):
+    """
+    Piecewise linear scaling of an intensity image based on reference label regions.
+    
+    This function performs a piecewise linear transformation of the input image,
+    using median intensity values from regions defined by a label image as breakpoints.
+    Each segment between breakpoints is mapped linearly to a corresponding interval 
+    in the `target_values` array. The final result is normalized by dividing by 3.
+    
+    Parameters
+    ----------
+    input_img : np.ndarray
+        Input image (e.g., intensity or probability map), 1D or ND.
+    label_img : np.ndarray
+        Label image of same shape as input_img, with integer class labels 
+        (0=background, 1=CSF, 2=GM, 3=WM).
+
+    Returns
+    -------
+    Ym : np.ndarray
+        Piecewise linearly scaled image, normalized to the range [0, 1] (if input covers full range).
+    
+    Notes
+    -----
+    - Median intensities of input_img are computed within regions defined by the labels:
+        - label==0 and intensity < 0.9*median(CSF): Background (BG)
+        - label==1: CSF
+        - label==2: GM
+        - label==3: WM
+        - label==4: WM+ (extrapolated as median_WM + (median_WM - median_GM))
+    - The breakpoints for piecewise scaling are set to these median values.
+    - Each interval [median_i-1, median_i] is mapped linearly to [target_i-1, target_i].
+    - For values above the last median (WM+), the mapping continues linearly.
+    - Output is normalized by dividing by 3, so that the range maps to [0, 1.33].
+    """
+    
+    # Define output target values for each class interval (BG, CSF, GM, WM, WM+)
+    target_values = np.arange(0, 5)  # [0, 1, 2, 3, 4]
+    Ym = input_img.copy().astype(float)
+    N = len(target_values)
+    
+    # Compute medians for class-specific reference regions
+    median_input = {}
+    # CSF, GM, WM peaks
+    for k in [1, 2, 3]:
+        mask = (np.abs(label_img - k) < 0.01)
+        median_input[k] = np.median(input_img[mask])
+    # BG peak: label==0 and much lower than CSF
+    mask = (label_img == 0) & (input_img < 0.9*median_input[1]) # BG mask
+    median_input[0] = np.median(input_img[mask])
+    # Extrapolated "WM+" for values beyond WM (e.g., fat, vessels)
+    median_input[4] = median_input[3] + (median_input[3] - median_input[2])
+    
+    # Piecewise linear mapping for each interval [median_input[i-1], median_input[i]]
+    for i in range(1, N):
+        mask = (input_img > median_input[i-1]) & (input_img <= median_input[i])
+        Ym[mask] = (
+            target_values[i-1]
+            + (input_img[mask] - median_input[i-1])
+              / (median_input[i] - median_input[i-1])
+              * (target_values[i] - target_values[i-1])
+        )
+    # For outliers above the last median, extrapolate linearly using last segment's slope
+    mask = input_img >= median_input[4]
+    slope = (target_values[4] - target_values[3]) / (median_input[4] - median_input[3])
+    Ym[mask] = target_values[4] + (input_img[mask] - median_input[4]) * slope
+    
+    # Normalize so WM (target 3) maps to 1.0
+    Ym = Ym / 3
+    return Ym
+    
+def correct_bias_field(brain, seg, steps=1000, spacing=1.0, get_discrepancy=False):
     """
     Applies bias field correction to an input brain image.
 
@@ -282,9 +366,9 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
     Z = 0.01
     Nbins = 256
     maxlevel = 4
-    fwhm = 0.1
+    fwhm = 0.2
     subsamp = 5
-    stopthr = 1e-4
+    stopthr = 5e-4
 
     # Process voxel sizes and mask for brain segmentation
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
@@ -346,7 +430,7 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
         mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
     
         histfilt = wiener_filter_withpad(hist, mfilt, mfiltmid, Z)
-        histfiltclip = np.clip(histfilt,0,None)
+        histfiltclip = np.clip(histfilt, 0, None)
     
         uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval, mfilt, hist)
         datalogmaskedupd = map_Eu_v(histval, uest, datalogmaskedcur)
@@ -401,16 +485,15 @@ def correct_bias_field(brain, seg, steps=1000, spacing=0.75, get_discrepancy=Fal
     # apply nu-correction
     tissue_idx = bias0 != 0
     brain0[tissue_idx] /= bias0[tissue_idx]
-    
-    brain = nib.Nifti1Image(brain0, brain.affine, brain.header)
-    
+
     brain0 = piecewise_linear_scaling(brain0, seg0)        
+        
     brain_normalized = nib.Nifti1Image(brain0, brain.affine, brain.header)
 
-    return brain, brain_normalized
+    return brain_normalized
 
 def fit_intensity_field(
-    brain, seg, limit=None, steps=1000, spacing=0.75, stopthr=1e-4, use_prctile=3
+    brain, seg, limit=None, steps=1000, spacing=1.0, stopthr=5e-4, use_prctile=3
 ):
     """
     Estimate a smooth, bias-like intensity field in a specified tissue mask using log-domain smoothing
@@ -455,7 +538,7 @@ def fit_intensity_field(
     Z = 0.01
     Nbins = 256
     maxlevel = 4
-    fwhm = 0.1
+    fwhm = 0.2
     subsamp = 5
 
     # Prepare data and mask
@@ -489,6 +572,29 @@ def fit_intensity_field(
         maskSub = maskSub & (dataSub > p5)
     # If use_prctile==0, use maskSub as is.
 
+    # save temporary maks images
+    if False:
+        masked_data_to_save = np.zeros_like(dataSub, dtype=np.float32)
+        masked_data_to_save[maskSub] = dataSub[maskSub]
+        limit_str = "_".join([f"{l:.2f}" for l in limit])
+        tmp_filename = f"tmp_maskedsrc_limit_{limit_str}.nii"
+
+        if subsamp:
+            # Adjust the affine for subsampled data
+            orig_affine = brain.affine.copy()
+            new_affine = orig_affine.copy()
+            for d in range(3):
+                new_affine[:3, d] *= subsamp  # scale voxel sizes
+            # The header shape and zooms will be auto-derived from the array/affine.
+        else:
+            new_affine = brain.affine
+        
+        nib.save(
+            nib.Nifti1Image(masked_data_to_save, new_affine, brain.header),
+            tmp_filename,    
+        )
+        print(f"Saved masked source image for fitting: {tmp_filename}")
+    
     datalog = dataSub.astype(np.float32)
 
     # Sanity check: Ensure no nonpositive values inside mask before log
@@ -576,6 +682,15 @@ def fit_intensity_field(
     mean_field = np.median(field[mask])
     field = field * (mean_raw / mean_field)
 
+    if True:
+        limit_str = "_".join([f"{l:.2f}" for l in limit])
+        tmp_filename = f"tmp_src_limit_{limit_str}.nii"
+
+        nib.save(
+            nib.Nifti1Image(field, brain.affine, brain.header),
+            tmp_filename,    
+        )
+
     return field
 
 def apply_LAS(t1, label):
@@ -600,25 +715,24 @@ def apply_LAS(t1, label):
         - 0 = background, 1 = white matter, intermediate values = CSF/GM.
     """
 
-    Ysrc = t1.get_fdata().copy()
-
-    stopthr = 2e-4
+    eps = np.finfo(float).eps  # machine epsilon for float
+    stopthr = 5e-4
     spacing = 1.0
+    
+    Ysrc = t1.get_fdata().copy()
+    minYsrc = np.min(Ysrc)
 
     # Fit smooth intensity fields for each tissue
     fit_csf = fit_intensity_field(
-        t1, label, limit=[0.5, 1.25], spacing=spacing, stopthr=stopthr, use_prctile=2
+        t1, label, limit=[1, 1.25], spacing=spacing, stopthr=stopthr, use_prctile=3
     )
     fit_gm = fit_intensity_field(
-        t1, label, limit=[1.5, 2.85], spacing=spacing, stopthr=stopthr, use_prctile=1
+        t1, label, limit=[1.5, 2.85], spacing=spacing, stopthr=stopthr, use_prctile=3
     )
     fit_wm = fit_intensity_field(
-        t1, label, limit=[2.75, 3], spacing=spacing, stopthr=stopthr, use_prctile=1
+        t1, label, limit=[2.5, 3], spacing=spacing, stopthr=stopthr, use_prctile=3
     )
 
-    eps = np.finfo(float).eps  # machine epsilon for float
-
-    minYsrc = np.min(Ysrc)
     Yml = np.zeros_like(Ysrc, dtype=np.float32)
 
     # Ensure shapes match
@@ -640,7 +754,9 @@ def apply_LAS(t1, label):
     # Background: scale below CSF
     mask_bg = (Ysrc < fit_csf)
     Yml += mask_bg * ((Ysrc - minYsrc) / np.maximum(eps, fit_csf - minYsrc))
-
+    
+    Yml[Yml < 0.25] = 0
+    
     # Normalize to [0, 1]
     brain_normalized = nib.Nifti1Image(Yml / 3, t1.affine, t1.header)
 
@@ -698,77 +814,6 @@ def correct_label_map(brain, seg):
     brain_corrected = nib.Nifti1Image(brain0, brain.affine, brain.header)
 
     return seg_corrected, brain_corrected
-
-def piecewise_linear_scaling(input_img, label_img):
-    """
-    Piecewise linear scaling of an intensity image based on reference label regions.
-    
-    This function performs a piecewise linear transformation of the input image,
-    using median intensity values from regions defined by a label image as breakpoints.
-    Each segment between breakpoints is mapped linearly to a corresponding interval 
-    in the `target_values` array. The final result is normalized by dividing by 3.
-    
-    Parameters
-    ----------
-    input_img : np.ndarray
-        Input image (e.g., intensity or probability map), 1D or ND.
-    label_img : np.ndarray
-        Label image of same shape as input_img, with integer class labels 
-        (0=background, 1=CSF, 2=GM, 3=WM).
-
-    Returns
-    -------
-    Ym : np.ndarray
-        Piecewise linearly scaled image, normalized to the range [0, 1] (if input covers full range).
-    
-    Notes
-    -----
-    - Median intensities of input_img are computed within regions defined by the labels:
-        - label==0 and intensity < 0.9*median(CSF): Background (BG)
-        - label==1: CSF
-        - label==2: GM
-        - label==3: WM
-        - label==4: WM+ (extrapolated as median_WM + (median_WM - median_GM))
-    - The breakpoints for piecewise scaling are set to these median values.
-    - Each interval [median_i-1, median_i] is mapped linearly to [target_i-1, target_i].
-    - For values above the last median (WM+), the mapping continues linearly.
-    - Output is normalized by dividing by 3, so that the range maps to [0, 1.33].
-    """
-    
-    # Define output target values for each class interval (BG, CSF, GM, WM, WM+)
-    target_values = np.arange(0, 5)  # [0, 1, 2, 3, 4]
-    Ym = input_img.copy().astype(float)
-    N = len(target_values)
-    
-    # Compute medians for class-specific reference regions
-    median_input = {}
-    # CSF, GM, WM peaks
-    for k in [1, 2, 3]:
-        mask = (np.abs(label_img - k) < 0.01)
-        median_input[k] = np.median(input_img[mask])
-    # BG peak: label==0 and much lower than CSF
-    mask = (label_img == 0) & (input_img < 0.9*median_input[1]) # BG mask
-    median_input[0] = np.median(input_img[mask])
-    # Extrapolated "WM+" for values beyond WM (e.g., fat, vessels)
-    median_input[4] = median_input[3] + (median_input[3] - median_input[2])
-    
-    # Piecewise linear mapping for each interval [median_input[i-1], median_input[i]]
-    for i in range(1, N):
-        mask = (input_img > median_input[i-1]) & (input_img <= median_input[i])
-        Ym[mask] = (
-            target_values[i-1]
-            + (input_img[mask] - median_input[i-1])
-              / (median_input[i] - median_input[i-1])
-              * (target_values[i] - target_values[i-1])
-        )
-    # For outliers above the last median, extrapolate linearly using last segment's slope
-    mask = input_img >= median_input[4]
-    slope = (target_values[4] - target_values[3]) / (median_input[4] - median_input[3])
-    Ym[mask] = target_values[4] + (input_img[mask] - median_input[4]) * slope
-    
-    # Normalize so WM (target 3) maps to 1.0
-    Ym = Ym / 3
-    return Ym
 
 def get_atlas(t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None, device='cpu'):
     """
@@ -875,7 +920,7 @@ def crop_nifti_image_with_border(img, border=5, threshold=0):
 
     return cropped_img
     
-def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align=None, crop=None):
+def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align=None, crop=None, clip=None):
     """
     Saves a NIfTI object with resampling and reorientation.
 
@@ -897,10 +942,16 @@ def resample_and_save_nifti(nifti_obj, grid, affine, header, out_name, align=Non
     tensor = F.grid_sample(
         tensor, grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
 
+
+    if clip is not None:
+        if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
+            raise ValueError("limit must be a 2-element list or tuple")
+        tensor = torch.clamp(tensor, min=clip[0], max=clip[1])
+
     # Step 3: Reorient and save as NIfTI
     if (align):
         tensor, tmp1, tmp2, tmp3  = align_brain(
-            tensor.cpu().numpy(), affine, header, np.eye(4), 1)
+            tensor.cpu().numpy(), affine, header, np.eye(4), do_flip=1)
         nii_data = nib.Nifti1Image(tensor, affine, header)
     else:
         nii_data = reoriented_nifti(tensor, affine, header)
@@ -1010,6 +1061,9 @@ def get_partition(p0_large, atlas):
     regions = dict(zip(rois.ROIabbr,rois.ROIid))
 
     atlas_data = atlas.get_fdata().copy()
+    atlas_mask = atlas_data > 0
+    atlas_mask = binary_dilation(atlas_mask, generate_binary_structure(3, 3), 3)
+    
     p0_data = p0_large.get_fdata().copy()
     gm = (p0_data > 1.5) & (p0_data < 2.5)
     gm_regions = ["lCbrGM","rCbrGM","lAmy", "lHip", "rAmy", "rHip"]
@@ -1028,6 +1082,10 @@ def get_partition(p0_large, atlas):
     left  = np.isin(atlas_data, [regions[r] for r in left_regions])
     right = np.isin(atlas_data, [regions[r] for r in right_regions])
 
+    # Clean left hemisphere by opening and closing
+    left = binary_opening(left, generate_binary_structure(3, 3), 3)
+    left = binary_closing(left, generate_binary_structure(3, 3), 3)
+
     # Process hemispheres: dilation and closing to refine boundaries
     lh = binary_dilation(left, generate_binary_structure(3, 3), 5) & ~right
     rh = binary_dilation(right, generate_binary_structure(3, 3), 5) & ~left
@@ -1042,6 +1100,7 @@ def get_partition(p0_large, atlas):
     exclude = np.isin(atlas_data, [regions[r] for r in excl_regions])
     exclude = binary_dilation(exclude, generate_binary_structure(3, 3), 1)
     exclude = exclude | binary_dilation(np.isin(atlas_data, regions["bBst"]), generate_binary_structure(3, 3), 5)
+    exclude = exclude | ~atlas_mask
 
     # Define regions that should be filled with WM 
     wm_regions = ["lThaPro", "lCau", "lPut", "lPal", "lAcc", "lLatVen", "lInfLatVen",
@@ -1063,17 +1122,17 @@ def get_partition(p0_large, atlas):
     rh[exclude | left] = 1
     
     # Finally remove small non-connected parts from hemi maps
-    mask = (lh > 1)| (rh > 1)
+    mask = (lh > 1) | (rh > 1)
     mask = binary_closing(mask, generate_binary_structure(3, 3), 1)
-    mask = binary_opening(mask, generate_binary_structure(3, 3), 2)
+    mask = binary_opening(mask, generate_binary_structure(3, 3), 3)
     mask = find_largest_cluster(mask)
-    mask = binary_dilation(mask, generate_binary_structure(3, 3), 1)
+    mask = binary_dilation(mask, generate_binary_structure(3, 3), 1)    
     lh[~mask] = 1
     rh[~mask] = 1
 
     return lh, rh
 
-def align_brain(data, aff, header, aff_ref, do_flip):
+def align_brain(data, aff, header, aff_ref, do_flip=1):
     """
     Aligns a volume to a reference orientation (axis and direction) specified by an affine matrix.
 
