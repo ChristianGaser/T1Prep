@@ -59,38 +59,8 @@ surf_templates_dir=${root_dir}/data/templates_surfaces_32k
 T1prep_env=${root_dir}/env
 src_dir=${root_dir}/src
 os_type=$(uname -s) # Determine OS type
-outsurfdir=''
-outmridir=''
-use_bids_naming=0
-thickness_fwhm=-1
-median_filter=2
-save_pial_white=1
-save_lesions=0
-save_hemi=0
-save_surf=1
-save_csf=0
-save_mwp=1
-save_wp=0
-save_rp=0
-save_p=0
-nii_ext='nii'
-estimate_spherereg=1
-thickness_method=3
-correct_folding=1
-estimate_seg=1
-downsample=0.0
-vessel=0.5
-sharpening=0.0
-bias_fwhm=0
-post_fwhm=1.75
-pre_fwhm=2
-re_install=0
-use_amap=1
-isoval=0.5
-thresh=0.6
-debug=0
-multi=-1
-version=0.1.0
+
+source "${script_dir}/../defaults.txt"
 source "${script_dir}/progress_bar.sh"
 
 ########################################################
@@ -217,6 +187,11 @@ parse_args()
       --multi*)
         exit_if_empty "$optname" "$optarg"
         multi=$optarg
+        shift
+        ;;
+      --min-mem*)
+        exit_if_empty "$optname" "$optarg"
+        min_memory=$optarg
         shift
         ;;
       --gz)
@@ -777,7 +752,7 @@ process()
     cmd=(
       "$(dirname "$0")/parallelize"
       -l "/tmp"
-      -m 12
+      -m "${min–memory}"
       -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-surf --hemisphere --multi -2)"
       "${ARRAY[@]}"
     )
@@ -1054,6 +1029,10 @@ ${BOLD}OPTIONS:${NC}
   --re-install                Remove the existing installation and reinstall the required Python libraries.
   --python <FILE>             Set the Python interpreter to use (default: $python).
   --multi <NUMBER>            Set the number of processes for parallelization. Use '-1' to automatically 
+                              detect the number of available processors (default: $multi).
+  --min-memory <NUMBER>       Set the minimum memory size in GB for each process to be parallelized.
+                              The default value of $min_memory GB can be increased if your system runs 
+                              low on memory and becomes unresponsive during parallelization.. 
                               detect the number of available processors (default: $multi).
   --debug                     Enable verbose output, retain temporary files, and save additional 
                               debugging information.
