@@ -857,7 +857,7 @@ def correct_label_map(brain, seg):
 
 
 def get_atlas(
-    t1, affine, p1_large, p2_large, p3_large, atlas_name, warp_yx=None, device="cpu"
+    t1, affine, target_header, target_affine, atlas_name, warp_yx=None, device="cpu"
 ):
     """
     Generates an atlas-aligned image for brain segmentation.
@@ -866,7 +866,8 @@ def get_atlas(
         t1 (nibabel.Nifti1Image): Input T1-weighted image.
         affine (numpy.ndarray): Affine transformation matrix.
         warp_yx (nibabel.Nifti1Image, optional): Warp field for alignment. Defaults to None.
-        p1_large, p2_large, p3_large (nibabel.Nifti1Image): Probability maps for tissue segmentation.
+        target_header (nibabel.Nifti1Image.header): Header for target image.
+        target_affine (numpy.ndarray): Affine transformation matrix for target image.
         atlas_name (str): Name of the atlas template.
         device (str): Device to use ('cpu' or 'cuda').
 
@@ -875,13 +876,10 @@ def get_atlas(
     """
 
     # Extract headers and affine transformations
-    header = p1_large.header
-    transform = p1_large.affine
-
-    # Convert inputs to tensors
-    p1_large, p2_large, p3_large = [
-        nifti_to_tensor(p).to(device) for p in [p1_large, p2_large, p3_large]
-    ]
+    header = target_header
+    dim_hdr = target_header["dim"][1:4]
+    dim     = tuple(int(x) for x in dim_hdr)
+    transform = target_affine
 
     # Load the atlas template
     atlas = nib.as_closest_canonical(
@@ -907,7 +905,7 @@ def get_atlas(
 
     # Convert atlas to tensor and interpolate to match segmentation shape
     atlas_tensor = nifti_to_tensor(atlas)[None, None].to(device)
-    atlas_tensor = F.interpolate(atlas_tensor, p1_large.shape, mode="nearest")[0, 0]
+    atlas_tensor = F.interpolate(atlas_tensor, dim, mode="nearest")[0, 0]
 
     # Choose dtype based on max value
     atlas_tensor = atlas_tensor.type(
