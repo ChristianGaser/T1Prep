@@ -21,6 +21,7 @@ T1Prep/
 - Use Python 3.8 or newer.
 - Keep functions small and well documented. Include docstrings for public functions.
 - Prefer using the utilities provided in `src/utils.py` when possible.
+- Check documentation of functions and add missing documentation.
 
 ## Coding style
 - Follow [PEP 8](https://peps.python.org/pep-0008/) style. Format new Python code with `black` and verify with `black --check src scripts`.

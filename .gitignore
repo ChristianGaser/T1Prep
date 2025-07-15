@@ -6,7 +6,7 @@ data
 env
 bin
 test
-
+__pycache__
 *.webloc
 BIDS-Naming.txt
 *.m

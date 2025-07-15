@@ -27,6 +27,7 @@ from pathlib import Path
 from scipy.ndimage import (
     grey_opening,
     median_filter,
+    binary_dilation,
     binary_closing,
     binary_erosion,
     generate_binary_structure,
@@ -46,6 +47,8 @@ from utils import (
     correct_label_map,
     apply_LAS,
 )
+
+from scipy.ndimage import label as label_image
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
 TMP_PATH = ROOT_PATH / "tmp_models/"
@@ -327,10 +330,8 @@ def run_segment():
         amapdir = args.amapdir
 
         if verbose:
-            count = progress_bar(count, end_count, "Amap segmentation")
+            count = progress_bar(count, end_count, "Amap segmentation        ")
 
-        if verbose:
-            print("Label correction")
         p0_large_orig = p0_large
         p0_large, brain_large = correct_label_map(brain_large, p0_large)
         brain_large = apply_LAS(brain_large, p0_large)
@@ -351,7 +352,7 @@ def run_segment():
         # Call AMAP and write GM and label map
         cmd = (
             os.path.join(amapdir, "CAT_VolAmap")
-            + f" -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 "
+            + f" -use-bmap -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 "
             + "-h-ornlm 0.025 -write-seg 1 1 1 -label "
             + f"{out_dir}/{out_name}_seg_large.{ext}"
             + " "
@@ -369,7 +370,7 @@ def run_segment():
     else:
         # Call deepmriprep refinement of deepmriprep label
         if verbose:
-            count = progress_bar(count, end_count, "Fine DeepMriPrep segmentation")
+            count = progress_bar(count, end_count, "Fine DeepMriPrep segmentation         ")
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 
         # Load probability maps for GM, WM, CSF
@@ -403,6 +404,7 @@ def run_segment():
         wm = p0_tmp >= 2.5
         wm = binary_closing(wm, generate_binary_structure(3, 3), 3)
         wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
+        gm = (p0_tmp >= 1.5) & (p0_tmp < 2.5)
         csf = (p0_tmp < 1.5) & (p0_tmp > 0)
 
         # Get uncorrected GM/WM maps from Amap
@@ -442,7 +444,30 @@ def run_segment():
             p1_large_uncorr.get_fdata().copy() - p1_large.get_fdata().copy()
         )
         wm_lesions_large = median_filter(wm_lesions_large, size=3)
-        ind_wm_lesions = wm & (wm_lesions_large > 0)
+
+        # Create deep WM mask
+        deep_wm = binary_erosion(wm, generate_binary_structure(3,3), 2)
+
+        # Exclude lesions near cortex (i.e. near GM)
+        gm_border = binary_dilation(gm, generate_binary_structure(3,3), 2)
+
+        atlas = get_atlas(
+            t1, affine, p0_large.header, p0_large.affine, "cat_wmh_miccai2017", None, device
+        )
+        wmh_TPM = atlas.get_fdata().copy()
+        wmh_TPM /= np.max(wmh_TPM)
+
+        # Keep only lesions inside TPM for WMH and in deep WM, far from cortex
+        ind_wm_lesions = ((wm_lesions_large*wmh_TPM) > 0.025) & deep_wm & (~gm_border)
+
+        # Remove smaller clusters
+        label_map, n_labels = label_image(ind_wm_lesions)
+        sizes = np.bincount(label_map.ravel())
+        print(sizes)
+        min_lesion_size = 500
+        remove = np.isin(label_map, np.where(sizes < min_lesion_size)[0])
+        ind_wm_lesions[remove] = 0
+
         wm_lesions_large[~ind_wm_lesions] = 0
 
         # Correct GM/WM segmentation + Label
@@ -505,11 +530,11 @@ def run_segment():
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) to refine segmentation
     if vessel > 0:
         atlas = get_atlas(
-            t1, affine, p1_large, p2_large, p3_large, "ibsr", None, device
+            t1, affine, p0_large.header, p0_large.affine, "ibsr", None, device
         )
         cerebellum = get_cerebellum(atlas)
         atlas = get_atlas(
-            t1, affine, p1_large, p2_large, p3_large, "csf_TPM", None, device
+            t1, affine, p0_large.header, p0_large.affine, "csf_TPM", None, device
         )
         csf_TPM = atlas.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup(
@@ -634,7 +659,7 @@ def run_segment():
     if save_lesions:
         # Convert back to nifti
         wm_lesions_large = nib.Nifti1Image(
-            wm_lesions_large, affine_resamp, header_resamp
+            wm_lesions_large, p0_large.affine, p0_large.header
         )
         wmh_name = code_vars.get("WMH_volume", "")
         resample_and_save_nifti(
@@ -712,7 +737,7 @@ def run_segment():
         if verbose:
             count = progress_bar(count, end_count, "Atlas creation                 ")
         atlas = get_atlas(
-            t1, affine, p1_large, p2_large, p3_large, "ibsr", warp_yx, device
+            t1, affine, p0_large.header, p0_large.affine, "ibsr", warp_yx, device
         )
         lh, rh = get_partition(p0_large, atlas)
 
