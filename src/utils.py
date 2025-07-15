@@ -718,15 +718,6 @@ def fit_intensity_field(
     mean_field = np.median(field[mask])
     field = field * (mean_raw / mean_field)
 
-    if True:
-        limit_str = "_".join([f"{l:.2f}" for l in limit])
-        tmp_filename = f"tmp_src_limit_{limit_str}.nii"
-
-        nib.save(
-            nib.Nifti1Image(field, brain.affine, brain.header),
-            tmp_filename,
-        )
-
     return field
 
 

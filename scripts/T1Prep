@@ -752,7 +752,7 @@ process()
     cmd=(
       "$(dirname "$0")/parallelize"
       -l "/tmp"
-      -m "${min–memory}"
+      -m "${min_memory}"
       -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-surf --hemisphere --multi -2)"
       "${ARRAY[@]}"
     )

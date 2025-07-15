@@ -463,8 +463,7 @@ def run_segment():
         # Remove smaller clusters
         label_map, n_labels = label_image(ind_wm_lesions)
         sizes = np.bincount(label_map.ravel())
-        print(sizes)
-        min_lesion_size = 500
+        min_lesion_size = 500 # is resolution-dependent and should be changed for other resolutiuons than 0.5mm
         remove = np.isin(label_map, np.where(sizes < min_lesion_size)[0])
         ind_wm_lesions[remove] = 0
 
