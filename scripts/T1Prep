@@ -550,7 +550,7 @@ surface_estimation()
 
     # Progress indication
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Calculate $side thickness"; fi
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Calculate $side thickness        "; fi
   
     # Executes the 'CAT_VolThicknessPbt' tool with various options:
     # - ${verbose} toggles verbose output.
@@ -561,7 +561,7 @@ surface_estimation()
 
     # Updates progress to 'Extract $side surface'.
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Extract $side surface"; fi
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Extract $side surface             "; fi
   
     # Executes the 'CAT_VolMarchingCubes' tool to generate a surface mesh from volumetric data:
     # - '-median-filter' applies a median filter a specified number of times to reduce artifacts.
@@ -569,11 +569,11 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${outmridir}/${PPM_volume} ${outsurfdir}/${Mid_surface}      
+    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${outmridir}/${PPM_volume} ${outsurfdir}/${Mid_surface}
 
     # Updates progress to 'Map $side thickness values'.
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Map $side thickness values"; fi
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Map $side thickness values        "; fi
 
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
@@ -594,7 +594,7 @@ surface_estimation()
      
     # Updates progress to 'Deform $side surface'
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side central surface"; fi
+    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side central surface       "; fi
 
     # Obtain more accurate central surface by surface deformation to PPM image
     ${bin_dir}/CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${outmridir}/${PPM_volume} ${outsurfdir}/${Mid_surface} ${outsurfdir}/${Mid_surface}    
@@ -610,7 +610,7 @@ surface_estimation()
     if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
       # Updates progress to 'Deform $side surface'
       ((count++))
-      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface"; fi
+      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface     "; fi
       ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${outsurfdir}/${Mid_surface} ${outsurfdir}/${GMT_shape} ${outmridir}/${Hemi_volume} ${outsurfdir}/${Pial_surface} ${outsurfdir}/${WM_surface}
 
       # Get central surface by averaging pial and white matter surface
@@ -621,7 +621,7 @@ surface_estimation()
     if [ "${thickness_method}" -eq 2 ]; then
       # Updates progress to 'Refine $side thickness'
       ((count++))
-      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness"; fi
+      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness            "; fi
       ${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${outsurfdir}/${Pial_surface} ${outsurfdir}/${WM_surface} ${outsurfdir}/${GMT_shape}
     fi
     
@@ -641,7 +641,7 @@ surface_estimation()
     if [ "${estimate_spherereg}" -eq 1 ]; then
       # Updates progress to 'Spherical inflation $side hemisphere'.
       ((count++))
-      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical inflation $side hemisphere"; fi
+      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical inflation $side hemisphere  "; fi
       # Inflates the surface to a sphere with additional areal smoothing.
       ${bin_dir}/CAT_Surf2Sphere ${outsurfdir}/${Mid_surface} ${outsurfdir}/${Sphere_surface} 6
   
