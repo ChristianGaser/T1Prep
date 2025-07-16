@@ -10,11 +10,13 @@ import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
+import spline_resize as sr
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
+from spline_resize import resize
 from deepbet.utils import reoriented_nifti
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
@@ -985,9 +987,8 @@ def resample_and_save_nifti(
     tensor = nifti_to_tensor(nifti_obj)[None, None]
 
     # Step 2: Resample using grid
-    tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[
-        0, 0
-    ]
+    #tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[0, 0]
+    tensor = sr.grid_sample(tensor, grid, align_corners=INTERP_KWARGS['align_corners'], mask_value=0)[0, 0]
 
     if clip is not None:
         if not (isinstance(clip, (list, tuple)) and len(clip) == 2):

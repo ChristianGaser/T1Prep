@@ -17,6 +17,7 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
+from spline_resize import resize
 from deepbet.utils import reoriented_nifti
 from deepmriprep.segment import BrainSegmentation, scale_intensity
 from deepmriprep.preprocess import Preprocess
@@ -52,7 +53,7 @@ from scipy.ndimage import label as label_image
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
 TMP_PATH = ROOT_PATH / "tmp_models/"
-DATA_PATH0 = ROOT_PATH / "data/"
+DATA_PATH_T1PREP = ROOT_PATH / "data/"
 MODEL_DIR = Path(DATA_PATH) / "models/"
 MODEL_FILES = (
     [
@@ -71,7 +72,7 @@ MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
 # Skip self.run_patch_models(x, p0) which takes a lot of time and is not needed
 # for Amap segmentation
 class CustomBrainSegmentation(BrainSegmentation):
-    def __call__(self, x):
+    def __call__(self, x, mask):
         x = x[:, :, 1:-2, 15:-12, :-3]
         x = scale_intensity(x)
         p0 = self.run_model(x)  # Skip self.run_patch_models(x, p0)
@@ -240,7 +241,7 @@ def run_segment():
 
     for file in MODEL_FILES:
         if not Path(f"{DATA_PATH}/models/{file}").exists():
-            shutil.copy(f"{DATA_PATH0}/models/{file}", f"{DATA_PATH}/models/{file}")
+            shutil.copy(f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}")
 
     # Preprocess the input volume
     vol = t1.get_fdata().copy()
@@ -558,23 +559,25 @@ def run_segment():
 
     # Get affine segmentations
     if save_hemilabel or save_mwp or save_wp or save_rp:
-        p1_affine = F.interpolate(
-            nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
+        p1_affine = resize(
+            nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3,
+             align_corners=INTERP_KWARGS['align_corners'], mask_value=0
         )[0, 0]
         p1_affine = reoriented_nifti(
             p1_affine, warp_template.affine, warp_template.header
         )
-        p2_affine = F.interpolate(
-            nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
+        p2_affine = resize(
+            nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, 
+            align_corners=INTERP_KWARGS['align_corners'], mask_value=0
         )[0, 0]
         p2_affine = reoriented_nifti(
             p2_affine, warp_template.affine, warp_template.header
         )
         if save_csf and save_rp:
-            p3_affine = F.interpolate(
+            p3_affine = resize(
                 nifti_to_tensor(p3_large)[None, None],
                 scale_factor=1 / 3,
-                **INTERP_KWARGS,
+                align_corners=INTERP_KWARGS['align_corners'], mask_value=0,
             )[0, 0]
             p3_affine = reoriented_nifti(
                 p3_affine, warp_template.affine, warp_template.header
