@@ -252,8 +252,14 @@ parse_args()
         exit 1
         ;;
       *)
-        ARRAY[$count]=$1
-        ((count++))
+        if [ ! -f "$1" ]; then
+          if [ ! -L "$1" ]; then
+            echo "${RED}File $1 was not found and will be skipped.${NC}" >&2
+          fi
+        else
+          ARRAY[$count]=$1
+          ((count++))
+        fi
         ;;
     esac
     shift
@@ -337,18 +343,10 @@ check_files()
 
   i=0
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
-    if [ ! -f "${ARRAY[$i]}" ]; then
-      if [ ! -L "${ARRAY[$i]}" ]; then
-        echo "${RED}ERROR: File ${ARRAY[$i]} not found${NC}" >&2
-        help
-        exit 1
-      fi
-    else
-      if [[ ! "${ARRAY[$i]}" =~ \.nii(\.gz)?$ ]]; then
-        echo "${RED}ERROR: File ${ARRAY[$i]} is not a valid NIfTI file${NC}" >&2
-        help
-        exit 1
-      fi
+    if [[ ! "${ARRAY[$i]}" =~ \.nii(\.gz)?$ ]]; then
+      echo "${RED}ERROR: File ${ARRAY[$i]} is not a valid NIfTI file${NC}" >&2
+      help
+      exit 1
     fi
     ((i++))
   done
