@@ -87,6 +87,8 @@ class CustomBrainSegmentation(BrainSegmentation):
 
 
 def all_models_present():
+    """Return ``True`` if all required model files are available."""
+
     return all((MODEL_DIR / f).exists() for f in MODEL_FILES)
 
 
@@ -241,7 +243,9 @@ def run_segment():
 
     for file in MODEL_FILES:
         if not Path(f"{DATA_PATH}/models/{file}").exists():
-            shutil.copy(f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}")
+            shutil.copy(
+                f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}"
+            )
 
     # Preprocess the input volume
     vol = t1.get_fdata().copy()
@@ -371,7 +375,9 @@ def run_segment():
     else:
         # Call deepmriprep refinement of deepmriprep label
         if verbose:
-            count = progress_bar(count, end_count, "Fine DeepMriPrep segmentation         ")
+            count = progress_bar(
+                count, end_count, "Fine DeepMriPrep segmentation         "
+            )
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 
         # Load probability maps for GM, WM, CSF
@@ -447,24 +453,30 @@ def run_segment():
         wm_lesions_large = median_filter(wm_lesions_large, size=3)
 
         # Create deep WM mask
-        deep_wm = binary_erosion(wm, generate_binary_structure(3,3), 2)
+        deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
 
         # Exclude lesions near cortex (i.e. near GM)
-        gm_border = binary_dilation(gm, generate_binary_structure(3,3), 2)
+        gm_border = binary_dilation(gm, generate_binary_structure(3, 3), 2)
 
         atlas = get_atlas(
-            t1, affine, p0_large.header, p0_large.affine, "cat_wmh_miccai2017", None, device
+            t1,
+            affine,
+            p0_large.header,
+            p0_large.affine,
+            "cat_wmh_miccai2017",
+            None,
+            device,
         )
         wmh_TPM = atlas.get_fdata().copy()
         wmh_TPM /= np.max(wmh_TPM)
 
         # Keep only lesions inside TPM for WMH and in deep WM, far from cortex
-        ind_wm_lesions = ((wm_lesions_large*wmh_TPM) > 0.025) & deep_wm & (~gm_border)
+        ind_wm_lesions = ((wm_lesions_large * wmh_TPM) > 0.025) & deep_wm & (~gm_border)
 
         # Remove smaller clusters
         label_map, n_labels = label_image(ind_wm_lesions)
         sizes = np.bincount(label_map.ravel())
-        min_lesion_size = 500 # is resolution-dependent and should be changed for other resolutiuons than 0.5mm
+        min_lesion_size = 500  # is resolution-dependent and should be changed for other resolutiuons than 0.5mm
         remove = np.isin(label_map, np.where(sizes < min_lesion_size)[0])
         ind_wm_lesions[remove] = 0
 
@@ -560,15 +572,19 @@ def run_segment():
     # Get affine segmentations
     if save_hemilabel or save_mwp or save_wp or save_rp:
         p1_affine = resize(
-            nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3,
-             align_corners=INTERP_KWARGS['align_corners'], mask_value=0
+            nifti_to_tensor(p1_large)[None, None],
+            scale_factor=1 / 3,
+            align_corners=INTERP_KWARGS["align_corners"],
+            mask_value=0,
         )[0, 0]
         p1_affine = reoriented_nifti(
             p1_affine, warp_template.affine, warp_template.header
         )
         p2_affine = resize(
-            nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, 
-            align_corners=INTERP_KWARGS['align_corners'], mask_value=0
+            nifti_to_tensor(p2_large)[None, None],
+            scale_factor=1 / 3,
+            align_corners=INTERP_KWARGS["align_corners"],
+            mask_value=0,
         )[0, 0]
         p2_affine = reoriented_nifti(
             p2_affine, warp_template.affine, warp_template.header
@@ -577,7 +593,8 @@ def run_segment():
             p3_affine = resize(
                 nifti_to_tensor(p3_large)[None, None],
                 scale_factor=1 / 3,
-                align_corners=INTERP_KWARGS['align_corners'], mask_value=0,
+                align_corners=INTERP_KWARGS["align_corners"],
+                mask_value=0,
             )[0, 0]
             p3_affine = reoriented_nifti(
                 p3_affine, warp_template.affine, warp_template.header

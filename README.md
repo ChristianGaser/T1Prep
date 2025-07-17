@@ -140,6 +140,10 @@ Install required Python packages:
 ```bash
 ./scripts/T1Prep --install
 ```
+Alternatively, install the dependencies manually:
+```bash
+pip install -r requirements.txt
+```
 
 ## Support
 For issues and inquiries, contact christian.gaser@uni-jena.de.
