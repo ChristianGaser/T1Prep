@@ -57,6 +57,8 @@ codes = [
 
 
 def load_namefile(filename):
+    """Parse a two-column TSV name file into a dictionary."""
+
     name_dict = {}
     with open(filename) as f:
         for line in f:
@@ -71,6 +73,8 @@ def load_namefile(filename):
 
 
 def substitute_pattern(pattern, bname, side, desc, space, nii_ext):
+    """Replace placeholders in *pattern* using the provided values."""
+
     if not pattern:
         return ""
     result = pattern
@@ -87,6 +91,8 @@ def substitute_pattern(pattern, bname, side, desc, space, nii_ext):
 
 
 def get_filenames(use_bids_naming, bname, side, desc, space, nii_ext):
+    """Return a mapping of output filenames based on the name table."""
+
     name_dict = load_namefile(name_file)
 
     # BIDS/naming logic
@@ -871,7 +877,7 @@ def get_atlas(
     # Extract headers and affine transformations
     header = target_header
     dim_hdr = target_header["dim"][1:4]
-    dim     = tuple(int(x) for x in dim_hdr)
+    dim = tuple(int(x) for x in dim_hdr)
     transform = target_affine
 
     # Load the atlas template
@@ -987,8 +993,10 @@ def resample_and_save_nifti(
     tensor = nifti_to_tensor(nifti_obj)[None, None]
 
     # Step 2: Resample using grid
-    #tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[0, 0]
-    tensor = sr.grid_sample(tensor, grid, align_corners=INTERP_KWARGS['align_corners'], mask_value=0)[0, 0]
+    # tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[0, 0]
+    tensor = sr.grid_sample(
+        tensor, grid, align_corners=INTERP_KWARGS["align_corners"], mask_value=0
+    )[0, 0]
 
     if clip is not None:
         if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
@@ -1225,18 +1233,26 @@ def get_partition(p0_large, atlas):
 
 
 def align_brain(data, aff, header, aff_ref, do_flip=1):
-    """
-    Aligns a volume to a reference orientation (axis and direction) specified by an affine matrix.
+    """Align ``data`` to the orientation defined by ``aff_ref``.
 
-    Parameters:
-        dim (ndarray): dimension of input data.
-        aff (ndarray): Affine matrix of the volume.
-        aff_ref (ndarray): Reference affine matrix.
+    Parameters
+    ----------
+    data : ndarray
+        Input image volume.
+    aff : ndarray
+        Affine matrix describing ``data``.
+    header : nibabel.Nifti1Header
+        NIfTI header to update.
+    aff_ref : ndarray
+        Reference affine defining the desired orientation.
+    do_flip : int, optional
+        If ``True`` (default) flip axes to match the reference orientation.
 
-    Returns:
-        ndarray: Aligned image data.
-        ndarray: Aligned affine matrix.
-        ndarray: Aligned nifti header.
+    Returns
+    -------
+    tuple
+        ``(aligned_data, aff, header, ras_aff)`` where ``ras_aff`` describes the
+        RAS orientation of the input volume.
     """
 
     dim = 3
