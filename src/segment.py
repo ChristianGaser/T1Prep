@@ -272,6 +272,15 @@ def run_segment():
     brain_large = output_aff["brain_large"]
     mask_large = output_aff["mask_large"]
 
+    # Ensure that minimum of brain is not negative (which can happen after sinc-interpolation)
+    brain_value = brain_large.get_fdata().copy()
+    mask_value = brain_large.get_fdata().copy()
+    min_brain = np.min(brain_value)
+    if (min_brain < 0):
+        brain_value -= min_brain
+    brain_value[mask_value < 0.01] = 0
+    brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
+
     # Step 3: Segmentation
     if verbose:
         count = progress_bar(
@@ -279,6 +288,11 @@ def run_segment():
         )
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg["p0_large"]
+
+    # Due to sinc-interpolation we have to set values close to zero to zero
+    p0_value = p0_large.get_fdata()
+    p0_value[mask_value < 0.01] = 0
+    p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
     # Prepare for resampling
     header_resamp, affine_resamp = get_resampled_header(
@@ -401,12 +415,12 @@ def run_segment():
             )
 
         # Get original WM and CSF mask from deepmriprep label (without any lesions)
-        p0_tmp = p0_large_orig.get_fdata().copy()
-        wm = p0_tmp >= 2.5
+        p0_value = p0_large_orig.get_fdata().copy()
+        wm = p0_value >= 2.5
         wm = binary_closing(wm, generate_binary_structure(3, 3), 3)
         wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
-        gm = (p0_tmp >= 1.5) & (p0_tmp < 2.5)
-        csf = (p0_tmp < 1.5) & (p0_tmp > 0)
+        gm = (p0_value >= 1.5) & (p0_value < 2.5)
+        csf = (p0_value < 1.5) & (p0_value > 0)
 
         # Get uncorrected GM/WM maps from Amap
         if use_amap:
@@ -415,17 +429,17 @@ def run_segment():
             p3_large_uncorr = p3_large
 
             # We have to extract the corrected GM from deepmriprep p0 map to identify lesions
-            tmp_p0 = p0_large_orig.get_fdata().copy()
-            tmp_p0[csf | wm] = 1.5
-            tmp_p0 -= 1.5
+            p0_value = p0_large_orig.get_fdata().copy()
+            p0_value[csf | wm] = 1.5
+            p0_value -= 1.5
             p1_large = nib.Nifti1Image(
-                tmp_p0, affine_resamp_reordered, header_resamp_reordered
+                p0_value, affine_resamp_reordered, header_resamp_reordered
             )
 
-            tmp_p0 = p0_large_orig.get_fdata().copy()
-            tmp_p0[~csf] = 0
+            p0_value = p0_large_orig.get_fdata().copy()
+            p0_value[~csf] = 0
             p3_large = nib.Nifti1Image(
-                tmp_p0, affine_resamp_reordered, header_resamp_reordered
+                p0_value, affine_resamp_reordered, header_resamp_reordered
             )
 
         else:
@@ -549,12 +563,12 @@ def run_segment():
         p0_large = nib.Nifti1Image(tmp, affine_resamp, header_resamp)
 
     if use_amap or save_lesions:
-        tmp_p0 = p0_large.get_fdata().copy()
-        np.clip(tmp_p0, 0, 3)
-        tmp_p0[ind_wm_lesions] += wm_lesions_large[ind_wm_lesions]
-        np.clip(tmp_p0, 0, 4)
+        p0_value = p0_large.get_fdata().copy()
+        np.clip(p0_value, 0, 3)
+        p0_value[ind_wm_lesions] += wm_lesions_large[ind_wm_lesions]
+        np.clip(p0_value, 0, 4)
         p0_large = nib.Nifti1Image(
-            tmp_p0, affine_resamp_reordered, header_resamp_reordered
+            p0_value, affine_resamp_reordered, header_resamp_reordered
         )
 
     # Get affine segmentations
@@ -770,8 +784,8 @@ def run_segment():
         )
 
     # remove temporary AMAP files
+    remove_file(f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
     if (use_amap or save_lesions) and not debug:
-        remove_file(f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
         remove_file(f"{out_dir}/{out_name}_brain_large_seg.{ext}")
         remove_file(f"{out_dir}/{out_name}_brain_large.{ext}")
         remove_file(f"{out_dir}/{out_name}_seg_large.{ext}")
