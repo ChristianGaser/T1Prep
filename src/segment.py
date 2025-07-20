@@ -77,6 +77,7 @@ class CustomBrainSegmentation(BrainSegmentation):
     Furthermore use run_model function with linear interpolation for p0, which
     prevents negative values due to sinc-interpolation
     """
+
     def __call__(self, x, mask):
         x = x[:, :, 1:-2, 15:-12, :-3]
         x = scale_intensity(x)
@@ -90,30 +91,54 @@ class CustomBrainSegmentation(BrainSegmentation):
 
     def run_model(self, x, scale_factor=1.5):
         with torch.no_grad():
-            p0 = self.model(F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
+            p0 = self.model(
+                F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS)
+            )
         return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
+
 
 class CustomPreprocess(Preprocess):
     """
     Custom class to override Preprocess
-    Use linear interpolation for p0, which prevents negative values due to 
+    Use linear interpolation for p0, which prevents negative values due to
     sinc-interpolation
     """
+
     def run_segment_brain(self, brain_large, mask, affine, mask_large):
         brain_large = nifti_to_tensor(brain_large)
         mask_large = nifti_to_tensor(mask_large)
-        p0_large = self.brain_segment(brain_large[None, None].to(self.device), mask_large[None, None].to(self.device))[0, 0]
-        if self.device.type == 'cuda': torch.cuda.empty_cache()
-        p0_large[mask_large == 0.] = 0.
-        inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float().to(self.device))
+        p0_large = self.brain_segment(
+            brain_large[None, None].to(self.device),
+            mask_large[None, None].to(self.device),
+        )[0, 0]
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        p0_large[mask_large == 0.0] = 0.0
+        inv_affine = torch.linalg.inv(
+            torch.from_numpy(affine.values).float().to(self.device)
+        )
         shape = nib.as_closest_canonical(mask).shape
-        grid = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
-        p0 = F.conv3d(p0_large[None, None].to(self.device), unsmooth_kernel(device=self.device)[None, None], padding=1)
-        p0 = F.grid_sample(p0, grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+        grid = F.affine_grid(
+            inv_affine[None, :3],
+            [1, 3, *shape],
+            align_corners=INTERP_KWARGS["align_corners"],
+        )
+        p0 = F.conv3d(
+            p0_large[None, None].to(self.device),
+            unsmooth_kernel(device=self.device)[None, None],
+            padding=1,
+        )
+        p0 = F.grid_sample(p0, grid, align_corners=INTERP_KWARGS["align_corners"])[0, 0]
         p0 = p0.clip(min=0, max=3).cpu()
-        if self.device.type == 'cuda': torch.cuda.empty_cache()
-        return {'p0_large': reoriented_nifti(p0_large.cpu().numpy(), **self.affine_template_metadata),
-                'p0': reoriented_nifti(p0.cpu().numpy(), mask.affine, mask.header)}
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        return {
+            "p0_large": reoriented_nifti(
+                p0_large.cpu().numpy(), **self.affine_template_metadata
+            ),
+            "p0": reoriented_nifti(p0.cpu().numpy(), mask.affine, mask.header),
+        }
+
 
 def all_models_present():
     """Return ``True`` if all required model files are available."""
@@ -121,14 +146,9 @@ def all_models_present():
     return all((MODEL_DIR / f).exists() for f in MODEL_FILES)
 
 
-def run_segment():
-    """
-    Perform brain segmentation (either using deepmriprep or AMAP) on input T1w brain data using
-    preprocessing, affine registration, and segmentation techniques.
+def parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments for the segmentation pipeline."""
 
-    """
-
-    # Parse command-line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", help="Input file", required=True, type=str)
     parser.add_argument("--outdir", help="Output folder", required=True, type=str)
@@ -185,7 +205,180 @@ def run_segment():
         default=0.4,
         help="Initial threshold to isolate WM for vessel removal",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def setup_device() -> tuple[torch.device, bool]:
+    """Return the torch device and ``no_gpu`` flag."""
+
+    if torch.cuda.is_available():
+        return torch.device("cuda"), False
+    if torch.backends.mps.is_available() and False:  # not yet fully supported
+        return torch.device("mps"), False
+    return torch.device("cpu"), True
+
+
+def prepare_model_files() -> None:
+    """Ensure required model files are present, downloading if needed."""
+
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    if not all_models_present():
+        print("One or more model files are missing. Downloading zip archive...")
+        if not MODEL_ZIP_LOCAL.exists():
+            print(f"Downloading {MODEL_ZIP_URL} ...")
+            urllib.request.urlretrieve(MODEL_ZIP_URL, MODEL_ZIP_LOCAL)
+            print("Download complete.")
+
+        with zipfile.ZipFile(MODEL_ZIP_LOCAL, "r") as zip_ref:
+            zip_ref.extractall(TMP_PATH)
+        print(f"Unzipped models to {TMP_PATH}")
+        for file in MODEL_FILES:
+            shutil.copy(
+                f"{TMP_PATH}/T1Prep/data/models/{file}", f"{DATA_PATH}/models/{file}"
+            )
+        shutil.rmtree(TMP_PATH)
+        MODEL_ZIP_LOCAL.unlink()
+
+    for file in MODEL_FILES:
+        if not Path(f"{DATA_PATH}/models/{file}").exists():
+            shutil.copy(
+                f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}"
+            )
+
+
+def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
+    """Align the input volume and create the preprocessing object."""
+
+    vol = t1.get_fdata().copy()
+    vol = np.squeeze(vol)
+    vol, affine_resamp, header_resamp, ras_affine = align_brain(
+        vol, t1.affine, t1.header, np.eye(4), do_flip=0
+    )
+    t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
+    prep = CustomPreprocess(no_gpu)
+    if use_amap:
+        prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
+    return t1, prep, ras_affine
+
+
+def skull_strip(
+    prep: CustomPreprocess,
+    t1: nib.Nifti1Image,
+    verbose: bool,
+    count: int,
+    end_count: int,
+):
+    """Run skull stripping and return brain and mask images."""
+
+    if verbose:
+        count = progress_bar(count, end_count, "Skull-stripping               ")
+    output = prep.run_bet(t1)
+    return output["brain"], output["mask"], count
+
+
+def affine_register(
+    prep: CustomPreprocess,
+    brain: nib.Nifti1Image,
+    mask: nib.Nifti1Image,
+    verbose: bool,
+    count: int,
+    end_count: int,
+):
+    """Perform affine registration of the brain."""
+
+    if verbose:
+        count = progress_bar(count, end_count, "Affine registration           ")
+    output = prep.run_affine_register(brain, mask)
+    return output["affine"], output["brain_large"], output["mask_large"], count
+
+
+def run_amap_segmentation(
+    amapdir: str,
+    bias_fwhm: float,
+    p0_large: nib.Nifti1Image,
+    brain_large: nib.Nifti1Image,
+    out_dir: str,
+    out_name: str,
+    ext: str,
+    verbose: bool,
+    debug: bool,
+):
+    """Execute the AMAP segmentation pipeline."""
+
+    if verbose:
+        print("Running AMAP segmentation")
+
+    p0_large_orig = p0_large
+    p0_large, brain_large = correct_label_map(brain_large, p0_large)
+    brain_large = apply_LAS(brain_large, p0_large)
+
+    nib.save(brain_large, f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
+    nib.save(p0_large, f"{out_dir}/{out_name}_seg_large.{ext}")
+
+    cmd = (
+        os.path.join(amapdir, "CAT_VolSanlm")
+        + " "
+        + f"{out_dir}/{out_name}_brain_large_tmp.{ext}"
+        + " "
+        + f"{out_dir}/{out_name}_brain_large.{ext}"
+    )
+    os.system(cmd)
+
+    cmd = (
+        os.path.join(amapdir, "CAT_VolAmap")
+        + f" -use-bmap -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 "
+        + "-h-ornlm 0.05 -write-seg 1 1 1 -label "
+        + f"{out_dir}/{out_name}_seg_large.{ext}"
+        + " "
+        + f"{out_dir}/{out_name}_brain_large.{ext}"
+    )
+    if verbose and debug:
+        cmd += " -verbose"
+    os.system(cmd)
+    return p0_large_orig
+
+
+def run_deepmriprep_segmentation(
+    prep: CustomPreprocess,
+    p0_large: nib.Nifti1Image,
+    affine,
+    t1: nib.Nifti1Image,
+    verbose: bool,
+    count: int,
+    end_count: int,
+):
+    """Run DeepMRIprep refinement of the segmentation."""
+
+    if verbose:
+        count = progress_bar(count, end_count, "Fine DeepMriPrep segmentation         ")
+    output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
+    return output_nogm, count
+
+
+def final_cleanup(
+    out_dir: str,
+    out_name: str,
+    ext: str,
+    use_amap: bool,
+    save_lesions: bool,
+    debug: bool,
+) -> None:
+    """Remove temporary files generated during processing."""
+
+    remove_file(f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
+    if (use_amap or save_lesions) and not debug:
+        remove_file(f"{out_dir}/{out_name}_brain_large_seg.{ext}")
+        remove_file(f"{out_dir}/{out_name}_brain_large.{ext}")
+        remove_file(f"{out_dir}/{out_name}_seg_large.{ext}")
+        remove_file(f"{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}")
+        remove_file(f"{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
+        remove_file(f"{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
+
+
+def run_segment():
+    """Run the full segmentation workflow."""
+
+    args = parse_arguments()
 
     # Input/output parameters
     t1_name = args.input
@@ -211,15 +404,7 @@ def run_segment():
     save_hemilabel = args.surf
 
     # Check for GPU support
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        no_gpu = False
-    elif torch.backends.mps.is_available() and False:  # not yet fully supported
-        device = torch.device("mps")
-        no_gpu = False
-    else:
-        device = torch.device("cpu")
-        no_gpu = True
+    device, no_gpu = setup_device()
 
     # Set processing parameters
     target_res = np.array([0.5] * 3)  # Target resolution for resampling
@@ -238,79 +423,30 @@ def run_segment():
         ext = "nii"
 
     # Prepare filenames and load input MRI data
-    out_name = (
-        os.path.basename(os.path.basename(t1_name).replace(".nii", ""))
-        .replace(".gz", "")
+    out_name = os.path.basename(os.path.basename(t1_name).replace(".nii", "")).replace(
+        ".gz", ""
     )
     t1 = nib.load(t1_name)
 
-    # Copy necessary model files from T1Prep release to local T1Prep folder to 
-    # install it, since  often the API rate limit for Github repositories is 
-    # exceeded if you don't have an account.
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    # Ensure required model files are available
+    prepare_model_files()
 
-    # Download required model files from Github as zip-file and unzip it to DATA_PATH
-    if not all_models_present():
-        print("One or more model files are missing. Downloading zip archive...")
-        # Download the zip file if not already present
-        if not MODEL_ZIP_LOCAL.exists():
-            print(f"Downloading {MODEL_ZIP_URL} ...")
-            urllib.request.urlretrieve(MODEL_ZIP_URL, MODEL_ZIP_LOCAL)
-            print("Download complete.")
-
-        # Extract zip
-        with zipfile.ZipFile(MODEL_ZIP_LOCAL, "r") as zip_ref:
-            zip_ref.extractall(TMP_PATH)
-        print(f"Unzipped models to {TMP_PATH}")
-        for file in MODEL_FILES:
-            shutil.copy(
-                f"{TMP_PATH}/T1Prep/data/models/{file}", f"{DATA_PATH}/models/{file}"
-            )
-        shutil.rmtree(TMP_PATH)
-
-        # Optionally, delete the zip to save space
-        MODEL_ZIP_LOCAL.unlink()
-
-    for file in MODEL_FILES:
-        if not Path(f"{DATA_PATH}/models/{file}").exists():
-            shutil.copy(
-                f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}"
-            )
-
-    # Preprocess the input volume
-    vol = t1.get_fdata().copy()
-    vol = np.squeeze(vol)
-    vol, affine_resamp, header_resamp, ras_affine = align_brain(
-        vol, t1.affine, t1.header, np.eye(4), do_flip=0
-    )
-    t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
-
-    prep = CustomPreprocess(no_gpu)
-
-    # Use faster preprocessing and segmentation for Amap segmentation
-    if use_amap:
-        prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
+    # Preprocess volume and create preprocess object
+    t1, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap)
 
     # Step 1: Skull-stripping
-    if verbose:
-        count = progress_bar(count, end_count, "Skull-stripping               ")
-    output_bet = prep.run_bet(t1)
-    brain = output_bet["brain"]
-    mask = output_bet["mask"]
+    brain, mask, count = skull_strip(prep, t1, verbose, count, end_count)
 
     # Step 2: Affine registration
-    if verbose:
-        count = progress_bar(count, end_count, "Affine registration           ")
-    output_aff = prep.run_affine_register(brain, mask)
-    affine = output_aff["affine"]
-    brain_large = output_aff["brain_large"]
-    mask_large = output_aff["mask_large"]
+    affine, brain_large, mask_large, count = affine_register(
+        prep, brain, mask, verbose, count, end_count
+    )
 
     # Ensure that minimum of brain is not negative (which can happen after sinc-interpolation)
     brain_value = brain_large.get_fdata().copy()
     mask_value = brain_large.get_fdata().copy()
     min_brain = np.min(brain_value)
-    if (min_brain < 0):
+    if min_brain < 0:
         brain_value -= min_brain
     brain_value[mask_value < 0.5] = 0
     brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
@@ -325,7 +461,7 @@ def run_segment():
 
     # Due to sinc-interpolation we have to change values close to zero
     p0_value = p0_large.get_fdata()
-    if (np.min(brain_value) < 0):
+    if np.min(brain_value) < 0:
         p0_value[mask_value < 0.5] = 0
         p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
@@ -621,26 +757,22 @@ def run_segment():
     # Get affine segmentations
     if save_hemilabel or save_mwp or save_wp or save_rp:
         p1_affine = F.interpolate(
-            nifti_to_tensor(p1_large)[None, None], 
-            scale_factor=1 / 3, 
-            **INTERP_KWARGS
+            nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
         )[0, 0]
         p1_affine = reoriented_nifti(
             p1_affine, warp_template.affine, warp_template.header
         )
         p2_affine = F.interpolate(
-            nifti_to_tensor(p2_large)[None, None], 
-            scale_factor=1 / 3, 
-            **INTERP_KWARGS
+            nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
         )[0, 0]
         p2_affine = reoriented_nifti(
             p2_affine, warp_template.affine, warp_template.header
         )
         if save_csf and save_rp:
             p3_affine = F.interpolate(
-                nifti_to_tensor(p3_large)[None, None], 
-                scale_factor=1 / 3, 
-                **INTERP_KWARGS
+                nifti_to_tensor(p3_large)[None, None],
+                scale_factor=1 / 3,
+                **INTERP_KWARGS,
             )[0, 0]
             p3_affine = reoriented_nifti(
                 p3_affine, warp_template.affine, warp_template.header
@@ -833,14 +965,7 @@ def run_segment():
         )
 
     # remove temporary AMAP files
-    remove_file(f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
-    if (use_amap or save_lesions) and not debug:
-        remove_file(f"{out_dir}/{out_name}_brain_large_seg.{ext}")
-        remove_file(f"{out_dir}/{out_name}_brain_large.{ext}")
-        remove_file(f"{out_dir}/{out_name}_seg_large.{ext}")
-        remove_file(f"{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}")
-        remove_file(f"{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
-        remove_file(f"{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
+    final_cleanup(out_dir, out_name, ext, use_amap, save_lesions, debug)
 
 
 if __name__ == "__main__":
