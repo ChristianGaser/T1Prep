@@ -12,12 +12,12 @@ import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
+import fill_voids
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
-from spline_resize import resize
 from deepbet.utils import reoriented_nifti
 from deepmriprep.segment import BrainSegmentation, scale_intensity
 from deepmriprep.preprocess import Preprocess
@@ -37,6 +37,7 @@ from utils import (
     progress_bar,
     remove_file,
     correct_bias_field,
+    unsmooth_kernel,
     get_atlas,
     resample_and_save_nifti,
     get_resampled_header,
@@ -68,23 +69,51 @@ MODEL_ZIP_URL = "https://github.com/ChristianGaser/T1Prep/releases/download/v0.1
 MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
 
 
-# Custom class to override BrainSegmentation
-# Skip self.run_patch_models(x, p0) which takes a lot of time and is not needed
-# for Amap segmentation
 class CustomBrainSegmentation(BrainSegmentation):
+    """
+    Custom class to override BrainSegmentation
+    Skip self.run_patch_models(x, p0) which takes a lot of time and is not needed
+    for Amap segmentation.
+    Furthermore use run_model function with linear interpolation for p0, which
+    prevents negative values due to sinc-interpolation
+    """
     def __call__(self, x, mask):
         x = x[:, :, 1:-2, 15:-12, :-3]
         x = scale_intensity(x)
         p0 = self.run_model(x)  # Skip self.run_patch_models(x, p0)
         if self.fill_holes:
             mask = p0[0, 0].cpu().numpy() > 0.9
-            import fill_voids
-
             mask_filled = fill_voids.fill(mask)
             filled = (mask == 0) & (mask_filled == 1)
             p0[0, 0][filled] = 1.0
         return F.pad(p0, (0, 3, 15, 12, 1, 2))
 
+    def run_model(self, x, scale_factor=1.5):
+        with torch.no_grad():
+            p0 = self.model(F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
+        return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
+
+class CustomPreprocess(Preprocess):
+    """
+    Custom class to override Preprocess
+    Use linear interpolation for p0, which prevents negative values due to 
+    sinc-interpolation
+    """
+    def run_segment_brain(self, brain_large, mask, affine, mask_large):
+        brain_large = nifti_to_tensor(brain_large)
+        mask_large = nifti_to_tensor(mask_large)
+        p0_large = self.brain_segment(brain_large[None, None].to(self.device), mask_large[None, None].to(self.device))[0, 0]
+        if self.device.type == 'cuda': torch.cuda.empty_cache()
+        p0_large[mask_large == 0.] = 0.
+        inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float().to(self.device))
+        shape = nib.as_closest_canonical(mask).shape
+        grid = F.affine_grid(inv_affine[None, :3], [1, 3, *shape], align_corners=INTERP_KWARGS['align_corners'])
+        p0 = F.conv3d(p0_large[None, None].to(self.device), unsmooth_kernel(device=self.device)[None, None], padding=1)
+        p0 = F.grid_sample(p0, grid, align_corners=INTERP_KWARGS['align_corners'])[0, 0]
+        p0 = p0.clip(min=0, max=3).cpu()
+        if self.device.type == 'cuda': torch.cuda.empty_cache()
+        return {'p0_large': reoriented_nifti(p0_large.cpu().numpy(), **self.affine_template_metadata),
+                'p0': reoriented_nifti(p0.cpu().numpy(), mask.affine, mask.header)}
 
 def all_models_present():
     """Return ``True`` if all required model files are available."""
@@ -210,13 +239,14 @@ def run_segment():
 
     # Prepare filenames and load input MRI data
     out_name = (
-        os.path.basename(os.path.basename(t1_name).replace("_desc-sanlm", ""))
-        .replace(".nii", "")
+        os.path.basename(os.path.basename(t1_name).replace(".nii", ""))
         .replace(".gz", "")
     )
     t1 = nib.load(t1_name)
 
-    # Copy necessary model files from local folder to install it, since often the API rate limit is exceeded
+    # Copy necessary model files from T1Prep release to local T1Prep folder to 
+    # install it, since  often the API rate limit for Github repositories is 
+    # exceeded if you don't have an account.
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     # Download required model files from Github as zip-file and unzip it to DATA_PATH
@@ -255,7 +285,7 @@ def run_segment():
     )
     t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
 
-    prep = Preprocess(no_gpu)
+    prep = CustomPreprocess(no_gpu)
 
     # Use faster preprocessing and segmentation for Amap segmentation
     if use_amap:
@@ -282,7 +312,7 @@ def run_segment():
     min_brain = np.min(brain_value)
     if (min_brain < 0):
         brain_value -= min_brain
-    brain_value[mask_value < 0.01] = 0
+    brain_value[mask_value < 0.5] = 0
     brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
 
     # Step 3: Segmentation
@@ -293,10 +323,11 @@ def run_segment():
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg["p0_large"]
 
-    # Due to sinc-interpolation we have to set values close to zero to zero
+    # Due to sinc-interpolation we have to change values close to zero
     p0_value = p0_large.get_fdata()
-    p0_value[mask_value < 0.01] = 0
-    p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
+    if (np.min(brain_value) < 0):
+        p0_value[mask_value < 0.5] = 0
+        p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
     # Prepare for resampling
     header_resamp, affine_resamp = get_resampled_header(
@@ -372,7 +403,7 @@ def run_segment():
         cmd = (
             os.path.join(amapdir, "CAT_VolAmap")
             + f" -use-bmap -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 "
-            + "-h-ornlm 0.025 -write-seg 1 1 1 -label "
+            + "-h-ornlm 0.05 -write-seg 1 1 1 -label "
             + f"{out_dir}/{out_name}_seg_large.{ext}"
             + " "
             + f"{out_dir}/{out_name}_brain_large.{ext}"
@@ -380,6 +411,10 @@ def run_segment():
         if verbose and debug:
             cmd += " -verbose"
         os.system(cmd)
+    else:
+        if debug:
+            nib.save(brain_large, f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
+            nib.save(p0_large, f"{out_dir}/{out_name}_seg_large.{ext}")
 
     if use_amap:
         # Load Amap label
@@ -585,30 +620,27 @@ def run_segment():
 
     # Get affine segmentations
     if save_hemilabel or save_mwp or save_wp or save_rp:
-        p1_affine = resize(
-            nifti_to_tensor(p1_large)[None, None],
-            scale_factor=1 / 3,
-            align_corners=INTERP_KWARGS["align_corners"],
-            mask_value=0,
+        p1_affine = F.interpolate(
+            nifti_to_tensor(p1_large)[None, None], 
+            scale_factor=1 / 3, 
+            **INTERP_KWARGS
         )[0, 0]
         p1_affine = reoriented_nifti(
             p1_affine, warp_template.affine, warp_template.header
         )
-        p2_affine = resize(
-            nifti_to_tensor(p2_large)[None, None],
-            scale_factor=1 / 3,
-            align_corners=INTERP_KWARGS["align_corners"],
-            mask_value=0,
+        p2_affine = F.interpolate(
+            nifti_to_tensor(p2_large)[None, None], 
+            scale_factor=1 / 3, 
+            **INTERP_KWARGS
         )[0, 0]
         p2_affine = reoriented_nifti(
             p2_affine, warp_template.affine, warp_template.header
         )
         if save_csf and save_rp:
-            p3_affine = resize(
-                nifti_to_tensor(p3_large)[None, None],
-                scale_factor=1 / 3,
-                align_corners=INTERP_KWARGS["align_corners"],
-                mask_value=0,
+            p3_affine = F.interpolate(
+                nifti_to_tensor(p3_large)[None, None], 
+                scale_factor=1 / 3, 
+                **INTERP_KWARGS
             )[0, 0]
             p3_affine = reoriented_nifti(
                 p3_affine, warp_template.affine, warp_template.header
