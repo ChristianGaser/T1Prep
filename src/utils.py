@@ -10,7 +10,6 @@ import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
-import spline_resize as sr
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -20,7 +19,7 @@ from spline_resize import resize
 from deepbet.utils import reoriented_nifti
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
-from torchreg.utils import INTERP_KWARGS
+from torchreg.utils import INTERP_KWARGS, smooth_kernel
 from scipy.ndimage import (
     binary_opening,
     binary_dilation,
@@ -855,6 +854,13 @@ def correct_label_map(brain, seg):
     return seg_corrected, brain_corrected
 
 
+def unsmooth_kernel(factor=3., sigma=.6, device='cpu'):
+    # Hand-optimized factor and sigma for compensation of smoothing caused by affine transformation (inspired by CAT12)
+    kernel = -factor * smooth_kernel(kernel_size=3 * [3], sigma=torch.tensor(3 * [sigma], device=device))
+    kernel[1, 1, 1] = 0
+    kernel[1, 1, 1] = 1 - kernel.sum()
+    return kernel
+
 def get_atlas(
     t1, affine, target_header, target_affine, atlas_name, warp_yx=None, device="cpu"
 ):
@@ -993,10 +999,7 @@ def resample_and_save_nifti(
     tensor = nifti_to_tensor(nifti_obj)[None, None]
 
     # Step 2: Resample using grid
-    # tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[0, 0]
-    tensor = sr.grid_sample(
-        tensor, grid, align_corners=INTERP_KWARGS["align_corners"], mask_value=0
-    )[0, 0]
+    tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[0, 0]
 
     if clip is not None:
         if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
