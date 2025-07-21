@@ -444,11 +444,12 @@ def run_segment():
 
     # Ensure that minimum of brain is not negative (which can happen after sinc-interpolation)
     brain_value = brain_large.get_fdata().copy()
-    mask_value = brain_large.get_fdata().copy()
+    mask_value = brain_large.get_fdata().copy() > 0.5
+    mask_value = binary_closing(mask_value, generate_binary_structure(3, 3), 7)
     min_brain = np.min(brain_value)
     if min_brain < 0:
         brain_value -= min_brain
-    brain_value[mask_value < 0.5] = 0
+    brain_value[~mask_value] = 0
     brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
 
     # Step 3: Segmentation
@@ -462,7 +463,7 @@ def run_segment():
     # Due to sinc-interpolation we have to change values close to zero
     p0_value = p0_large.get_fdata()
     if np.min(brain_value) < 0:
-        p0_value[mask_value < 0.5] = 0
+        p0_value[~mask_value] = 0
         p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
     # Prepare for resampling

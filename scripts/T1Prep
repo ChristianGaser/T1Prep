@@ -629,7 +629,7 @@ surface_estimation()
     fi
 
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
-    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1_volume}]]; then
+    if [[ "${debug}" -eq 1 && -f "${outmridir}/${mT1_volume}" ]]; then
       ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Mid_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Mid}
       if [ "${save_pial_white}" -eq 1 ]; then
         ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Pial_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Pial}
@@ -763,6 +763,8 @@ process()
     # Execute the command using eval
     if [ "${estimate_seg}" -eq 1 ]; then
       eval "${cmd[@]}"
+status=$?
+echo "Exit status was: $status"
     fi
 
     # Call parallelize with filtered arguments
