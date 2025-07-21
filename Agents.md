@@ -56,6 +56,7 @@ When creating a PR:
 1. Summarize the changes and link to relevant issues.
 2. Mention any new dependencies or setup steps.
 3. Ensure `python -m compileall src` completed without errors and describe the result in the PR body.
+4. Use the following linters to pass before a PR is merged. They’re installed automatically by the Codex environment’s Setup Script: shellcheck for *.sh and *.bash and flake8 (or ruff) for Python.
 
 ## Notes
 These instructions are a starting point for contributors. Update this file as the project evolves.
