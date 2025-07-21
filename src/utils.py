@@ -834,25 +834,25 @@ def correct_label_map(brain, seg):
 
     # 1. For WM: If intensity is low for a high label, reduce the label value
     wm_mask = (seg0 > 2.5) & (discrepancy0 < 1)
-    seg0[wm_mask] *= (
-        discrepancy0[wm_mask] ** 2
-    )  # consistent with original (*discrepancy*discrepancy)
+    # consistent with original (*discrepancy*discrepancy)
+    seg0[wm_mask] *= (discrepancy0[wm_mask] ** 2)
 
-    # 2. Find rim (edge) voxels in the label map
-    mask_rim = seg0 > 0
-    rim_struct = generate_binary_structure(3, 3)
-    rim = mask_rim & ~binary_erosion(mask_rim, rim_struct, 5)
-
-    # For rim voxels labeled CSF but intensity is high, scale down brain intensity
-    csf_mask = rim & (seg0 < 1.5) & (discrepancy0 > 1)
-    brain0[csf_mask] /= discrepancy0[csf_mask]
+    # For voxels labeled CSF but intensity is high, scale down brain intensity
+    csf_mask = (seg0 < 1.5) & (discrepancy0 > 1)
+    brain0[csf_mask] /= (discrepancy0[csf_mask] ** 2)
+    
+    # For voxels labeled GM but intensity is slightly below or above threshold, 
+    # scale brain intensity
+    gm_mask1 = (seg0 > 1.5) & (seg0 <= 2)
+    brain0[gm_mask1 & (brain0 > 1.4/3) & (brain0 <= 1.6/3)] = 1.6/3
+    gm_mask2 = (seg0 > 2) & (seg0 <= 2.5)
+    brain0[gm_mask2 & (brain0 > 2.4/3) & (brain0 <= 2.6/3)] = 2.4/3
 
     # Wrap outputs in Nifti images
     seg_corrected = nib.Nifti1Image(seg0, seg.affine, seg.header)
     brain_corrected = nib.Nifti1Image(brain0, brain.affine, brain.header)
 
     return seg_corrected, brain_corrected
-
 
 def unsmooth_kernel(factor=3., sigma=.6, device='cpu'):
     # Hand-optimized factor and sigma for compensation of smoothing caused by affine transformation (inspired by CAT12)
