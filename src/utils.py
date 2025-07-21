@@ -835,18 +835,18 @@ def correct_label_map(brain, seg):
     # 1. For WM: If intensity is low for a high label, reduce the label value
     wm_mask = (seg0 > 2.5) & (discrepancy0 < 1)
     # consistent with original (*discrepancy*discrepancy)
-    seg0[wm_mask] *= (discrepancy0[wm_mask] ** 2)
+    seg0[wm_mask] *= discrepancy0[wm_mask] ** 2
 
     # For voxels labeled CSF but intensity is high, scale down brain intensity
     csf_mask = (seg0 < 1.5) & (discrepancy0 > 1)
-    brain0[csf_mask] /= (discrepancy0[csf_mask] ** 2)
-    
-    # For voxels labeled GM but intensity is slightly below or above threshold, 
+    brain0[csf_mask] /= discrepancy0[csf_mask] ** 2
+
+    # For voxels labeled GM but intensity is slightly below or above threshold,
     # scale brain intensity
     gm_mask1 = (seg0 > 1.5) & (seg0 <= 2)
-    brain0[gm_mask1 & (brain0 > 1.4/3) & (brain0 <= 1.6/3)] = 1.6/3
+    brain0[gm_mask1 & (brain0 > 1.4 / 3) & (brain0 <= 1.6 / 3)] = 1.6 / 3
     gm_mask2 = (seg0 > 2) & (seg0 <= 2.5)
-    brain0[gm_mask2 & (brain0 > 2.4/3) & (brain0 <= 2.6/3)] = 2.4/3
+    brain0[gm_mask2 & (brain0 > 2.4 / 3) & (brain0 <= 2.6 / 3)] = 2.4 / 3
 
     # Wrap outputs in Nifti images
     seg_corrected = nib.Nifti1Image(seg0, seg.affine, seg.header)
@@ -854,12 +854,16 @@ def correct_label_map(brain, seg):
 
     return seg_corrected, brain_corrected
 
-def unsmooth_kernel(factor=3., sigma=.6, device='cpu'):
+
+def unsmooth_kernel(factor=3.0, sigma=0.6, device="cpu"):
     # Hand-optimized factor and sigma for compensation of smoothing caused by affine transformation (inspired by CAT12)
-    kernel = -factor * smooth_kernel(kernel_size=3 * [3], sigma=torch.tensor(3 * [sigma], device=device))
+    kernel = -factor * smooth_kernel(
+        kernel_size=3 * [3], sigma=torch.tensor(3 * [sigma], device=device)
+    )
     kernel[1, 1, 1] = 0
     kernel[1, 1, 1] = 1 - kernel.sum()
     return kernel
+
 
 def get_atlas(
     t1, affine, target_header, target_affine, atlas_name, warp_yx=None, device="cpu"
@@ -999,7 +1003,9 @@ def resample_and_save_nifti(
     tensor = nifti_to_tensor(nifti_obj)[None, None]
 
     # Step 2: Resample using grid
-    tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[0, 0]
+    tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[
+        0, 0
+    ]
 
     if clip is not None:
         if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
