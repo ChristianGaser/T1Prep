@@ -805,7 +805,8 @@ def correct_label_map(brain, seg):
 
     This function performs two main corrections:
       1. For white matter voxels (seg > 2.5) where the intensity is unexpectedly low,
-         the label value is downscaled to match intensity.
+         the label value is downscaled to match intensity, since this usually points
+         to WMHs.
       2. For rim (boundary) voxels labeled as CSF (seg < 1.5) but with intensity higher than expected,
          the brain intensity is downscaled in these rim areas.
 
@@ -832,13 +833,13 @@ def correct_label_map(brain, seg):
     discrepancy0 = (1 + brain0 * 3) / (1 + seg0)
     discrepancy0 = median_filter(discrepancy0, size=3)
 
-    # 1. For WM: If intensity is low for a high label, reduce the label value
+    # For WM: If intensity is low for a high label, reduce the label value
     wm_mask = (seg0 > 2.5) & (discrepancy0 < 1)
     # consistent with original (*discrepancy*discrepancy)
     seg0[wm_mask] *= discrepancy0[wm_mask] ** 2
 
     # For voxels labeled CSF but intensity is high, scale down brain intensity
-    csf_mask = (seg0 < 1.5) & (discrepancy0 > 1)
+    csf_mask = (seg0 < 1.5) & (discrepancy0 > 1) & (brain0 > 1.5 / 3 )
     brain0[csf_mask] /= discrepancy0[csf_mask] ** 2
 
     # For voxels labeled GM but intensity is slightly below or above threshold,
