@@ -745,16 +745,20 @@ process()
   # "--multi" is defined
   if [[ "$multi" -ne 0 && "$multi" -gt -2 ]]; then
 
-    # Filter arguments before recursion
+    # Filter arguments before recursion and include debugging flag if needed
     filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
+    if [[ "${debug}" -eq 1 ]]; then
+      filtered_args+=("--debug")
+    fi
 
     # Call parallelize with filtered arguments and use memory limit of 24GB per process
     echo "${BOLD}Volume Segmentation${NC}"
+    seg_cmd=("$0" "${filtered_args[@]}" --no-surf --hemisphere --multi -2)
     cmd=(
       "$(dirname "$0")/parallelize"
       -l "/tmp"
       -m "${min_memory}"
-      -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-surf --hemisphere --multi -2)"
+      -c "$(printf '%q ' "${seg_cmd[@]}")"
       "${ARRAY[@]}"
     )
     
@@ -769,12 +773,13 @@ process()
     if [ "$multi" -gt 0 ]; then
       arg_parallelize="-p ${multi}"
     fi
+    surf_cmd=("$0" "${filtered_args[@]}" --no-seg --multi -2)
     cmd=(
       "$(dirname "$0")/parallelize"
       -l "/tmp"
       -p 0.5
       "${arg_parallelize}"
-      -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-seg --multi -2)"
+      -c "$(printf '%q ' "${surf_cmd[@]}")"
       "${ARRAY[@]}"
     )
     
