@@ -629,10 +629,12 @@ surface_estimation()
     fi
 
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
-    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1_volume}  && "${save_pial_white}" -eq 1 ]]; then
+    if [[ "${debug}" -eq 1 && -f ${outmridir}/${mT1_volume}]]; then
       ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Mid_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Mid}
-      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Pial_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Pial}
-      ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${WM_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_WM}
+      if [ "${save_pial_white}" -eq 1 ]; then
+        ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${Pial_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_Pial}
+        ${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${outsurfdir}/${WM_surface} ${outmridir}/${mT1_volume} ${outsurfdir}/${Intensity_WM}
+      fi
     fi
   
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
@@ -745,20 +747,16 @@ process()
   # "--multi" is defined
   if [[ "$multi" -ne 0 && "$multi" -gt -2 ]]; then
 
-    # Filter arguments before recursion and include debugging flag if needed
+    # Filter arguments before recursion
     filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
-    if [[ "${debug}" -eq 1 ]]; then
-      filtered_args+=("--debug")
-    fi
 
     # Call parallelize with filtered arguments and use memory limit of 24GB per process
     echo "${BOLD}Volume Segmentation${NC}"
-    seg_cmd=("$0" "${filtered_args[@]}" --no-surf --hemisphere --multi -2)
     cmd=(
       "$(dirname "$0")/parallelize"
       -l "/tmp"
       -m "${min_memory}"
-      -c "$(printf '%q ' "${seg_cmd[@]}")"
+      -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-surf --hemisphere --multi -2)"
       "${ARRAY[@]}"
     )
     
@@ -773,13 +771,12 @@ process()
     if [ "$multi" -gt 0 ]; then
       arg_parallelize="-p ${multi}"
     fi
-    surf_cmd=("$0" "${filtered_args[@]}" --no-seg --multi -2)
     cmd=(
       "$(dirname "$0")/parallelize"
       -l "/tmp"
       -p 0.5
       "${arg_parallelize}"
-      -c "$(printf '%q ' "${surf_cmd[@]}")"
+      -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-seg --multi -2)"
       "${ARRAY[@]}"
     )
     
