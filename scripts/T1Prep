@@ -654,13 +654,16 @@ surface_estimation()
     if [ "${debug}" -eq 0 ]; then
       rm ${outmridir}/${GMT_volume} ${outmridir}/${PPM_volume}
     fi
-    
+
+    return 0
+
   else
-    if [ "${estimate_seg}" -eq 0 ]; then    
+    if [ "${estimate_seg}" -eq 0 ]; then
       echo "${RED}ERROR: Could not find ${outmridir}/${Hemi_volume}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
     else
       echo "${RED}ERROR: ${python} ${src_dir}/segment.py failed.${NC}" >&2
     fi
+    return 1
   fi
 }
 
@@ -937,8 +940,21 @@ process()
       cmd+=" --bias-fwhm \"${bias_fwhm}\" --vessel \"${vessel}\""
       cmd+=" --input \"${input}\" --outdir \"${outmridir}\""
       
-      # Execute the command and print errors
-      [ "${estimate_seg}" -eq 1 ] && eval "${cmd}"
+      # Execute the command and capture exit code
+      if [ "${estimate_seg}" -eq 1 ]; then
+        eval "${cmd}"
+        seg_status=$?
+      else
+        seg_status=0
+      fi
+
+      if [ "$seg_status" -ne 0 ]; then
+        if [[ "$multi" -ne -2 ]]; then
+          progress_bar $end_count $end_count "Segmentation failed" "" 1
+        fi
+        ((i++))
+        continue
+      fi
   
     else
       echo "${RED}ERROR: ${input} could not be found.${NC}" >&2
@@ -954,12 +970,22 @@ process()
       # allow parallelization
       # ----------------------------------------------------------------------
       # check for outputs from previous step
+      pids=()
       for side in left right; do
         surface_estimation $bname $side $outmridir $outsurfdir $estimate_spherereg $multi $nii_ext &
+        pids+=("$!")
       done
-      
-      # use wait to check finishing the background processes
-      wait
+
+      surf_status=0
+      for pid in "${pids[@]}"; do
+        wait "$pid" || surf_status=1
+      done
+
+      if [ "$surf_status" -ne 0 ]; then
+        if [[ "$multi" -ne -2 ]]; then
+          progress_bar $end_count $end_count "Surface estimation failed" "" 1
+        fi
+      fi
       
     fi # save_surf
 
