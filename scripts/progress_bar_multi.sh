@@ -42,7 +42,8 @@ main ()
   if [ -z "$color" ]; then color=2; fi
   if [ -z "$width" ]; then width=40; fi
 
-  COLOR=$(tput setaf $color)
+  DEFAULT_COLOR=$(tput setaf $color)
+  FAIL_COLOR=$(tput setaf 1)
   
   # Print empty lines for each job
   for ((i=0; i<n_jobs; i++)); do
@@ -65,7 +66,17 @@ main ()
         bar+=$(printf "%${unfilled}s")
         jobnumber=$((i+1))
         printf -v jobstr "%2d" "$jobnumber"
-        echo -ne "Job ${jobstr}: [${COLOR}${bar}${NC}] (${percent}%)\n"
+
+        status_file="$PROGRESS_DIR/job${i}.status"
+        status=0
+        [[ -f "$status_file" ]] && status=$(cat "$status_file")
+        if [[ "$status" -ne 0 ]]; then
+          BAR_COLOR=$FAIL_COLOR
+        else
+          BAR_COLOR=$DEFAULT_COLOR
+        fi
+
+        echo -ne "Job ${jobstr}: [${BAR_COLOR}${bar}${NC}] (${percent}%)\n"
         [[ "$done_items" -lt "$total_items" ]] && all_done=false
       else
         echo -ne "Job $((i+1)): [waiting...]\n"
@@ -93,6 +104,7 @@ ${BOLD}OPTIONS:${NC}
   width   Width of progress bar (default $width).
   color   Color code (default $color).
           (0-black, 1-red, 2-green, 3-yellow, 4-blue, 5-pink, 6-cyan, 7-white)
+  Failed jobs are displayed in red regardless of the chosen color.
 
 ${BOLD}EXAMPLE:${NC}
   #! /bin/bash
