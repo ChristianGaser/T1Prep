@@ -321,10 +321,15 @@ do_parallelize ()
       # before the 1st process is finished.
       if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
         echo "$i/$SIZE_OF_ARRAY" > "$PROGRESS_DIR/job0.progress"
+        echo 0 > "$PROGRESS_DIR/job0.status"
       fi
 
       for file in "${ARRAY[@]}"; do
           eval "$COMMAND \"$file\""  # Use eval to handle complex commands
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo 1 > "$PROGRESS_DIR/job0.status"
+          fi
           ((i++))
           
           if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
@@ -392,6 +397,7 @@ do_parallelize ()
           total_k=\$(echo ${ARG_LIST[$i]} | wc -w)
           k_count=0
           echo \"\$k_count/\$total_k\" > \"$PROGRESS_DIR/job${i}.progress\"
+          echo 0 > \"$PROGRESS_DIR/job${i}.status\"
           for k in ${ARG_LIST[$i]}; do
             ((k_count++))
               
@@ -399,6 +405,10 @@ do_parallelize ()
             echo \"Processing \$k (\$k_count/\$total_k)\" >> \"$log\"
   
             $COMMAND \$k >> \"$log\" 2>&1
+            exit_code=$?
+            if [ \$exit_code -ne 0 ]; then
+              echo 1 > \"$PROGRESS_DIR/job${i}.status\"
+            fi
 
             # Update progress file (instead of printing progress)
             echo \"\$k_count/\$total_k\" > \"$PROGRESS_DIR/job${i}.progress\"
