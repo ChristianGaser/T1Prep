@@ -26,7 +26,7 @@ progress_bar()
   fi
   local current=$1 total=$2 label=$3 width=$4 color=$5
   if [ -z "$label" ]; then label="Progress"; fi
-  if [ -z "$color" ]; then color=0; fi
+  if [ -z "$color" ]; then color=2; fi
   if [ -z "$width" ]; then width=40; fi
   local percent=$(( current * 100 / total ))
   local filled=$(( width * current / total ))
