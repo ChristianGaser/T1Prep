@@ -539,7 +539,7 @@ def run_segment():
         # Call AMAP and write GM and label map
         cmd = (
             os.path.join(amapdir, "CAT_VolAmap")
-            + f" -use-bmap -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 "
+            + f" -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 "
             + "-h-ornlm 0.05 -write-seg 1 1 1 -label "
             + f"{out_dir}/{out_name}_seg_large.{ext}"
             + " "
