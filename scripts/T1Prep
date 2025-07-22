@@ -959,6 +959,7 @@ process()
         fi
         ((i++))
         ((errors++))
+        echo "Error in ${input}"
         continue
       fi
   
@@ -992,6 +993,8 @@ process()
         if [[ "$multi" -ne -2 ]]; then
           progress_bar $end_count $end_count "Surface estimation failed" "" 1
         fi
+        ((errors++))
+        echo "Error in ${bname}"
       fi
       
     fi # save_surf

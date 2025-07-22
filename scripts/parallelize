@@ -427,10 +427,12 @@ do_parallelize ()
       done
 
       errors=0
+      error_list=""
       for ((i=0; i<$NUM_JOBS; i++)); do
         status=$(cat "$PROGRESS_DIR/job${i}.status")
         if [[ "$status" -ne 0 ]]; then
-          errors=$(($status+1))
+          ((errors++))
+          error_list+="${ARG_LIST[$i]} "
         fi
       done
 
@@ -453,13 +455,13 @@ do_parallelize ()
 
       # Display the result depending on error status
       if [[ "$errors" -ne 0 ]]; then
-        overall+=" with errors"
+        overall+=" with $errors errors in $error_list"
         echo "${RED}-------------------------------------------------------"
         echo "${RED}${overall}.${NC}"
         exit 1
       else
         echo "${GREEN}-------------------------------------------------------"
-        echo "${GREEN}${overall}.${NC}"
+        echo "${GREEN}${overall}${NC}"
       fi
   fi
 }
