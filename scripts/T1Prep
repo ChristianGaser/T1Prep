@@ -737,7 +737,8 @@ get_output_folder()
 
 process()
 {
-
+  
+  errors=0
   SIZE_OF_ARRAY="${#ARRAY[@]}"
   if [[ "$SIZE_OF_ARRAY" -lt 2 && "$multi" -ne -2 ]]; then
     multi=0
@@ -750,7 +751,7 @@ process()
     # Filter arguments before recursion
     filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
 
-    # Call parallelize with filtered arguments and use memory limit of 24GB per process
+    # Call parallelize with filtered arguments and use memory limit per process
     echo "${BOLD}Volume Segmentation${NC}"
     cmd=(
       "$(dirname "$0")/parallelize"
@@ -763,8 +764,7 @@ process()
     # Execute the command using eval
     if [ "${estimate_seg}" -eq 1 ]; then
       eval "${cmd[@]}"
-status=$?
-echo "Exit status was: $status"
+      status=$?
     fi
 
     # Call parallelize with filtered arguments
@@ -785,9 +785,10 @@ echo "Exit status was: $status"
     # Execute the command using eval
     if [ "${save_surf}" -eq 1 ]; then
       eval "${cmd[@]}"
+      status=$?
     fi
     
-    exit 1
+    exit $status
   fi
 
   # Don't use colored text in parallelization (for clearer log-file)
@@ -854,7 +855,7 @@ echo "Exit status was: $status"
   
   # Exit if no files could be found for processing
   if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
-    exit 0
+    exit 1
   fi
 
   # set overall starting time
@@ -957,12 +958,14 @@ echo "Exit status was: $status"
           progress_bar $end_count $end_count "Segmentation failed" "" 1
         fi
         ((i++))
+        ((errors++))
         continue
       fi
   
     else
       echo "${RED}ERROR: ${input} could not be found.${NC}" >&2
       ((i++))
+      ((errors++))
       continue
     fi
     
@@ -1016,9 +1019,11 @@ echo "Exit status was: $status"
   if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
     end0=`date +%s`
     runtime=$((end0-start0))
-    runtime="T1Prep finished after: $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))sec"
+    runtime="T1Prep finished after $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))s"
     echo "${GREEN}${runtime}${NC}"  
   fi
+  
+  exit $errors
 
 }
 
