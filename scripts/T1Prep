@@ -139,11 +139,6 @@ parse_args()
         thickness_fwhm=$optarg
         shift
         ;;
-      --bias-fwhm)
-        exit_if_empty "$optname" "$optarg"
-        bias_fwhm=$optarg
-        shift
-        ;;
       --downsample)
         exit_if_empty "$optname" "$optarg"
         downsample=$optarg
@@ -942,7 +937,7 @@ process()
       [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
       
-      cmd+=" --bias-fwhm \"${bias_fwhm}\" --vessel \"${vessel}\""
+      cmd+=" --vessel \"${vessel}\""
       cmd+=" --input \"${input}\" --outdir \"${outmridir}\""
       
       # Execute the command and capture exit code
@@ -1005,10 +1000,10 @@ process()
     hours=$(($runtime / 3600))
     min=$((($runtime / 60) % 60))
     s=$(($runtime % 60))
-    overall="Finished after: "
+    overall="Finished after "
     if [ $hours -gt 0 ]; then overall+="${hours}hrs "; fi
     if [ $min -gt 0 ]; then overall+="${min}min "; fi
-    overall+="${s}sec"
+    overall+="${s}s"
 
     if [[ "$multi" -ne -2 ]]; then
       echo "${GREEN}-------------------------------------------------------${NC}"
@@ -1102,7 +1097,6 @@ ${BOLD}OPTIONS:${NC}
   --no-correct-folding        Do not correct for cortical thickness by folding effects.
   --pre-fwhm <NUMBER>         Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
   --post-fwhm <NUMBER>        Set the post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
-  --bias-fwhm <NUMBER>        Set the FWHM size for bias-correction in CAT_VolAmap (default: $bias_fwhm).
   --thickness-fwhm <NUMBER>   Set the FWHM size for volumetric thickness smoothing in 
                               CAT_VolThicknessPbt (default: $thickness_fwhm).
   --sharpening <NUMBER>       Set the sharpening amount applied to the PPM map by enhancing differences
