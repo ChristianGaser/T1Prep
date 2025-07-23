@@ -320,7 +320,7 @@ def run_amap_segmentation(
     # Call AMAP and write tissue and label maps
     cmd = (
         os.path.join(amapdir, "CAT_VolAmap")
-        + f" -use-bmap -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 "
+        + f" -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 "
         + "-h-ornlm 0.05 -write-seg 1 1 1 -label "
         + f"{out_dir}/{out_name}_seg_large.{ext}"
         + " "
@@ -494,7 +494,7 @@ def save_results(
     p1_large: nib.Nifti1Image,
     p2_large: nib.Nifti1Image,
     p3_large: nib.Nifti1Image,
-    wm_lesions_large: np.ndarray | None,
+    wm_lesions_large,
     mask: nib.Nifti1Image,
     brain_large: nib.Nifti1Image,
     grid_native,
@@ -514,17 +514,31 @@ def save_results(
     out_dir: str,
     out_name: str,
     ext: str,
-    code_vars: dict,
-    code_vars_affine: dict,
-    code_vars_warped: dict,
-    code_vars_warped_modulated: dict,
-    code_vars_left: dict,
-    code_vars_right: dict,
+    use_bids: bool,
     device,
     affine_resamp,
     header_resamp,
 ) -> None:
     """Save segmentation and atlas results to disk."""
+
+    # Get filenames for different spaces and sides w.r.t. BIDS flag
+    code_vars = get_filenames(use_bids, out_name, "", "", "", ext)
+    space_affine = code_vars.get("Affine_space", "")
+    space_warp = code_vars.get("Warp_space", "")
+    space_warp_modulated = code_vars.get("Warp_modulated_space", "")
+
+    if use_bids:
+        code_vars_affine = get_filenames(use_bids, out_name, "", "", space_affine, ext)
+    else:
+        code_vars_affine = get_filenames(
+            use_bids, out_name, "", "_affine", space_affine, ext
+        )
+    code_vars_warped_modulated = get_filenames(
+        use_bids, out_name, "", "", space_warp_modulated, ext
+    )
+    code_vars_warped = get_filenames(use_bids, out_name, "", "", space_warp, ext)
+    code_vars_left = get_filenames(use_bids, out_name, "left", "", "", ext)
+    code_vars_right = get_filenames(use_bids, out_name, "right", "", "", ext)
 
     if save_hemilabel or save_mwp or save_wp or save_rp:
         p1_affine = F.interpolate(
@@ -686,8 +700,6 @@ def save_results(
                 True,
             )
 
-    final_cleanup(out_dir, out_name, ext, use_amap, save_lesions, debug)
-
 
 def run_segment():
     """Run the full segmentation workflow."""
@@ -801,25 +813,6 @@ def run_segment():
     )
 
     warp_template = nib.load(f"{DATA_PATH}/templates/Template_4_GS.nii.gz")
-
-    # Get filenames for different spaces and sides w.r.t. BIDS flag
-    code_vars = get_filenames(use_bids, out_name, "", "", "", ext)
-    space_affine = code_vars.get("Affine_space", "")
-    space_warp = code_vars.get("Warp_space", "")
-    space_warp_modulated = code_vars.get("Warp_modulated_space", "")
-
-    if use_bids:
-        code_vars_affine = get_filenames(use_bids, out_name, "", "", space_affine, ext)
-    else:
-        code_vars_affine = get_filenames(
-            use_bids, out_name, "", "_affine", space_affine, ext
-        )
-    code_vars_warped_modulated = get_filenames(
-        use_bids, out_name, "", "", space_warp_modulated, ext
-    )
-    code_vars_warped = get_filenames(use_bids, out_name, "", "", space_warp, ext)
-    code_vars_left = get_filenames(use_bids, out_name, "left", "", "", ext)
-    code_vars_right = get_filenames(use_bids, out_name, "right", "", "", ext)
 
     # Correct bias using label from deepmriprep
     brain_large = correct_bias_field(brain_large, p0_large)
@@ -958,16 +951,13 @@ def run_segment():
         out_dir,
         out_name,
         ext,
-        code_vars,
-        code_vars_affine,
-        code_vars_warped,
-        code_vars_warped_modulated,
-        code_vars_left,
-        code_vars_right,
+        use_bids,
         device,
         affine_resamp,
         header_resamp,
     )
+
+    final_cleanup(out_dir, out_name, ext, use_amap, save_lesions, debug)
 
 
 if __name__ == "__main__":
