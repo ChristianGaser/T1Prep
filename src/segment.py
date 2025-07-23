@@ -188,12 +188,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--amap", action="store_true", help="(optional) Use AMAP segmentation."
     )
-    parser.add_argument(
-        "--bias-fwhm",
-        type=float,
-        default=0,
-        help="(optional)FWHM value for the bias correction in AMAP.",
-    )
     parser.add_argument("--amapdir", help="Amap binary folder", type=str)
     parser.add_argument("--verbose", action="store_true", help="(optional) Be verbose.")
     parser.add_argument(
@@ -294,7 +288,6 @@ def affine_register(
 
 def run_amap_segmentation(
     amapdir: str,
-    bias_fwhm: float,
     p0_large: nib.Nifti1Image,
     brain_large: nib.Nifti1Image,
     out_dir: str,
@@ -308,13 +301,13 @@ def run_amap_segmentation(
     if verbose:
         print("Running AMAP segmentation")
 
-    p0_large_orig = p0_large
     p0_large, brain_large = correct_label_map(brain_large, p0_large)
     brain_large = apply_LAS(brain_large, p0_large)
 
     nib.save(brain_large, f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
     nib.save(p0_large, f"{out_dir}/{out_name}_seg_large.{ext}")
 
+    # Call SANLM filter and rename output to original name
     cmd = (
         os.path.join(amapdir, "CAT_VolSanlm")
         + " "
@@ -324,9 +317,10 @@ def run_amap_segmentation(
     )
     os.system(cmd)
 
+    # Call AMAP and write tissue and label maps
     cmd = (
         os.path.join(amapdir, "CAT_VolAmap")
-        + f" -use-bmap -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 "
+        + f" -use-bmap -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 "
         + "-h-ornlm 0.05 -write-seg 1 1 1 -label "
         + f"{out_dir}/{out_name}_seg_large.{ext}"
         + " "
@@ -335,24 +329,7 @@ def run_amap_segmentation(
     if verbose and debug:
         cmd += " -verbose"
     os.system(cmd)
-    return p0_large_orig
-
-
-def run_deepmriprep_segmentation(
-    prep: CustomPreprocess,
-    p0_large: nib.Nifti1Image,
-    affine,
-    t1: nib.Nifti1Image,
-    verbose: bool,
-    count: int,
-    end_count: int,
-):
-    """Run DeepMRIprep refinement of the segmentation."""
-
-    if verbose:
-        count = progress_bar(count, end_count, "Fine DeepMriPrep segmentation         ")
-    output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
-    return output_nogm, count
+    return brain_large, p0_large
 
 
 def final_cleanup(
@@ -389,7 +366,6 @@ def run_segment():
     use_amap = args.amap
     use_bids = args.bids
     vessel = args.vessel
-    bias_fwhm = args.bias_fwhm
     verbose = args.verbose
     debug = args.debug
 
@@ -520,34 +496,10 @@ def run_segment():
             count = progress_bar(count, end_count, "Amap segmentation        ")
 
         p0_large_orig = p0_large
-        p0_large, brain_large = correct_label_map(brain_large, p0_large)
-        brain_large = apply_LAS(brain_large, p0_large)
-
-        nib.save(brain_large, f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
-        nib.save(p0_large, f"{out_dir}/{out_name}_seg_large.{ext}")
-
-        # Call SANLM filter and rename output to original name
-        cmd = (
-            os.path.join(amapdir, "CAT_VolSanlm")
-            + " "
-            + f"{out_dir}/{out_name}_brain_large_tmp.{ext}"
-            + " "
-            + f"{out_dir}/{out_name}_brain_large.{ext}"
+        brain_large, p0_large = run_amap_segmentation(
+            amapdir, p0_large, brain_large, out_dir, out_name, ext, verbose, debug,
         )
-        os.system(cmd)
-
-        # Call AMAP and write GM and label map
-        cmd = (
-            os.path.join(amapdir, "CAT_VolAmap")
-            + f" -nowrite-corr -bias-fwhm {bias_fwhm} -cleanup 1 -mrf 0 "
-            + "-h-ornlm 0.05 -write-seg 1 1 1 -label "
-            + f"{out_dir}/{out_name}_seg_large.{ext}"
-            + " "
-            + f"{out_dir}/{out_name}_brain_large.{ext}"
-        )
-        if verbose and debug:
-            cmd += " -verbose"
-        os.system(cmd)
+    
     else:
         if debug:
             nib.save(brain_large, f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
@@ -559,7 +511,7 @@ def run_segment():
         p2_large = nib.load(f"{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
         p3_large = nib.load(f"{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
     else:
-        # Call deepmriprep refinement of deepmriprep label
+        # Call deepmriprep refinement of deepmriprep label        
         if verbose:
             count = progress_bar(
                 count, end_count, "Fine DeepMriPrep segmentation         "
@@ -676,23 +628,6 @@ def run_segment():
             csf_discrep_large = median_filter(csf_discrep_large, size=3)
             ind_csf_discrep = csf_discrep_large < 0
 
-            if True:
-                csf = binary_closing(csf, generate_binary_structure(3, 3), 2)
-                nib.save(
-                    nib.Nifti1Image(
-                        csf_discrep_large, p0_large.affine, p0_large.header
-                    ),
-                    f"{out_dir}/csf_discrep.{ext}",
-                )
-                nib.save(
-                    nib.Nifti1Image(csf, p0_large.affine, p0_large.header),
-                    f"{out_dir}/csf.{ext}",
-                )
-                nib.save(
-                    nib.Nifti1Image(ind_csf_discrep, p0_large.affine, p0_large.header),
-                    f"{out_dir}/csf_ind.{ext}",
-                )
-
             tmp_p3 = p3_large_uncorr.get_fdata().copy()
             tmp_p3[ind_csf_discrep] += csf_discrep_large[ind_csf_discrep]
             np.clip(tmp_p3, 0, 1)
@@ -714,11 +649,6 @@ def run_segment():
             p2_large = nib.Nifti1Image(
                 tmp_p2, affine_resamp_reordered, header_resamp_reordered
             )
-
-    # else:
-    #    p1_large = output_nogm['p1_large']
-    #    p2_large = output_nogm['p2_large']
-    #    p3_large = output_nogm['p3_large']
 
     wj_affine = (
         np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
