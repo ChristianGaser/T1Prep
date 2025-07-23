@@ -347,7 +347,7 @@ do_parallelize ()
       overall="Finished after: "
       if [ $hours -gt 0 ]; then overall+="${hours}hrs "; fi
       if [ $min -gt 0 ]; then overall+="${min}min "; fi
-      overall+="${s}sec"
+      overall+="${s}s"
       
       # wait until progress bar is finished
       wait $progress_pid
@@ -455,9 +455,9 @@ do_parallelize ()
 
       # Display the result depending on error status
       if [[ "$errors" -ne 0 ]]; then
-        overall+=" with $errors errors in $error_list"
+        overall+=" with $errors failed jobs for $error_list"
         echo "${RED}-------------------------------------------------------"
-        echo "${RED}${overall}.${NC}"
+        echo "${RED}${overall}${NC}"
         exit 1
       else
         echo "${GREEN}-------------------------------------------------------"
