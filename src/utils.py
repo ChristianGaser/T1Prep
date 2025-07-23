@@ -829,15 +829,15 @@ def correct_label_map(brain, seg):
     brain0 = brain.get_fdata().copy()
     seg0 = seg.get_fdata().copy()
 
-    # Compute a local discrepancy map between intensity and label value
+    # Compute a local discrepancy map between normalized intensity and label value
     discrepancy0 = (1 + brain0 * 3) / (1 + seg0)
     discrepancy0 = median_filter(discrepancy0, size=3)
 
-    # For WM: If intensity is low for a high label, reduce the label value
+    # For WM: If intensity is low for a high label, this probably points to WMHs
     wm_mask = (seg0 > 2.5) & (discrepancy0 < 1)
-    # consistent with original (*discrepancy*discrepancy)
+    # Reduce the label value to GM
     seg0[wm_mask] *= discrepancy0[wm_mask] ** 2
-
+    
     # For voxels labeled CSF but intensity is high, scale down brain intensity
     csf_mask = (seg0 < 1.5) & (discrepancy0 > 1) & (brain0 > 1.5 / 3 )
     brain0[csf_mask] /= discrepancy0[csf_mask] ** 2
@@ -1139,9 +1139,10 @@ def get_partition(p0_large, atlas):
     ]
     regions = dict(zip(rois.ROIabbr, rois.ROIid))
 
+    bin_struct3 = generate_binary_structure(3, 3)
     atlas_data = atlas.get_fdata().copy()
     atlas_mask = atlas_data > 0
-    atlas_mask = binary_dilation(atlas_mask, generate_binary_structure(3, 3), 3)
+    atlas_mask = binary_dilation(atlas_mask, bin_struct3, 3)
 
     p0_data = p0_large.get_fdata().copy()
     gm = (p0_data > 1.5) & (p0_data < 2.5)
@@ -1149,7 +1150,7 @@ def get_partition(p0_large, atlas):
 
     # Create cerebral GM mask
     gm_mask = np.isin(atlas_data, [regions[r] for r in gm_regions])
-    gm_mask = binary_dilation(gm_mask, generate_binary_structure(3, 3), 2)
+    gm_mask = binary_dilation(gm_mask, bin_struct3, 2)
     gm = gm & gm_mask
 
     # Define left and right hemisphere regions
@@ -1175,25 +1176,27 @@ def get_partition(p0_large, atlas):
     left = np.isin(atlas_data, [regions[r] for r in left_regions])
     right = np.isin(atlas_data, [regions[r] for r in right_regions])
 
+    bin_struct3 = generate_binary_structure(3, 3)
+
     # Clean left hemisphere by opening and closing
-    left = binary_opening(left, generate_binary_structure(3, 3), 3)
-    left = binary_closing(left, generate_binary_structure(3, 3), 3)
+    left = binary_opening(left, bin_struct3, 3)
+    left = binary_closing(left, bin_struct3, 3)
 
     # Process hemispheres: dilation and closing to refine boundaries
-    lh = binary_dilation(left, generate_binary_structure(3, 3), 5) & ~right
-    rh = binary_dilation(right, generate_binary_structure(3, 3), 5) & ~left
+    lh = binary_dilation(left, bin_struct3, 5) & ~right
+    rh = binary_dilation(right, bin_struct3, 5) & ~left
 
-    left = binary_closing(lh, generate_binary_structure(3, 3), 2) & ~rh
-    right = binary_closing(rh, generate_binary_structure(3, 3), 2) & ~left
+    left = binary_closing(lh, bin_struct3, 2) & ~rh
+    right = binary_closing(rh, bin_struct3, 2) & ~left
 
     # Define regions to exclude
     excl_regions = ["lCbeWM", "lCbeGM", "rCbeWM", "rCbeGM", "b3thVen", "b4thVen"]
 
     # Create masks
     exclude = np.isin(atlas_data, [regions[r] for r in excl_regions])
-    exclude = binary_dilation(exclude, generate_binary_structure(3, 3), 1)
+    exclude = binary_dilation(exclude, bin_struct3, 1)
     exclude = exclude | binary_dilation(
-        np.isin(atlas_data, regions["bBst"]), generate_binary_structure(3, 3), 5
+        np.isin(atlas_data, regions["bBst"]), bin_struct3, 5
     )
     exclude = exclude | ~atlas_mask
 
@@ -1216,7 +1219,7 @@ def get_partition(p0_large, atlas):
     ]
 
     wm_fill = np.isin(atlas_data, [regions[r] for r in wm_regions])
-    wm_fill = binary_dilation(wm_fill, generate_binary_structure(3, 3), 10)
+    wm_fill = binary_dilation(wm_fill, bin_struct3, 10)
 
     # build hemispheric label with CSF=1, GM=2, and WM=3
     # adding 0 is neccessary to create a new variable otherwise amap is also modified
@@ -1232,10 +1235,10 @@ def get_partition(p0_large, atlas):
 
     # Finally remove small non-connected parts from hemi maps
     mask = (lh > 1) | (rh > 1)
-    mask = binary_closing(mask, generate_binary_structure(3, 3), 1)
-    mask = binary_opening(mask, generate_binary_structure(3, 3), 3)
+    mask = binary_closing(mask, bin_struct3, 1)
+    mask = binary_opening(mask, bin_struct3, 3)
     mask = find_largest_cluster(mask)
-    mask = binary_dilation(mask, generate_binary_structure(3, 3), 1)
+    mask = binary_dilation(mask, bin_struct3, 1)
     lh[~mask] = 1
     rh[~mask] = 1
 
