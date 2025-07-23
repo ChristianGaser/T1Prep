@@ -352,6 +352,343 @@ def final_cleanup(
         remove_file(f"{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
 
 
+def handle_lesions(
+    t1: nib.Nifti1Image,
+    affine,
+    p0_large: nib.Nifti1Image,
+    p0_large_orig: nib.Nifti1Image,
+    p1_large: nib.Nifti1Image,
+    p2_large: nib.Nifti1Image,
+    p3_large: nib.Nifti1Image,
+    affine_resamp_reordered,
+    header_resamp_reordered,
+    out_dir: str,
+    out_name: str,
+    ext: str,
+    use_amap: bool,
+    debug: bool,
+    device: torch.device,
+) -> tuple[
+    nib.Nifti1Image,
+    nib.Nifti1Image,
+    nib.Nifti1Image,
+    np.ndarray,
+    np.ndarray,
+]:
+    """Detect lesions and correct tissue probability maps."""
+
+    if debug:
+        p0_large_diff = (
+            p3_large.get_fdata().copy()
+            + 2 * p1_large.get_fdata().copy()
+            + 3 * p2_large.get_fdata().copy()
+            - p0_large_orig.get_fdata().copy()
+        )
+        p0_large_diff = median_filter(p0_large_diff, size=3)
+        p0_large_diff = nib.Nifti1Image(p0_large_diff, p0_large.affine, p0_large.header)
+        nib.save(
+            p0_large_diff,
+            f"{out_dir}/{out_name}_brain_large_label-discrepancy.{ext}",
+        )
+
+    p0_value = p0_large_orig.get_fdata().copy()
+    wm = p0_value >= 2.5
+    wm = binary_closing(wm, generate_binary_structure(3, 3), 3)
+    wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
+    gm = (p0_value >= 1.5) & (p0_value < 2.5)
+    csf = (p0_value < 1.5) & (p0_value > 0)
+
+    if use_amap:
+        p1_large_uncorr = p1_large
+        p2_large_uncorr = p2_large
+        p3_large_uncorr = p3_large
+
+        p0_value = p0_large_orig.get_fdata().copy()
+        p0_value[csf | wm] = 1.5
+        p0_value -= 1.5
+        p1_large = nib.Nifti1Image(
+            p0_value, affine_resamp_reordered, header_resamp_reordered
+        )
+
+        p0_value = p0_large_orig.get_fdata().copy()
+        p0_value[~csf] = 0
+        p3_large = nib.Nifti1Image(
+            p0_value, affine_resamp_reordered, header_resamp_reordered
+        )
+    else:
+        p1_large_uncorr = nib.load(
+            f"{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}"
+        )
+        p2_large_uncorr = nib.load(
+            f"{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}"
+        )
+        p3_large_uncorr = nib.load(
+            f"{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}"
+        )
+
+    wm_lesions_large = p1_large_uncorr.get_fdata().copy() - p1_large.get_fdata().copy()
+    wm_lesions_large = median_filter(wm_lesions_large, size=3)
+
+    deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
+    gm_border = binary_dilation(gm, generate_binary_structure(3, 3), 2)
+
+    atlas = get_atlas(
+        t1,
+        affine,
+        p0_large.header,
+        p0_large.affine,
+        "cat_wmh_miccai2017",
+        None,
+        device,
+    )
+    wmh_tpm = atlas.get_fdata().copy()
+    wmh_tpm /= np.max(wmh_tpm)
+
+    ind_wm_lesions = ((wm_lesions_large * wmh_tpm) > 0.025) & deep_wm & (~gm_border)
+
+    label_map, _ = label_image(ind_wm_lesions)
+    sizes = np.bincount(label_map.ravel())
+    min_lesion_size = 500
+    remove = np.isin(label_map, np.where(sizes < min_lesion_size)[0])
+    ind_wm_lesions[remove] = 0
+
+    wm_lesions_large[~ind_wm_lesions] = 0
+
+    if use_amap:
+        csf_discrep_large = (
+            p3_large_uncorr.get_fdata().copy() - p3_large.get_fdata().copy()
+        )
+        csf_discrep_large = median_filter(csf_discrep_large, size=3)
+        ind_csf_discrep = csf_discrep_large < 0
+
+        tmp_p3 = p3_large_uncorr.get_fdata().copy()
+        tmp_p3[ind_csf_discrep] += csf_discrep_large[ind_csf_discrep]
+        np.clip(tmp_p3, 0, 1)
+        p3_large = nib.Nifti1Image(
+            tmp_p3, affine_resamp_reordered, header_resamp_reordered
+        )
+
+        tmp_p1 = p1_large_uncorr.get_fdata().copy()
+        tmp_p1[ind_wm_lesions] -= wm_lesions_large[ind_wm_lesions]
+        tmp_p1[ind_csf_discrep] -= csf_discrep_large[ind_csf_discrep]
+        np.clip(tmp_p1, 0, 1)
+        p1_large = nib.Nifti1Image(
+            tmp_p1, affine_resamp_reordered, header_resamp_reordered
+        )
+
+        tmp_p2 = p2_large_uncorr.get_fdata().copy()
+        tmp_p2[ind_wm_lesions] += wm_lesions_large[ind_wm_lesions]
+        np.clip(tmp_p2, 0, 1)
+        p2_large = nib.Nifti1Image(
+            tmp_p2, affine_resamp_reordered, header_resamp_reordered
+        )
+
+    return p1_large, p2_large, p3_large, wm_lesions_large, ind_wm_lesions
+
+
+def save_results(
+    prep: CustomPreprocess,
+    t1: nib.Nifti1Image,
+    affine,
+    p0_large: nib.Nifti1Image,
+    p1_large: nib.Nifti1Image,
+    p2_large: nib.Nifti1Image,
+    p3_large: nib.Nifti1Image,
+    wm_lesions_large: np.ndarray | None,
+    mask: nib.Nifti1Image,
+    brain_large: nib.Nifti1Image,
+    grid_native,
+    grid_target_res,
+    warp_template: nib.Nifti1Image,
+    wj_affine: pd.Series,
+    save_p: bool,
+    save_rp: bool,
+    save_wp: bool,
+    save_mwp: bool,
+    save_hemilabel: bool,
+    save_lesions: bool,
+    save_csf: bool,
+    verbose: bool,
+    count: int,
+    end_count: int,
+    out_dir: str,
+    out_name: str,
+    ext: str,
+    code_vars: dict,
+    code_vars_affine: dict,
+    code_vars_warped: dict,
+    code_vars_warped_modulated: dict,
+    code_vars_left: dict,
+    code_vars_right: dict,
+    device,
+    affine_resamp,
+    header_resamp,
+) -> None:
+    """Save segmentation and atlas results to disk."""
+
+    if save_hemilabel or save_mwp or save_wp or save_rp:
+        p1_affine = F.interpolate(
+            nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
+        )[0, 0]
+        p1_affine = reoriented_nifti(
+            p1_affine, warp_template.affine, warp_template.header
+        )
+        p2_affine = F.interpolate(
+            nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
+        )[0, 0]
+        p2_affine = reoriented_nifti(
+            p2_affine, warp_template.affine, warp_template.header
+        )
+        if save_csf and save_rp:
+            p3_affine = F.interpolate(
+                nifti_to_tensor(p3_large)[None, None],
+                scale_factor=1 / 3,
+                **INTERP_KWARGS,
+            )[0, 0]
+            p3_affine = reoriented_nifti(
+                p3_affine, warp_template.affine, warp_template.header
+            )
+    else:
+        p1_affine = p2_affine = p3_affine = None
+
+    if save_rp:
+        gm_name = code_vars_affine.get("GM_volume", "")
+        wm_name = code_vars_affine.get("WM_volume", "")
+        nib.save(p1_affine, f"{out_dir}/{gm_name}")
+        nib.save(p2_affine, f"{out_dir}/{wm_name}")
+        if save_csf:
+            csf_name = code_vars_affine.get("CSF_volume", "")
+            nib.save(p3_affine, f"{out_dir}/{csf_name}")
+
+    label_name = code_vars.get("Label_volume", "")
+    mT1_name = code_vars.get("mT1_volume", "")
+    resample_and_save_nifti(
+        p0_large,
+        grid_native,
+        mask.affine,
+        mask.header,
+        f"{out_dir}/{label_name}",
+        clip=[0, 4],
+    )
+    resample_and_save_nifti(
+        brain_large, grid_native, mask.affine, mask.header, f"{out_dir}/{mT1_name}"
+    )
+
+    if save_p:
+        gm_name = code_vars.get("GM_volume", "")
+        wm_name = code_vars.get("WM_volume", "")
+        resample_and_save_nifti(
+            p1_large,
+            grid_native,
+            mask.affine,
+            mask.header,
+            f"{out_dir}/{gm_name}",
+            clip=[0, 1],
+        )
+        resample_and_save_nifti(
+            p2_large,
+            grid_native,
+            mask.affine,
+            mask.header,
+            f"{out_dir}/{wm_name}",
+            clip=[0, 1],
+        )
+        if save_csf:
+            csf_name = code_vars.get("CSF_volume", "")
+            resample_and_save_nifti(
+                p3_large,
+                grid_native,
+                mask.affine,
+                mask.header,
+                f"{out_dir}/{csf_name}",
+                clip=[0, 1],
+            )
+
+    if save_lesions and wm_lesions_large is not None:
+        wm_lesions_large = nib.Nifti1Image(
+            wm_lesions_large, p0_large.affine, p0_large.header
+        )
+        wmh_name = code_vars.get("WMH_volume", "")
+        resample_and_save_nifti(
+            wm_lesions_large,
+            grid_native,
+            mask.affine,
+            mask.header,
+            f"{out_dir}/{wmh_name}",
+        )
+
+    if save_hemilabel or save_mwp or save_wp:
+        if verbose:
+            count = progress_bar(count, end_count, "Warping           ")
+        output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
+        warp_yx = output_reg["warp_yx"]
+        warp_xy = output_reg["warp_xy"]
+
+        if save_mwp:
+            gm_name = code_vars_warped_modulated.get("GM_volume", "")
+            wm_name = code_vars_warped_modulated.get("WM_volume", "")
+            mwp1 = output_reg["mwp1"]
+            mwp2 = output_reg["mwp2"]
+            nib.save(mwp1, f"{out_dir}/{gm_name}")
+            nib.save(mwp2, f"{out_dir}/{wm_name}")
+            if save_csf:
+                csf_name = code_vars_warped_modulated.get("CSF_volume", "")
+                mwp3 = output_reg["mwp3"]
+                nib.save(mwp3, f"{out_dir}/{csf_name}")
+
+        if save_wp:
+            gm_name = code_vars_warped.get("GM_volume", "")
+            wm_name = code_vars_warped.get("WM_volume", "")
+            wp1 = output_reg["wp1"]
+            wp2 = output_reg["wp2"]
+            nib.save(wp1, f"{out_dir}/{gm_name}")
+            nib.save(wp2, f"{out_dir}/{wm_name}")
+            if save_csf:
+                csf_name = code_vars_warped.get("CSF_volume", "")
+                wp3 = output_reg["wp3"]
+                nib.save(wp3, f"{out_dir}/{csf_name}")
+
+        def_name = code_vars.get("Def_volume", "")
+        nib.save(warp_xy, f"{out_dir}/{def_name}")
+        invdef_name = code_vars.get("invDef_volume", "")
+        # nib.save(warp_yx, f"{out_dir}/{invdef_name}")
+
+        if save_hemilabel:
+            if verbose:
+                count = progress_bar(count, end_count, "Atlas creation     ")
+            atlas = get_atlas(
+                t1, affine, p0_large.header, p0_large.affine, "ibsr", warp_yx, device
+            )
+            lh, rh = get_partition(p0_large, atlas)
+
+            if verbose:
+                count = progress_bar(count, end_count, "Resampling         ")
+
+            hemileft_name = code_vars_left.get("Hemi_volume", "")
+            hemiright_name = code_vars_right.get("Hemi_volume", "")
+
+            resample_and_save_nifti(
+                nib.Nifti1Image(lh, p0_large.affine, p0_large.header),
+                grid_target_res,
+                affine_resamp,
+                header_resamp,
+                f"{out_dir}/{hemileft_name}",
+                True,
+                True,
+            )
+            resample_and_save_nifti(
+                nib.Nifti1Image(rh, p0_large.affine, p0_large.header),
+                grid_target_res,
+                affine_resamp,
+                header_resamp,
+                f"{out_dir}/{hemiright_name}",
+                True,
+                True,
+            )
+
+    final_cleanup(out_dir, out_name, ext, use_amap, save_lesions, debug)
+
+
 def run_segment():
     """Run the full segmentation workflow."""
 
@@ -497,9 +834,16 @@ def run_segment():
 
         p0_large_orig = p0_large
         brain_large, p0_large = run_amap_segmentation(
-            amapdir, p0_large, brain_large, out_dir, out_name, ext, verbose, debug,
+            amapdir,
+            p0_large,
+            brain_large,
+            out_dir,
+            out_name,
+            ext,
+            verbose,
+            debug,
         )
-    
+
     else:
         if debug:
             nib.save(brain_large, f"{out_dir}/{out_name}_brain_large_tmp.{ext}")
@@ -511,7 +855,7 @@ def run_segment():
         p2_large = nib.load(f"{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
         p3_large = nib.load(f"{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
     else:
-        # Call deepmriprep refinement of deepmriprep label        
+        # Call deepmriprep refinement of deepmriprep label
         if verbose:
             count = progress_bar(
                 count, end_count, "Fine DeepMriPrep segmentation         "
@@ -527,128 +871,29 @@ def run_segment():
         tiv = output_nogm["tiv"]
 
     if use_amap or save_lesions:
-
-        if debug:
-            p0_large_diff = (
-                p3_large.get_fdata().copy()
-                + 2 * p1_large.get_fdata().copy()
-                + 3 * p2_large.get_fdata().copy()
-                - p0_large_orig.get_fdata().copy()
-            )
-            p0_large_diff = median_filter(p0_large_diff, size=3)
-            p0_large_diff = nib.Nifti1Image(
-                p0_large_diff, p0_large.affine, p0_large.header
-            )
-            nib.save(
-                p0_large_diff,
-                f"{out_dir}/{out_name}_brain_large_label-discrepancy.{ext}",
-            )
-
-        # Get original WM and CSF mask from deepmriprep label (without any lesions)
-        p0_value = p0_large_orig.get_fdata().copy()
-        wm = p0_value >= 2.5
-        wm = binary_closing(wm, generate_binary_structure(3, 3), 3)
-        wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
-        gm = (p0_value >= 1.5) & (p0_value < 2.5)
-        csf = (p0_value < 1.5) & (p0_value > 0)
-
-        # Get uncorrected GM/WM maps from Amap
-        if use_amap:
-            p1_large_uncorr = p1_large
-            p2_large_uncorr = p2_large
-            p3_large_uncorr = p3_large
-
-            # We have to extract the corrected GM from deepmriprep p0 map to identify lesions
-            p0_value = p0_large_orig.get_fdata().copy()
-            p0_value[csf | wm] = 1.5
-            p0_value -= 1.5
-            p1_large = nib.Nifti1Image(
-                p0_value, affine_resamp_reordered, header_resamp_reordered
-            )
-
-            p0_value = p0_large_orig.get_fdata().copy()
-            p0_value[~csf] = 0
-            p3_large = nib.Nifti1Image(
-                p0_value, affine_resamp_reordered, header_resamp_reordered
-            )
-
-        else:
-            p1_large_uncorr = nib.load(
-                f"{out_dir}/{out_name}_brain_large_label-GM_probseg.{ext}"
-            )
-            p2_large_uncorr = nib.load(
-                f"{out_dir}/{out_name}_brain_large_label-WM_probseg.{ext}"
-            )
-            p3_large_uncorr = nib.load(
-                f"{out_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}"
-            )
-
-        # Use difference between corrected and uncorrected GM after correction as lesion map and
-        # restrict it to WM areas
-        wm_lesions_large = (
-            p1_large_uncorr.get_fdata().copy() - p1_large.get_fdata().copy()
-        )
-        wm_lesions_large = median_filter(wm_lesions_large, size=3)
-
-        # Create deep WM mask
-        deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
-
-        # Exclude lesions near cortex (i.e. near GM)
-        gm_border = binary_dilation(gm, generate_binary_structure(3, 3), 2)
-
-        atlas = get_atlas(
+        (
+            p1_large,
+            p2_large,
+            p3_large,
+            wm_lesions_large,
+            ind_wm_lesions,
+        ) = handle_lesions(
             t1,
             affine,
-            p0_large.header,
-            p0_large.affine,
-            "cat_wmh_miccai2017",
-            None,
+            p0_large,
+            p0_large_orig,
+            p1_large,
+            p2_large,
+            p3_large,
+            affine_resamp_reordered,
+            header_resamp_reordered,
+            out_dir,
+            out_name,
+            ext,
+            use_amap,
+            debug,
             device,
         )
-        wmh_TPM = atlas.get_fdata().copy()
-        wmh_TPM /= np.max(wmh_TPM)
-
-        # Keep only lesions inside TPM for WMH and in deep WM, far from cortex
-        ind_wm_lesions = ((wm_lesions_large * wmh_TPM) > 0.025) & deep_wm & (~gm_border)
-
-        # Remove smaller clusters
-        label_map, n_labels = label_image(ind_wm_lesions)
-        sizes = np.bincount(label_map.ravel())
-        min_lesion_size = 500  # is resolution-dependent and should be changed for other resolutiuons than 0.5mm
-        remove = np.isin(label_map, np.where(sizes < min_lesion_size)[0])
-        ind_wm_lesions[remove] = 0
-
-        wm_lesions_large[~ind_wm_lesions] = 0
-
-        # Correct GM/WM segmentation + Label
-        if use_amap:
-            csf_discrep_large = (
-                p3_large_uncorr.get_fdata().copy() - p3_large.get_fdata().copy()
-            )
-            csf_discrep_large = median_filter(csf_discrep_large, size=3)
-            ind_csf_discrep = csf_discrep_large < 0
-
-            tmp_p3 = p3_large_uncorr.get_fdata().copy()
-            tmp_p3[ind_csf_discrep] += csf_discrep_large[ind_csf_discrep]
-            np.clip(tmp_p3, 0, 1)
-            p3_large = nib.Nifti1Image(
-                tmp_p3, affine_resamp_reordered, header_resamp_reordered
-            )
-
-            tmp_p1 = p1_large_uncorr.get_fdata().copy()
-            tmp_p1[ind_wm_lesions] -= wm_lesions_large[ind_wm_lesions]
-            tmp_p1[ind_csf_discrep] -= csf_discrep_large[ind_csf_discrep]
-            np.clip(tmp_p1, 0, 1)
-            p1_large = nib.Nifti1Image(
-                tmp_p1, affine_resamp_reordered, header_resamp_reordered
-            )
-
-            tmp_p2 = p2_large_uncorr.get_fdata().copy()
-            tmp_p2[ind_wm_lesions] += wm_lesions_large[ind_wm_lesions]
-            np.clip(tmp_p2, 0, 1)
-            p2_large = nib.Nifti1Image(
-                tmp_p2, affine_resamp_reordered, header_resamp_reordered
-            )
 
     wj_affine = (
         np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
@@ -685,218 +930,44 @@ def run_segment():
             p0_value, affine_resamp_reordered, header_resamp_reordered
         )
 
-    # Get affine segmentations
-    if save_hemilabel or save_mwp or save_wp or save_rp:
-        p1_affine = F.interpolate(
-            nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
-        )[0, 0]
-        p1_affine = reoriented_nifti(
-            p1_affine, warp_template.affine, warp_template.header
-        )
-        p2_affine = F.interpolate(
-            nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
-        )[0, 0]
-        p2_affine = reoriented_nifti(
-            p2_affine, warp_template.affine, warp_template.header
-        )
-        if save_csf and save_rp:
-            p3_affine = F.interpolate(
-                nifti_to_tensor(p3_large)[None, None],
-                scale_factor=1 / 3,
-                **INTERP_KWARGS,
-            )[0, 0]
-            p3_affine = reoriented_nifti(
-                p3_affine, warp_template.affine, warp_template.header
-            )
-
-    vol_t1 = 1e-3 * nifti_volume(t1)
-    vol_p0 = 1e-3 * nifti_volume(p0_large)
-
-    # print(vol_t1)
-    # print(vol_p0)
-
-    vol_abs_CGW = []
-    mean_CGW = []
-    for label in (1, 2, 3):
-        mask_label = p0_large.get_fdata().copy() == label
-        mean_CGW.append(brain_large.get_fdata().copy()[mask_label].mean())
-        vol_abs_CGW.append(brain_large.get_fdata().copy()[mask_label].mean())
-
-    # print(vol_abs_CGW)
-
-    # * p[None].mean((2, 3, 4)).cpu().numpy()
-    # abs_vol = pd.DataFrame(vol, columns=['gmv_cm3', 'wmv_cm3', 'csfv_cm3'])
-    # rel_vol = pd.DataFrame(vol / vol.sum(), columns=['gmv/tiv', 'wmv/tiv', 'csfv/tiv'])
-    # tiv = pd.Series([vol.sum()], name='tiv_cm3')
-
-    # Save affine registration
-    if save_rp:
-        gm_name = code_vars_affine.get("GM_volume", "")
-        wm_name = code_vars_affine.get("WM_volume", "")
-        nib.save(p1_affine, f"{out_dir}/{gm_name}")
-        nib.save(p2_affine, f"{out_dir}/{wm_name}")
-        if save_csf:
-            csf_name = code_vars_affine.get("CSF_volume", "")
-            nib.save(p3_affine, f"{out_dir}/{csf_name}")
-
-    # Save native registration
-    label_name = code_vars.get("Label_volume", "")
-    mT1_name = code_vars.get("mT1_volume", "")
-    resample_and_save_nifti(
+    save_results(
+        prep,
+        t1,
+        affine,
         p0_large,
+        p1_large,
+        p2_large,
+        p3_large,
+        wm_lesions_large,
+        mask,
+        brain_large,
         grid_native,
-        mask.affine,
-        mask.header,
-        f"{out_dir}/{label_name}",
-        clip=[0, 4],
+        grid_target_res,
+        warp_template,
+        wj_affine,
+        save_p,
+        save_rp,
+        save_wp,
+        save_mwp,
+        save_hemilabel,
+        save_lesions,
+        save_csf,
+        verbose,
+        count,
+        end_count,
+        out_dir,
+        out_name,
+        ext,
+        code_vars,
+        code_vars_affine,
+        code_vars_warped,
+        code_vars_warped_modulated,
+        code_vars_left,
+        code_vars_right,
+        device,
+        affine_resamp,
+        header_resamp,
     )
-    resample_and_save_nifti(
-        brain_large, grid_native, mask.affine, mask.header, f"{out_dir}/{mT1_name}"
-    )
-
-    if save_p:
-        gm_name = code_vars.get("GM_volume", "")
-        wm_name = code_vars.get("WM_volume", "")
-        resample_and_save_nifti(
-            p1_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{out_dir}/{gm_name}",
-            clip=[0, 1],
-        )
-        resample_and_save_nifti(
-            p2_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{out_dir}/{wm_name}",
-            clip=[0, 1],
-        )
-        if save_csf:
-            csf_name = code_vars.get("CSF_volume", "")
-            resample_and_save_nifti(
-                p3_large,
-                grid_native,
-                mask.affine,
-                mask.header,
-                f"{out_dir}/{csf_name}",
-                clip=[0, 1],
-            )
-
-    if save_lesions:
-        # Convert back to nifti
-        wm_lesions_large = nib.Nifti1Image(
-            wm_lesions_large, p0_large.affine, p0_large.header
-        )
-        wmh_name = code_vars.get("WMH_volume", "")
-        resample_and_save_nifti(
-            wm_lesions_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{out_dir}/{wmh_name}",
-        )
-
-    # Warping is necessary for surface creation and saving warped segmentations
-    if save_hemilabel or save_mwp or save_wp:
-        # Step 5: Warping
-        if verbose:
-            count = progress_bar(count, end_count, "Warping                          ")
-        output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
-        warp_yx = output_reg["warp_yx"]
-        warp_xy = output_reg["warp_xy"]
-
-        if save_mwp:
-            gm_name = code_vars_warped_modulated.get("GM_volume", "")
-            wm_name = code_vars_warped_modulated.get("WM_volume", "")
-            mwp1 = output_reg["mwp1"]
-            mwp2 = output_reg["mwp2"]
-            nib.save(mwp1, f"{out_dir}/{gm_name}")
-            nib.save(mwp2, f"{out_dir}/{wm_name}")
-            if save_csf:
-                csf_name = code_vars_warped_modulated.get("CSF_volume", "")
-                mwp3 = output_reg["mwp3"]
-                nib.save(mwp3, f"{out_dir}/{csf_name}")
-
-        if save_wp:
-            gm_name = code_vars_warped.get("GM_volume", "")
-            wm_name = code_vars_warped.get("WM_volume", "")
-            wp1 = output_reg["wp1"]
-            wp2 = output_reg["wp2"]
-            nib.save(wp1, f"{out_dir}/{gm_name}")
-            nib.save(wp2, f"{out_dir}/{wm_name}")
-            if save_csf:
-                csf_name = code_vars_warped.get("CSF_volume", "")
-                wp3 = output_reg["wp3"]
-                nib.save(wp3, f"{out_dir}/{csf_name}")
-
-        def_name = code_vars.get("Def_volume", "")
-        nib.save(warp_xy, f"{out_dir}/{def_name}")
-        invdef_name = code_vars.get("invDef_volume", "")
-        # nib.save(warp_yx, f'{out_dir}/{invdef_name}')
-
-        """
-        # write atlas ROI volumes to csv files
-        atlas_list = tuple([f'{atlas}_volumes' for atlas in ATLASES])
-        atlas_list = list(atlas_list)
-        output_paths = tuple([f'{out_dir}/../label/{out_name}_{atlas}.csv' for atlas in ATLASES])
-        output_paths = list(output_paths)
-
-        output_atlas = prep.run_atlas_register(t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list)
-        for k, output in output_atlas.items():
-            print("k")
-            print(k)
-            print("output")
-            print(output)
-         
-        for i, atl in enumerate(output_atlas):
-            print("atl")
-            atl
-            print("output_paths")
-            output_paths[i]
-            print("output_atlas")
-            output_atlas[i]
-        """
-
-    # Atlas is necessary for surface creation
-    if save_hemilabel:
-        # Step 6: Atlas creation
-        if verbose:
-            count = progress_bar(count, end_count, "Atlas creation                 ")
-        atlas = get_atlas(
-            t1, affine, p0_large.header, p0_large.affine, "ibsr", warp_yx, device
-        )
-        lh, rh = get_partition(p0_large, atlas)
-
-        # Step 7: Save hemisphere outputs
-        if verbose:
-            count = progress_bar(count, end_count, "Resampling                     ")
-
-        hemileft_name = code_vars_left.get("Hemi_volume", "")
-        hemiright_name = code_vars_right.get("Hemi_volume", "")
-
-        resample_and_save_nifti(
-            nib.Nifti1Image(lh, p0_large.affine, p0_large.header),
-            grid_target_res,
-            affine_resamp,
-            header_resamp,
-            f"{out_dir}/{hemileft_name}",
-            True,
-            True,
-        )
-        resample_and_save_nifti(
-            nib.Nifti1Image(rh, p0_large.affine, p0_large.header),
-            grid_target_res,
-            affine_resamp,
-            header_resamp,
-            f"{out_dir}/{hemiright_name}",
-            True,
-            True,
-        )
-
-    # remove temporary AMAP files
-    final_cleanup(out_dir, out_name, ext, use_amap, save_lesions, debug)
 
 
 if __name__ == "__main__":
