@@ -184,6 +184,11 @@ parse_args()
         multi=$optarg
         shift
         ;;
+      --atlas*)
+        exit_if_empty "$optname" "$optarg"
+        atlas=$optarg
+        shift
+        ;;
       --min-mem*)
         exit_if_empty "$optname" "$optarg"
         min_memory=$optarg
@@ -517,7 +522,6 @@ surface_estimation()
   for code in "PBT_shape" "GMT_shape" "Hemi_volume" "mT1_volume" "PPM_volume" "GMT_volume" "Mid_surface" "Pial_surface" "WM_surface" "Sphere_surface" "Spherereg_surface" "Intensity_Mid" "Intensity_Pial" "Intensity_WM"; do
     pattern=$(get_pattern "$code" "$name_columns")
     value=$(substitute_pattern "$pattern" "$hemi""" "")
-
     # Use eval to assign the result to a variable named after the code
     eval "${code}=\"\$value\""
   done
@@ -900,6 +904,8 @@ process()
     # create output folders    
     dir_list="$mri_dir"
     [ "${save_surf}" -eq 1 ] && dir_list+=" $surf_dir"
+    dir_list+=" $report_dir"
+    dir_list+=" $label_dir"
     mkdir -p $dir_list
         
     # print progress and filename
@@ -938,8 +944,9 @@ process()
       [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
       
-      cmd+=" --vessel \"${vessel}\""
-      cmd+=" --input \"${input}\" --outdir \"${mri_dir}\""
+      cmd+=" --vessel \"${vessel}\" --label_dir \"${label_dir}\""
+      cmd+=" --input \"${input}\" --mri_dir \"${mri_dir}\""
+      cmd+=" --report_dir \"${report_dir}\" --atlas \"${atlas}\""
       
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
@@ -1084,6 +1091,7 @@ ${BOLD}OPTIONS:${NC}
   --p                         Additionally save native space segmentations.
   --csf                       Additionally save CSF segmentations (default: only GM/WM are saved).
   --lesions                   Additionally save WMH lesions.
+  --atlas                     Define an atlas list (default: $atlas)
   --bids                      Use BIDS (Brain Imaging Data Structure) standard for output file 
                               naming conventions (not yet fully working!).
 
@@ -1133,9 +1141,10 @@ ${BLUE}${root_dir}/T1Prep --no-amap sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii' and use DeppMriPrep instead of AMAP
   segmentation.
 
-${BLUE}${root_dir}/T1Prep --multi 8 --p --csf sTRIO*.nii${NC}
+${BLUE}${root_dir}/T1Prep --multi 8 --p --csf --atlas "'neuromorphometrics', 'suit'" sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
-  in native space, including CSF segmentation. The processing pipeline involves two stages 
+  in native space, including CSF segmentationand estimate ROI volumes for the defined atlases.
+  The processing pipeline involves two stages 
   of parallelization:
   
   1. Segmentation (Python-based): Runs best with at least 12GB of memory per process. 
