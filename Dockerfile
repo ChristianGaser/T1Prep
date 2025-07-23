@@ -2,7 +2,7 @@ FROM ubuntu:latest
 
 ARG T1PREP_VERSION=0
 ARG T1PREP_RELEASE=0.2.0
-ARG T1PREP_REVISION=alpha
+ARG T1PREP_REVISION=beta
 # Calculated
 ENV T1PREP_TAG=${T1PREP_RELEASE}${T1PREP_REVISION:+.${T1PREP_REVISION}}
 
@@ -30,7 +30,7 @@ RUN wget --no-check-certificate --progress=bar:force -P /opt https://github.com/
     && unzip -q /opt/T1Prep${T1PREP_TAG}.zip -d /opt \
     && rm -f /opt/T1Prep${T1PREP_TAG}.zip \
     && /opt/T1Prep/scripts/T1Prep --re-install \
-    && ln -s /opt/T1Prep/scripts/T1Prep /usr/local/bin/T1Prep
+    && ln -s /opt/T1Prep/scripts/* /usr/local/bin/T1Prep
 
 RUN T1Prep
 
