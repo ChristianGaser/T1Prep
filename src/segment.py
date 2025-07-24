@@ -289,10 +289,10 @@ def affine_register(
         count = progress_bar(count, end_count, "Affine registration           ")
     output = prep.run_affine_register(brain, mask)
     return (
-        output["affine"], 
-        output["brain_large"], 
-        output["mask_large"], 
-        output["affine_loss"], 
+        output["affine"],
+        output["brain_large"],
+        output["mask_large"],
+        output["affine_loss"],
         count,
     )
 
@@ -493,7 +493,7 @@ def handle_lesions(
         p2_large = nib.Nifti1Image(
             tmp_p2, affine_resamp_reordered, header_resamp_reordered
         )
-    
+
     return p1_large, p2_large, p3_large, wmh_value, ind_wmh
 
 
@@ -648,12 +648,15 @@ def save_results(
         )
 
     # Estimate raw volumes
-    vol_abs_CGW = [get_volume_native_space(img, affine.values) for img in [p3_large, p1_large, p2_large, wmh_large]]
+    vol_abs_CGW = [
+        get_volume_native_space(img, affine.values)
+        for img in [p3_large, p1_large, p2_large, wmh_large]
+    ]
     tiv_volume = sum(vol_abs_CGW)
 
     # Compute relative volumes as fractions
     vol_rel_CGW = [v / tiv_volume for v in vol_abs_CGW]
-    
+
     mean_CGW = []
     for label in (1, 2, 3):
         mask_label = np.round(p0_large.get_fdata()) == label
@@ -661,22 +664,22 @@ def save_results(
 
     # Prepare dictionary
     summary = {
-        "vol_abs_CGW": vol_abs_CGW,            # list of floats
-        "vol_rel_CGW": vol_rel_CGW,            # list of floats
-        "mean_CGW": mean_CGW,                  # list of floats
-        "tiv_volume": tiv_volume               # float
+        "vol_abs_CGW": vol_abs_CGW,  # list of floats
+        "vol_rel_CGW": vol_rel_CGW,  # list of floats
+        "mean_CGW": mean_CGW,  # list of floats
+        "tiv_volume": tiv_volume,  # float
     }
-    
+
     # Optional: ensure all values are Python floats (for JSON compatibility)
-    #for key in ["vol_abs_CGW", "vol_rel_CGW", "mean_CGW"]:
+    # for key in ["vol_abs_CGW", "vol_rel_CGW", "mean_CGW"]:
     #    summary[key] = [float(x) for x in summary[key]]
-    #summary["tiv_volume"] = float(summary["tiv_volume"])
-    
+    # summary["tiv_volume"] = float(summary["tiv_volume"])
+
     # Write to JSON file
     report_name = code_vars.get("Report_file", "")
     with open(f"{report_dir}/{report_name}", "w") as f:
         json.dump(summary, f, indent=2)
-        
+
     # Save non-linear registered data
     if save_hemilabel or save_mwp or save_wp:
         if verbose:
@@ -689,18 +692,18 @@ def save_results(
         output_atlas = prep.run_atlas_register(
             t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list
         )
-        
+
         # Convert each DataFrame to a list of dicts:
         atlas_json = {
-            key.removesuffix('_volumes'): df.to_dict(orient='records')
+            key.removesuffix("_volumes"): df.to_dict(orient="records")
             for key, df in output_atlas.items()
         }
 
         # Write to a single JSON file:
         atlas_name = code_vars.get("Atlas_ROI", "")
-        with open(f"{label_dir}/{atlas_name}", 'w') as f:
+        with open(f"{label_dir}/{atlas_name}", "w") as f:
             json.dump(atlas_json, f, indent=2)
-    
+
         if save_mwp:
             gm_name = code_vars_warped_modulated.get("GM_volume", "")
             wm_name = code_vars_warped_modulated.get("WM_volume", "")
@@ -815,14 +818,14 @@ def run_segment():
         ext = "nii"
 
     # Get atlas list (currently restricted to ROI estimation)
-    atlas = tuple(x.strip(" '") for x in atlas.split(','))
-    atlas_list = tuple([f'{a}_volumes' for a in atlas])
+    atlas = tuple(x.strip(" '") for x in atlas.split(","))
+    atlas_list = tuple([f"{a}_volumes" for a in atlas])
 
     # Prepare filenames and load input MRI data
     out_name = os.path.basename(os.path.basename(t1_name).replace(".nii", "")).replace(
         ".gz", ""
     )
-    
+
     t1 = nib.load(t1_name)
 
     # Ensure required model files are available
