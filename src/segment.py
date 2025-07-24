@@ -52,6 +52,7 @@ from segmentation_utils import (
     get_cerebellum,
     correct_label_map,
     apply_LAS,
+    normalize_to_sum1,
 )
 
 from scipy.ndimage import label as label_image
@@ -474,26 +475,28 @@ def handle_lesions(
         csf_discrep_large = median_filter(csf_discrep_large, size=3)
         ind_csf_discrep = csf_discrep_large < 0
 
-        tmp_p3 = p3_large_uncorr.get_fdata().copy()
-        tmp_p3[ind_csf_discrep] += csf_discrep_large[ind_csf_discrep]
-        np.clip(tmp_p3, 0, 1)
-        p3_large = nib.Nifti1Image(
-            tmp_p3, affine_resamp_reordered, header_resamp_reordered
-        )
-
         tmp_p1 = p1_large_uncorr.get_fdata().copy()
         tmp_p1[ind_wmh] -= wmh_value[ind_wmh]
         tmp_p1[ind_csf_discrep] -= csf_discrep_large[ind_csf_discrep]
-        np.clip(tmp_p1, 0, 1)
-        p1_large = nib.Nifti1Image(
-            tmp_p1, affine_resamp_reordered, header_resamp_reordered
-        )
 
         tmp_p2 = p2_large_uncorr.get_fdata().copy()
         tmp_p2[ind_wmh] += wmh_value[ind_wmh]
-        np.clip(tmp_p2, 0, 1)
+
+        tmp_p3 = p3_large_uncorr.get_fdata().copy()
+        tmp_p3[ind_csf_discrep] += csf_discrep_large[ind_csf_discrep]
+        
+        # We have to normalize all tissue values to overall sum of one
+        tmp_p1, tmp_p2, tmp_p3 = normalize_to_sum1(tmp_p1, tmp_p2, tmp_p3)
+
+        # Convert back to nifti
+        p1_large = nib.Nifti1Image(
+            tmp_p1, affine_resamp_reordered, header_resamp_reordered
+        )
         p2_large = nib.Nifti1Image(
             tmp_p2, affine_resamp_reordered, header_resamp_reordered
+        )
+        p3_large = nib.Nifti1Image(
+            tmp_p3, affine_resamp_reordered, header_resamp_reordered
         )
 
     return p1_large, p2_large, p3_large, wmh_value, ind_wmh

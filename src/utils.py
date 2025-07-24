@@ -480,14 +480,19 @@ def get_volume_native_space(vol_nifti, affine_values):
 
     vol_prob = vol_nifti.get_fdata()
     vol_sum = np.sum(vol_prob)
+    
     # Voxel volume in target/registered space (mm³)
     voxel_volume_target = abs(np.linalg.det(vol_nifti.affine[:3, :3]))
+
     # Volume in registered space (mm³)
     volume__target = vol_sum * voxel_volume_target
+
     # Affine scaling (native->target)
     scaling = abs(np.linalg.det(affine_values[:3, :3]))
+
     # Volume in native space (mm³)
     volume__native_mm3 = volume__target * scaling
+
     # Convert mm³ to cm³
     volume__native_cm3 = volume__native_mm3 / 1000.0
     return volume__native_cm3
