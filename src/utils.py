@@ -1,11 +1,7 @@
 import os
-import sys
-import platform
 import torch
-import argparse
 import warnings
 import math
-import shutil
 import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
@@ -839,9 +835,9 @@ def correct_label_map(brain, seg):
     wm_mask = (seg0 > 2.5) & (discrepancy0 < 1)
     # Reduce the label value to GM
     seg0[wm_mask] *= discrepancy0[wm_mask] ** 2
-    
+
     # For voxels labeled CSF but intensity is high, scale down brain intensity
-    csf_mask = (seg0 < 1.5) & (discrepancy0 > 1) & (brain0 > 1.5 / 3 )
+    csf_mask = (seg0 < 1.5) & (discrepancy0 > 1) & (brain0 > 1.5 / 3)
     brain0[csf_mask] /= discrepancy0[csf_mask] ** 2
 
     # For voxels labeled GM but intensity is slightly below or above threshold,
@@ -1317,9 +1313,10 @@ def align_brain(data, aff, header, aff_ref, do_flip=1):
 
     return aligned_data, aff, header, ras_aff
 
+
 def get_volume_native_space(vol_nifti, affine_values):
     """
-    Estimate GM volume in native/original space (cm³) from a registered probability 
+    Estimate GM volume in native/original space (cm³) from a registered probability
     NIfTI and the 4x4 affine matrix that maps native to registered space.
 
     Args:
@@ -1329,10 +1326,10 @@ def get_volume_native_space(vol_nifti, affine_values):
     Returns:
         volume in native/original space in cm³ (float)
     """
-    
+
     if vol_nifti is None:
         return 0
-        
+
     vol_prob = vol_nifti.get_fdata()
     vol_sum = np.sum(vol_prob)
     # Voxel volume in target/registered space (mm³)
