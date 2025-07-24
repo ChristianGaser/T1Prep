@@ -652,7 +652,7 @@ def save_results(
     tiv_volume = sum(vol_abs_CGW)
 
     # Compute relative volumes as fractions
-    rel_vol_CGW = [v / tiv_volume for v in vol_abs_CGW]
+    vol_rel_CGW = [v / tiv_volume for v in vol_abs_CGW]
     
     mean_CGW = []
     for label in (1, 2, 3):
@@ -662,13 +662,13 @@ def save_results(
     # Prepare dictionary
     summary = {
         "vol_abs_CGW": vol_abs_CGW,            # list of floats
-        "rel_vol_CGW": rel_vol_CGW,            # list of floats
+        "vol_rel_CGW": vol_rel_CGW,            # list of floats
         "mean_CGW": mean_CGW,                  # list of floats
         "tiv_volume": tiv_volume               # float
     }
     
     # Optional: ensure all values are Python floats (for JSON compatibility)
-    #for key in ["vol_abs_CGW", "rel_vol_CGW", "mean_CGW"]:
+    #for key in ["vol_abs_CGW", "vol_rel_CGW", "mean_CGW"]:
     #    summary[key] = [float(x) for x in summary[key]]
     #summary["tiv_volume"] = float(summary["tiv_volume"])
     
