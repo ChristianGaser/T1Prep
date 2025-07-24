@@ -482,12 +482,12 @@ ${BOLD}OPTIONS:${NC}
                            If <NUMBER> is a floating-point value between 0 and 1,
                            it will be interpreted as a fraction of available CPU cores.
                            For example, 0.7 means 70% of CPU cores will be used.
-  -m, --mem-limit <INT>    Memory limit for each process in GB (default is $MEM_LIMIT GB).
+  -m, --mem-limit <INT>    Memory limit for each process in GB (default is ${MEM_LIMIT}GB).
   -c, --command <STRING>   Command to be executed in parallel.
   -b, --bg                 Keep all processes in background.
   -l, --logdir <DIR>       Directory to save the log file (default $LOGDIR).
   -t, --test               Run in test mode: print the files to be processed without 
-                          executing the command.
+                           executing the command.
 
 ${BOLD}DESCRIPTION:${NC}
   Execute commands in parallel across multiple files specified by filenames or a wildcard 
