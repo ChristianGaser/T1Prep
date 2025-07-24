@@ -554,7 +554,7 @@ surface_estimation()
     # - '-n-avgs 4' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize 0.5 -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}
+    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize 0. -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}
 
     # Updates progress to 'Extract $side surface'.
     ((count++))
