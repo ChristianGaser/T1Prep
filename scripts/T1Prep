@@ -36,29 +36,11 @@
 # global parameters
 ########################################################
 
-# Text formatting
-BOLD=$(tput bold)
-UNDERLINE=$(tput smul)
-NC=$(tput sgr0) # Reset all attributes
-
-# Colors
-BLACK=$(tput setaf 0)
-RED=$(tput setaf 1)
-GREEN=$(tput setaf 2)
-YELLOW=$(tput setaf 3)
-BLUE=$(tput setaf 4)
-PINK=$(tput setaf 5)
-CYAN=$(tput setaf 6)
-WHITE=$(tput setaf 7)
-
 # defaults
-script_dir=$(dirname "$0")
-root_dir=$(dirname $script_dir)
-name_file=${root_dir}/Names.tsv
-surf_templates_dir=${root_dir}/data/templates_surfaces_32k
+source "$(dirname "$0")/utils.sh"
+
 T1prep_env=${root_dir}/env
 src_dir=${root_dir}/src
-os_type=$(uname -s) # Determine OS type
 
 source "${script_dir}/../defaults.txt"
 source "${script_dir}/progress_bar.sh"
@@ -273,24 +255,6 @@ parse_args()
 }
 
 ########################################################
-# check arguments
-########################################################
-
-exit_if_empty()
-{
-  local desc val
-
-  desc="$1"
-  shift
-  val="$*"
-
-  if [ -z "${val}" ]; then
-    echo "${RED}ERROR: No argument given with \"$desc\" command line argument!${NC}" >&2
-    exit 1
-  fi
-}
-
-########################################################
 # logo
 ########################################################
 
@@ -426,38 +390,6 @@ install_deepmriprep()
       find MacOS -name "${bin_dir}/CAT*" -exec xattr -d com.apple.quarantine {} \;
       ;;
   esac
-}
-
-########################################################
-# get operation system
-########################################################
-
-get_OS() 
-{
-  # Determine CPU architecture
-  cpu_arch=$(uname -m)
-
-  case "$os_type" in
-    Linux*)   
-      bin_dir="${root_dir}/bin/Linux"
-      ;;
-    Darwin*)  
-      if [[ "$cpu_arch" == arm64 ]]; then 
-        bin_dir="${root_dir}/bin/MacOS"
-      else 
-        echo "MacOS Intel not supported anymore"
-        exit 1
-      fi
-      ;;
-    CYGWIN*|MINGW32*|MSYS*|MINGW*) 
-      bin_dir="${root_dir}/bin/Windows"
-      ;;
-    *)
-      echo "Unknown OS system"
-      exit 1
-      ;;
-  esac
-  
 }
 
 ########################################################
@@ -669,35 +601,6 @@ surface_estimation()
 }
 
 ########################################################
-# filter arguments so that filenames are removed 
-########################################################
-
-filter_arguments() {
-  local args=("$@")   # All input arguments to filter
-  local filtered=()   # Array to store filtered arguments
-  local filepatterns=("${ARRAY[@]}")  # File patterns to exclude
-
-  for arg in "${args[@]}"; do
-    # Check if the argument is a file pattern by comparing it to ${ARRAY[@]}
-    local is_filepattern=0
-    for pattern in "${filepatterns[@]}"; do
-      if [[ "$arg" == "$pattern" ]]; then
-        is_filepattern=1
-        break
-      fi
-    done
-
-    # If it's not a file pattern, add it to the filtered list
-    if [[ $is_filepattern -eq 0 ]]; then
-      filtered+=("$arg")
-    fi
-  done
-
-  echo "${filtered[@]}"  # Return the filtered arguments
-}
-
-
-########################################################
 # get output folder depending on BIDS structure
 ########################################################
 
@@ -753,7 +656,7 @@ process()
     # Call parallelize with filtered arguments and use memory limit per process
     echo "${BOLD}Volume Segmentation${NC}"
     cmd=(
-      "$(dirname "$0")/parallelize"
+      "${script_dir}/parallelize"
       -l "/tmp"
       -m "${min_memory}"
       -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-surf --hemisphere --multi -2)"
@@ -773,7 +676,7 @@ process()
       arg_parallelize="-p ${multi}"
     fi
     cmd=(
-      "$(dirname "$0")/parallelize"
+      "${script_dir}/parallelize"
       -l "/tmp"
       -p 0.5
       "${arg_parallelize}"
