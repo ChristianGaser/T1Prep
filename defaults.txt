@@ -31,4 +31,4 @@ debug=0
 multi=-1
 min_memory=12
 version=0.1.0
-atlas="'neuromorphometrics', 'suit'"
+atlas="'neuromorphometrics', 'cobra'"
