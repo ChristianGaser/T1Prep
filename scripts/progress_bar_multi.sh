@@ -67,13 +67,17 @@ main ()
         jobnumber=$((i+1))
         printf -v jobstr "%2d" "$jobnumber"
 
+        # If process failed, display bar in red and decrease
+        # refresh interval
         status_file="$PROGRESS_DIR/job${i}.status"
         status=0
         [[ -f "$status_file" ]] && status=$(cat "$status_file")
         if [[ "$status" -ne 0 ]]; then
           BAR_COLOR=$FAIL_COLOR
+          REFRESH_INTERVAL=0.1
         else
           BAR_COLOR=$DEFAULT_COLOR
+          REFRESH_INTERVAL=2.0
         fi
 
         echo -ne "Job ${jobstr}: [${BAR_COLOR}${bar}${NC}] (${percent}%)\n"
