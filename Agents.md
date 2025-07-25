@@ -41,7 +41,7 @@ T1Prep/
 - Commit messages use the form `type: short summary` where `type` can be `feat`, `fix`, `docs`, `chore`, etc.
 - Reference issues when relevant, e.g. `fix: handle missing atlas path (#12)`.
 - Use short (<50 char) summaries and include a blank line before the body.
-- Wrap body lines at 72 characters.
+- Wrap body lines at 80 characters.
 
 ## Shell scripts
 - Validate scripts in `scripts/` with `shellcheck`.
