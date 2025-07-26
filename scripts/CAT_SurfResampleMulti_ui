@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+#
+# PURPOSE:
+#   Resample left (und optional right) hemisphere surface data to a target sphere,
+#   optionally smooth the values and write a single combined GIfTI using
+#   CAT_SurfResampleMulti.
+#
+# USAGE:
+#   SurfResample.sh [options] <lh_input_value_file> [<lh_input_value_file> ...]
+#
+# INPUT:
+#   Left hemisphere value files (e.g. lh.thickness.gii or lh.thickness.dat).
+#   The script auto-derives corresponding central/sphere files and the right
+#   hemisphere counterparts by name.
+#
+# OUTPUT:
+#   One combined .gii per left input file containing LH (+RH) resampled values.
+# ______________________________________________________________________
+#
+# Christian Gaser
+# Structural Brain Mapping Group (https://neuro-jena.github.io)
+# Departments of Neurology and Psychiatry
+# Jena University Hospital
+# ______________________________________________________________________
+
+# ----------------------------------------------------------------------
+# global parameters
+# ----------------------------------------------------------------------
+
+# defaults
+os_type=$(uname -s) # Determine OS type
+
+source "$(dirname "$0")/utils.sh"
+
+script_dir=$(dirname "$0")
+root_dir=$(dirname $script_dir)
+name_file=${root_dir}/Names.tsv
+surf_templates_dir=${root_dir}/data/templates_surfaces_32k
+
+time=$(date "+%Y%b%d_%H%M")
+JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
+PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
+
+# Parameters
+fwhm=12
+lh_fsavg_sphere=${root_dir}/data/templates_surfaces_32k/lh.sphere.freesurfer.gii
+
+declare -a FILES=()
+declare -a LH_ARRAY=()
+declare -a RH_ARRAY=()
+declare -a OUT_ARRAY=()
+
+# ----------------------------------------------------------------------
+# run main
+# ----------------------------------------------------------------------
+
+main()
+{
+  parse_args ${1+"$@"}
+  get_OS
+  
+  process "$@"
+
+  exit 0
+}
+
+# ----------------------------------------------------------------------
+# check arguments and files
+# ----------------------------------------------------------------------
+
+parse_args()
+{
+  local optname optarg
+  
+  if [ $# -lt 1 ]; then
+    help
+    exit 1
+  fi
+
+  count=0
+  while [ $# -gt 0 ]; do
+    optname="${1%%=*}"
+    optarg="${2:-}"
+
+    case "$1" in
+      --out)
+        exit_if_empty "$optname" "$optarg"
+        out=$optarg
+        shift
+        ;;
+      --trg-sphere)
+        exit_if_empty "$optname" "$optarg"
+        lh_fsavg_sphere=$optarg
+        shift
+        ;;
+      --fwhm)
+        exit_if_empty "$optname" "$optarg"
+        fwhm=$optarg
+        shift
+        ;;
+      -h | --help | --h | -v | --version | -V)
+        help
+        exit 1
+        ;;
+      -*)
+        echo "basename $0: ERROR: Unrecognized option \"$1\"" >&2
+        exit 1
+        ;;
+      *)
+        if [ ! -f "$1" ]; then
+          if [ ! -L "$1" ]; then
+            echo "${RED}File $1 was not found and will be skipped.${NC}" >&2
+          fi
+        else
+          FILES[$count]=$1
+          ((count++))
+        fi
+        ;;
+    esac
+    shift
+  done
+
+  # RH target sphere fallback
+  if [[ -z "$rh_fsavg_sphere" ]]; then
+    rh_fsavg_sphere="${lh_fsavg_sphere/lh./rh.}"
+    rh_fsavg_sphere="${rh_fsavg_sphere/left_/right_}"
+  fi
+
+}
+
+# ----------------------------------------------------------------------
+# per-file processing
+# ----------------------------------------------------------------------
+process_file() {
+  local infile="$1"
+
+  local dname bname hemi measure ext sphere_reg rh_bname out
+  dname=$(dirname "$infile")
+  bname=$(basename "$infile")
+
+  # only lh.* supported for now
+  if [[ "$bname" == lh.* ]]; then
+    measure=${bname#*.}; measure=${measure%%.*}
+    sphere_reg=".sphere.reg"
+    rh_bname="${bname/lh./rh.}"
+    # default output naming
+    if [[ -n "${_SR_OUT_DIR}" ]]; then
+      out="${_SR_OUT_DIR}/${bname/lh./s${fwhm}.mesh.}.gii"
+    else
+      out="${dname}/${bname/lh./s${fwhm}.mesh.}.gii"
+    fi
+  elif [[ "$bname" == *_left* ]]; then
+    echo -e "${RED}BIDS format not yet implemented (${bname}).${NC}" >&2
+    return 1
+  else
+    echo -e "${RED}File '$infile' should be left hemisphere data (lh.*).${NC}" >&2
+    return 1
+  fi
+
+  local lh_central="${dname}/${bname/.$measure/.central}.gii"
+  local lh_sphere_reg="${dname}/${bname/.$measure/${sphere_reg}}.gii"
+  local rh_central="${dname}/${rh_bname/.$measure/.central}.gii"
+  local rh_sphere_reg="${dname}/${rh_bname/.$measure/${sphere_reg}}.gii"
+
+  # build units for CAT_SurfResampleMulti
+  local lh_unit="surf=${lh_central},src_sphere=${lh_sphere_reg},vals=${dname}/${bname},trg_sphere=${lh_fsavg_sphere}"
+  local rh_unit="surf=${rh_central},src_sphere=${rh_sphere_reg},vals=${dname}/${rh_bname},trg_sphere=${rh_fsavg_sphere}"
+
+  LH_ARRAY+=("$lh_unit")
+  RH_ARRAY+=("$rh_unit")
+  OUT_ARRAY+=("$out")
+}
+
+
+# ----------------------------------------------------------------------
+# process data
+# ----------------------------------------------------------------------
+
+process()
+{  
+  n="${#FILES[@]}"
+  
+  for f in "${FILES[@]}"; do
+    if [[ ! -f "$f" && ! -L "$f" ]]; then
+      echo -e "${RED}File '$f' not found – skipping.${NC}" >&2
+      continue
+    fi
+    process_file "$f"
+  done
+ 
+  # serial
+  if [  ${n} -gt 1 ]; then
+    mkdir -p "$PROGRESS_DIR"
+    rm -f "$PROGRESS_DIR"/*.progress
+    ${script_dir}/progress_bar_multi.sh 1 "$PROGRESS_DIR" &
+    progress_pid=$!
+  fi  
+  j=1
+  for ((i=0; i<${n}; i++)); do
+    if [  ${n} -gt 1 ]; then
+      echo "$j/$n" > "$PROGRESS_DIR/job0.progress"
+      ((j++))
+      echo 0 > "$PROGRESS_DIR/job0.status"
+    fi
+    "${bin_dir}/CAT_SurfResampleMulti" \
+      -fwhm "${fwhm}" \
+      -out  "${OUT_ARRAY[$i]}" \
+      -unit "${LH_ARRAY[$i]}" \
+      -unit "${RH_ARRAY[$i]}"
+    exit_code=$?
+    if [  ${n} -gt 1 ]; then
+      if [ $exit_code -ne 0 ]; then
+        echo 1 > "$PROGRESS_DIR/job0.status"
+      fi
+    fi
+  done
+  
+  if [  ${n} -gt 1 ]; then
+    wait $progress_pid
+    rm -r "$PROGRESS_DIR"
+  fi
+  exit $?
+}
+
+
+# ----------------------------------------------------------------------
+# help
+# ----------------------------------------------------------------------
+
+help() {
+cat << EOM
+${BOLD}${BLUE}$0
+---------------------------------------------${NC}
+
+${BOLD}USAGE:${NC}
+  ${GREEN}$0 [options] <filename(s)>${NC}
+
+${BOLD}DESCRIPTION:${NC}
+Resample left (and optional right) hemisphere surfaces/values to target spheres and
+write a single combined GIfTI per subject using CAT_SurfResampleMulti.
+
+${BOLD}OPTIONS:${NC}
+  --out <DIR>                  Output directory (default: same as input file dir)
+  --trg-sphere <FILE>          Target sphere for the left hemisphere
+  --fwhm <FLOAT>               Smoothing FWHM applied inside CAT_SurfResampleMulti (default: $fwhm)
+  -h | --help                  Show this help and exit
+
+${BOLD}INPUT NAMING EXPECTATIONS:${NC}
+  lh.* case (supported now)
+    lh.<measure>.something.gii
+    Will look for:
+      lh.central.gii               (same base, measure replaced by "central")
+      lh.sphere.reg.gii            (same base, measure replaced by "sphere.reg")
+      rh.<measure>.something.gii   (right hemisphere counterpart)
+      rh.central.gii, rh.sphere.reg.gii accordingly
+
+  *_left* (BIDS) not yet implemented → the script exits with an error.
+        
+${BOLD}OUTPUT:${NC}
+  For each LH input file, writes a combined GIfTI (LH+RH) with resampled (and optionally smoothed) values.
+
+${BOLD}Dependencies:${NC}
+  CAT_SurfResampleMulti
+  ${script_dir}/progress_bar_multi.sh
+  ${script_dir}/parallelize
+
+${BOLD}Author:${NC}
+  Christian Gaser (christian.gaser@uni-jena.de)
+
+EOM
+
+}
+
+# ----------------------------------------------------------------------
+# call main program
+# ----------------------------------------------------------------------
+
+main "${@}"
