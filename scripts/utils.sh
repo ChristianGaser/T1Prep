@@ -11,11 +11,7 @@
 # ______________________________________________________________________
 
 # defaults
-script_dir=$(dirname "$0")
-root_dir=$(dirname $script_dir)
 os_type=$(uname -s) # Determine OS type
-name_file=${root_dir}/Names.tsv
-surf_templates_dir=${root_dir}/data/templates_surfaces_32k
 
 # Text formatting
 BOLD=$(tput bold)
