@@ -30,12 +30,12 @@
 # defaults
 os_type=$(uname -s) # Determine OS type
 
-source "$(dirname "$0")/utils.sh"
-
 script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
 name_file=${root_dir}/Names.tsv
 surf_templates_dir=${root_dir}/data/templates_surfaces_32k
+
+source "${script_dir}/utils.sh"
 
 time=$(date "+%Y%b%d_%H%M")
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
@@ -43,6 +43,7 @@ PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
 
 # Parameters
 fwhm=12
+ext="dat"
 lh_fsavg_sphere=${root_dir}/data/templates_surfaces_32k/lh.sphere.freesurfer.gii
 
 declare -a FILES=()
@@ -86,6 +87,11 @@ parse_args()
       --out)
         exit_if_empty "$optname" "$optarg"
         out=$optarg
+        shift
+        ;;
+      --ext)
+        exit_if_empty "$optname" "$optarg"
+        ext=$optarg
         shift
         ;;
       --trg-sphere)
@@ -134,7 +140,7 @@ parse_args()
 process_file() {
   local infile="$1"
 
-  local dname bname hemi measure ext sphere_reg rh_bname out
+  local dname bname hemi measure sphere_reg rh_bname out_namr
   dname=$(dirname "$infile")
   bname=$(basename "$infile")
 
@@ -144,10 +150,10 @@ process_file() {
     sphere_reg=".sphere.reg"
     rh_bname="${bname/lh./rh.}"
     # default output naming
-    if [[ -n "${_SR_OUT_DIR}" ]]; then
-      out="${_SR_OUT_DIR}/${bname/lh./s${fwhm}.mesh.}.gii"
+    if [[ -n "${out}" ]]; then
+      out_name="${out}/${bname/lh./s${fwhm}.mesh.}.${ext}"
     else
-      out="${dname}/${bname/lh./s${fwhm}.mesh.}.gii"
+      out_name="${dname}/${bname/lh./s${fwhm}.mesh.}.${ext}"
     fi
   elif [[ "$bname" == *_left* ]]; then
     echo -e "${RED}BIDS format not yet implemented (${bname}).${NC}" >&2
@@ -168,7 +174,7 @@ process_file() {
 
   LH_ARRAY+=("$lh_unit")
   RH_ARRAY+=("$rh_unit")
-  OUT_ARRAY+=("$out")
+  OUT_ARRAY+=("$out_name")
 }
 
 
@@ -192,7 +198,7 @@ process()
   if [  ${n} -gt 1 ]; then
     mkdir -p "$PROGRESS_DIR"
     rm -f "$PROGRESS_DIR"/*.progress
-    ${script_dir}/progress_bar_multi.sh 1 "$PROGRESS_DIR" &
+    ${script_dir}/progress_bar_multi.sh 1 "$PROGRESS_DIR" 40 2 "CAT_SurfResampleMulti" &
     progress_pid=$!
 
     # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
@@ -245,6 +251,7 @@ write a single combined GIfTI per subject using CAT_SurfResampleMulti.
 
 ${BOLD}OPTIONS:${NC}
   --out <DIR>                  Output directory (default: same as input file dir)
+  --ext <STR>                  Output file extension (default: $ext)
   --trg-sphere <FILE>          Target sphere for the left hemisphere
   --fwhm <FLOAT>               Smoothing FWHM applied inside CAT_SurfResampleMulti (default: $fwhm)
   -h | --help                  Show this help and exit
@@ -261,7 +268,8 @@ ${BOLD}INPUT NAMING EXPECTATIONS:${NC}
   *_left* (BIDS) not yet implemented → the script exits with an error.
         
 ${BOLD}OUTPUT:${NC}
-  For each LH input file, writes a combined GIfTI (LH+RH) with resampled (and optionally smoothed) values.
+  For each LH input file, writes a combined GIfTI (LH+RH) with resampled (and optionally smoothed) values. If extension is "dat" used, then an external binary file is saved, which is the default
+  for use with SPM.
 
 ${BOLD}Dependencies:${NC}
   CAT_SurfResampleMulti

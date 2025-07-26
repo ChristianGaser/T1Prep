@@ -22,6 +22,7 @@ n_jobs=$1
 PROGRESS_DIR=$2
 width=$3
 color=$4
+job_name=$5
 BOLD=$(tput bold)
 NC=$(tput sgr0) # Reset all attributes
 REFRESH_INTERVAL=2.0
@@ -41,6 +42,7 @@ main ()
   fi
   if [ -z "$color" ]; then color=2; fi
   if [ -z "$width" ]; then width=40; fi
+  if [ -z "$job_name" ]; then job_name="Job"; fi
 
   DEFAULT_COLOR=$(tput setaf $color)
   FAIL_COLOR=$(tput setaf 1)
@@ -65,8 +67,11 @@ main ()
         bar=$(printf "%${filled}s" | tr ' ' '█')
         bar+=$(printf "%${unfilled}s")
         jobnumber=$((i+1))
-        printf -v jobstr "%2d" "$jobnumber"
-
+        
+        if [ $n_jobs -gt 1 ]; then
+          printf -v jobstr "%2d" "$jobnumber"
+        fi
+        
         # If process failed, display bar in red and decrease
         # refresh interval
         status_file="$PROGRESS_DIR/job${i}.status"
@@ -80,7 +85,8 @@ main ()
           REFRESH_INTERVAL=2.0
         fi
 
-        echo -ne "Job ${jobstr}: [${BAR_COLOR}${bar}${NC}] (${percent}%)\n"
+        printf -v percent_str "%3d" "$percent"
+        echo -ne "${percent_str}% [${BAR_COLOR}${bar}${NC}] ${job_name} ${jobstr}\n"
         [[ "$done_items" -lt "$total_items" ]] && all_done=false
       else
         echo -ne "Job $((i+1)): [waiting...]\n"

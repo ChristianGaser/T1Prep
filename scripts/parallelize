@@ -10,7 +10,7 @@
 # ----------------------------------------------------------------------
 # global parameters
 # ----------------------------------------------------------------------
-source "$(dirname "$0")/utils.sh"
+#source "$(dirname "$0")/utils.sh"
 
 time=$(date "+%Y%b%d_%H%M")
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
