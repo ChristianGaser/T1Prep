@@ -28,9 +28,12 @@ PINK=$(tput setaf 5)
 CYAN=$(tput setaf 6)
 WHITE=$(tput setaf 7)
 
-########################################################
+progress_pid= # This will hold the PID of the progress bar monitor
+pids=()
+
+# ----------------------------------------------------------------------
 # check arguments
-########################################################
+# ----------------------------------------------------------------------
 
 exit_if_empty()
 {
@@ -46,9 +49,9 @@ exit_if_empty()
   fi
 }
 
-########################################################
+# ----------------------------------------------------------------------
 # check files
-########################################################
+# ----------------------------------------------------------------------
 
 check_files()
 {
@@ -60,9 +63,9 @@ check_files()
   fi
 }
 
-########################################################
+# ----------------------------------------------------------------------
 # get operation system
-########################################################
+# ----------------------------------------------------------------------
 
 get_OS() 
 {
@@ -92,9 +95,34 @@ get_OS()
   
 }
 
-########################################################
+# ----------------------------------------------------------------------
+# Cleanup function
+# ----------------------------------------------------------------------
+
+cleanup() {
+  echo " Caught interrupt. Cleaning up..."
+  echo ""
+  echo "Please note that only new processes can be killed, but already started child processes hast to be maybe manually interrupted."
+  if [ -n "$progress_pid" ]; then
+    kill "$progress_pid" 2>/dev/null
+  fi
+
+  # Kill all background jobs started with nohup
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+    fi
+  done
+
+  wait $progress_pid
+  rm -rf "$PROGRESS_DIR"
+  exit 1
+}
+
+# ----------------------------------------------------------------------
 # filter arguments so that filenames are removed 
-########################################################
+# ----------------------------------------------------------------------
 
 filter_arguments() {
   local args=("$@")   # All input arguments to filter

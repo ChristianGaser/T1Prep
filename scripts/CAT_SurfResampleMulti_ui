@@ -194,6 +194,9 @@ process()
     rm -f "$PROGRESS_DIR"/*.progress
     ${script_dir}/progress_bar_multi.sh 1 "$PROGRESS_DIR" &
     progress_pid=$!
+
+    # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
+    trap cleanup INT TERM
   fi  
   j=1
   for ((i=0; i<${n}; i++)); do
@@ -202,16 +205,17 @@ process()
       ((j++))
       echo 0 > "$PROGRESS_DIR/job0.status"
     fi
+    
     "${bin_dir}/CAT_SurfResampleMulti" \
       -fwhm "${fwhm}" \
       -out  "${OUT_ARRAY[$i]}" \
       -unit "${LH_ARRAY[$i]}" \
       -unit "${RH_ARRAY[$i]}"
+      
+    pids=($!)
     exit_code=$?
-    if [  ${n} -gt 1 ]; then
-      if [ $exit_code -ne 0 ]; then
-        echo 1 > "$PROGRESS_DIR/job0.status"
-      fi
+    if [[ ${n} -gt 1  &&  $exit_code -ne 0 ]]; then
+      echo 1 > "$PROGRESS_DIR/job0.status"
     fi
   done
   
