@@ -290,8 +290,9 @@ do_parallelize ()
       mkdir -p "$PROGRESS_DIR"
       rm -f "$PROGRESS_DIR"/*.progress
       
+      cmd_name=$(basename $COMMAND)
       # Start progress monitor
-      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" &
+      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" 40 2 $cmd_name &
       progress_pid=$!
     fi
 
@@ -312,7 +313,7 @@ do_parallelize ()
       fi
 
       for file in "${ARRAY[@]}"; do
-          eval "$COMMAND \"$file\""  # Use eval to handle complex commands
+          "$COMMAND \"$file\""  # Use eval to handle complex commands
           exit_code=$?
           if [ $exit_code -ne 0 ]; then
             echo 1 > "$PROGRESS_DIR/job0.status"

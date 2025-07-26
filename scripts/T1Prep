@@ -460,7 +460,7 @@ surface_estimation()
     pattern=$(get_pattern "$code" "$name_columns")
     value=$(substitute_pattern "$pattern" "$hemi""" "")
     # Use eval to assign the result to a variable named after the code
-    eval "${code}=\"\$value\""
+    "${code}=\"\$value\""
   done
     
   # Change number of commands if spherical registration is disabled
@@ -670,7 +670,7 @@ process()
     
     # Execute the command using eval
     if [ "${estimate_seg}" -eq 1 ]; then
-      eval "${cmd[@]}"
+      "${cmd[@]}"
       status=$?
     fi
 
@@ -691,7 +691,7 @@ process()
     
     # Execute the command using eval
     if [ "${save_surf}" -eq 1 ]; then
-      eval "${cmd[@]}"
+      "${cmd[@]}"
       status=$?
     fi
     
@@ -858,7 +858,7 @@ process()
       
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
-        eval "${cmd}"
+        "${cmd}"
         seg_status=$?
       else
         seg_status=0
