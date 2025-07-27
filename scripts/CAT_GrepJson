@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+#
+# PURPOSE:
+#
+# USAGE:
+#
+# INPUT:
+#
+# OUTPUT:
+# ______________________________________________________________________
+#
+# Christian Gaser
+# Structural Brain Mapping Group (https://neuro-jena.github.io)
+# Departments of Neurology and Psychiatry
+# Jena University Hospital
+# ______________________________________________________________________
+
+script_dir=$(dirname "$0")
+source "${script_dir}/utils.sh"
+
+# ----------------------------------------------------------------------
+# run main
+# ----------------------------------------------------------------------
+
+main()
+{
+  parse_args ${1+"$@"}  
+  process "$@"
+
+  exit 0
+}
+
+# ----------------------------------------------------------------------
+# check arguments and files
+# ----------------------------------------------------------------------
+
+parse_args()
+{
+  local optname optarg
+  
+  if [ $# -lt 1 ]; then
+    help
+    exit 1
+  fi
+
+  count=0
+  while [ $# -gt 0 ]; do
+    optname="${1%%=*}"
+    optarg="${2:-}"
+
+    case "$1" in
+      --field)
+        exit_if_empty "$optname" "$optarg"
+        field=$optarg
+        shift
+        ;;
+      -h | --help | --h | -v | --version | -V)
+        help
+        exit 1
+        ;;
+      -*)
+        echo "basename $0: ERROR: Unrecognized option \"$1\"" >&2
+        exit 1
+        ;;
+      *)
+        FILES[$count]=$1
+        ((count++))
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$field" || -z "$FILES" ]]; then
+      help
+  fi
+}
+
+# ----------------------------------------------------------------------
+# process data
+# ----------------------------------------------------------------------
+
+process()
+{
+  for f in "${FILES[@]}"; do
+    jq -r ".\"$field\" | join(\" \")" "$f"
+  done
+}
+
+
+# ----------------------------------------------------------------------
+# help
+# ----------------------------------------------------------------------
+
+help() {
+cat << EOM
+${BOLD}${BLUE}$0
+---------------------------------------------${NC}
+
+${BOLD}USAGE:${NC}
+  ${GREEN}$0 [options] <filename(s)>${NC}
+
+${BOLD}DESCRIPTION:${NC}
+
+${BOLD}OPTIONS:${NC}
+  --field <STR>    Field name to be used in json file
+
+${BOLD}Author:${NC}
+  Christian Gaser (christian.gaser@uni-jena.de)
+
+EOM
+
+}
+
+# ----------------------------------------------------------------------
+# call main program
+# ----------------------------------------------------------------------
+
+main "${@}"
