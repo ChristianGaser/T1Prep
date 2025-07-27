@@ -106,7 +106,7 @@ parse_args()
         python=$optarg
         shift
         ;;
-      --out-dir | --outdir)
+      --out*)
         exit_if_empty "$optname" "$optarg"
         outdir=$optarg
         shift
@@ -196,8 +196,8 @@ parse_args()
       --no-sphere*)
         estimate_spherereg=0
         ;;
-      --no-pial*)
-        save_pial_white=0
+      --pial*)
+        save_pial_white=1
         ;;
       --lesion*)
         save_lesions=1
@@ -291,7 +291,7 @@ check_python_cmd()
     elif command -v python &>/dev/null; then
       python="python"
     else
-      echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}" >&2
+      echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
       exit 1
     fi
   fi
@@ -460,7 +460,7 @@ surface_estimation()
     pattern=$(get_pattern "$code" "$name_columns")
     value=$(substitute_pattern "$pattern" "$hemi""" "")
     # Use eval to assign the result to a variable named after the code
-    "${code}=\"\$value\""
+    eval "${code}=\"\$value\""
   done
     
   # Change number of commands if spherical registration is disabled
@@ -537,7 +537,7 @@ surface_estimation()
     # - '-w1' sets the internal smoothness weight.
     # - '-w2' sets the gradient alignment weight.
     # - '-w3' sets the balloon force weight.
-    # - '-w4' sets theconncetion force weight.
+    # - '-w4' sets the conncetion force weight.
     # - '-sigma' sets the smoothing size for filtering the displacement field.
     # - '-iter' sets the number of iterations.
     # - '-isovalue' sets the isovalue for mesh generation.
@@ -670,7 +670,7 @@ process()
     
     # Execute the command using eval
     if [ "${estimate_seg}" -eq 1 ]; then
-      "${cmd[@]}"
+      eval "${cmd[@]}"
       status=$?
     fi
 
@@ -691,7 +691,7 @@ process()
     
     # Execute the command using eval
     if [ "${save_surf}" -eq 1 ]; then
-      "${cmd[@]}"
+      eval "${cmd[@]}"
       status=$?
     fi
     
@@ -858,7 +858,7 @@ process()
       
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
-        "${cmd}"
+        eval "${cmd}"
         seg_status=$?
       else
         seg_status=0
@@ -993,13 +993,15 @@ ${BOLD}OPTIONS:${NC}
   --no-seg                    Skip segmentation processing.
   --no-sphere-reg             Skip spherical surface registration.
   --no-mwp                    Skip the estimation of modulated and warped segmentations.
+  --pial-white                Additionally estimate pial and white matter surface during 
+                              surface estimation.
   --hemisphere                Additionally save hemispheric partitions of the segmentation.
   --wp                        Additionally save warped segmentations.
   --rp                        Additionally save affine-registered segmentations.
   --p                         Additionally save native space segmentations.
   --csf                       Additionally save CSF segmentations (default: only GM/WM are saved).
   --lesions                   Additionally save WMH lesions.
-  --atlas                     Define an atlas list (default: $atlas)
+  --atlas                     Define an atlas list in the format "'suit','cobra'" (default: $atlas).
   --bids                      Use BIDS (Brain Imaging Data Structure) standard for output file 
                               naming conventions (not yet fully working!).
 
