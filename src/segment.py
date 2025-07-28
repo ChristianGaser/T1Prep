@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import fill_voids
 import json
+from memory_profiler import profile
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -654,7 +655,7 @@ def save_results(
 
     # Estimate raw volumes
     vol_abs_CGW = [
-        get_volume_native_space(img, affine.values)
+        get_volume_native_space(img, wj_affine[0])
         for img in [p3_large, p1_large, p2_large, wmh_large]
     ]
     tiv_volume = sum(vol_abs_CGW)
@@ -773,6 +774,7 @@ def save_results(
             )
 
 
+#@profile
 def run_segment():
     """Run the full segmentation workflow."""
 
@@ -847,6 +849,8 @@ def run_segment():
         prep, brain, mask, verbose, count, end_count
     )
 
+    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
+
     # Ensure that minimum of brain is not negative (which can happen after sinc-interpolation)
     brain_value = brain_large.get_fdata().copy()
     mask_value = brain_large.get_fdata().copy() > 0.5
@@ -880,6 +884,7 @@ def run_segment():
     )
     dim_target_res = header_resamp["dim"]
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
+    
     grid_target_res = F.affine_grid(
         inv_affine[None, :3],
         [1, 3, *dim_target_res[1:4]],
@@ -971,6 +976,7 @@ def run_segment():
     wj_affine = (
         np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
     )
+    
     wj_affine = pd.Series([wj_affine])
 
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) to refine segmentation

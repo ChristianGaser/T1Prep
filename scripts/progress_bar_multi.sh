@@ -86,7 +86,7 @@ main ()
         fi
 
         printf -v percent_str "%3d" "$percent"
-        echo -ne "${percent_str}% [${BAR_COLOR}${bar}${NC}] ${job_name} ${jobstr}\n"
+        echo -ne "[${BAR_COLOR}${bar}${NC}] ${percent_str}% ${job_name} ${jobstr}\n"
         [[ "$done_items" -lt "$total_items" ]] && all_done=false
       else
         echo -ne "Job $((i+1)): [waiting...]\n"
