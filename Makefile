@@ -1,7 +1,7 @@
 .PHONY: help docker clean zip cp_binaries
 .DEFAULT: help
 
-VERSION='0.1.0'
+VERSION='0.2.0'
 
 FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py
 DATA_FILES=data

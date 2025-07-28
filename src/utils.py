@@ -32,7 +32,8 @@ from pathlib import Path
 from skimage import filters
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
-DATA_PATH = ROOT_PATH / "data"
+DATA_PATH_T1PREP = ROOT_PATH / "data"
+TEMPLATE_PATH_T1PREP = DATA_PATH_T1PREP / "templates_MNI152NLin2009cAsym"
 name_file = ROOT_PATH / "Names.tsv"
 
 codes = [
@@ -52,7 +53,16 @@ codes = [
     "Report_file",
 ]
 
-
+def smart_round(x):
+    """Smart rounding depending on x"""
+    x = float(x)
+    if abs(x) < 1:
+        return round(x, 5)
+    elif abs(x) < 10:
+        return round(x, 3)
+    else:
+        return round(x, 2)
+        
 def load_namefile(filename):
     """Parse a two-column TSV name file into a dictionary."""
 
