@@ -18,7 +18,7 @@ from torchreg.utils import smooth_kernel
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
 
-from utils import DATA_PATH, find_largest_cluster
+from utils import DATA_PATH_T1PREP, TEMPLATE_PATH_T1PREP, find_largest_cluster
 
 import numpy as np
 import nibabel as nib
@@ -453,7 +453,7 @@ def get_atlas(
     transform = target_affine
 
     atlas = nib.as_closest_canonical(
-        nib.load(f"{DATA_PATH}/templates_MNI152NLin2009cAsym/{atlas_name}.nii.gz")
+        nib.load(f"{TEMPLATE_PATH_T1PREP}/{atlas_name}.nii.gz")
     )
     atlas_register = AtlasRegistration()
 
@@ -478,7 +478,7 @@ def get_atlas(
 
 def get_cerebellum(atlas):
     """Return a binary cerebellum mask from the IBSR atlas."""
-    rois = pd.read_csv(f"{DATA_PATH}/templates_MNI152NLin2009cAsym/ibsr.csv", sep=";")[
+    rois = pd.read_csv(f"{TEMPLATE_PATH_T1PREP}/ibsr.csv", sep=";")[
         ["ROIid", "ROIabbr"]
     ]
     regions = dict(zip(rois.ROIabbr, rois.ROIid))
@@ -494,7 +494,7 @@ def get_cerebellum(atlas):
 
 def get_partition(p0_large, atlas):
     """Partition a segmentation into left and right hemispheres."""
-    rois = pd.read_csv(f"{DATA_PATH}/templates_MNI152NLin2009cAsym/ibsr.csv", sep=";")[
+    rois = pd.read_csv(f"{TEMPLATE_PATH_T1PREP}/ibsr.csv", sep=";")[
         ["ROIid", "ROIabbr"]
     ]
     regions = dict(zip(rois.ROIabbr, rois.ROIid))
