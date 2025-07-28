@@ -24,7 +24,7 @@ from deepbet.utils import reoriented_nifti
 from deepmriprep.segment import BrainSegmentation, scale_intensity
 from deepmriprep.preprocess import Preprocess
 from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
-from deepmriprep.atlas import get_volumes
+from deepmriprep.atlas import get_volumes, shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from scipy.ndimage import (
@@ -36,6 +36,7 @@ from scipy.ndimage import (
     generate_binary_structure,
 )
 from utils import (
+    smart_round,
     progress_bar,
     remove_file,
     resample_and_save_nifti,
@@ -43,6 +44,8 @@ from utils import (
     align_brain,
     get_filenames,
     get_volume_native_space,
+    DATA_PATH_T1PREP,
+    TEMPLATE_PATH_T1PREP,
 )
 from segmentation_utils import (
     correct_bias_field,
@@ -60,7 +63,6 @@ from scipy.ndimage import label as label_image
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
 TMP_PATH = ROOT_PATH / "tmp_models/"
-DATA_PATH_T1PREP = ROOT_PATH / "data/"
 MODEL_DIR = Path(DATA_PATH) / "models/"
 MODEL_FILES = (
     [
@@ -144,6 +146,64 @@ class CustomPreprocess(Preprocess):
             ),
             "p0": reoriented_nifti(p0.cpu().numpy(), mask.affine, mask.header),
         }
+
+
+    def run_atlas_register(self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine):
+        voxel_vol = np.prod(p1_large.affine[np.diag_indices(3)])
+        p1_large, p2_large, p3_large = [nifti_to_tensor(p).to(self.device) for p in [p1_large, p2_large, p3_large]]
+        inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float().to(self.device))
+        grid = F.affine_grid(inv_affine[None, :3], [1, 3, *t1.shape[:3]], align_corners=INTERP_KWARGS['align_corners'])
+        warp_yx = nib.as_closest_canonical(warp_yx)
+        yx = nifti_to_tensor(warp_yx)[None].to(self.device)
+        atlases, warps = {}, {}
+    
+        atl_list = [
+            '_'.join(a.split('_')[:-1]) if a.endswith(('_affine', '_volumes')) else a
+            for a in atlas_list
+        ]
+        for atl in atl_list:
+            # Use absolute path for external atlas if exists
+            if os.path.isabs(atl) and os.path.exists(atl):
+                atlas_path = atl
+                base_atl = os.path.splitext(os.path.basename(atl))[0]
+            else:
+                atlas_path = f'{TEMPLATE_PATH_T1PREP}/{atl}.nii.gz'
+                base_atl = atl
+            atlas = nib.as_closest_canonical(nib.load(atlas_path))
+            header = atlas.header
+            shape = tuple(shape_from_to(atlas, warp_yx))
+            if shape not in warps:
+                scaled_yx = F.interpolate(yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
+                warps[shape] = scaled_yx.permute(0, 2, 3, 4, 1)
+            atlas = self.atlas_register(affine, warps[shape], atlas, t1.shape)
+            if f'{atl}_affine' in atlas_list:
+                atlases[f'{atl}_affine'] = atlas
+            atlas_tensor = nifti_to_tensor(atlas).to(self.device)
+            if f'{atl}_volumes' in atlas_list:
+                # Check for csf file and create dummy ROIs if not found
+                csv_path = f'{TEMPLATE_PATH_T1PREP}/{base_atl}.csv' if not os.path.isabs(atl) else os.path.splitext(atl)[0] + '.csv'
+                if os.path.exists(csv_path):
+                    rois = pd.read_csv(csv_path, sep=';')[['ROIid', 'ROIname']]
+                else:
+                    # Fallback: Dummy-ROI-list with increasing IDs
+                    labels = torch.unique(atlas_tensor).cpu().numpy()
+                    labels = labels[labels > 0]
+                    rois = pd.DataFrame({
+                        'ROIid': labels,
+                        'ROIname': [f'Region_{i}' for i in labels]
+                    })
+                volumes = voxel_vol * get_volumes(atlas_tensor, p1_large, p2_large, p3_large)
+                volumes *= wj_affine[0] / 1000
+                # Smart rounding
+                volumes = np.vectorize(smart_round)(volumes)
+                volumes = pd.DataFrame(volumes, columns=['gmv_cm3', 'wmv_cm3', 'csfv_cm3', 'region_cm3'])                
+                atlases[f'{atl}_volumes'] = pd.concat([rois, volumes], axis=1)
+            if atl in atlas_list:
+                sample_kwargs = {'mode': 'nearest', 'align_corners': INTERP_KWARGS['align_corners']}
+                sampled_atlas = F.grid_sample(atlas_tensor[None, None], grid, **sample_kwargs)[0, 0]
+                atlases[atl] = reoriented_nifti(sampled_atlas.cpu().numpy(), t1.affine, header)
+        return atlases
+
 
 
 def all_models_present():
@@ -670,10 +730,10 @@ def save_results(
 
     # Prepare dictionary
     summary = {
-        "vol_abs_CGW": vol_abs_CGW,  # list of floats
-        "vol_rel_CGW": vol_rel_CGW,  # list of floats
-        "mean_CGW": mean_CGW,  # list of floats
-        "tiv_volume": tiv_volume,  # float
+        "vol_abs_CGW": [smart_round(x) for x in vol_abs_CGW],
+        "vol_rel_CGW": [smart_round(x) for x in vol_rel_CGW],
+        "mean_CGW":   [smart_round(x) for x in mean_CGW],
+        "tiv_volume": smart_round(tiv_volume),
     }
 
     # Optional: ensure all values are Python floats (for JSON compatibility)
@@ -687,7 +747,7 @@ def save_results(
         json.dump(summary, f, indent=2)
 
     # Save non-linear registered data
-    if save_hemilabel or save_mwp or save_wp:
+    if save_hemilabel or save_mwp or save_wp or (atlas_list is not None):
         if verbose:
             count = progress_bar(count, end_count, "Warping           ")
         output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
@@ -696,7 +756,7 @@ def save_results(
         warp_mse = output_reg["warp_mse"]
 
         output_atlas = prep.run_atlas_register(
-            t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list
+            t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
         )
 
         # Convert each DataFrame to a list of dicts:
@@ -826,7 +886,8 @@ def run_segment():
 
     # Get atlas list (currently restricted to ROI estimation)
     atlas = tuple(x.strip(" '") for x in atlas.split(","))
-    atlas_list = tuple([f"{a}_volumes" for a in atlas])
+    # Build atlas_list. Set atlas_list to None, if empty
+    atlas_list = tuple(f"{a}_volumes" for a in atlas) if any(atlas) and atlas != ("",) else None
 
     # Prepare filenames and load input MRI data
     out_name = os.path.basename(os.path.basename(t1_name).replace(".nii", "")).replace(
