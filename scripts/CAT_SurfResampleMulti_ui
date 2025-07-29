@@ -140,7 +140,7 @@ parse_args()
 process_file() {
   local infile="$1"
 
-  local dname bname hemi measure sphere_reg rh_bname out_namr
+  local dname bname hemi measure sphere_reg rh_bname out_name
   dname=$(dirname "$infile")
   bname=$(basename "$infile")
 
@@ -155,6 +155,7 @@ process_file() {
     else
       out_name="${dname}/${bname/lh./s${fwhm}.mesh.}.${ext}"
     fi
+    out_name="${out_name/.$measure/.${measure}.resampled_32k}"
   elif [[ "$bname" == *_left* ]]; then
     echo -e "${RED}BIDS format not yet implemented (${bname}).${NC}" >&2
     return 1
@@ -203,7 +204,8 @@ process()
 
     # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
     trap cleanup INT TERM
-  fi  
+  fi 
+   
   j=1
   for ((i=0; i<${n}; i++)); do
     if [  ${n} -gt 1 ]; then
@@ -216,10 +218,11 @@ process()
       -fwhm "${fwhm}" \
       -out  "${OUT_ARRAY[$i]}" \
       -unit "${LH_ARRAY[$i]}" \
-      -unit "${RH_ARRAY[$i]}"
+      -unit "${RH_ARRAY[$i]}" 2>&1
       
-    pids=($!)
     exit_code=$?
+    pids=($!)
+
     if [[ ${n} -gt 1  &&  $exit_code -ne 0 ]]; then
       echo 1 > "$PROGRESS_DIR/job0.status"
     fi
