@@ -41,14 +41,14 @@ script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
 name_file=${root_dir}/Names.tsv
 surf_templates_dir=${root_dir}/data/templates_surfaces_32k
-
-source "${script_dir}/utils.sh"
-
 T1prep_env=${root_dir}/env
 src_dir=${root_dir}/src
+cfg="${script_dir}/../T1Prep_defaults.txt"
 
-source "${script_dir}/../defaults.txt"
+# Use some external functions
+source "${script_dir}/utils.sh"
 source "${script_dir}/progress_bar.sh"
+
 
 # ----------------------------------------------------------------------
 # run main
@@ -89,16 +89,21 @@ parse_args()
     exit 1
   fi
 
+  # Check default-file first and load it before any other options
+  for ((i=1;i<=$#;i++)); do
+      case "${!i}" in
+          --default*)   cfg="${!((i+1))}"; i=$((i+1)) ;;
+      esac
+  done
+  source "${cfg}"
+
   count=0
   while [ $# -gt 0 ]; do
     optname="${1%%=*}"
     optarg="${2:-}"
 
     case "$1" in
-      --install)
-        re_install=1
-        ;;
-      --re-install)
+      --install | --re-install)
         re_install=1
         ;;
       --python)
@@ -504,6 +509,8 @@ surface_estimation()
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
     ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}
+
+    #${bin_dir}/CAT_SurfReduce ${verbose} -ratio 0.25 -aggr 4 -preserve_sharp ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}
 
     # Updates progress to 'Map $side thickness values'.
     ((count++))
@@ -972,6 +979,7 @@ Analysis Tools for Surface, a core component of the CAT12 toolbox.
 
 ${BOLD}OPTIONS:${NC}
   ${BOLD}${YELLOW}General Options:${NC}
+  --defaults <FILE>           Define alternative defaults file.
   --install                   Install the required Python libraries.
   --re-install                Remove the existing installation and reinstall the required Python libraries.
   --python <FILE>             Set the Python interpreter to use (default: $python).
