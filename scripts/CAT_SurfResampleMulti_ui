@@ -45,6 +45,7 @@ PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
 fwhm=12
 ext="dat"
 lh_fsavg_sphere=${root_dir}/data/templates_surfaces_32k/lh.sphere.freesurfer.gii
+lh_fsavg_mask=${root_dir}/data/templates_surfaces_32k/lh.mask
 
 declare -a FILES=()
 declare -a LH_ARRAY=()
@@ -99,6 +100,11 @@ parse_args()
         lh_fsavg_sphere=$optarg
         shift
         ;;
+      --mask)
+        exit_if_empty "$optname" "$optarg"
+        lh_fsavg_mask=$optarg
+        shift
+        ;;
       --fwhm)
         exit_if_empty "$optname" "$optarg"
         fwhm=$optarg
@@ -126,10 +132,14 @@ parse_args()
     shift
   done
 
-  # RH target sphere fallback
+  # RH hemisphere fallback
   if [[ -z "$rh_fsavg_sphere" ]]; then
     rh_fsavg_sphere="${lh_fsavg_sphere/lh./rh.}"
     rh_fsavg_sphere="${rh_fsavg_sphere/left_/right_}"
+  fi
+  if [[ -z "$rh_fsavg_mask" ]]; then
+    rh_fsavg_mask="${lh_fsavg_mask/lh./rh.}"
+    rh_fsavg_mask="${rh_fsavg_mask/left_/right_}"
   fi
 
 }
@@ -168,10 +178,11 @@ process_file() {
   local lh_sphere_reg="${dname}/${bname/.$measure/${sphere_reg}}.gii"
   local rh_central="${dname}/${rh_bname/.$measure/.central}.gii"
   local rh_sphere_reg="${dname}/${rh_bname/.$measure/${sphere_reg}}.gii"
+  local rh_central="${dname}/${rh_bname/.$measure/.central}.gii"
 
   # build units for CAT_SurfResampleMulti
-  local lh_unit="surf=${lh_central},src_sphere=${lh_sphere_reg},vals=${dname}/${bname},trg_sphere=${lh_fsavg_sphere}"
-  local rh_unit="surf=${rh_central},src_sphere=${rh_sphere_reg},vals=${dname}/${rh_bname},trg_sphere=${rh_fsavg_sphere}"
+  local lh_unit="surf=${lh_central},src_sphere=${lh_sphere_reg},vals=${dname}/${bname},trg_sphere=${lh_fsavg_sphere},mask=${lh_fsavg_mask}"
+  local rh_unit="surf=${rh_central},src_sphere=${rh_sphere_reg},vals=${dname}/${rh_bname},trg_sphere=${rh_fsavg_sphere},mask=${rh_fsavg_mask}"
 
   LH_ARRAY+=("$lh_unit")
   RH_ARRAY+=("$rh_unit")
