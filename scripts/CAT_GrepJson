@@ -82,7 +82,7 @@ parse_args()
 process()
 {
   for f in "${FILES[@]}"; do
-    jq -r ".\"$field\" | join(\" \")" "$f"
+    jq -r ".\"$field\" | (if type==\"array\" then join(\" \") else tostring end)" "$f"
   done
 }
 
