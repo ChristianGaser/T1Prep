@@ -510,7 +510,7 @@ surface_estimation()
     # - '-local-smoothing' applies additional local smoothing to the mesh.
     ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}
 
-    #${bin_dir}/CAT_SurfReduce ${verbose} -ratio 0.25 -aggr 4 -preserve_sharp ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}
+    ${bin_dir}/CAT_SurfReduce ${verbose} -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}
 
     # Updates progress to 'Map $side thickness values'.
     ((count++))
@@ -749,12 +749,12 @@ process()
       get_output_folder $FILE
       
       if [ "${use_bids_naming}" -eq 1 ]; then  
-        processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
+        processed=$(ls "${outdir0}/${bname}"*"/${no_overwrite}"* 2>/dev/null)
       else
-        processed=$(ls "${outdir0}/${bname}"*"${no_overwrite}"* 2>/dev/null)
+        processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
       fi
     fi
-
+    
     if [ -z "${processed}" ]; then
       ARRAY2[$j]="$FILE"
       ((j++))
@@ -769,7 +769,7 @@ process()
   
   # Exit if no files could be found for processing
   if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
-    exit 1
+    exit 0
   fi
 
   # set overall starting time
