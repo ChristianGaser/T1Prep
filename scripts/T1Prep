@@ -121,11 +121,6 @@ parse_args()
         pre_fwhm=$optarg
         shift
         ;;
-      --post-fwhm)
-        exit_if_empty "$optname" "$optarg"
-        post_fwhm=$optarg
-        shift
-        ;;
       --thickness-fwhm)
         exit_if_empty "$optname" "$optarg"
         thickness_fwhm=$optarg
@@ -508,7 +503,7 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -post-fwhm ${post_fwhm} -thresh ${thresh} ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}
+    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh ${thresh} ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}
 
     ${bin_dir}/CAT_SurfReduce ${verbose} -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}
 
@@ -554,8 +549,11 @@ surface_estimation()
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface     "; fi
       ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}
 
+
+      ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.4 -w3 0.3 -w4 0 -sigma 0.2 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}
+
       # Get central surface by averaging pial and white matter surface
-      ${bin_dir}/CAT_AverageSurfaces -avg ${surf_dir}/${Mid_surface} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}    
+      #${bin_dir}/CAT_SurfAverage -avg ${surf_dir}/${Mid_surface} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}    
     fi
           
     # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
@@ -590,7 +588,7 @@ surface_estimation()
   
       # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
       ((count++))
-      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical estimate_spherereg $side hemisphere"; fi
+      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical registration $side hemisphere"; fi
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
       ${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${surf_dir}/${Mid_surface} -is ${surf_dir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${surf_dir}/${Spherereg_surface}
     fi
@@ -929,7 +927,7 @@ process()
     overall+="${s}s"
 
     if [[ "$multi" -ne -2 ]]; then
-      echo "${GREEN}-------------------------------------------------------${NC}"
+      echo "${GREEN}-------------------------------------------------------                                ${NC}"
       echo "${GREEN}${overall}${NC}"
     fi
       
@@ -1094,12 +1092,14 @@ ${BOLD}USED FUNCTIONS:${NC}
   CAT_VolThicknessPbt
   CAT_VolMarchingCubes
   CAT_Vol2Surf
+  CAT_SurfAverage
   CAT_Surf2PialWhite
   CAT_SurfDistance
   CAT_SurfWarp
   CAT_Surf2Sphere
   CAT_SurfDeform
   CAT_SurfCorrectThicknessFolding
+  CAT_SurfReduce
   ${src_dir}/segment.py
   ${src_dir}/utils.py
   ${script_dir}/progress_bar_multi.sh
