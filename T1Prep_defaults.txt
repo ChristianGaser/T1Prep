@@ -21,7 +21,6 @@ downsample=0.0
 vessel=0.5
 sharpening=0.0
 bias_fwhm=0
-post_fwhm=1.75
 pre_fwhm=2
 re_install=0
 use_amap=1
