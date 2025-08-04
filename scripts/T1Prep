@@ -141,11 +141,6 @@ parse_args()
         median_filter=$optarg
         shift
         ;;
-      --thresh*)
-        exit_if_empty "$optname" "$optarg"
-        thresh=$optarg
-        shift
-        ;;
       --vessel*)
         exit_if_empty "$optname" "$optarg"
         vessel=$optarg
@@ -503,9 +498,9 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh ${thresh} ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}
+    ${bin_dir}/CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}
 
-    ${bin_dir}/CAT_SurfReduce ${verbose} -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}
+    ${bin_dir}/CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}
 
     # Updates progress to 'Map $side thickness values'.
     ((count++))
@@ -522,12 +517,6 @@ surface_estimation()
       ${bin_dir}/CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${surf_dir}/${PBT_shape} ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape}
     fi
 
-    # Estimate the necessary shift if the threshold is not 0.5
-    shift=$(echo "$thresh - $isoval" | bc)
-    if (( $(echo "$shift != 0" | bc) )); then
-      ${bin_dir}/CAT_SurfCentral2Pial ${verbose} ${surf_dir}/${Mid_surface} ${surf_dir}/${PBT_shape} ${surf_dir}/${Mid_surface} ${shift}
-    fi    
-     
     # Updates progress to 'Deform $side surface'
     ((count++))
     if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side central surface       "; fi
@@ -553,7 +542,7 @@ surface_estimation()
       ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.4 -w3 0.3 -w4 0 -sigma 0.2 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}
 
       # Get central surface by averaging pial and white matter surface
-      #${bin_dir}/CAT_SurfAverage -avg ${surf_dir}/${Mid_surface} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}    
+      ${bin_dir}/CAT_SurfAverage -avg ${surf_dir}/${Mid_surface} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}    
     fi
           
     # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
@@ -664,7 +653,6 @@ process()
     filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
 
     # Call parallelize with filtered arguments and use memory limit per process
-    echo "${BOLD}Volume Segmentation${NC}"
     cmd=(
       "${script_dir}/parallelize"
       -l "/tmp"
@@ -675,12 +663,12 @@ process()
     
     # Execute the command using eval
     if [ "${estimate_seg}" -eq 1 ]; then
+      echo "${BOLD}Volume Segmentation${NC}"
       eval "${cmd[@]}"
       status=$?
     fi
 
     # Call parallelize with filtered arguments
-    echo "${BOLD}Surface Estimation${NC}"
     # Define number of processes, otherwise estimate it automatically 
     if [ "$multi" -gt 0 ]; then
       arg_parallelize="-p ${multi}"
@@ -696,6 +684,7 @@ process()
     
     # Execute the command using eval
     if [ "${save_surf}" -eq 1 ]; then
+      echo "${BOLD}Surface Estimation${NC}"
       eval "${cmd[@]}"
       status=$?
     fi
@@ -762,6 +751,7 @@ process()
     ((i++))
   done
   
+  
   i=0
   SIZE_OF_ARRAY="${#ARRAY2[@]}"
   
@@ -775,7 +765,6 @@ process()
 
   # use defined environment
   source ${T1prep_env}/bin/activate
-  #python="${T1prep_env}/bin/python"
 
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
     
@@ -1026,8 +1015,6 @@ ${BOLD}OPTIONS:${NC}
                               CAT_VolThicknessPbt (default: $thickness_fwhm).
   --sharpening <NUMBER>       Set the sharpening amount applied to the PPM map by enhancing differences
                               between the unsmoothed and smoothed PPM maps (default: $sharpening).
-  --thresh <NUMBER>           Set the isovalue threshold for surface creation in 
-                              CAT_VolMarchingCubes (default: $thresh).
   --vessel <NUMBER>           Set the initial white matter (WM) threshold for vessel removal. 
                               Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable 
                               vessel removal (default: $vessel).
