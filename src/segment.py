@@ -731,7 +731,7 @@ def save_results(
     
     # Compute relative volumes as fractions
     # Fractions w. r. t. TIV
-    vol_rel_CGW = [v / tiv_volume for v in vol_abs_CG]      # CSF, GM, WM, WMH
+    vol_rel_CGW = [v / tiv_volume for v in vol_abs_CGW]      # CSF, GM, WM, WMH
     
     # Lesion load: WMH fraction w. r. t. WM (+WMH)
     wmh_rel_to_wm = vol_wmh / vol_wm_incl
