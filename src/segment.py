@@ -714,32 +714,65 @@ def save_results(
         )
 
     # Estimate raw volumes
-    vol_abs_CGW = [
-        get_volume_native_space(img, wj_affine[0])
-        for img in [p3_large, p1_large, p2_large, wmh_large]
-    ]
-    tiv_volume = sum(vol_abs_CGW)
-
+    vol_gm   = get_volume_native_space(p1_large, wj_affine[0])   # GM    (p1)
+    vol_wm   = get_volume_native_space(p2_large, wj_affine[0])   # WM    (p2)
+    vol_csf  = get_volume_native_space(p3_large, wj_affine[0])   # CSF   (p3)
+    vol_wmh  = get_volume_native_space(wmh_large, wj_affine[0])  # WMHs  (lesions)
+    
+    # treat WMHs as part of WM
+    vol_wm_incl = vol_wm + vol_wmh
+    
+    # Absolute volumes
+    # Order: CSF-GM-WM(incl.WMH)-WMH
+    vol_abs_CGW = [vol_csf, vol_gm, vol_wm_incl, vol_wmh]
+    
+    # TIV contains CSF + GM + WM (already incl. WMH!)
+    tiv_volume = vol_csf + vol_gm + vol_wm_incl
+    
     # Compute relative volumes as fractions
-    vol_rel_CGW = [v / tiv_volume for v in vol_abs_CGW]
-
+    # Fractions w. r. t. TIV
+    vol_rel_CGW = [v / tiv_volume for v in vol_abs_CG]      # CSF, GM, WM, WMH
+    
+    # Lesion load: WMH fraction w. r. t. WM (+WMH)
+    wmh_rel_to_wm = vol_wmh / vol_wm_incl
+    
+    # Mean intensities per tissue class
     mean_CGW = []
-    for label in (1, 2, 3):
+    for label in (1, 2, 3):          # p0_large: 1=CSF, 2=GM, 3=WM
         mask_label = np.round(p0_large.get_fdata()) == label
-        mean_CGW.append(brain_large.get_fdata().copy()[mask_label].mean())
-
+        mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
+    
     # Prepare dictionary
-    summary = {
-        "vol_abs_CGW": [smart_round(x) for x in vol_abs_CGW],
-        "vol_rel_CGW": [smart_round(x) for x in vol_rel_CGW],
-        "mean_CGW":   [smart_round(x) for x in mean_CGW],
-        "tiv_volume": smart_round(tiv_volume),
+    summary_old = {
+        "vol_abs_CGW": [smart_round(x) for x in vol_abs_CGW],      # [CSF, GM, WM+WMH, WMH]
+        "vol_rel_CGW": [smart_round(x) for x in vol_rel_CGW],      # same order, /TIV
+        "wmh_rel_WM":  smart_round(wmh_rel_to_wm),                 # WMH load  (/WM+WMH)
+        "mean_CGW":    [smart_round(x) for x in mean_CGW],
+        "tiv_volume":  smart_round(tiv_volume),
     }
 
-    # Optional: ensure all values are Python floats (for JSON compatibility)
-    # for key in ["vol_abs_CGW", "vol_rel_CGW", "mean_CGW"]:
-    #    summary[key] = [float(x) for x in summary[key]]
-    # summary["tiv_volume"] = float(summary["tiv_volume"])
+    summary = {
+        "vol_abs_CGW": {
+            "value": [smart_round(x) for x in vol_abs_CGW],
+            "desc":  "[CSF, GM, WM+WMH, WMH]"
+        },
+        "vol_rel_CGW": {
+            "value": [smart_round(x) for x in vol_rel_CGW],
+            "desc": "Relative volumes (/TIV) – CSF, GM, WM, WMH"
+        },
+        "wmh_rel_WM": {
+            "value": smart_round(wmh_rel_to_wm),
+            "desc": "WMH load relative to WM+WMH"
+        },
+        "mean_CGW":  {
+            "value": [smart_round(x) for x in mean_CGW],
+            "desc": "Mean intensity per tissue (p0 labels 1-3)"
+        },
+        "tiv_volume": {
+            "value": smart_round(tiv_volume),
+            "desc": "Total intracranial volume (CSF+GM+WM incl. WMH)"
+        }
+    }
 
     # Write to JSON file
     report_name = code_vars.get("Report_file", "")
