@@ -483,7 +483,7 @@ surface_estimation()
   
     # Executes the 'CAT_VolThicknessPbt' tool with various options:
     # - ${verbose} toggles verbose output.
-    # - '-n-avgs 4' sets the number of averages for distance estimation.
+    # - '-n-avgs 8' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
     ${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize 0 -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}
@@ -500,6 +500,9 @@ surface_estimation()
     # - '-local-smoothing' applies additional local smoothing to the mesh.
     ${bin_dir}/CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}
 
+    # Reduce surface mesh to smaller size:
+    # - '-ratio' defines target triangle ratio in (0,1], e.g., 0.5 keeps ~50% of faces (default 0.25)
+    # - '-aggr' defines aggressiveness of simplification (default 7)
     ${bin_dir}/CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}
 
     # Updates progress to 'Map $side thickness values'.
@@ -536,9 +539,6 @@ surface_estimation()
       # Updates progress to 'Deform $side surface'
       ((count++))
       if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface     "; fi
-      ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.2 -w3 0.4 -w4 0 -sigma 0.3 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}
-
-
       ${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.4 -w3 0.3 -w4 0 -sigma 0.2 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}
 
       # Get central surface by averaging pial and white matter surface
