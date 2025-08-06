@@ -117,22 +117,22 @@ parse_args()
     --mc0 | -mc0)
       method=4
       ;;
-    --bi | -bi)
+    --sd | -sd)
       method=5
       ;;
-    --sh | -sh)
+    --bi | -bi)
       method=6
       ;;
-    --fi | -fi)
+    --sh | -sh)
       method=7
       ;;
-    --min-curv | -min-curv)
+    --fi | -fi)
       method=8
       ;;
-    --max-curv | -max-curv)
+    --min-curv | -min-curv)
       method=9
       ;;
-    --sd | -sd)
+    --max-curv | -max-curv)
       method=10
       ;;
     --dp | -dp)
