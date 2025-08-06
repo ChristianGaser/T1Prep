@@ -743,14 +743,6 @@ def save_results(
         mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
     
     # Prepare dictionary
-    summary_old = {
-        "vol_abs_CGW": [smart_round(x) for x in vol_abs_CGW],      # [CSF, GM, WM+WMH, WMH]
-        "vol_rel_CGW": [smart_round(x) for x in vol_rel_CGW],      # same order, /TIV
-        "wmh_rel_WM":  smart_round(wmh_rel_to_wm),                 # WMH load  (/WM+WMH)
-        "mean_CGW":    [smart_round(x) for x in mean_CGW],
-        "tiv_volume":  smart_round(tiv_volume),
-    }
-
     summary = {
         "vol_abs_CGW": {
             "value": [smart_round(x) for x in vol_abs_CGW],
@@ -758,7 +750,7 @@ def save_results(
         },
         "vol_rel_CGW": {
             "value": [smart_round(x) for x in vol_rel_CGW],
-            "desc": "Relative volumes (/TIV) – CSF, GM, WM, WMH"
+            "desc": "Relative volumes [CSF, GM, WM, WMH]/TIV"
         },
         "wmh_rel_WM": {
             "value": smart_round(wmh_rel_to_wm),
@@ -768,7 +760,7 @@ def save_results(
             "value": [smart_round(x) for x in mean_CGW],
             "desc": "Mean intensity per tissue (p0 labels 1-3)"
         },
-        "tiv_volume": {
+        "vol_tiv": {
             "value": smart_round(tiv_volume),
             "desc": "Total intracranial volume (CSF+GM+WM incl. WMH)"
         }

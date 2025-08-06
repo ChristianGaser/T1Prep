@@ -82,7 +82,22 @@ parse_args()
 process()
 {
   for f in "${FILES[@]}"; do
-    jq -r ".\"$field\" | (if type==\"array\" then join(\" \") else tostring end)" "$f"
+    # read both entries with and without values
+    jq -r --arg field "$field" '
+      . as $root
+      | ($root[$field]) as $entry
+      | if $entry == null then
+          "N/A"
+        elif ($entry | type == "object") and ($entry | has("value")) then
+          $entry.value
+        else
+          $entry
+        end
+      | if type == "array" then join(" ")
+        elif type == "object" then tojson
+        else tostring
+        end
+    ' "$f"
   done
 }
 
