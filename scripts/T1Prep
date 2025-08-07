@@ -664,7 +664,7 @@ process()
     # Execute the command using eval
     if [ "${estimate_seg}" -eq 1 ]; then
       echo "${BOLD}Volume Segmentation${NC}"
-      eval "${cmd[@]}"
+      "${cmd[@]}"
       status=$?
     fi
 
@@ -673,6 +673,7 @@ process()
     if [ "$multi" -gt 0 ]; then
       arg_parallelize="-p ${multi}"
     fi
+    
     cmd=(
       "${script_dir}/parallelize"
       -l "/tmp"
@@ -685,7 +686,7 @@ process()
     # Execute the command using eval
     if [ "${save_surf}" -eq 1 ]; then
       echo "${BOLD}Surface Estimation${NC}"
-      eval "${cmd[@]}"
+      "${cmd[@]}"
       status=$?
     fi
     
