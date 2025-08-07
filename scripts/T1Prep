@@ -653,9 +653,11 @@ process()
     filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
 
     # Call parallelize with filtered arguments and use memory limit per process
+    # and a small delay of 5s between the jobs to avoid simultaneous peak memory usage
     cmd=(
       "${script_dir}/parallelize"
       -l "/tmp"
+      -d 5
       -m "${min_memory}"
       -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-surf --hemisphere --multi -2)"
       "${ARRAY[@]}"
