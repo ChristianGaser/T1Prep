@@ -20,6 +20,7 @@ FG=1
 LOGDIR="/tmp"
 progress_pid= # This will hold the PID of the progress bar monitor
 pids=()
+delay=0
 
 # ----------------------------------------------------------------------
 # run main
@@ -74,6 +75,11 @@ parse_args () {
             exit_if_empty "$optname" "$optarg"
             COMMAND="$optarg"
             shift  # Skip the next argument since it's the value for --command
+            ;;
+        --delay* | -d*)
+            exit_if_empty "$optname" "$optarg"
+            delay="$optarg"
+            shift
             ;;
         --bg* | -b*)
             FG=0
@@ -169,7 +175,7 @@ get_no_of_cpus () {
     percent=$(echo 100*"$NUM_JOBS" | bc | cut -f1 -d'.')
     digit=$(echo 100*"$NUM_JOBS" | bc | cut -f2 -d'.')
 
-    if [[ -n $digit && $percent -gt 100 ]]; then
+    if [[ $digit -eq 0 && $percent -gt 100 ]]; then
       echo "ERROR: Argument -p is a floating number > 1.0"
       exit 1
     fi
@@ -313,7 +319,7 @@ do_parallelize ()
       fi
 
       for file in "${ARRAY[@]}"; do
-          "$COMMAND \"$file\""  # Use eval to handle complex commands
+          eval "$COMMAND \"$file\""  # Use eval to handle complex commands
           exit_code=$?
           if [ $exit_code -ne 0 ]; then
             echo 1 > "$PROGRESS_DIR/job0.status"
@@ -403,6 +409,7 @@ do_parallelize ()
             echo \$status > \"$PROGRESS_DIR/job${i}.status\"
           done
         " >> "$log" 2>&1 & pids+=($!)
+        sleep $delay
       fi
     fi
   done
@@ -472,6 +479,9 @@ ${BOLD}OPTIONS:${NC}
                            For example, 0.7 means 70% of CPU cores will be used.
   -m, --mem-limit <INT>    Memory limit for each process in GB (default is ${MEM_LIMIT}GB).
   -c, --command <STRING>   Command to be executed in parallel.
+  -d, --delay <NUMBER>     Specify a delay (in seconds) between starting each job. 
+                           This helps to avoid simultaneous peak memory usage, which can 
+                           lead to system overload or job failures (default: $delay).
   -b, --bg                 Keep all processes in background.
   -l, --logdir <DIR>       Directory to save the log file (default $LOGDIR).
   -t, --test               Run in test mode: print the files to be processed without 

@@ -138,7 +138,7 @@ ${BOLD}OPTIONS:${NC}
   --field <STR>  Field name to be used in json file
   --out <FILE>   Filename for saving the output
 
-${BOLD}FIELD NAMES:${NC}
+${BOLD}T1PREP FIELD NAMES:${NC}
   vol_abs_CGW   [CSF, GM, WM+WMH, WMH]
   vol_tiv       Total intracranial volume (CSF+GM+WM incl. WMH)
   vol_rel_CGW   Relative volumes [CSF, GM, WM, WMH]/TIV

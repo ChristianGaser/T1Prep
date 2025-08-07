@@ -1,5 +1,7 @@
 # custom
 .DS_Store
+ideas.txt
+todo.txt
 log*
 *.nii
 data
