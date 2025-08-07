@@ -17,6 +17,7 @@
 
 script_dir=$(dirname "$0")
 source "${script_dir}/utils.sh"
+out_file=""
 
 # ----------------------------------------------------------------------
 # run main
@@ -54,6 +55,11 @@ parse_args()
         field=$optarg
         shift
         ;;
+      --out*)
+        exit_if_empty "$optname" "$optarg"
+        out_file=$optarg
+        shift
+        ;;
       -h | --help | --h | -v | --version | -V)
         help
         exit 1
@@ -81,23 +87,35 @@ parse_args()
 
 process()
 {
+  # Remove existing outfile
+  if [[ -n "${out_file}" && -f "${out_file}" ]]; then
+    rm  "${out_file}"
+  fi
+  
   for f in "${FILES[@]}"; do
     # read both entries with and without values
-    jq -r --arg field "$field" '
-      . as $root
-      | ($root[$field]) as $entry
-      | if $entry == null then
-          "N/A"
-        elif ($entry | type == "object") and ($entry | has("value")) then
-          $entry.value
-        else
-          $entry
-        end
-      | if type == "array" then join(" ")
-        elif type == "object" then tojson
-        else tostring
-        end
-    ' "$f"
+    cmd=(
+      jq -r --arg field "$field" '
+        . as $root
+        | ($root[$field]) as $entry
+        | if $entry == null then
+            "N/A"
+          elif ($entry | type == "object") and ($entry | has("value")) then
+            $entry.value
+          else
+            $entry
+          end
+        | if type == "array" then join(" ")
+          elif type == "object" then tojson
+          else tostring
+          end
+      ' "$f"
+    )
+    if [ -z "${out_file}" ]; then
+      "${cmd[@]}"
+    else
+      "${cmd[@]}" >> "${out_file}"
+    fi
   done
 }
 
@@ -112,12 +130,21 @@ ${BOLD}${BLUE}$0
 ---------------------------------------------${NC}
 
 ${BOLD}USAGE:${NC}
-  ${GREEN}$0 [options] <filename(s)>${NC}
+  ${GREEN}$0 [options] <json-filename(s)>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
 
 ${BOLD}OPTIONS:${NC}
-  --field <STR>    Field name to be used in json file
+  --field <STR>  Field name to be used in json file
+  --out <FILE>   Filename for saving the output
+
+${BOLD}FIELD NAMES:${NC}
+  vol_abs_CGW   [CSF, GM, WM+WMH, WMH]
+  vol_tiv       Total intracranial volume (CSF+GM+WM incl. WMH)
+  vol_rel_CGW   Relative volumes [CSF, GM, WM, WMH]/TIV
+  wmh_rel_WM    WMH load relative to WM+WMH
+  mean_CGW      Mean intensity per tissue (p0 labels 1-3)
+  
 
 ${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
