@@ -417,8 +417,8 @@ def final_cleanup(
 ) -> None:
     """Remove temporary files generated during processing."""
 
-    remove_file(f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
     if (use_amap or save_lesions) and not debug:
+        remove_file(f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_seg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large.{ext}")
         remove_file(f"{mri_dir}/{out_name}_seg_large.{ext}")
@@ -717,7 +717,10 @@ def save_results(
     vol_gm   = get_volume_native_space(p1_large, wj_affine[0])   # GM    (p1)
     vol_wm   = get_volume_native_space(p2_large, wj_affine[0])   # WM    (p2)
     vol_csf  = get_volume_native_space(p3_large, wj_affine[0])   # CSF   (p3)
-    vol_wmh  = get_volume_native_space(wmh_large, wj_affine[0])  # WMHs  (lesions)
+    if save_lesions and wmh_large is not None:
+        vol_wmh  = get_volume_native_space(wmh_large, wj_affine[0])  # WMHs  (lesions)
+    else:
+        vol_wmh = 0
     
     # treat WMHs as part of WM
     vol_wm_incl = vol_wm + vol_wmh
@@ -1080,9 +1083,9 @@ def run_segment():
         )
     else:
         tmp = (
-            p3_large.get_fdata().copy()
-            + 2 * p1_large.get_fdata().copy()
-            + 3 * p2_large.get_fdata().copy()
+            p3_large.get_fdata()
+            + 2 * p1_large.get_fdata()
+            + 3 * p2_large.get_fdata()
         )
         p0_large = nib.Nifti1Image(tmp, affine_resamp, header_resamp)
 
@@ -1097,6 +1100,8 @@ def run_segment():
         wmh_large = nib.Nifti1Image(
             wmh_value, affine_resamp_reordered, header_resamp_reordered
         )
+    else:
+        wmh_large = None
 
     save_results(
         prep,
