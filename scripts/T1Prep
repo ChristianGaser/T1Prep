@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/usr/bin/env bash
 #
 # PURPOSE: This script performs preprocessing steps on T1-weighted MRI images
 #          to create segmentations and extract cortical surface. 
@@ -256,21 +256,27 @@ parse_args()
 # logo
 # ----------------------------------------------------------------------
 
-logo()
-{
-echo $BLUE
-cat <<__EOM__
+logo() {
+    local BLOCK_COLOR="$BLUE"    # colour for the █ glyphs
+    local TEXT_COLOR="$GRAY"    # colour for every other character
 
-████████╗ ██╗ ██████╗ ██████╗ ███████╗██████╗
+    # ASCII art in one variable (can be here-doc or external file)
+    local art='
+████████╗ ██╗ ██████╗ ██████╗ ███████╗██████╗ 
 ╚══██╔══╝███║ ██╔══██╗██╔══██╗██╔════╝██╔══██╗
-   ██║    ██║ █████╔╝║██████╔╝█████╗  ██████╔╝
+   ██║    ██║ ██████╔╝██████╔╝█████╗  ██████╔╝
    ██║    ██║ ██╔═══╝ ██╔══██╗██╔══╝  ██╔═══╝ 
-   ██║    ██║ ██║     ██║  ██║███████╗██║   
-   ╚═╝    ╚═╝ ╚═╝     ╚═╝  ╚═ ╚══════╝╚═╝   
+   ██║    ██║ ██║     ██║  ██║███████╗██║     
+   ╚═╝    ╚═╝ ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝     
+'
 
-__EOM__
-echo $NC
+    # Parameter substitution: colourise each █, keep rest in TEXT_COLOR
+    art=${art//█/${BLOCK_COLOR}█${TEXT_COLOR}}
+
+    # Print once, reset at the end
+    printf "%b%s%b\n" "$TEXT_COLOR" "$art" "$NC"
 }
+
 
 # ----------------------------------------------------------------------
 # check for python version
