@@ -33,11 +33,11 @@
 # ______________________________________________________________________
 
 # ----------------------------------------------------------------------
-# global parameters
+# Global parameters
 # ----------------------------------------------------------------------
 
 # Defaults
-version=0.1.0
+version="0.2.0"
 script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
 name_file=${root_dir}/Names.tsv
@@ -54,7 +54,7 @@ source "${script_dir}/progress_bar.sh"
 
 
 # ----------------------------------------------------------------------
-# run main
+# Run main
 # ----------------------------------------------------------------------
 
 main()
@@ -79,7 +79,7 @@ main()
 
 
 # ----------------------------------------------------------------------
-# check arguments and files
+# Check arguments and files
 # ----------------------------------------------------------------------
 
 parse_args()
@@ -253,7 +253,7 @@ parse_args()
 }
 
 # ----------------------------------------------------------------------
-# logo
+# Logo
 # ----------------------------------------------------------------------
 
 logo() {
@@ -279,7 +279,7 @@ logo() {
 
 
 # ----------------------------------------------------------------------
-# check for python version
+# Check for python version
 # ----------------------------------------------------------------------
 
 check_python_cmd()
@@ -297,7 +297,7 @@ check_python_cmd()
 }
 
 # ----------------------------------------------------------------------
-# check files
+# Check files
 # ----------------------------------------------------------------------
 
 check_files()
@@ -322,7 +322,7 @@ check_files()
 }
 
 # ----------------------------------------------------------------------
-# check for python
+# Check for python
 # ----------------------------------------------------------------------
 
 check_python()
@@ -334,7 +334,7 @@ check_python()
 }
 
 # ----------------------------------------------------------------------
-# check for python modules (e.g. pip)
+# Check for python modules (e.g. pip)
 # ----------------------------------------------------------------------
 
 check_python_module() {
@@ -347,7 +347,7 @@ check_python_module() {
 }
 
 # ----------------------------------------------------------------------
-# check for python libraries
+# Check for python libraries
 # ----------------------------------------------------------------------
 
 check_python_libraries()
@@ -370,7 +370,7 @@ check_python_libraries()
 }
 
 # ----------------------------------------------------------------------
-# install deepmriprep
+# Install deepmriprep
 # ----------------------------------------------------------------------
 
 install_deepmriprep()
@@ -424,7 +424,7 @@ substitute_pattern() {
 }
 
 # ----------------------------------------------------------------------
-# surface estimation
+# Surface estimation
 # ----------------------------------------------------------------------
 
 surface_estimation() 
@@ -604,7 +604,7 @@ surface_estimation()
 }
 
 # ----------------------------------------------------------------------
-# get output folder depending on BIDS structure
+# Get output folder depending on BIDS structure
 # ----------------------------------------------------------------------
 
 get_output_folder()
@@ -637,7 +637,7 @@ get_output_folder()
 } 
 
 # ----------------------------------------------------------------------
-# process data
+# Process data
 # ----------------------------------------------------------------------
 
 process()
@@ -942,7 +942,7 @@ process()
 }
 
 # ----------------------------------------------------------------------
-# help
+# Help
 # ----------------------------------------------------------------------
 
 help() {
@@ -959,19 +959,17 @@ and cortical surface reconstruction. It provides a complete set of tools for eff
 processing structural MRI scans.
 
 T1Prep partially integrates DeepMriPrep, which uses deep learning (DL) techniques to 
-mimic CAT12''s functionality for processing structural MRIs.
+mimic CAT12''s functionality for processing structural MRIs. DeepMriPrep is used for 
+skull-stripping, segmentation and nonlinear spatial registration.
 
-As with other DL-based methods, DeepMriPrep slightly underestimates gray matter in 
-cases of significant atrophy. Therefore, it is primarily used for bias field correction, 
-lesion detection, and as an initial estimate for the subsequent AMAP segmentation from CAT12. 
-The skull-stripping and nonlinear spatial registration steps provided by DeepMriPrep are 
-unaffected by this bias and are fully utilized in T1Prep.
+An alternative approach uses DeepMriPrep for bias field correction, lesion detection, 
+and also serves as an initial estimate for the subsequent AMAP segmentation from CAT12. 
 
 Cortical surface reconstruction and thickness estimation are performed using Cortex 
 Analysis Tools for Surface, a core component of the CAT12 toolbox.
 
 ${BOLD}OPTIONS:${NC}
-  ${BOLD}${YELLOW}General Options:${NC}
+${BOLD}${GREEN}General Options:${NC}
   --defaults <FILE>           Define alternative defaults file.
   --install                   Install the required Python libraries.
   --re-install                Remove the existing installation and reinstall the required Python libraries.
@@ -985,7 +983,7 @@ ${BOLD}OPTIONS:${NC}
   --debug                     Enable verbose output, retain temporary files, and save additional 
                               debugging information.
   
-  ${BOLD}${YELLOW}Save Options:${NC}
+${BOLD}${GREEN}Save Options:${NC}
   --out-dir <DIR>             Set the relative output directory (default: current working directory).
   --no-overwrite <STRING>     Avoid overwriting existing results by checking for the specified 
                               filename pattern.
@@ -1006,7 +1004,7 @@ ${BOLD}OPTIONS:${NC}
   --bids                      Use BIDS (Brain Imaging Data Structure) standard for output file 
                               naming conventions (not yet fully working!).
 
-  ${BOLD}${YELLOW}Expert Options:${NC}
+${BOLD}${GREEN}Expert Options:${NC}
   --no-amap                   Use DeepMRIPrep instead of AMAP for segmentation.
   --thickness-method <NUMBER> Set the thickness method (default: $thickness_method).
                               Use 1 for the Tfs-distance from Freesurfer for PBT-based measure,
@@ -1022,8 +1020,7 @@ ${BOLD}OPTIONS:${NC}
   --median-filter <NUMBER>    Set the number of median filter applications to reduce topology 
                               artifacts (default: $median_filter).
   
-  ${BOLD}${YELLOW}Examples:${NC}
-
+${BOLD}${GREEN}Examples:${NC}
 ${BLUE}${root_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation and 
   surface maps, saving the results in the 'test_folder' directory.
@@ -1053,10 +1050,12 @@ ${BLUE}${root_dir}/T1Prep --multi 8 --p --csf --atlas "'neuromorphometrics', 'su
   
   1. Segmentation (Python-based): Runs best with at least 12GB of memory per process. 
      The number of processes is automatically estimated based on available memory to 
-     optimize resource usage.
+     optimize resource usage. If you notice system overload due to peak memory usage
+     you can set a higher minimum memory limit using the "--min-memory" flag.
 
   2. Surface Extraction: This stage does not require significant memory and is 
-     distributed across all available processors or limited to the defined number.
+     distributed across all available processors or limited to the defined number of
+     processes using the "--multi" flag.
 
   If "--multi" is set to a specific number (e.g., 8), the system still estimates memory-based 
   constraints for segmentation parallelization. However, the specified number of processes 
@@ -1069,7 +1068,7 @@ ${BOLD}PURPOSE:${NC}
   segmentation, surface mapping, and more.
 
 ${BOLD}INPUT:${NC}
-  Accepts NIfTI files as input.
+  Accepts NIfTI files as input (extension nii/nii.gz).
 
 ${BOLD}OUTPUT:${NC}
   Produces segmented images and surface extractions.
@@ -1088,11 +1087,11 @@ ${BOLD}USED FUNCTIONS:${NC}
   CAT_SurfDeform
   CAT_SurfCorrectThicknessFolding
   CAT_SurfReduce
-  ${src_dir}/segment.py
-  ${src_dir}/utils.py
-  ${script_dir}/progress_bar_multi.sh
-  ${script_dir}/progress_bar.sh
-  ${script_dir}/parallelize
+  segment.py
+  utils.py
+  progress_bar_multi.sh
+  progress_bar.sh
+  parallelize
 
 ${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
