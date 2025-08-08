@@ -36,13 +36,16 @@
 # global parameters
 # ----------------------------------------------------------------------
 
-# defaults
+# Defaults
+version=0.1.0
 script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
 name_file=${root_dir}/Names.tsv
 surf_templates_dir=${root_dir}/data/templates_surfaces_32k
 T1prep_env=${root_dir}/env
 src_dir=${root_dir}/src
+
+# Load additional defaults
 cfg="${script_dir}/../T1Prep_defaults.txt"
 
 # Use some external functions
@@ -131,11 +134,6 @@ parse_args()
         downsample=$optarg
         shift
         ;;
-      --sharpen*)
-        exit_if_empty "$optname" "$optarg"
-        sharpening=$optarg
-        shift
-        ;;
       --median-filter)
         exit_if_empty "$optname" "$optarg"
         median_filter=$optarg
@@ -183,7 +181,7 @@ parse_args()
         save_hemi=1
         ;;
       --no-surf)
-        save_surf=0
+        estimate_surf=0
         ;;
       --no-seg*)
         estimate_seg=0
@@ -247,7 +245,7 @@ parse_args()
     shift
   done
 
-  if [[ "$estimate_seg" -eq 0 && "$save_surf" -eq 0 ]]; then
+  if [[ "$estimate_seg" -eq 0 && "$estimate_surf" -eq 0 ]]; then
     echo "${RED}ERROR: Options "--no-surf" and "--no-seg" cannot be used together.${NC}" >&2
     exit 1
   fi
@@ -486,7 +484,7 @@ surface_estimation()
     # - '-n-avgs 8' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize 0 -median-filter ${median_filter} -sharpen ${sharpening} -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}
+    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize 0 -median-filter ${median_filter} -sharpen 0 -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}
 
     # Updates progress to 'Extract $side surface'.
     ((count++))
@@ -685,7 +683,7 @@ process()
     )
     
     # Execute the command using eval
-    if [ "${save_surf}" -eq 1 ]; then
+    if [ "${estimate_surf}" -eq 1 ]; then
       echo "${BOLD}Surface Estimation${NC}"
       eval "${cmd[@]}"
       status=$?
@@ -807,7 +805,7 @@ process()
               
     # create output folders    
     dir_list="$mri_dir"
-    [ "${save_surf}" -eq 1 ] && dir_list+=" $surf_dir"
+    [ "${estimate_surf}" -eq 1 ] && dir_list+=" $surf_dir"
     dir_list+=" $report_dir"
     dir_list+=" $label_dir"
     mkdir -p $dir_list
@@ -845,7 +843,7 @@ process()
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
       [ "${multi}" -ne -2 ] && cmd+=" --verbose"
       [ "${debug}" -eq 1 ] && cmd+=" --debug"
-      [ "${save_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
+      [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
       
       cmd+=" --vessel \"${vessel}\" --label_dir \"${label_dir}\""
@@ -878,7 +876,7 @@ process()
     fi
     
     # optionally extract surface
-    if [ "${save_surf}" -eq 1 ]; then
+    if [ "${estimate_surf}" -eq 1 ]; then
         
       # 2. Estimate thickness and percentage position maps for each hemisphere
       #  and extract cortical surface and call it as background process to
@@ -904,7 +902,7 @@ process()
         echo "Error in ${bname}"
       fi
       
-    fi # save_surf
+    fi # estimate_surf
 
     # print execution time per data set
     end=$(date +%s)
@@ -1003,20 +1001,15 @@ ${BOLD}OPTIONS:${NC}
                               naming conventions (not yet fully working!).
 
   ${BOLD}${YELLOW}Expert Options:${NC}
-  --no-amap                   Use DeepMRIPrep instead of AMAP for segmentation. Please note 
-                              that this might lead to an underestimation of gray matter (GM) 
-                              in cases of significant atrophy.
+  --no-amap                   Use DeepMRIPrep instead of AMAP for segmentation.
   --thickness-method <NUMBER> Set the thickness method (default: $thickness_method).
                               Use 1 for the Tfs-distance from Freesurfer for PBT-based measure,
                               2 for the Tfs-distance from Freesurfer based on distance between 
                               pial and white matter surfaces, and 3 for the pure PBT-based approach
   --no-correct-folding        Do not correct for cortical thickness by folding effects.
   --pre-fwhm <NUMBER>         Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
-  --post-fwhm <NUMBER>        Set the post-smoothing FWHM size in CAT_VolMarchingCubes (default: $post_fwhm).
   --thickness-fwhm <NUMBER>   Set the FWHM size for volumetric thickness smoothing in 
                               CAT_VolThicknessPbt (default: $thickness_fwhm).
-  --sharpening <NUMBER>       Set the sharpening amount applied to the PPM map by enhancing differences
-                              between the unsmoothed and smoothed PPM maps (default: $sharpening).
   --vessel <NUMBER>           Set the initial white matter (WM) threshold for vessel removal. 
                               Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable 
                               vessel removal (default: $vessel).

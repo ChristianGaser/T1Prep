@@ -1,33 +1,43 @@
-outsurfdir=''
-outmridir=''
-use_bids_naming=0
-thickness_fwhm=-1
-median_filter=2
-save_pial_white=0
-save_lesions=0
-save_hemi=0
-save_surf=1
-save_csf=0
-save_mwp=1
-save_wp=0
-save_rp=0
-save_p=0
-nii_ext='nii'
-estimate_spherereg=1
-thickness_method=3
-correct_folding=1
-estimate_seg=1
-downsample=0.0
-vessel=0.5
-sharpening=0.0
-bias_fwhm=0
-pre_fwhm=2
-re_install=0
-use_amap=1
-isoval=0.5
-thresh=0.5
-debug=0
-multi=-1
-min_memory=12
-version=0.1.0
+# ------------------------------------------------------------------------------
+# General options
+# ------------------------------------------------------------------------------
+re_install=0          # Remove the existing installation and reinstall the 
+                      # required Python libraries
+multi=-1              # Set the number of processes for parallelization. Use '-1' 
+                      # to automatically detect the number of available processors
+min_memory=12         # Set the minimum memory size in GB for each process to be parallelized
+debug=0               # Enable verbose output, retain temporary files, and save 
+                      # additional debugging information
+
+# ------------------------------------------------------------------------------
+# Save options
+# ------------------------------------------------------------------------------
+nii_ext='nii'         # Define extension (nii.gz or nii)
+estimate_surf=1       # Run surface and thickness estimation
+estimate_seg=1        # Run segmentation processing
+estimate_spherereg=1  # Run spherical surface registration
+save_pial_white=0     # Additionally estimate pial and white matter surface 
+                      # during surface estimatio
+save_lesions=0        # Additionally save WMH lesions
+save_hemi=0           # Additionally save hemispheric partitions of the segmentation
+save_csf=0            # Additionally save CSF segmentations
+save_mwp=1            # Estimate modulated and warped segmentations
+save_wp=0             # Additionally save warped segmentations
+save_rp=0             # Additionally save affine-registered segmentations
+save_p=0              # Additionally save native space segmentations
+use_bids_naming=0     # Use BIDS standard for output file naming conventions
 atlas="'neuromorphometrics', 'cobra'"
+                      # Define an atlas list in the format "'suit','cobra'"
+
+# ------------------------------------------------------------------------------
+# Expert options
+# ------------------------------------------------------------------------------
+use_amap=1            # Use AMAP instead of DeepMRIPrep for segmentation
+thickness_method=3    # Set the thickness method
+correct_folding=1     # Correct for cortical thickness by folding effects
+pre_fwhm=2            # Set the pre-smoothing FWHM size in CAT_VolMarchingCubes
+thickness_fwhm=-1     # Set the post-smoothing FWHM size in CAT_VolMarchingCubes
+vessel=0.5            # Set the initial white matter (WM) threshold for vessel removal
+median_filter=2       # Set the number of median filter applications to reduce 
+                      # topology artefacts
+downsample=0.0        # Downsample image to defined resolution
