@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/usr/bin/env bash
 #
 # PURPOSE: Define text colors
 #
@@ -27,9 +27,20 @@ BLUE=$(tput setaf 4)
 PINK=$(tput setaf 5)
 CYAN=$(tput setaf 6)
 WHITE=$(tput setaf 7)
+GRAY=$(tput setaf 8)
+MAGENTA=$(tput setaf 13)
 
 progress_pid= # This will hold the PID of the progress bar monitor
 pids=()
+
+# indent, x spaces
+function indent02() { sed 's/^/  /'; }
+function indent04() { sed 's/^/    /'; }
+function indent10() { sed 's/^/          /'; }
+function indent15() { sed 's/^/               /'; }
+function indent18() { sed 's/^/                  /'; }
+function indent20() { sed 's/^/                    /'; }
+function indent25() { sed 's/^/                         /'; }
 
 # ----------------------------------------------------------------------
 # check arguments

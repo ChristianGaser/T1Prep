@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/usr/bin/env bash
 #
 # PURPOSE: This script displays a progress bar.
 #
