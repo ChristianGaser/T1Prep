@@ -42,6 +42,7 @@ script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
 name_file=${root_dir}/Names.tsv
 surf_templates_dir=${root_dir}/data/templates_surfaces_32k
+atlas_templates_dir=${root_dir}/data/atlases_surfaces_32k
 T1prep_env=${root_dir}/env
 src_dir=${root_dir}/src
 os_type=$(uname -s) # Determine OS type
@@ -69,7 +70,6 @@ main()
     check_python_module pip
     check_python_libraries    
   fi
-
   check_files
   get_OS
   
@@ -87,12 +87,6 @@ parse_args()
 {
   local optname optarg
   
-  if [ $# -lt 1 ]; then
-    logo
-    help
-    exit 1
-  fi
-
   # Check default-file first and load it before any other options
   for ((i=1;i<=$#;i++)); do
       case "${!i}" in
@@ -100,6 +94,12 @@ parse_args()
       esac
   done
   source "${cfg}"
+
+  if [ $# -lt 1 ]; then
+    logo
+    help
+    exit 1
+  fi
 
   count=0
   while [ $# -gt 0 ]; do
@@ -160,9 +160,14 @@ parse_args()
         multi=$optarg
         shift
         ;;
-      --atlas*)
+      --atlas)
         exit_if_empty "$optname" "$optarg"
-        atlas=$optarg
+        atlas_vol=$optarg
+        shift
+        ;;
+      --atlas-surf)
+        exit_if_empty "$optname" "$optarg"
+        atlas_surf=$optarg
         shift
         ;;
       --min-mem*)
@@ -222,7 +227,8 @@ parse_args()
       --fast)
         estimate_spherereg=0
         save_mwp=0
-        atlas=""
+        atlas_vol=""
+        atlas_surf=""
         ;;
       -h | --help | --h | -v | --version | -V)
         help
@@ -380,9 +386,7 @@ check_python_module() {
 check_python_libraries()
 {
   # Remove T1pre-env if reinstallation is selected
-  if [[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]]; then
-    rm -r "${T1prep_env}"
-  fi
+  [[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]] &&  rm -r "${T1prep_env}"
 
   if [ ! -d ${T1prep_env} ]; then
     $python -m venv ${T1prep_env}
@@ -444,10 +448,12 @@ substitute_pattern() {
   local hemi="$2"
   local desc="$3"
   local space="$4"
+  local atlas_surf="$5"
   pattern="${pattern//\{bname\}/$bname}"
   pattern="${pattern//\{side\}/$hemi}"
   pattern="${pattern//\{space\}/$space}"
   pattern="${pattern//\{desc\}/$desc}"
+  pattern="${pattern//\{atlas\}/$atlas_surf}"
   pattern="${pattern//\{nii_ext\}/$nii_ext}"
   echo $pattern
 }
@@ -471,6 +477,7 @@ surface_estimation()
   fshemi="${fshemi/right/rh}"
   Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
   Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
+  Fsavgatlas=${atlas_templates_dir}/${fshemi}
 
   # BIDS dependent parameters for coding hemispheres and column in Names.tsv
   if [[ $use_bids_naming -eq 1 ]]; then
@@ -486,7 +493,7 @@ surface_estimation()
   # Create dynamic variables for filenames
   for code in "PBT_shape" "GMT_shape" "Hemi_volume" "mT1_volume" "PPM_volume" "GMT_volume" "Mid_surface" "Pial_surface" "WM_surface" "Sphere_surface" "Spherereg_surface" "Intensity_Mid" "Intensity_Pial" "Intensity_WM"; do
     pattern=$(get_pattern "$code" "$name_columns")
-    value=$(substitute_pattern "$pattern" "$hemi""" "")
+    value=$(substitute_pattern "$pattern" "$hemi" "" "")
     # Use eval to assign the result to a variable named after the code
     eval "${code}=\"\$value\""
   done
@@ -522,6 +529,12 @@ surface_estimation()
     cmd="${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize -0.75 -median-filter ${median_filter} -sharpen 0 -downsample ${downsample} -n-avgs 8 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
     echo "${cmd}" >> ${report_log}
     $cmd >> ${report_log}
+    
+    # Exit if nothing was saved from 1st command
+    if [[ ! -f "${mri_dir}/${PPM_volume}" ]]; then
+      echo "${RED}ERROR: Surface estimation for $side hemisphere failed because an error occurred in CAT_VolThicknessPbt.${NC}" >&2
+      return 1
+    fi
 
     # Updates progress to 'Extract $side surface'.
     ((count++))
@@ -643,11 +656,27 @@ surface_estimation()
       cmd="${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${surf_dir}/${Mid_surface} -is ${surf_dir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${surf_dir}/${Spherereg_surface}"
       echo "${cmd}" >> ${report_log}
       $cmd >> ${report_log}
+      
+      # Resamples atlases to individual surface space
+      code="ATLAS_label"
+      pattern=$(get_pattern "$code" "$name_columns")
+      # Create dynamic variables for filenames
+      for atl in ${atlas_surf}; do
+        value=$(substitute_pattern "$pattern" "$hemi" "" "" "$atl")
+        # Use eval to assign the result to a variable named after the code
+        eval "${code}=\"\$value\""
+
+        cmd="${bin_dir}/CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgatlas}.${atl}.annot ${surf_dir}/${ATLAS_label}"
+        echo "${cmd}" >> ${report_log}
+        $cmd >> ${report_log}
+      done
     fi
 
     # remove temporary files if not debugging
     if [ "${debug}" -eq 0 ]; then
-      rm ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}
+      for file in ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}; do
+        [ -f "${file}" ] && rm ${file}
+      done
     fi
 
     return 0
@@ -905,7 +934,7 @@ process()
     # print progress and filename
     j=$(expr $i + 1)
     if [ "${multi}" -ne -2 ]; then
-      echo "${BOLD}-------------------------------------------------------${NC}"
+      echo "${BOLD}----------------------------------------------------------${NC}"
       if [ "${SIZE_OF_ARRAY}" -gt 1 ]; then
         echo "${GREEN}${j}/${SIZE_OF_ARRAY} ${BOLD}Processing ${FILE}${NC}"
       else
@@ -940,7 +969,7 @@ process()
       
       cmd+=" --vessel \"${vessel}\" --label_dir \"${label_dir}\""
       cmd+=" --input \"${input}\" --mri_dir \"${mri_dir}\""
-      cmd+=" --report_dir \"${report_dir}\" --atlas \"${atlas}\""
+      cmd+=" --report_dir \"${report_dir}\" --atlas \"${atlas_vol}\""
       
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
@@ -1009,7 +1038,7 @@ process()
     overall+="${s}s"
 
     if [[ "$multi" -ne -2 ]]; then
-      echo "${GREEN}-------------------------------------------------------                                ${NC}"
+      echo "${GREEN}----------------------------------------------------------                                ${NC}"
       echo "${GREEN}${overall}${NC}"
     fi
       
@@ -1087,7 +1116,9 @@ ${BOLD}${GREEN}Save Options:${NC}
   --p                         Additionally save native space segmentations.
   --csf                       Additionally save CSF segmentations (default: only GM/WM are saved).
   --lesions                   Additionally save WMH lesions.
-  --atlas                     Define an atlas list in the format "'suit','cobra'" (default: $atlas).
+  --atlas                     Define an atlas list in the format "'suit','cobra'" (default: $atlas_vol).
+  --atlas-surf                Define an surface atlas list in the format 
+                              "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'" (default: $atlas_surf).
   --bids                      Use BIDS (Brain Imaging Data Structure) standard for output file 
                               naming conventions (not yet fully working!).
 
@@ -1175,6 +1206,7 @@ ${BOLD}USED FUNCTIONS:${NC}
   CAT_SurfDeform
   CAT_SurfCorrectThicknessFolding
   CAT_SurfReduce
+  CAT_SurfResample
   segment.py
   utils.py
   progress_bar_multi.sh
