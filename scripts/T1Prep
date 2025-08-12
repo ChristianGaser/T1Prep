@@ -285,7 +285,13 @@ logo() {
 check_python_cmd()
 {
   if [ -z "${python}" ]; then
-    if command -v python3 &>/dev/null; then
+    if command -v python3.11 &>/dev/null; then
+      python="python3.11"
+    elif command -v python3.10 &>/dev/null; then
+      python="python3.10"
+    elif command -v python3.9 &>/dev/null; then
+      python="python3.9"
+    elif command -v python3 &>/dev/null; then
       python="python3"
     elif command -v python &>/dev/null; then
       python="python"
