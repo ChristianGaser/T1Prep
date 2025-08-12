@@ -10,7 +10,7 @@ authors = [
     { name = "Christian Gaser", email = "christian.gaser@uni-jena.de" },
 ]
 license = {text = "Apache License Version 2.0"}
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 readme = "README.md"
 repository = "https://github.com/ChristianGaser/T1Prep"
 
@@ -18,7 +18,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

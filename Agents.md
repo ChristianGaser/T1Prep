@@ -18,7 +18,7 @@ T1Prep/
 ```
 
 ## Development Guidelines
-- Use Python 3.8 or newer.
+- Use Python 3.9 or newer.
 - Keep functions small and well documented. Include docstrings for public functions.
 - Prefer using the utilities provided in `src/utils.py` when possible.
 - Check documentation of functions and add missing documentation.
