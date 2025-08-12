@@ -21,7 +21,7 @@ As with other DL-based methods, DeepMriPrep slightly underestimates gray matter 
 Cortical surface reconstruction and thickness estimation are performed using [Cortex Analysis Tools for Surface](https://github.com/ChristianGaser/CAT-Surface), a core component of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12).
 
 ## Requirements
-Python 3.8 (or higher) is required, and all necessary libraries are automatically installed the first time T1Prep is run.
+ Python 3.9 (or higher) is required, and all necessary libraries are automatically installed the first time T1Prep is run.
 
 ## Main Differences to CAT12
 - Implemented entirely in Python and C, eliminating the need for a Matlab license.
@@ -84,10 +84,10 @@ Python 3.8 (or higher) is required, and all necessary libraries are automaticall
     Only segmentation maps are generated and saved in the same directory as the input files.
 
 ```bash
-  ./scripts/T1Prep --python python3.8 --no-overwrite "surf/lh.thickness." sTRIO*.nii
+  ./scripts/T1Prep --python python3.9 --no-overwrite "surf/lh.thickness." sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii' and use python3.8. Skip processing 
-    for files where 'surf/lh.thickness.*' already exists, and save new results in the same 
+    Process all files matching the pattern 'sTRIO*.nii' and use python3.9. Skip processing
+    for files where 'surf/lh.thickness.*' already exists, and save new results in the same
     directory as the input files.
 
 ```bash
