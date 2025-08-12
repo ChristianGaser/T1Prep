@@ -32,11 +32,10 @@ atlas="'neuromorphometrics', 'cobra'"
 # ------------------------------------------------------------------------------
 # Expert options
 # ------------------------------------------------------------------------------
-use_amap=1            # Use AMAP instead of DeepMRIPrep for segmentation
+use_amap=0            # Use AMAP instead of DeepMRIPrep for segmentation
 thickness_method=3    # Set the thickness method
 correct_folding=1     # Correct for cortical thickness by folding effects
 pre_fwhm=2            # Set the pre-smoothing FWHM size in CAT_VolMarchingCubes
-thickness_fwhm=-1     # Set the post-smoothing FWHM size in CAT_VolMarchingCubes
 vessel=0.5            # Set the initial white matter (WM) threshold for vessel removal
 median_filter=2       # Set the number of median filter applications to reduce 
                       # topology artefacts
