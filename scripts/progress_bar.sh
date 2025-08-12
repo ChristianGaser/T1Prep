@@ -28,6 +28,15 @@ progress_bar()
   if [ -z "$label" ]; then label="Progress"; fi
   if [ -z "$color" ]; then color=2; fi
   if [ -z "$width" ]; then width=40; fi
+
+  # Check both variables for being integers (positive or negative)
+  if [[ ! "$current" == ^-?[0-9]+$ ]] || [[ ! "$total" =~ ^-?[0-9]+$ ]]; then
+    current=10
+    total=10
+    color=1
+  fi
+  
+  local percent=$(( current * 100 / total ))
   local percent=$(( current * 100 / total ))
   local filled=$(( width * current / total ))
   local empty=$(( width - filled ))
