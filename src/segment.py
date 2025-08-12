@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 import fill_voids
 import json
-from memory_profiler import profile
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -63,6 +62,7 @@ from scipy.ndimage import label as label_image
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
 TMP_PATH = ROOT_PATH / "tmp_models/"
+MODEL_DIR_T1PREP = Path(DATA_PATH_T1PREP) / "models/"
 MODEL_DIR = Path(DATA_PATH) / "models/"
 MODEL_FILES = (
     [
@@ -73,7 +73,7 @@ MODEL_FILES = (
     + [f"segmentation_patch_{i}_model.pt" for i in range(18)]
     + ["segmentation_model.pt", "warp_model.pt"]
 )
-MODEL_ZIP_URL = "https://github.com/ChristianGaser/T1Prep/releases/download/v0.1.0-alpha/T1Prep_Models.zip"
+MODEL_ZIP_URL = "https://github.com/ChristianGaser/T1Prep/releases/download/v0.2.0-beta/T1Prep_Models.zip"
 MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
 
 
@@ -286,28 +286,12 @@ def prepare_model_files() -> None:
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     if not all_models_present():
-        print("One or more model files are missing. Downloading zip archive...")
-        if not MODEL_ZIP_LOCAL.exists():
-            print(f"Downloading {MODEL_ZIP_URL} ...")
-            urllib.request.urlretrieve(MODEL_ZIP_URL, MODEL_ZIP_LOCAL)
-            print("Download complete.")
-
-        with zipfile.ZipFile(MODEL_ZIP_LOCAL, "r") as zip_ref:
-            zip_ref.extractall(TMP_PATH)
-        print(f"Unzipped models to {TMP_PATH}")
+        print("One or more model files are missing. Copying models...")
         for file in MODEL_FILES:
-            shutil.copy(
-                f"{TMP_PATH}/T1Prep/data/models/{file}", f"{DATA_PATH}/models/{file}"
-            )
-        shutil.rmtree(TMP_PATH)
-        MODEL_ZIP_LOCAL.unlink()
-
-    for file in MODEL_FILES:
-        if not Path(f"{DATA_PATH}/models/{file}").exists():
-            shutil.copy(
-                f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}"
-            )
-
+            if not Path(f"{DATA_PATH}/models/{file}").exists():
+                shutil.copy(
+                    f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}"
+                )
 
 def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     """Align the input volume and create the preprocessing object."""
@@ -783,20 +767,21 @@ def save_results(
         warp_xy = output_reg["warp_xy"]
         warp_mse = output_reg["warp_mse"]
 
-        output_atlas = prep.run_atlas_register(
-            t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
-        )
-
-        # Convert each DataFrame to a list of dicts:
-        atlas_json = {
-            key.removesuffix("_volumes"): df.to_dict(orient="records")
-            for key, df in output_atlas.items()
-        }
-
-        # Write to a single JSON file:
-        atlas_name = code_vars.get("Atlas_ROI", "")
-        with open(f"{label_dir}/{atlas_name}", "w") as f:
-            json.dump(atlas_json, f, indent=2)
+        if (atlas_list is not None): 
+            output_atlas = prep.run_atlas_register(
+                t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
+            )
+    
+            # Convert each DataFrame to a list of dicts:
+            atlas_json = {
+                key.removesuffix("_volumes"): df.to_dict(orient="records")
+                for key, df in output_atlas.items()
+            }
+    
+            # Write to a single JSON file:
+            atlas_name = code_vars.get("Atlas_ROI", "")
+            with open(f"{label_dir}/{atlas_name}", "w") as f:
+                json.dump(atlas_json, f, indent=2)
 
         if save_mwp:
             gm_name = code_vars_warped_modulated.get("GM_volume", "")
@@ -862,7 +847,6 @@ def save_results(
             )
 
 
-#@profile
 def run_segment():
     """Run the full segmentation workflow."""
 
