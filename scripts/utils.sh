@@ -107,6 +107,70 @@ get_OS()
 }
 
 # ----------------------------------------------------------------------
+# get # of processes w.r.t. available memory
+# ----------------------------------------------------------------------
+
+get_no_processes () {
+
+  ARCH=`uname`
+  MEM_LIMIT=$1
+  
+  if [ "$ARCH" == "Linux" ]; then
+    # Get total installed memory in MB
+    mem_total=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+
+    # Convert KB to GB
+    mem_gb=$(echo "scale=2; $mem_total / 1024 / 1024" | bc)
+
+  elif [ "$ARCH" == "Darwin" ]; then
+    # Get total installed memory in bytes
+    mem_total=$(sysctl hw.memsize | awk '{print $2}')
+
+    # Convert bytes to GB
+    mem_gb=$(echo "scale=2; $mem_total / 1024 / 1024 / 1024" | bc)
+
+  elif [ "$ARCH" == "CYGWIN_NT" ] || [ "$ARCH" == "MSYS_NT" ] || [ "$ARCH" == "MINGW32_NT" ] || [ "$ARCH" == "MINGW64_NT" ]; then
+    # Get total installed memory in KB
+    mem_total=$(wmic ComputerSystem get TotalPhysicalMemory | grep -Eo '[0-9]+')
+
+    # Convert bytes to GB
+    mem_gb=$(echo "$mem_total / 1024 / 1024 / 1024" | bc)
+  else
+    echo "${RED}System $ARCH not recognized${NC}"
+    exit 1
+  fi
+    
+  # Calculate number of processes (at least 1) w.r.t. to defined memory limit for each process
+  NUM_JOBS=$(echo "$mem_gb / $MEM_LIMIT" | bc)
+  if [ "$NUM_JOBS" -lt 1 ]; then
+    NUM_JOBS=1
+  fi
+}
+
+# ----------------------------------------------------------------------
+# Prepare binary folder for MacOS function
+# ----------------------------------------------------------------------
+
+prepare_MacOS_bin_folder() {
+  if [ "$(uname)" != "Darwin" ]; then
+    return 0
+  fi
+
+  local bin_path="$1"
+  if [ -z "$bin_path" ] || [ ! -d "$bin_path" ]; then
+    echo "Usage: prepare_bin_folder <folder-with-binaries>"
+    return 2
+  fi
+  
+  # Remove qurantine for all files in folder
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -dr com.apple.quarantine "$bin_path" 2>/dev/null || true
+  else
+    echo "xattr not found; skipping quarantine removal."
+  fi
+}
+
+# ----------------------------------------------------------------------
 # Cleanup function
 # ----------------------------------------------------------------------
 
