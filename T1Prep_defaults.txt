@@ -26,8 +26,11 @@ save_wp=0             # Additionally save warped segmentations
 save_rp=0             # Additionally save affine-registered segmentations
 save_p=0              # Additionally save native space segmentations
 use_bids_naming=0     # Use BIDS standard for output file naming conventions
-atlas="'neuromorphometrics', 'cobra'"
+atlas_vol="'neuromorphometrics', 'cobra'"
                       # Define an atlas list in the format "'suit','cobra'"
+atlas_surf=""
+                      # Define an surface atlas list in the format 
+                      #"'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"
 
 # ------------------------------------------------------------------------------
 # Expert options
