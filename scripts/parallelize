@@ -10,7 +10,6 @@
 # ----------------------------------------------------------------------
 # global parameters
 # ----------------------------------------------------------------------
-#source "$(dirname "$0")/utils.sh"
 
 time=$(date "+%Y%b%d_%H%M")
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
@@ -139,21 +138,10 @@ check_files ()
   SIZE_OF_ARRAY="${#ARRAY[@]}"
   
   if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
-      echo "${RED}ERROR: No files given!${NC}" >&2
+      echo "${RED}ERROR: No files or parameters given!${NC}" >&2
       help
       exit 1
   fi
-
-  i=0
-  while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
-    if [ ! -f "${ARRAY[$i]}" ] && [ ! -d "${ARRAY[$i]}" ]; then
-      echo "${RED}ERROR: File or directory ${ARRAY[$i]} not found${NC}"
-      help
-      exit 1
-    fi
-    ((i++))
-  done
-
 }
 
 # ----------------------------------------------------------------------
