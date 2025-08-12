@@ -330,7 +330,7 @@ check_python()
   if ! command -v "${python}" &>/dev/null; then
     echo "${RED}ERROR: $python not found${NC}" >&2
     exit 1
-  fi
+  fi  
 }
 
 # ----------------------------------------------------------------------
@@ -338,6 +338,7 @@ check_python()
 # ----------------------------------------------------------------------
 
 check_python_module() {
+    ${python} -c "import $1"
     ${python} -c "import $1" 2>/dev/null
     if [ $? -ne 0 ]; then
         echo "Error: Python module '$1' is not installed."
@@ -361,6 +362,7 @@ check_python_libraries()
     $python -m venv ${T1prep_env}
     install_deepmriprep
   fi
+
   source ${T1prep_env}/bin/activate
   
   $python -c "import deepmriprep" &>/dev/null
@@ -378,6 +380,7 @@ install_deepmriprep()
   echo "Install deepmriprep"
   $python -m venv ${T1prep_env}
   source ${T1prep_env}/bin/activate
+
   $python -m pip install -U pip
   $python -m pip install -r ${root_dir}/requirements.txt
   
@@ -490,7 +493,7 @@ surface_estimation()
     # - '-n-avgs 8' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    ${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize 0 -median-filter ${median_filter} -sharpen 0 -downsample ${downsample} -n-avgs 8 -fwhm ${thickness_fwhm} ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}
+    ${bin_dir}/CAT_VolThicknessPbt -method 6 ${verbose} -correct-voxelsize 0.75 -median-filter ${median_filter} -sharpen 0 -downsample ${downsample} -n-avgs 8 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}
 
     # Updates progress to 'Extract $side surface'.
     ((count++))
@@ -1013,7 +1016,8 @@ ${BOLD}${GREEN}Expert Options:${NC}
   --no-correct-folding        Do not correct for cortical thickness by folding effects.
   --pre-fwhm <NUMBER>         Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
   --thickness-fwhm <NUMBER>   Set the FWHM size for volumetric thickness smoothing in 
-                              CAT_VolThicknessPbt (default: $thickness_fwhm).
+                              CAT_VolThicknessPbt. Set to negative values to use approximation of 
+                              remaining values instead of laplace function (default: $thickness_fwhm).
   --vessel <NUMBER>           Set the initial white matter (WM) threshold for vessel removal. 
                               Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable 
                               vessel removal (default: $vessel).
