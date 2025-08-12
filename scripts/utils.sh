@@ -2,6 +2,17 @@
 #
 # PURPOSE: Define text colors
 #
+# FUNCTIONS:
+# - exit_if_empty: Checks if a command line argument is empty and exits with an error message if it is.
+# - check_python_cmd: Checks if the Python command is available.
+# - check_python: Checks if the specified Python command is available.
+# - check_python_module: Checks for python modules.
+# - check_python_libraries: Checks for python libraries.
+# - get_OS: Identifies operations system and folder of binaries.
+# - get_pattern: Get the pattern from the desired column in namefile
+# - substitute_pattern: Substitute variables in the pattern
+# - check_files: Checks if the input files exist.
+#
 # ______________________________________________________________________
 #
 # Christian Gaser
@@ -12,6 +23,13 @@
 
 # defaults
 os_type=$(uname -s) # Determine OS type
+script_dir=$(dirname "$0")
+root_dir=$(dirname $script_dir)
+name_file=${root_dir}/Names.tsv
+surf_templates_dir=${root_dir}/data/templates_surfaces_32k
+atlas_templates_dir=${root_dir}/data/atlases_surfaces_32k
+T1prep_env=${root_dir}/env
+src_dir=${root_dir}/src
 
 # Text formatting
 BOLD=$(tput bold)
@@ -66,12 +84,23 @@ exit_if_empty()
 
 check_files()
 {
-  SIZE_OF_ARRAY="${#ARRAY[@]}"
+  SIZE_OF_ARRAY="${1}"
   if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
     echo "${RED}ERROR: No files given!${NC}" >&2
     help
     exit 1
   fi
+
+  i=0
+  while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
+    if [[ ! "${ARRAY[$i]}" =~ \.nii(\.gz)?$ ]]; then
+      echo "${RED}ERROR: File ${ARRAY[$i]} is not a valid NIfTI file${NC}" >&2
+      help
+      exit 1
+    fi
+    ((i++))
+  done
+
 }
 
 # ----------------------------------------------------------------------
@@ -222,4 +251,220 @@ filter_arguments() {
 
   echo "${filtered[@]}"  # Return the filtered arguments
 }
+
+# ----------------------------------------------------------------------
+# Check for python version
+# ----------------------------------------------------------------------
+
+check_python_cmd()
+{
+  if [ -z "$1" ]; then
+    if command -v python3.13 &>/dev/null; then
+      python="python3.13"
+    elif command -v python3.12 &>/dev/null; then
+      python="python3.12"
+    elif command -v python3.11 &>/dev/null; then
+      python="python3.11"
+    elif command -v python3.10 &>/dev/null; then
+      python="python3.10"
+    elif command -v python3.9 &>/dev/null; then
+      python="python3.9"
+    elif command -v python3 &>/dev/null; then
+      python="python3"
+    elif command -v python &>/dev/null; then
+      python="python"
+    else
+      echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
+      exit 1
+    fi
+  fi
+}
+
+# ----------------------------------------------------------------------
+# Check for python
+# ----------------------------------------------------------------------
+
+check_python()
+{
+  local python=$1
+  if ! command -v "${python}" &>/dev/null; then
+    echo "${RED}ERROR: $python not found${NC}" >&2
+    exit 1
+  fi
+
+  required="3.9"
+  py_version="$(${python} -V 2>&1 | awk '{print $2}')"
+  if [ "$(printf '%s\n' "${required}" "${py_version}" | sort -V | head -n1)" != "${required}" ]; then
+    echo "${RED}ERROR: Python ${required} or newer is required (found ${py_version}).${NC}" >&2
+    exit 1
+  fi
+}
+
+# ----------------------------------------------------------------------
+# Check for python modules (e.g. pip)
+# ----------------------------------------------------------------------
+
+check_python_module() {
+    ${python} -c "import $1" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "Error: Python module '$1' is not installed."
+        echo "On Linux use 'apt install $(basename "$python")-"$1"'"
+        exit 1
+    fi
+}
+
+# ----------------------------------------------------------------------
+# Logo
+# ----------------------------------------------------------------------
+
+logo() {
+    local BLOCK_COLOR="$BLUE"    # colour for the █ glyphs
+    local TEXT_COLOR="$GRAY"    # colour for every other character
+
+    # ASCII art in one variable (can be here-doc or external file)
+    local art='
+████████╗ ██╗ ██████╗ ██████╗ ███████╗██████╗ 
+╚══██╔══╝███║ ██╔══██╗██╔══██╗██╔════╝██╔══██╗
+   ██║    ██║ ██████╔╝██████╔╝█████╗  ██████╔╝
+   ██║    ██║ ██╔═══╝ ██╔══██╗██╔══╝  ██╔═══╝ 
+   ██║    ██║ ██║     ██║  ██║███████╗██║     
+   ╚═╝    ╚═╝ ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝   
+'
+
+    # Parameter substitution: colourise each █, keep rest in TEXT_COLOR
+    art=${art//█/${BLOCK_COLOR}█${TEXT_COLOR}}
+
+    # trim one trailing newline if present (so last-line extraction works)
+    [[ ${art: -1} == $'\n' ]] && art="${art%$'\n'}"
+
+    # split into head (everything up to last newline) and last line
+    local last="${art##*$'\n'}"
+    local head="${art%$last}"
+
+    # append version to the last line (stay in TEXT_COLOR)
+    last+="${TEXT_COLOR} version ${version}"
+
+    # print
+    printf "%b%s%b\n" "$TEXT_COLOR" "$head$last" "$NC"
+}
+
+# ----------------------------------------------------------------------
+# Get the pattern from the desired column in name_file
+# ----------------------------------------------------------------------
+
+get_pattern() {
+  local code="$1"
+  local colnum="$2"
+  awk -v c="$code" -v n="$colnum" '$1 == c {print $n}' ${name_file}
+}
+
+# ----------------------------------------------------------------------
+# Substitute variables in the pattern
+# ----------------------------------------------------------------------
+
+substitute_pattern() {
+  local pattern="$1"
+  local hemi="$2"
+  local desc="$3"
+  local space="$4"
+  local atlas_surf="$5"
+  pattern="${pattern//\{bname\}/$bname}"
+  pattern="${pattern//\{side\}/$hemi}"
+  pattern="${pattern//\{space\}/$space}"
+  pattern="${pattern//\{desc\}/$desc}"
+  pattern="${pattern//\{atlas\}/$atlas_surf}"
+  pattern="${pattern//\{nii_ext\}/$nii_ext}"
+  echo $pattern
+}
+
+# ----------------------------------------------------------------------
+# Check for python libraries
+# ----------------------------------------------------------------------
+
+check_python_libraries()
+{
+  local python=$1
+  local T1prep_env=$2
+  local re_install=$3
+  
+  # Remove T1pre-env if reinstallation is selected
+  [[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]] &&  rm -r "${T1prep_env}"
+
+  if [ ! -d ${T1prep_env} ]; then
+    $python -m venv ${T1prep_env}
+    install_deepmriprep "$python" "${T1prep_env}"
+  fi
+
+  source ${T1prep_env}/bin/activate
+  
+  $python -c "import deepmriprep" &>/dev/null
+  if [ $? -gt 0 ]; then
+    install_deepmriprep "$python" "${T1prep_env}"
+  fi
+}
+
+# ----------------------------------------------------------------------
+# Install deepmriprep
+# ----------------------------------------------------------------------
+
+install_deepmriprep()
+{
+  local pythom=$1
+  local T1prep_env=$2
+  
+  echo "Install deepmriprep"
+  $python -m venv ${T1prep_env}
+  source ${T1prep_env}/bin/activate
+
+  $python -m pip install -U pip
+  $python -m pip install -r ${root_dir}/requirements.txt
+  
+  $python -c "import deepmriprep" &>/dev/null
+  if [ $? -gt 0 ]; then
+    echo "${RED}ERROR: Installation of deepmriprep not successful. 
+      Please install it manually${NC}" >&2
+    exit 1
+  fi
+  
+  # Allow executable on MacOS
+  case "$os_type" in
+    Darwin*)  
+      find ${bin_dir}/MacOS -name "CAT*" -exec xattr -d com.apple.quarantine {} \;
+      ;;
+  esac
+}
+
+# ----------------------------------------------------------------------
+# Get output folder depending on BIDS structure
+# ----------------------------------------------------------------------
+
+get_output_folder()
+{
+  local FILE=$1
+  bname=$(basename "$FILE")
+  bname="${bname%.nii.gz}"
+  bname="${bname%.nii}"
+
+  local dname=$(dirname "$FILE")
+  local dname=$(cd "$dname" && pwd) # get absolute path
+  
+  # check for BIDS folder structure, where the upper folder is "anat"
+  local upper_dname=$(basename "$dname") # get upper directory
+  if [ "${upper_dname}" == "anat" ]; then
+    use_subfolder=0
+    subj_folder=$(dirname "$dname")
+    subj_folder=$(basename "$subj_folder")
+    bids_folder="/derivatives/T1Prep${amap_string}-v${version}/${subj_folder}/anat/"
+  else
+    use_subfolder=1
+    bids_folder=""
+  fi
+  
+  if [ -z "${outdir}" ]; then
+    outdir0=${dname}${bids_folder}
+  else
+    outdir0=${outdir}${bids_folder}
+  fi
+} 
+
 
