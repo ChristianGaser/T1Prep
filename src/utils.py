@@ -1,35 +1,20 @@
 import os
-import torch
 import warnings
-import math
 import nibabel as nib
-import torch.nn.functional as F
 import numpy as np
-import pandas as pd
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
-from spline_resize import resize
 from deepbet.utils import reoriented_nifti
-from deepmriprep.utils import DEVICE, nifti_to_tensor
-from deepmriprep.atlas import shape_from_to, AtlasRegistration
-from torchreg.utils import INTERP_KWARGS, smooth_kernel
+from deepmriprep.utils import nifti_to_tensor
+from torchreg.utils import INTERP_KWARGS
 from scipy.ndimage import (
-    binary_opening,
-    binary_dilation,
-    grey_opening,
-    binary_closing,
-    binary_erosion,
-    generate_binary_structure,
-    median_filter,
     label,
 )
-from nxbc.filter import *
-from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
 from pathlib import Path
-from skimage import filters
+
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
 DATA_PATH_T1PREP = ROOT_PATH / "data"
@@ -53,8 +38,17 @@ codes = [
     "Report_file",
 ]
 
+
 def smart_round(x):
-    """Smart rounding depending on x"""
+    """
+    Rounds a number with an adaptive number of decimal places.
+
+    Args:
+        x (float or int): The number to round.
+
+    Returns:
+        float: The rounded number.
+    """
     x = float(x)
     if abs(x) < 1:
         return round(x, 5)
@@ -62,16 +56,24 @@ def smart_round(x):
         return round(x, 3)
     else:
         return round(x, 2)
-        
-def load_namefile(filename):
-    """Parse a two-column TSV name file into a dictionary."""
 
+
+def load_namefile(filename):
+    """
+    Parses a two-column TSV name file into a dictionary.
+
+    Args:
+        filename (str): The path to the TSV file.
+
+    Returns:
+        dict: A dictionary mapping codes to name patterns.
+    """
     name_dict = {}
     with open(filename) as f:
         for line in f:
             if not line.strip() or line.startswith("#"):
                 continue
-            parts = line.strip().split(None, 2)  # split on whitespace, max 3 fields
+            parts = line.strip().split(None, 2)
             while len(parts) < 3:
                 parts.append("")
             code, col2, col3 = parts
@@ -80,8 +82,20 @@ def load_namefile(filename):
 
 
 def substitute_pattern(pattern, bname, side, desc, space, nii_ext):
-    """Replace placeholders in *pattern* using the provided values."""
+    """
+    Replaces placeholders in a pattern string with the provided values.
 
+    Args:
+        pattern (str): The pattern string with placeholders.
+        bname (str): The base name.
+        side (str): The hemisphere side ('lh' or 'rh').
+        desc (str): The description.
+        space (str): The space.
+        nii_ext (str): The NIfTI file extension.
+
+    Returns:
+        str: The pattern string with placeholders replaced.
+    """
     if not pattern:
         return ""
     result = pattern
@@ -93,13 +107,25 @@ def substitute_pattern(pattern, bname, side, desc, space, nii_ext):
         "nii_ext": nii_ext,
     }
     for key, val in replacements.items():
-        result = result.replace("{" + key + "}", val if val is not None else "")
+        result = result.replace(f"{{{key}}}", val if val is not None else "")
     return result
 
 
 def get_filenames(use_bids_naming, bname, side, desc, space, nii_ext):
-    """Return a mapping of output filenames based on the name table."""
+    """
+    Returns a mapping of output filenames based on the name table.
 
+    Args:
+        use_bids_naming (bool): Whether to use BIDS naming conventions.
+        bname (str): The base name.
+        side (str): The hemisphere side ('left' or 'right').
+        desc (str): The description.
+        space (str): The space.
+        nii_ext (str): The NIfTI file extension.
+
+    Returns:
+        dict: A dictionary mapping codes to filenames.
+    """
     name_dict = load_namefile(name_file)
 
     # BIDS/naming logic
@@ -141,9 +167,6 @@ def progress_bar(elapsed, total, name):
     Returns:
         int: Elapsed progress count increased by 1.
     """
-    # Calculate percentage completion
-    it = elapsed * 100 // total
-
     # Create the progress bar
     prog = "█" * elapsed
     remaining = " " * (total - elapsed)
@@ -199,20 +222,23 @@ def get_ras(aff, dim):
 
 def find_largest_cluster(binary_volume, min_size=None, max_n_cluster=1):
     """
-    Finds up to max_n_cluster largest connected clusters in a binary 3D volume, optionally above min_size.
+    Finds up to max_n_cluster largest connected clusters in a binary 3D volume,
+    optionally above min_size.
 
     Parameters:
         binary_volume (numpy.ndarray): A 3D binary numpy array (0 and 1).
-        min_size (int, optional): Minimum cluster size to include (in voxels). If None, no threshold.
-        max_n_cluster (int, optional): Maximum number of clusters to include. If None, all clusters above min_size.
+        min_size (int, optional): Minimum cluster size to include (in voxels).
+                                  If None, no threshold.
+        max_n_cluster (int, optional): Maximum number of clusters to include.
+                                       If None, all clusters above min_size.
 
     Returns:
-        cluster_mask (numpy.ndarray): Binary 3D numpy array containing selected clusters.
+        cluster_mask (numpy.ndarray): Binary 3D numpy array with selected clusters.
     """
     # Label connected components
     labeled_volume, num_features = label(binary_volume)
     if num_features == 0:
-        raise ValueError("No clusters found in the binary volume.")
+        return np.zeros_like(binary_volume, dtype=bool)
 
     # Get sizes of all components
     component_sizes = np.bincount(labeled_volume.ravel())
@@ -228,13 +254,15 @@ def find_largest_cluster(binary_volume, min_size=None, max_n_cluster=1):
         valid_labels = valid_labels[component_sizes > 0]
 
     # Sort clusters by size, descending
-    sorted_labels = valid_labels[np.argsort(component_sizes[valid_labels])[::-1]]
+    sorted_labels = valid_labels[
+        np.argsort(component_sizes[valid_labels])[::-1]
+    ]
 
     # Apply max_n_cluster if set
     if max_n_cluster is not None:
         sorted_labels = sorted_labels[:max_n_cluster]
     if sorted_labels.size == 0:
-        raise ValueError("No clusters meet the min_size/max_n_cluster criteria.")
+        return np.zeros_like(binary_volume, dtype=bool)
 
     # Build output mask
     cluster_mask = np.isin(labeled_volume, sorted_labels)
@@ -243,16 +271,16 @@ def find_largest_cluster(binary_volume, min_size=None, max_n_cluster=1):
 
 def crop_nifti_image_with_border(img, border=5, threshold=0):
     """
-    Crop a NIfTI image to the smallest bounding box containing non-zero values,
-    add a border, ensure the resulting dimensions are even, and update the affine
-    and header to preserve the spatial origin.
+    Crops a NIfTI image to its content with a border.
 
-    Parameters:
-    img (nib.Nifti1Image): Input NIfTI image
-    border (int): Number of voxels to add as a border (default=5)
+    Args:
+        img (nib.Nifti1Image): The input NIfTI image.
+        border (int, optional): The border size in voxels. Defaults to 5.
+        threshold (int, optional): The threshold to determine the content.
+                                    Defaults to 0.
 
     Returns:
-    nib.Nifti1Image: Cropped and padded NIfTI image with updated affine and header
+        nib.Nifti1Image: The cropped NIfTI image.
     """
     # Load image data, affine, and header
     data = img.get_fdata().copy()
@@ -289,7 +317,9 @@ def crop_nifti_image_with_border(img, border=5, threshold=0):
     cropped_affine[:3, 3] += np.dot(affine[:3, :3], min_coords)
 
     # Create a new NIfTI image
-    cropped_img = nib.Nifti1Image(cropped_data, affine=cropped_affine, header=header)
+    cropped_img = nib.Nifti1Image(
+        cropped_data, affine=cropped_affine, header=header
+    )
 
     # Update header dimensions
     cropped_img.header.set_data_shape(cropped_data.shape)
@@ -301,26 +331,29 @@ def resample_and_save_nifti(
     nifti_obj, grid, affine, header, out_name, align=None, crop=None, clip=None
 ):
     """
-    Saves a NIfTI object with resampling and reorientation.
+    Resamples and saves a NIfTI object.
 
     Args:
-        nifti_obj: The input NIfTI object to process.
-        affine: affine matrix for saved file.
-        header: header for saved file.
-        reference: Reference containing affine and header for reorientation.
-        out_name: Output filename.
-
-    Returns:
-        None
+        nifti_obj (nib.Nifti1Image): The input NIfTI object.
+        grid (torch.Tensor): The resampling grid.
+        affine (np.ndarray): The affine matrix for the output file.
+        header (nib.Nifti1Header): The header for the output file.
+        out_name (str): The output filename.
+        align (bool, optional): Whether to align the brain. Defaults to None.
+        crop (bool, optional): Whether to crop the image. Defaults to None.
+        clip (tuple, optional): A tuple with min and max values to clip the data.
+                                 Defaults to None.
     """
+    import torch
+    import torch.nn.functional as F
 
     # Step 1: Convert NIfTI to tensor and add batch/channel dimensions
     tensor = nifti_to_tensor(nifti_obj)[None, None]
 
     # Step 2: Resample using grid
-    tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[
-        0, 0
-    ]
+    tensor = F.grid_sample(
+        tensor, grid, align_corners=INTERP_KWARGS["align_corners"]
+    )[0, 0]
 
     if clip is not None:
         if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
@@ -344,19 +377,17 @@ def resample_and_save_nifti(
 
 def get_resampled_header(header, aff, new_vox_size, ras_aff, reorder_method=1):
     """
-    Adjust the NIfTI header and affine matrix for a new voxel size.
+    Adjusts the NIfTI header and affine matrix for a new voxel size.
 
-    Parameters:
-    header : nibabel header object
-        Header information of the input NIfTI image.
-    aff : numpy.ndarray
-        Affine transformation matrix of the input image.
-    new_vox_size : numpy.ndarray
-        Desired voxel size as a 3-element array [x, y, z] in mm.
+    Args:
+        header (nib.Nifti1Header): The header of the input NIfTI image.
+        aff (np.ndarray): The affine transformation matrix of the input image.
+        new_vox_size (np.ndarray): The desired voxel size as a 3-element array.
+        ras_aff (np.ndarray): The RAS affine matrix.
+        reorder_method (int, optional): The reordering method. Defaults to 1.
 
     Returns:
-    tuple:
-        Updated header and affine transformation matrix.
+        tuple: A tuple containing the updated header and affine matrix.
     """
 
     header2 = header.copy()
@@ -388,7 +419,9 @@ def get_resampled_header(header, aff, new_vox_size, ras_aff, reorder_method=1):
     aff2 = aff.copy()
     for c in range(3):
         aff2[:-1, c] = aff2[:-1, c] / factor[c]
-    aff2[:-1, -1] = aff2[:-1, -1] - np.matmul(aff2[:-1, :-1], 0.5 * (factor - 1))
+    aff2[:-1, -1] = aff2[:-1, -1] - np.matmul(
+        aff2[:-1, :-1], 0.5 * (factor - 1)
+    )
 
     # Update header transformation fields
     header2["srow_x"] = aff2[0, :]
@@ -437,16 +470,20 @@ def align_brain(data, aff, header, aff_ref, do_flip=1):
             # Find the corresponding axis in the input affine matrix
             matching_axis_idx = np.where(ras_aff == axis_ref)[0][0]
             reordered_aff[:dim, i] = (
-                dirs_ref[i] * dirs_aff[matching_axis_idx] * aff[:dim, matching_axis_idx]
+                dirs_ref[i]
+                * dirs_aff[matching_axis_idx]
+                * aff[:dim, matching_axis_idx]
             )
 
     else:
         for i, axis in enumerate(ras_ref):
-            reordered_aff[:dim, i] = aff[:dim, np.where(ras_aff == axis)[0][0]]
+            reordered_aff[:dim, i] = aff[
+                :dim, np.where(ras_aff == axis)[0][0]
+            ]
 
     # Copy the translation vector
     reordered_aff[:dim, 3] = aff[:dim, 3]
-    reordered_aff[3, :] = [0, 0, 0, 1]  # Ensure the bottom row remains [0, 0, 0, 1]
+    reordered_aff[3, :] = [0, 0, 0, 1]
 
     header["srow_x"] = reordered_aff[0, :]
     header["srow_y"] = reordered_aff[1, :]
@@ -474,15 +511,14 @@ def align_brain(data, aff, header, aff_ref, do_flip=1):
 
 def get_volume_native_space(vol_nifti, wj_affine):
     """
-    Estimate GM volume in native/original space (cm³) from a registered probability
-    NIfTI and the 4x4 affine matrix that maps native to registered space.
+    Estimates volume in native space from a registered probability map.
 
     Args:
-        vol_nifti: nibabel.Nifti1Image, probability map in registered space
-        wj_affine: scaling factor for affine transformation
+        vol_nifti (nib.Nifti1Image): The probability map in registered space.
+        wj_affine (float): The scaling factor for the affine transformation.
 
     Returns:
-        volume in native/original space in cm³ (float)
+        float: The estimated volume in cm³.
     """
 
     if vol_nifti is None:
@@ -490,7 +526,7 @@ def get_volume_native_space(vol_nifti, wj_affine):
 
     vol_prob = vol_nifti.get_fdata()
     vol_sum = np.sum(vol_prob)
-    
+
     # Voxel volume in target/registered space (mm³)
     voxel_vol = np.prod(vol_nifti.affine[np.diag_indices(3)])
 
