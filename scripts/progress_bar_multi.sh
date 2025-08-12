@@ -64,7 +64,7 @@ main ()
         percent=$((100 * done_items / total_items))
         filled=$((width * done_items / total_items))
         unfilled=$((width - filled))
-        bar=$(printf "%${filled}s" | tr ' ' '█')
+        bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
         bar+=$(printf "%${unfilled}s")
         jobnumber=$((i+1))
         

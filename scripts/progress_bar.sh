@@ -35,7 +35,7 @@ progress_bar()
   local COLOR=$(tput setaf $color)
   local size=${#label} 
 
-  local bar=$(printf "%${filled}s" | tr ' ' '█')
+  local bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
   bar+=$(printf "%${empty}s")
 
   printf "[${COLOR}%-${width}s${NC}] %3d%% %s\r" "$bar" "$percent" "$label"
