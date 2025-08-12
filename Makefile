@@ -3,7 +3,7 @@
 
 VERSION='0.2.0'
 
-FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py
+FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py T1Prep_defaults.txt
 DATA_FILES=data
 
 ZIPFILE=T1Prep_${VERSION}.zip
@@ -32,7 +32,6 @@ zip: clean
 	-@test ! -d T1Prep || rm -r T1Prep
 	-@mkdir T1Prep
 	-@cp -rp ${FILES} T1Prep
-	-@rm -r T1Prep/data/models
 	-@zip ${ZIPFILE} -rm T1Prep
 	-@mkdir T1Prep
 	-@cp -rp ${DATA_FILES} T1Prep
