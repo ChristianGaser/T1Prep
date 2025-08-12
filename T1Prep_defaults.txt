@@ -40,3 +40,5 @@ vessel=0.5            # Set the initial white matter (WM) threshold for vessel r
 median_filter=2       # Set the number of median filter applications to reduce 
                       # topology artefacts
 downsample=0.0        # Downsample image to defined resolution
+fast=0                # Skip spherical registration and estimating atlases and warped
+                      # segmentations
