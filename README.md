@@ -69,215 +69,215 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
 ## Options
 **General Options**
 
-  --defaults &lt;FILE&gt;           
-      Specify an alternative defaults file to override built-in settings.
+--defaults &lt;FILE&gt;           
+    Specify an alternative defaults file to override built-in settings.
 
-  --install                   
-      Install all required Python libraries.
+--install                   
+    Install all required Python libraries.
 
-  --re-install                
-      Remove the existing installation and re-install all required Python libraries.
+--re-install                
+    Remove the existing installation and re-install all required Python libraries.
 
-  --python &lt;FILE&gt;             
-      Path to the Python interpreter to use.
+--python &lt;FILE&gt;             
+    Path to the Python interpreter to use.
 
-  --multi &lt;NUMBER&gt;            
-      Set the maximum number of parallel jobs. Use '-1' to automatically 
-      detect and use all available CPU cores.  
-      If you specify a value here and it is lower than the number of jobs 
-      calculated based on --min-memory, your specified value will be used.
+--multi &lt;NUMBER&gt;            
+    Set the maximum number of parallel jobs. Use '-1' to automatically 
+    detect and use all available CPU cores.  
+    If you specify a value here and it is lower than the number of jobs 
+    calculated based on --min-memory, your specified value will be used.
 
-  --min-memory &lt;NUMBER&gt;       
-      Set the minimum amount of memory (in GB) to reserve for each parallel 
-      job. This value is used to estimate the maximum number of jobs that 
-      can run in parallel without exceeding available system memory. 
-      Increase this value if your system runs low on memory or becomes 
-      unresponsive during parallelization.
+--min-memory &lt;NUMBER&gt;       
+    Set the minimum amount of memory (in GB) to reserve for each parallel 
+    job. This value is used to estimate the maximum number of jobs that 
+    can run in parallel without exceeding available system memory. 
+    Increase this value if your system runs low on memory or becomes 
+    unresponsive during parallelization.
 
-  --debug                     
-      Enable verbose output, retain all temporary files, and save additional
-      debugging information for inspection.
+--debug                     
+    Enable verbose output, retain all temporary files, and save additional
+    debugging information for inspection.
 
 **Save Options**
 
-  --out-dir &lt;DIR&gt;
-      Set the base output directory (relative or absolute).  
-      Default: the current working directory.
+--out-dir &lt;DIR&gt;
+    Set the base output directory (relative or absolute).  
+    Default: the current working directory.
 
-      Output folder structure depends on the input dataset type:
-      • BIDS datasets (if the upper-level folder of the input files is 'anat'):
-          Results are placed in a BIDS-compatible derivatives folder:
-          inside '<DIR>'.
-          Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
-      • Non-BIDS datasets:
-          Results are placed in subfolders similar to CAT12 output
-          (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
-          output directory.
+Output folder structure depends on the input dataset type:
+• BIDS datasets (if the upper-level folder of the input files is 'anat'):
+    Results are placed in a BIDS-compatible derivatives folder:
+    inside &lt;DIR&gt;
+    Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
+• Non-BIDS datasets:
+    Results are placed in subfolders similar to CAT12 output
+    (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
+    output directory.
 
-      If '--bids' is set, the BIDS derivatives substructure will always be used
-      inside '<DIR>'.
+    If '--bids' is set, the BIDS derivatives substructure will always be used
+    inside '<DIR>'.
 
-  --bids                      
-      Use BIDS derivatives naming conventions for all output files and folders
-      instead of the default CAT12 style.
-      
-      Naming behaviour:
-      • CAT12 style (default): Uses legacy folder and file names
-        (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
-      • BIDS style: Uses standardized derivatives names, including 
-        subject/session identifiers, modality, and processing steps.
+--bids                      
+    Use BIDS derivatives naming conventions for all output files and folders
+    instead of the default CAT12 style.
+    
+Naming behaviour:
+• CAT12 style (default): Uses legacy folder and file names
+  (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
+• BIDS style: Uses standardized derivatives names, including 
+  subject/session identifiers, modality, and processing steps.
 
-      The complete mapping between internal outputs and both naming conventions
-      is stored in 'Names.tsv' and can be customized.
+The complete mapping between internal outputs and both naming conventions
+is stored in 'Names.tsv' and can be customized.
 
-      Examples:
-        Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
-        Default output (no --out-dir):
-            /data/study/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
-        With --out-dir /results:
-            /results/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+Examples:
+  Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
+  Default output (no --out-dir):
+      /data/study/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+  With --out-dir /results:
+      /results/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
 
-        Input: /data/T1_images/subject01.nii.gz
-        Default output (no --out-dir):
-            /data/T1_images/mri/
-        With --out-dir /results:
-            /results/mri/
+  Input: /data/T1_images/subject01.nii.gz
+  Default output (no --out-dir):
+      /data/T1_images/mri/
+  With --out-dir /results:
+      /results/mri/
 
-  --no-overwrite &lt;STRING&gt;     
-      Prevent overwriting existing results by checking for the given filename 
-      pattern.
+--no-overwrite &lt;STRING&gt;     
+    Prevent overwriting existing results by checking for the given filename 
+    pattern.
 
-  --gz                        
-      Save images in compressed NIfTI format (*.nii.gz).
+--gz                        
+    Save images in compressed NIfTI format (*.nii.gz).
 
-  --no-surf                   
-      Skip surface and cortical thickness estimation.
+--no-surf                   
+    Skip surface and cortical thickness estimation.
 
-  --no-seg                    
-      Skip tissue segmentation processing.
+--no-seg                    
+    Skip tissue segmentation processing.
 
-  --no-sphere-reg             
-      Skip spherical surface registration.
+--no-sphere-reg             
+    Skip spherical surface registration.
 
-  --no-mwp                    
-      Skip estimation of modulated and warped segmentations.
+--no-mwp                    
+    Skip estimation of modulated and warped segmentations.
 
-  --pial-white                
-      Additionally estimate pial and white matter surfaces during surface 
-      processing.
+--pial-white                
+    Additionally estimate pial and white matter surfaces during surface 
+    processing.
 
-  --hemisphere                
-      Additionally save hemispheric partitions of the segmentation.
+--hemisphere                
+    Additionally save hemispheric partitions of the segmentation.
 
-  --wp                        
-      Additionally save warped segmentations.
+--wp                        
+    Additionally save warped segmentations.
 
-  --rp                        
-      Additionally save affine-registered segmentations.
+--rp                        
+    Additionally save affine-registered segmentations.
 
-  --p                         
-      Additionally save native-space segmentations.
+--p                         
+    Additionally save native-space segmentations.
 
-  --csf                       
-      Additionally save CSF segmentations (default: only GM/WM are saved).
+--csf                       
+    Additionally save CSF segmentations (default: only GM/WM are saved).
 
-  --lesions                   
-      Additionally save WMH lesion segmentations.
+--lesions                   
+    Additionally save WMH lesion segmentations.
 
-  --atlas                     
-      Specify a volumetric atlas list in the format `"'suit','cobra'"`.
+--atlas                     
+    Specify a volumetric atlas list in the format `"'suit','cobra'"`.
 
-  --atlas-surf                
-      Specify a surface atlas list in the format 
-      `"'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"`
+--atlas-surf                
+    Specify a surface atlas list in the format 
+    `"'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"`
 
 **Expert Options**
 
-  --amap                      
-      Use DeepMRIPrep segmentation only as initialization, followed by AMAP 
-      segmentation.
+--amap                      
+    Use DeepMRIPrep segmentation only as initialization, followed by AMAP 
+    segmentation.
 
-  --thickness-method &lt;NUMBER&gt; 
-      Set the cortical thickness estimation method:  
-        1 = Tfs-distance (FreeSurfer) for PBT-based measure  
-        2 = Tfs-distance (FreeSurfer) based on pial-to-white surface distance  
-        3 = Pure PBT-based approach
+--thickness-method &lt;NUMBER&gt; 
+    Set the cortical thickness estimation method:  
+      1 = Tfs-distance (FreeSurfer) for PBT-based measure  
+      2 = Tfs-distance (FreeSurfer) based on pial-to-white surface distance  
+      3 = Pure PBT-based approach
 
-  --no-correct-folding        
-      Disable cortical thickness correction for folding effects.
+--no-correct-folding        
+    Disable cortical thickness correction for folding effects.
 
-  --pre-fwhm &lt;NUMBER&gt;         
-      Set the pre-smoothing kernel size (FWHM) for CAT_VolMarchingCubes.
+--pre-fwhm &lt;NUMBER&gt;         
+    Set the pre-smoothing kernel size (FWHM) for CAT_VolMarchingCubes.
 
-  --vessel &lt;NUMBER&gt;           
-      Set the initial white matter threshold for vessel removal:  
-        0.2 = mild cleanup  
-        0.5 = strong cleanup  
-        0   = disable vessel removal  
+--vessel &lt;NUMBER&gt;           
+    Set the initial white matter threshold for vessel removal:  
+      0.2 = mild cleanup  
+      0.5 = strong cleanup  
+      0   = disable vessel removal  
 
-  --median-filter &lt;NUMBER&gt;    
-      Apply the specified number of median filter passes to reduce topology 
-      artifacts.
+--median-filter &lt;NUMBER&gt;    
+    Apply the specified number of median filter passes to reduce topology 
+    artifacts.
 
-  --fast                      
-      Skip spherical registration, atlas estimation, and warped segmentation 
-      steps.
+--fast                      
+    Skip spherical registration, atlas estimation, and warped segmentation 
+    steps.
 
 ## Examples
 ```bash
   ./scripts/T1Prep --out-dir test_folder sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation 
-    and surface maps, saving the results in the 'test_folder' directory.
+Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation 
+and surface maps, saving the results in the 'test_folder' directory.
 
 ```bash
   ./scripts/T1Prep --no-surf sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii', but skip surface 
-    creation. Only segmentation maps are generated and saved in the same 
-    directory as the input files.
+Process all files matching the pattern 'sTRIO*.nii', but skip surface 
+creation. Only segmentation maps are generated and saved in the same 
+directory as the input files.
 
 ```bash
   ./scripts/T1Prep --python python3.9 --no-overwrite "surf/lh.thickness." sTRIO*.nii
 ```
-    Process all files matching the pattern `'sTRIO*.nii'` and use python3.9. 
-    Skip processing for files where 'surf/lh.thickness.*' already exists, and 
-    save new results in the same directory as the input files.
+Process all files matching the pattern `'sTRIO*.nii'` and use python3.9. 
+Skip processing for files where 'surf/lh.thickness.*' already exists, and 
+save new results in the same directory as the input files.
 
 ```bash
   ./scripts/T1Prep --lesion --no-sphere sTRIO*.nii
 ```
-   Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of 
-   spherical registration, but additionally save lesion map (named p7sTRIO*.nii) 
-   in native space.
+Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of 
+spherical registration, but additionally save lesion map (named p7sTRIO*.nii) 
+in native space.
 
 ```bash
   ./scripts/T1Prep --no-amap sTRIO*.nii
 ```
-   Process all files matching the pattern `'sTRIO*.nii'` and use DeppMriPrep 
-   instead of AMAP segmentation.
+Process all files matching the pattern `'sTRIO*.nii'` and use DeppMriPrep 
+instead of AMAP segmentation.
   
 ```bash
   ./scripts/T1Prep --multi 8 --p --csf sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii'. Additionally save 
-    segmentations in native space, including CSF segmentation. The processing 
-    pipeline involves two stages of parallelization:
-    
-    1. Segmentation (Python-based): Runs best with about 24GB of memory per 
-       process. The number of processes is automatically estimated based on 
-       available memory to optimize resource usage.
-  
-    2. Surface Extraction: This stage does not require significant memory and is
-       fully distributed across all available processorsor limited to the 
-       defined number of processes using the "--multi" flag.
-  
-    If "--multi" is set to a specific number (e.g., 8), the system still 
-    estimates memory-based constraints for segmentation parallelization. However,
-    the specified number of processes (e.g., 8) will be used for surface 
-    extraction, ensuring efficient parallelization across the two stages. The 
-    default setting is -1, which automatically estimates the number of
-    available processors.
+Process all files matching the pattern 'sTRIO*.nii'. Additionally save 
+segmentations in native space, including CSF segmentation. The processing 
+pipeline involves two stages of parallelization:
+
+1. Segmentation (Python-based): Runs best with about 24GB of memory per 
+   process. The number of processes is automatically estimated based on 
+   available memory to optimize resource usage.
+
+2. Surface Extraction: This stage does not require significant memory and is
+   fully distributed across all available processorsor limited to the 
+   defined number of processes using the "--multi" flag.
+
+If "--multi" is set to a specific number (e.g., 8), the system still 
+estimates memory-based constraints for segmentation parallelization. However,
+the specified number of processes (e.g., 8) will be used for surface 
+extraction, ensuring efficient parallelization across the two stages. The 
+default setting is -1, which automatically estimates the number of
+available processors.
 
 
 ## Input
