@@ -47,12 +47,17 @@ main()
 {
   check_python_cmd
   parse_args ${1+"$@"}
+  check_python_cmd
+
   if [[ "$multi" -ne -2 ]]; then
     logo
     check_python ${python}
     check_python_module venv
     check_python_module pip
-    check_python_libraries "$python" "$T1prep_env" "$re_install"    
+    check_python_libraries "$python" "$T1prep_env" "$re_install"
+    if [ "$re_install" -eq 1 ]; then
+      exit 0
+    fi
   fi
   check_files "${#ARRAY[@]}"
   get_OS
@@ -567,7 +572,7 @@ process()
     BLACK=""
   fi
   
-  # later add string that indicates use of AMAP
+  # Later add string that indicates use of AMAP
   if [[ "${use_amap}" -eq 1 ]]; then
     amap_string=""
   else
@@ -578,7 +583,7 @@ process()
   j=0
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
 
-    # check whether absolute or relative names were given
+    # Check whether absolute or relative names were given
     if [ ! -f "${ARRAY[$i]}" ]; then
       if [ -f "${pwd}/${ARRAY[$i]}" ]; then
         FILE="${pwd}/${ARRAY[$i]}"
@@ -587,10 +592,10 @@ process()
       FILE="${ARRAY[$i]}"
     fi
 
-    # replace white spaces
+    # Replace white spaces
     FILE="${FILE// /\\ }"
 
-    # check whether processed files exist if no-overwrite flag is used
+    # Check whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
       
       get_output_folder $FILE
@@ -620,22 +625,22 @@ process()
     exit 0
   fi
 
-  # set overall starting time
+  # Set overall starting time
   start0=$(date +%s)
 
-  # use defined environment
+  # Use defined environment
   source ${T1prep_env}/bin/activate
 
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
     
-    # set starting time
+    # Set starting time
     start=$(date +%s)
 
     FILE="${ARRAY2[$i]}"
 
     get_output_folder $FILE
 
-    # check again whether processed files exist if no-overwrite flag is used
+    # Check again whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
       if [ "${use_bids_naming}" -eq 1 ]; then  
         processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
@@ -650,7 +655,7 @@ process()
       fi
     fi
     
-    # get output folders for surfaces and volumes
+    # Get output folders for surfaces and volumes
     if [[ "${use_bids_naming}" -eq 1 || "${use_subfolder}" -eq 0 ]]; then  
       mri_dir=${outdir0}
       surf_dir=${outdir0}
@@ -663,15 +668,28 @@ process()
       label_dir=${outdir0}/label
     fi
               
-    # create output folders    
+    # Create output folders    
     dir_list="$mri_dir"
     [ "${estimate_surf}" -eq 1 ] && dir_list+=" $surf_dir"
     dir_list+=" $report_dir"
     dir_list+=" $label_dir"
     mkdir -p $dir_list
     
+    # Get filename for log file
+    code="Log_file"
+    if [[ $use_bids_naming -eq 1 ]]; then
+      name_columns=3  # 3rd column in Names.tsv
+    else
+      name_columns=2  # 2nd column in Names.tsv
+    fi
+    pattern=$(get_pattern "$code" "$name_columns")
+    # Create dynamic variables for filenames
+    value=$(substitute_pattern "$pattern" "" "" "" "")
+    # Use eval to assign the result to a variable named after the code
+    eval "${code}=\"\$value\""
+
     # Save all output in log-file
-    report_log=${report_dir}/log_${bname}.txt
+    report_log=${report_dir}/${Log_file}
     [ -f "${report_log}" ] && rm ${report_log}
     echo "T1Prep version ${version}" >> ${report_log}
     date >> ${report_log}
@@ -683,7 +701,7 @@ process()
         echo "Use CPU in Python" >> ${report_log}
     fi
     
-    # print progress and filename
+    # Print progress and filename
     j=$(expr $i + 1)
     if [ "${multi}" -ne -2 ]; then
       echo "${BOLD}----------------------------------------------------------${NC}"
@@ -698,7 +716,7 @@ process()
     
     # 1. Call deepmriprep segmentation 
     # ----------------------------------------------------------------------
-    # check for outputs from previous step
+    # Check for outputs from previous step
     if [ -f "${input}" ]; then
 
       # Initialize command string with the Python script call
@@ -749,14 +767,14 @@ process()
       continue
     fi
     
-    # optionally extract surface
+    # Optionally extract surface
     if [ "${estimate_surf}" -eq 1 ]; then
         
       # 2. Estimate thickness and percentage position maps for each hemisphere
-      #  and extract cortical surface and call it as background process to
+      # and extract cortical surface and call it as background process to
       # allow parallelization
       # ----------------------------------------------------------------------
-      # check for outputs from previous step
+      # Check for outputs from previous step
       pids=()
       for side in left right; do
         surface_estimation $bname $side $mri_dir $surf_dir $estimate_spherereg $multi $nii_ext &
@@ -778,7 +796,7 @@ process()
       
     fi # estimate_surf
 
-    # print execution time per data set
+    # Print execution time per data set
     end=$(date +%s)
     runtime=$((end - start))
     hours=$(($runtime / 3600))
@@ -797,7 +815,7 @@ process()
     ((i++))
   done
   
-  # print overall execution time for more than one data set
+  # Print overall execution time for more than one data set
   if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
     end0=`date +%s`
     runtime=$((end0-start0))
@@ -821,13 +839,13 @@ ${BOLD}${BLUE}T1Prep Computational Anatomy Pipeline (aka PyCAT)
 ${BOLD}USAGE:${NC}
   ${GREEN}T1Prep [options] <filename(s)>${NC}
 
-${BOLD}DESCRIPTION:${NC}
+${BOLD}Tool Overview:${NC}
 T1Prep is a pipeline that preprocesses T1-weighted MRI data and supports segmentation 
 and cortical surface reconstruction. It provides a complete set of tools for efficiently 
 processing structural MRI scans.
 
 T1Prep partially integrates DeepMriPrep, which uses deep learning (DL) techniques to 
-mimic CAT12''s functionality for processing structural MRIs. DeepMriPrep is used for 
+mimic functionality of CAT12 for processing structural MRIs. DeepMriPrep is used for 
 skull-stripping, segmentation and nonlinear spatial registration.
 
 An alternative approach uses DeepMriPrep for bias field correction, lesion detection, 
@@ -836,60 +854,200 @@ and also serves as an initial estimate for the subsequent AMAP segmentation from
 Cortical surface reconstruction and thickness estimation are performed using Cortex 
 Analysis Tools for Surface, a core component of the CAT12 toolbox.
 
-${BOLD}OPTIONS:${NC}
-${BOLD}${GREEN}General Options:${NC}
-  --defaults <FILE>           Define alternative defaults file.
-  --install                   Install the required Python libraries.
-  --re-install                Remove the existing installation and reinstall the required Python libraries.
-  --python <FILE>             Set the Python interpreter to use (default: $python).
-  --multi <NUMBER>            Set the number of processes for parallelization. Use '-1' to automatically 
-                              detect the number of available processors (default: $multi).
-  --min-memory <NUMBER>       Set the minimum memory size in GB for each process to be parallelized.
-                              The default value of $min_memory GB can be increased if your system runs 
-                              low on memory and becomes unresponsive during parallelization.. 
-                              detect the number of available processors (default: $multi).
-  --debug                     Enable verbose output, retain temporary files, and save additional 
-                              debugging information.
+It is designed for both single-subject and batch processing, with optional parallelization
+and flexible output naming conventions. The naming patterns are compatible with both 
+CAT12 folder structures and the BIDS derivatives standard.
+
+${BOLD}Output Folder Behaviour:${NC}
+The location and structure of the output folders depend on:
+
+1. Whether the input data follow the BIDS structure
+  If the upper-level folder of the NIfTI file is named 'anat', the script assumes 
+  a BIDS dataset. Output will then be written into a BIDS-compatible derivatives folder:
+
+  '<dataset-root>/derivatives/T1Prep-v<version>/<sub-XXX>/<ses-YYY>/anat/'
+  where sub-XXX and ses-YYY are automatically detected from the path.
+
+2. Non-BIDS datasets
+
+  If the upper-level folder is not anat, results are written into subfolders similar 
+  to CAT12 output inside the specified output directory (or the current working 
+  directory if none is specified).
+
+3. Folder naming conventions
+
+  By default, CAT12-style names are used.
+  If --bids is set, BIDS-compatible names are used instead.
+  The mapping between internal processing outputs and their filenames for each 
+  convention is stored in Names.tsv.
+
+4. Custom output folder
+
+  You can specify --out-dir <DIR> to override the default location.
+  If --bids is set, the BIDS substructure will still be appended inside <DIR>.
   
+${BOLD}Naming conventions:${NC}
+CAT12 style (default): Uses legacy names for files and subfolders (mri, surf, etc.).
+
+BIDS style (--bids): Uses BIDS derivatives naming rules for filenames and metadata.
+
+The mapping between internal processing steps and filenames for both conventions 
+is defined in Names.tsv. This file can be edited to customize output naming.
+  
+${BOLD}Options:${NC}
+${BOLD}${GREEN}General Options:${NC}
+  --defaults <FILE>           
+      Specify an alternative defaults file to override built-in settings.
+
+  --install                   
+      Install all required Python libraries.
+
+  --re-install                
+      Remove the existing installation and re-install all required Python libraries.
+
+  --python <FILE>             
+      Path to the Python interpreter to use (default: $python).
+
+  --multi <NUMBER>            
+      Set the maximum number of parallel jobs. Use '-1' to automatically 
+      detect and use all available CPU cores (default: $multi).  
+      If you specify a value here and it is lower than the number of jobs 
+      calculated based on --min-memory, your specified value will be used.
+
+  --min-memory <NUMBER>       
+      Set the minimum amount of memory (in GB) to reserve for each parallel 
+      job (default: $min_memory GB). This value is used to estimate the 
+      maximum number of jobs that can run in parallel without exceeding 
+      available system memory. Increase this value if your system runs 
+      low on memory or becomes unresponsive during parallelization.
+
+  --debug                     
+      Enable verbose output, retain all temporary files, and save additional
+      debugging information for inspection.
+
 ${BOLD}${GREEN}Save Options:${NC}
-  --out-dir <DIR>             Set the relative output directory (default: current working directory).
-  --no-overwrite <STRING>     Avoid overwriting existing results by checking for the specified 
-                              filename pattern.
-  --gz                        Save images as nii.gz instead of nii.
-  --no-surf                   Skip surface and thickness estimation.
-  --no-seg                    Skip segmentation processing.
-  --no-sphere-reg             Skip spherical surface registration.
-  --no-mwp                    Skip the estimation of modulated and warped segmentations.
-  --pial-white                Additionally estimate pial and white matter surface during 
-                              surface estimation.
-  --hemisphere                Additionally save hemispheric partitions of the segmentation.
-  --wp                        Additionally save warped segmentations.
-  --rp                        Additionally save affine-registered segmentations.
-  --p                         Additionally save native space segmentations.
-  --csf                       Additionally save CSF segmentations (default: only GM/WM are saved).
-  --lesions                   Additionally save WMH lesions.
-  --atlas                     Define an atlas list in the format "'suit','cobra'" (default: $atlas_vol).
-  --atlas-surf                Define an surface atlas list in the format 
-                              "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'" (default: $atlas_surf).
-  --bids                      Use BIDS (Brain Imaging Data Structure) standard for output file 
-                              naming conventions (not yet fully working!).
+  --out-dir <DIR>             
+      Set the base output directory (relative or absolute).  
+      Default: the current working directory.
+
+      Output folder structure depends on the input dataset type:
+        • BIDS datasets (if the upper-level folder of the input files is 'anat'):
+            Results are placed in a BIDS-compatible derivatives folder:
+              <dataset-root>/derivatives/T1Prep-v<version>/<sub-XXX>/<ses-YYY>/anat/
+            Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
+        • Non-BIDS datasets:
+            Results are placed in subfolders similar to CAT12 output
+            (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified output directory.
+
+      If '--bids' is set, the BIDS derivatives substructure will always be used
+      inside '<DIR>'.
+
+  --bids                      
+      Use BIDS derivatives naming conventions for all output files and folders
+      instead of the default CAT12 style.
+      
+      Naming behaviour:
+        • CAT12 style (default): Uses legacy folder and file names
+          (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
+        • BIDS style: Uses standardized derivatives names, including subject/session
+          identifiers, modality, and processing steps
+          (e.g., 'sub-01_ses-1_space-MNI152NLin2009cAsym-nonlinear-modulated_label-WM_probseg.gz',
+          'sub-01_ses-1_hemi-L_thickness.shape.gii').
+
+      The complete mapping between internal outputs and both naming conventions
+      is stored in 'Names.tsv' and can be customized.
+
+      Examples:
+        Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
+        Default output (no --out-dir):
+            /data/study/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+        With --out-dir /results:
+            /results/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+
+        Input: /data/T1_images/subject01.nii.gz
+        Default output (no --out-dir):
+            /data/T1_images/mri/
+        With --out-dir /results:
+            /results/mri/
+
+  --no-overwrite <STRING>     
+      Prevent overwriting existing results by checking for the given filename pattern.
+
+  --gz                        
+      Save images in compressed NIfTI format (*.nii.gz).
+
+  --no-surf                   
+      Skip surface and cortical thickness estimation.
+
+  --no-seg                    
+      Skip tissue segmentation processing.
+
+  --no-sphere-reg             
+      Skip spherical surface registration.
+
+  --no-mwp                    
+      Skip estimation of modulated and warped segmentations.
+
+  --pial-white                
+      Additionally estimate pial and white matter surfaces during surface processing.
+
+  --hemisphere                
+      Additionally save hemispheric partitions of the segmentation.
+
+  --wp                        
+      Additionally save warped segmentations.
+
+  --rp                        
+      Additionally save affine-registered segmentations.
+
+  --p                         
+      Additionally save native-space segmentations.
+
+  --csf                       
+      Additionally save CSF segmentations (default: only GM/WM are saved).
+
+  --lesions                   
+      Additionally save WMH lesion segmentations.
+
+  --atlas                     
+      Specify a volumetric atlas list in the format 
+      "'suit','cobra'" (default: $atlas_vol).
+
+  --atlas-surf                
+      Specify a surface atlas list in the format 
+      "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'" 
+      (default: $atlas_surf).
 
 ${BOLD}${GREEN}Expert Options:${NC}
-  --amap                      Use DeepMRIPrep only as initial segmentation, followed by AMAP
-                              segmentation.
-  --thickness-method <NUMBER> Set the thickness method (default: $thickness_method).
-                              Use 1 for the Tfs-distance from Freesurfer for PBT-based measure,
-                              2 for the Tfs-distance from Freesurfer based on distance between 
-                              pial and white matter surfaces, and 3 for the pure PBT-based approach
-  --no-correct-folding        Do not correct for cortical thickness by folding effects.
-  --pre-fwhm <NUMBER>         Set the pre-smoothing FWHM size in CAT_VolMarchingCubes (default: $pre_fwhm).
-  --vessel <NUMBER>           Set the initial white matter (WM) threshold for vessel removal. 
-                              Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable 
-                              vessel removal (default: $vessel).
-  --median-filter <NUMBER>    Set the number of median filter applications to reduce topology 
-                              artifacts (default: $median_filter).
-  --fast                      Skip spherical registration and estimating atlases and warped
-                              segmentations
+  --amap                      
+      Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.
+
+  --thickness-method <NUMBER> 
+      Set the cortical thickness estimation method (default: $thickness_method):  
+        1 = Tfs-distance (FreeSurfer) for PBT-based measure  
+        2 = Tfs-distance (FreeSurfer) based on pial-to-white surface distance  
+        3 = Pure PBT-based approach
+
+  --no-correct-folding        
+      Disable cortical thickness correction for folding effects.
+
+  --pre-fwhm <NUMBER>         
+      Set the pre-smoothing kernel size (FWHM) for CAT_VolMarchingCubes 
+      (default: $pre_fwhm).
+
+  --vessel <NUMBER>           
+      Set the initial white matter threshold for vessel removal:  
+        0.2 = mild cleanup  
+        0.5 = strong cleanup  
+        0   = disable vessel removal  
+      (default: $vessel)
+
+  --median-filter <NUMBER>    
+      Apply the specified number of median filter passes to reduce topology artifacts
+      (default: $median_filter).
+
+  --fast                      
+      Skip spherical registration, atlas estimation, and warped segmentation steps.
   
 ${BOLD}${GREEN}Examples:${NC}
 ${BLUE}${root_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}
@@ -934,17 +1092,17 @@ ${BLUE}${root_dir}/T1Prep --multi 8 --p --csf --atlas "'neuromorphometrics', 'su
   the two stages. The default setting is -1, which automatically estimates the number of
   available processors.
     
-${BOLD}PURPOSE:${NC}
+${BOLD}Purpose:${NC}
   This script facilitates the analysis of T1-weighted brain images by providing tools for 
   segmentation, surface mapping, and more.
 
-${BOLD}INPUT:${NC}
+${BOLD}Input:${NC}
   Accepts NIfTI files as input (extension nii/nii.gz).
 
-${BOLD}OUTPUT:${NC}
+${BOLD}Output:${NC}
   Produces segmented images and surface extractions.
 
-${BOLD}USED FUNCTIONS:${NC}
+${BOLD}Used Functions:${NC}
   CAT_VolAmap
   CAT_VolSanlm
   CAT_VolThicknessPbt
