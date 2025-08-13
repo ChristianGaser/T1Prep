@@ -40,7 +40,7 @@ T1Prep automatically determines output locations based on the input data structu
 1. **BIDS datasets**  
    If the input NIfTI is located in an `anat` folder:
 
-<dataset-root>/derivatives/T1Prep-v<version>/<sub-XXX>/<ses-YYY>/anat/
+`<dataset-root>/derivatives/T1Prep-v<version>/<sub-XXX>/<ses-YYY>/anat/`
    
 - Subject (`sub-XXX`) and session (`ses-YYY`) are extracted from the path.
 - If `--out-dir <DIR>` is specified, the BIDS substructure will still be created inside `<DIR>`.
@@ -48,7 +48,7 @@ T1Prep automatically determines output locations based on the input data structu
 2. **Non-BIDS datasets**  
 Results are written to **CAT12-style subfolders** (`mri/`, `surf/`, etc.) in:
    
-<input-folder>/<subfolder>/
+`<input-folder>/<subfolder>/`
 
 or in `<DIR>` if `--out-dir <DIR>` is specified.
 
@@ -73,43 +73,160 @@ With --out-dir /results:
    
 ## Usage
 ```bash
-./scripts/T1Prep [options] file1.nii file2.nii ...
+./scripts/T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
 ```
 
 ## Options
-**General Options** ||
-:-------- | --------
-`--install` |Install the required Python libraries.
-`--re-install` |Remove the existing installation and reinstall the required Python libraries.
-`--python <FILE>` |Set the Python interpreter to use.
-`--multi <NUMBER>` |Set the number of processes for parallelization. Use '-1' to automatically estimate the number of available processors 
-`--debug` | Enable verbose output, retain temporary files, and save additional debugging information.
-**Save Options** ||
-`--out-dir <DIR>` |Set the relative output directory (default: current working directory).
-`--no-overwrite <STRING>` |Avoid overwriting existing results by checking for the specified filename pattern.
-`--gz' |Save images as nii.gz instead of nii.
-`--no-surf` |Skip surface and thickness estimation.
-`--no-seg` |Skip segmentation processing.
-`--no-sphere-reg` |Skip spherical surface registration.
-`--no-mwp` |Skip the estimation of modulated and warped segmentations.
-`--hemisphere` |Additionally save hemispheric partitions of the segmentation.
-`--wp` |Additionally save warped segmentations.
-`--rp` |Additionally save affine-registered segmentations.
-`--p` |Additionally save native space segmentations.
-`--csf` |Additionally save CSF segmentations (default: only GM/WM are saved).
-`--lesions` |Additionally save WMH lesions.
-`--bids` |Use BIDS (Brain Imaging Data Structure) standard for output file naming conventions.
-**Expert Options** ||
-`--no-amap` | Use DeepMRIPrep instead of AMAP for segmentation.
-`--thickness-method` <NUMBER> |Set the thickness method (default: $thickness_method). Use 1 for PBT-based method and 2 for approach based on distance between pial and white matter surface.
-`--no-correct-folding` |Do not correct for cortical thickness by folding effects.
-`--pre-fwhm <NUMBER>` |Set the pre-smoothing FWHM size in CAT_VolMarchingCubes 
-`--post-fwhm <NUMBER>` |Set the post-smoothing FWHM size in CAT_VolMarchingCubes 
-`--thickness-fwhm <NUMBER>` |Set the FWHM size for volumetric thickness smoothing in CAT_VolThicknessPbt
-`--sharpening <NUMBER>` |Set the sharpening level applied to the PPM map by enhancing differences between the unsmoothed and smoothed PPM maps 
-`--thresh <NUMBER>` |Set the isovalue threshold for surface creation in CAT_VolMarchingCubes
-`--vessel <NUMBER>` |Set the initial white matter (WM) threshold for vessel removal. Use 0.2 for mild cleanup, 0.5 for strong cleanup, or 0 to disable vessel removal.
-`--median-filter <NUMBER>` |Set the number of median filter applications to reduce topology artifacts.
+**General Options**
+
+  --defaults <FILE>           
+      Specify an alternative defaults file to override built-in settings.
+
+  --install                   
+      Install all required Python libraries.
+
+  --re-install                
+      Remove the existing installation and re-install all required Python libraries.
+
+  --python <FILE>             
+      Path to the Python interpreter to use.
+
+  --multi <NUMBER>            
+      Set the maximum number of parallel jobs. Use '-1' to automatically 
+      detect and use all available CPU cores.  
+      If you specify a value here and it is lower than the number of jobs 
+      calculated based on --min-memory, your specified value will be used.
+
+  --min-memory <NUMBER>       
+      Set the minimum amount of memory (in GB) to reserve for each parallel 
+      job. This value is used to estimate the maximum number of jobs that 
+      can run in parallel without exceeding available system memory. 
+      Increase this value if your system runs low on memory or becomes 
+      unresponsive during parallelization.
+
+  --debug                     
+      Enable verbose output, retain all temporary files, and save additional
+      debugging information for inspection.
+
+**Save Options**
+  --out-dir <DIR>             
+      Set the base output directory (relative or absolute).  
+      Default: the current working directory.
+
+      Output folder structure depends on the input dataset type:
+        • BIDS datasets (if the upper-level folder of the input files is 'anat'):
+            Results are placed in a BIDS-compatible derivatives folder:
+              <dataset-root>/derivatives/T1Prep-v<version>/<sub-XXX>/<ses-YYY>/anat/
+            Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
+        • Non-BIDS datasets:
+            Results are placed in subfolders similar to CAT12 output
+            (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified output directory.
+
+      If '--bids' is set, the BIDS derivatives substructure will always be used
+      inside '<DIR>'.
+
+  --bids                      
+      Use BIDS derivatives naming conventions for all output files and folders
+      instead of the default CAT12 style.
+      
+      Naming behaviour:
+        • CAT12 style (default): Uses legacy folder and file names
+          (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
+        • BIDS style: Uses standardized derivatives names, including subject/session
+          identifiers, modality, and processing steps
+          (e.g., 'sub-01_ses-1_space-MNI152NLin2009cAsym-nonlinear-modulated_label-WM_probseg.gz',
+          'sub-01_ses-1_hemi-L_thickness.shape.gii').
+
+      The complete mapping between internal outputs and both naming conventions
+      is stored in 'Names.tsv' and can be customized.
+
+      Examples:
+        Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
+        Default output (no --out-dir):
+            /data/study/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+        With --out-dir /results:
+            /results/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+
+        Input: /data/T1_images/subject01.nii.gz
+        Default output (no --out-dir):
+            /data/T1_images/mri/
+        With --out-dir /results:
+            /results/mri/
+
+  --no-overwrite <STRING>     
+      Prevent overwriting existing results by checking for the given filename pattern.
+
+  --gz                        
+      Save images in compressed NIfTI format (*.nii.gz).
+
+  --no-surf                   
+      Skip surface and cortical thickness estimation.
+
+  --no-seg                    
+      Skip tissue segmentation processing.
+
+  --no-sphere-reg             
+      Skip spherical surface registration.
+
+  --no-mwp                    
+      Skip estimation of modulated and warped segmentations.
+
+  --pial-white                
+      Additionally estimate pial and white matter surfaces during surface processing.
+
+  --hemisphere                
+      Additionally save hemispheric partitions of the segmentation.
+
+  --wp                        
+      Additionally save warped segmentations.
+
+  --rp                        
+      Additionally save affine-registered segmentations.
+
+  --p                         
+      Additionally save native-space segmentations.
+
+  --csf                       
+      Additionally save CSF segmentations (default: only GM/WM are saved).
+
+  --lesions                   
+      Additionally save WMH lesion segmentations.
+
+  --atlas                     
+      Specify a volumetric atlas list in the format 
+      "'suit','cobra'".
+
+  --atlas-surf                
+      Specify a surface atlas list in the format 
+      "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'". 
+
+**Expert Options**
+  --amap                      
+      Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.
+
+  --thickness-method <NUMBER> 
+      Set the cortical thickness estimation method:  
+        1 = Tfs-distance (FreeSurfer) for PBT-based measure  
+        2 = Tfs-distance (FreeSurfer) based on pial-to-white surface distance  
+        3 = Pure PBT-based approach
+
+  --no-correct-folding        
+      Disable cortical thickness correction for folding effects.
+
+  --pre-fwhm <NUMBER>         
+      Set the pre-smoothing kernel size (FWHM) for CAT_VolMarchingCubes.
+
+  --vessel <NUMBER>           
+      Set the initial white matter threshold for vessel removal:  
+        0.2 = mild cleanup  
+        0.5 = strong cleanup  
+        0   = disable vessel removal  
+
+  --median-filter <NUMBER>    
+      Apply the specified number of median filter passes to reduce topology artifacts.
+
+  --fast                      
+      Skip spherical registration, atlas estimation, and warped segmentation steps.
 
 ## Examples
 ```bash
@@ -156,7 +273,8 @@ With --out-dir /results:
        optimize resource usage.
   
     2. Surface Extraction: This stage does not require significant memory and is fully 
-       distributed across all available processors.
+       distributed across all available processorsor limited to the defined number of
+     processes using the "--multi" flag.
   
     If "--multi" is set to a specific number (e.g., 8), the system still estimates memory-based 
     constraints for segmentation parallelization. However, the specified number of processes 
@@ -166,24 +284,21 @@ With --out-dir /results:
 
 
 ## Input
-Files: T1-weighted MRI images in NIfTI format.
+Files: T1-weighted MRI images in NIfTI format (extension nii/nii.gz).
 
 ## Installation
 Download T1Prep_$version.zip from Github and unzip:
 ```bash
   unzip T1Prep_$version.zip -d your_installation_folder
 ```
-Download T1Prep_Models.zip from Github and unzip:
+Install required Python packages (check that the correct Python version is being used):
 ```bash
-  unzip T1Prep_Models.zip -d your_installation_folder
-```
-Install required Python packages:
-```bash
-./scripts/T1Prep --install
+./scripts/T1Prep --python python3.9 --install
 ```
 Alternatively, install the dependencies manually:
 ```bash
-pip install -r requirements.txt
+python3.9 -m pip install -r requirements.txt
+
 ```
 
 ## Support
