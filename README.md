@@ -99,7 +99,8 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
       debugging information for inspection.
 
 **Save Options**
-  --out-dir <DIR>             
+
+  --out-dir <DIR> 
       Set the base output directory (relative or absolute).  
       Default: the current working directory.
 
@@ -191,6 +192,7 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
       "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'". 
 
 **Expert Options**
+
   --amap                      
       Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.
 
