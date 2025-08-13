@@ -114,8 +114,8 @@ Output folder structure depends on the input dataset type:
     (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
     output directory.
 
-    If '--bids' is set, the BIDS derivatives substructure will always be used
-    inside '<DIR>'.
+If '--bids' is set, the BIDS derivatives substructure will always be used
+inside '<DIR>'.
 
 --bids                      
     Use BIDS derivatives naming conventions for all output files and folders
@@ -131,17 +131,17 @@ The complete mapping between internal outputs and both naming conventions
 is stored in 'Names.tsv' and can be customized.
 
 Examples:
-  Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
-  Default output (no --out-dir):
-      /data/study/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
-  With --out-dir /results:
-      /results/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
+Default output (no --out-dir):
+    /data/study/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+With --out-dir /results:
+    /results/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
 
-  Input: /data/T1_images/subject01.nii.gz
-  Default output (no --out-dir):
-      /data/T1_images/mri/
-  With --out-dir /results:
-      /results/mri/
+Input: /data/T1_images/subject01.nii.gz
+Default output (no --out-dir):
+    /data/T1_images/mri/
+With --out-dir /results:
+    /results/mri/
 
 --no-overwrite &lt;STRING&gt;     
     Prevent overwriting existing results by checking for the given filename 
