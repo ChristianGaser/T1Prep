@@ -59,17 +59,7 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
   sub-01_ses-1_space-T1w_desc-brain_mask.nii.gz
   sub-01_ses-1_hemi-L_thickness.shape.gii
   ```
-- All filename mappings for both modes are defined in `Names.tsv` and can be customized.
-
-**Examples:**
-
-_BIDS input_
-
-Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
-Default: /data/study/derivatives/T1Prep-v1.0/sub-01/ses-1/anat/
-With --out-dir /results:
-/results/derivatives/T1Prep-v1.0/sub-01/ses-1/anat/
-   
+- All filename mappings for both modes are defined in `Names.tsv` and can be customized.   
    
 ## Usage
 ```bash
