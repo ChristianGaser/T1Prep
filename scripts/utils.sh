@@ -259,15 +259,7 @@ filter_arguments() {
 check_python_cmd()
 {
   if [ -z "$1" ]; then
-    if command -v python3.13 &>/dev/null; then
-      python="python3.13"
-    elif command -v python3.12 &>/dev/null; then
-      python="python3.12"
-    elif command -v python3.11 &>/dev/null; then
-      python="python3.11"
-    elif command -v python3.10 &>/dev/null; then
-      python="python3.10"
-    elif command -v python3.9 &>/dev/null; then
+    if command -v python3.9 &>/dev/null; then
       python="python3.9"
     elif command -v python3 &>/dev/null; then
       python="python3"
@@ -278,6 +270,12 @@ check_python_cmd()
       exit 1
     fi
   fi
+  
+  python_version=$($python -V 2>&1 | grep -E '^Python 3\.9\.')
+  if [ -z "${python_version}" ]; then
+    echo "${RED}Only Python version 3.9 is supported. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
+    exit 1
+  fi  
 }
 
 # ----------------------------------------------------------------------
@@ -441,7 +439,7 @@ install_deepmriprep()
 get_output_folder()
 {
   local FILE=$1
-  local bname=$(basename "$FILE")
+  bname=$(basename "$FILE")
   bname="${bname%.nii.gz}"
   bname="${bname%.nii}"
 

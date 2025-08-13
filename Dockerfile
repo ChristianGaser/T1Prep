@@ -1,4 +1,5 @@
 FROM ubuntu:latest
+FROM python:3.9-slim
 
 ARG T1PREP_VERSION=0
 ARG T1PREP_RELEASE=0.2.0
@@ -31,6 +32,10 @@ RUN wget --no-check-certificate --progress=bar:force -P /opt https://github.com/
     && rm -f /opt/T1Prep${T1PREP_TAG}.zip \
     && /opt/T1Prep/scripts/T1Prep --re-install \
     && ln -s /opt/T1Prep/scripts/* /usr/local/bin/T1Prep
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
 
 RUN T1Prep
 

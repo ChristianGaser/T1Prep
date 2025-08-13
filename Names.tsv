@@ -24,5 +24,6 @@ Spherereg_surface {side}.sphere.reg.{bname}.gii {bname}_hemi-{side}{desc}_reg_sp
 Intensity_Mid {side}.intensity_mid.{bname}.txt {bname}_hemi-{side}{desc}_intensity_mid.shape.gii
 Intensity_Pial {side}.intensity_pial.{bname}.txt {bname}_hemi-{side}{desc}_intensity_pial.shape.gii
 Intensity_WM {side}.intensity_white.{bname}.txt {bname}_hemi-{side}{desc}_intensity_white.shape.gii
-Atlas_ROI ROI_{bname}.json  {bname}_ROI_volumes.json
-Report_file log_{bname}.json  {bname}_log.json
+Atlas_ROI ROI_{bname}.json {bname}_ROI_volumes.json
+Report_file log_{bname}.json {bname}_log.json
+Log_file T1Preplog_{bname}.txt {bname}_T1Preplog.txt
