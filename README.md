@@ -105,14 +105,14 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
       Default: the current working directory.
 
       Output folder structure depends on the input dataset type:
-        • BIDS datasets (if the upper-level folder of the input files is 'anat'):
-            Results are placed in a BIDS-compatible derivatives folder:
-            inside '<DIR>'.
-            Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
-        • Non-BIDS datasets:
-            Results are placed in subfolders similar to CAT12 output
-            (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
-            output directory.
+      • BIDS datasets (if the upper-level folder of the input files is 'anat'):
+          Results are placed in a BIDS-compatible derivatives folder:
+          inside '<DIR>'.
+          Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
+      • Non-BIDS datasets:
+          Results are placed in subfolders similar to CAT12 output
+          (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
+          output directory.
 
       If '--bids' is set, the BIDS derivatives substructure will always be used
       inside '<DIR>'.
@@ -122,12 +122,10 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
       instead of the default CAT12 style.
       
       Naming behaviour:
-        • CAT12 style (default): Uses legacy folder and file names
-          (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
-        • BIDS style: Uses standardized derivatives names, including 
-          subject/session identifiers, modality, and processing steps
-          (e.g., 'sub-01_ses-1_space-MNI152NLin2009cAsym-nonlinear-modulated_label-WM_probseg.gz',
-          'sub-01_ses-1_hemi-L_thickness.shape.gii').
+      • CAT12 style (default): Uses legacy folder and file names
+        (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
+      • BIDS style: Uses standardized derivatives names, including 
+        subject/session identifiers, modality, and processing steps.
 
       The complete mapping between internal outputs and both naming conventions
       is stored in 'Names.tsv' and can be customized.
