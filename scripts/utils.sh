@@ -441,20 +441,31 @@ install_deepmriprep()
 get_output_folder()
 {
   local FILE=$1
-  bname=$(basename "$FILE")
+  local bname=$(basename "$FILE")
   bname="${bname%.nii.gz}"
   bname="${bname%.nii}"
 
   local dname=$(dirname "$FILE")
-  local dname=$(cd "$dname" && pwd) # get absolute path
+  dname=$(cd "$dname" && pwd) # get absolute path
   
   # check for BIDS folder structure, where the upper folder is "anat"
   local upper_dname=$(basename "$dname") # get upper directory
   if [ "${upper_dname}" == "anat" ]; then
     use_subfolder=0
-    subj_folder=$(dirname "$dname")
+    sess_folder0=$(dirname "$dname")
+
+    if [ ! $(echo $(basename "$sess_folder0") | grep "ses-") == "" ]; then
+      sess_folder=$(basename "$sess_folder0")
+      updir="../"
+      subj_folder=$(dirname "$sess_folder0")
+    else
+      sess_folder=""
+      updir=""
+      subj_folder=$(dirname "$dname")
+    fi
+
     subj_folder=$(basename "$subj_folder")
-    bids_folder="/derivatives/T1Prep${amap_string}-v${version}/${subj_folder}/anat/"
+    bids_folder="${updir}../../../derivatives/T1Prep-v${version}/${subj_folder}/${sess_folder}/anat/"
   else
     use_subfolder=1
     bids_folder=""
