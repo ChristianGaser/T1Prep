@@ -16,12 +16,15 @@ T1Prep is a pipeline that preprocesses T1-weighted MRI data and supports segment
 T1Prep partially integrates [DeepMriPrep](https://github.com/wwu-mmll/deepmriprep), which uses deep learning (DL) techniques to mimic CAT12's functionality for processing structural MRIs. For details, see:
 Lukas Fisch et al., "deepmriprep: Voxel-based Morphometry (VBM) Preprocessing via Deep Neural Networks," available on arXiv at https://doi.org/10.48550/arXiv.2408.10656.
 
-As with other DL-based methods, DeepMriPrep slightly underestimates gray matter in cases of significant atrophy. Therefore, it is primarily used for bias field correction, lesion detection, and as an initial estimate for the subsequent AMAP segmentation from CAT12. The skull-stripping and nonlinear spatial registration steps provided by DeepMriPrep are unaffected by this bias and are fully utilized in T1Prep.
+An alternative approach uses DeepMriPrep for bias field correction, lesion detection, and also serves as an initial estimate for the subsequent AMAP segmentation from CAT12. 
 
 Cortical surface reconstruction and thickness estimation are performed using [Cortex Analysis Tools for Surface](https://github.com/ChristianGaser/CAT-Surface), a core component of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12).
 
+It is designed for both single-subject and batch processing, with optional parallelization and flexible output naming conventions. The naming patterns are compatible with both 
+CAT12 folder structures and the BIDS derivatives standard.
+
 ## Requirements
- Python 3.9 (or higher) is required, and all necessary libraries are automatically installed the first time T1Prep is run.
+ Python 3.9 is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
 
 ## Main Differences to CAT12
 - Implemented entirely in Python and C, eliminating the need for a Matlab license.
@@ -30,6 +33,44 @@ Cortical surface reconstruction and thickness estimation are performed using [Co
 - No quality assessment implemented yet.
 - Only T1 MRI data supported.
 
+## Output Folder Structure and Naming Conventions
+
+T1Prep automatically determines output locations based on the input data structure:
+
+1. **BIDS datasets**  
+   If the input NIfTI is located in an `anat` folder:
+
+<dataset-root>/derivatives/T1Prep-v<version>/<sub-XXX>/<ses-YYY>/anat/
+   
+- Subject (`sub-XXX`) and session (`ses-YYY`) are extracted from the path.
+- If `--out-dir <DIR>` is specified, the BIDS substructure will still be created inside `<DIR>`.
+
+2. **Non-BIDS datasets**  
+Results are written to **CAT12-style subfolders** (`mri/`, `surf/`, etc.) in:
+   
+<input-folder>/<subfolder>/
+
+or in `<DIR>` if `--out-dir <DIR>` is specified.
+
+3. **Naming Conventions**  
+- **Default (CAT12)**: Uses classic names like `mri/brainmask.nii` and `surf/lh.thickness`.
+- **With `--bids`**: Uses BIDS derivatives naming, e.g.:
+  ```
+  sub-01_ses-1_space-T1w_desc-brain_mask.nii.gz
+  sub-01_ses-1_hemi-L_thickness.shape.gii
+  ```
+- All filename mappings for both modes are defined in `Names.tsv` and can be customized.
+
+**Examples:**
+
+_BIDS input_
+
+Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
+Default: /data/study/derivatives/T1Prep-v1.0/sub-01/ses-1/anat/
+With --out-dir /results:
+/results/derivatives/T1Prep-v1.0/sub-01/ses-1/anat/
+   
+   
 ## Usage
 ```bash
 ./scripts/T1Prep [options] file1.nii file2.nii ...
