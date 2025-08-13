@@ -40,17 +40,17 @@ T1Prep automatically determines output locations based on the input data structu
 1. **BIDS datasets**  
    If the input NIfTI is located in an `anat` folder:
 
-`&lt;dataset-root&gt;/derivatives/T1Prep-v&lt;version&gt;/&lt;sub-XXX&gt;/&lt;ses-YYY&gt;/anat/`
+`<dataset-root>/derivatives/T1Prep-v<version>/<sub-XXX>/<ses-YYY>/anat/`
    
 - Subject (`sub-XXX`) and session (`ses-YYY`) are extracted from the path.
-- If `--out-dir &lt;DIR&gt;` is specified, the BIDS substructure will still be created inside `&lt;DIR&gt;`.
+- If `--out-dir <DIR>` is specified, the BIDS substructure will still be created inside `<DIR>`.
 
 2. **Non-BIDS datasets**  
 Results are written to **CAT12-style subfolders** (`mri/`, `surf/`, etc.) in:
    
-`&lt;input-folder&gt;/&lt;subfolder&gt;/`
+`<input-folder>/<subfolder>/`
 
-or in `&lt;DIR&gt;` if `--out-dir &lt;DIR&gt;` is specified.
+or in `<DIR>` if `--out-dir <DIR>` is specified.
 
 3. **Naming Conventions**  
 - **Default (CAT12)**: Uses classic names like `mri/brainmask.nii` and `surf/lh.thickness`.
@@ -107,14 +107,15 @@ or in `&lt;DIR&gt;` if `--out-dir &lt;DIR&gt;` is specified.
       Output folder structure depends on the input dataset type:
         • BIDS datasets (if the upper-level folder of the input files is 'anat'):
             Results are placed in a BIDS-compatible derivatives folder:
-              &lt;dataset-root&gt;/derivatives/T1Prep-v&lt;version&gt;/&lt;sub-XXX&gt;/&lt;ses-YYY&gt;/anat/
+            inside '<DIR>'.
             Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
         • Non-BIDS datasets:
             Results are placed in subfolders similar to CAT12 output
-            (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified output directory.
+            (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
+            output directory.
 
       If '--bids' is set, the BIDS derivatives substructure will always be used
-      inside '&lt;DIR&gt;'.
+      inside '<DIR>'.
 
   --bids                      
       Use BIDS derivatives naming conventions for all output files and folders
@@ -123,8 +124,8 @@ or in `&lt;DIR&gt;` if `--out-dir &lt;DIR&gt;` is specified.
       Naming behaviour:
         • CAT12 style (default): Uses legacy folder and file names
           (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
-        • BIDS style: Uses standardized derivatives names, including subject/session
-          identifiers, modality, and processing steps
+        • BIDS style: Uses standardized derivatives names, including 
+          subject/session identifiers, modality, and processing steps
           (e.g., 'sub-01_ses-1_space-MNI152NLin2009cAsym-nonlinear-modulated_label-WM_probseg.gz',
           'sub-01_ses-1_hemi-L_thickness.shape.gii').
 
@@ -145,7 +146,8 @@ or in `&lt;DIR&gt;` if `--out-dir &lt;DIR&gt;` is specified.
             /results/mri/
 
   --no-overwrite &lt;STRING&gt;     
-      Prevent overwriting existing results by checking for the given filename pattern.
+      Prevent overwriting existing results by checking for the given filename 
+      pattern.
 
   --gz                        
       Save images in compressed NIfTI format (*.nii.gz).
@@ -163,7 +165,8 @@ or in `&lt;DIR&gt;` if `--out-dir &lt;DIR&gt;` is specified.
       Skip estimation of modulated and warped segmentations.
 
   --pial-white                
-      Additionally estimate pial and white matter surfaces during surface processing.
+      Additionally estimate pial and white matter surfaces during surface 
+      processing.
 
   --hemisphere                
       Additionally save hemispheric partitions of the segmentation.
@@ -193,7 +196,8 @@ or in `&lt;DIR&gt;` if `--out-dir &lt;DIR&gt;` is specified.
 **Expert Options**
 
   --amap                      
-      Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.
+      Use DeepMRIPrep segmentation only as initialization, followed by AMAP 
+      segmentation.
 
   --thickness-method &lt;NUMBER&gt; 
       Set the cortical thickness estimation method:  
@@ -214,62 +218,67 @@ or in `&lt;DIR&gt;` if `--out-dir &lt;DIR&gt;` is specified.
         0   = disable vessel removal  
 
   --median-filter &lt;NUMBER&gt;    
-      Apply the specified number of median filter passes to reduce topology artifacts.
+      Apply the specified number of median filter passes to reduce topology 
+      artifacts.
 
   --fast                      
-      Skip spherical registration, atlas estimation, and warped segmentation steps.
+      Skip spherical registration, atlas estimation, and warped segmentation 
+      steps.
 
 ## Examples
 ```bash
   ./scripts/T1Prep --out-dir test_folder sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation and 
-    surface maps, saving the results in the 'test_folder' directory.
+    Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation 
+    and surface maps, saving the results in the 'test_folder' directory.
 
 ```bash
   ./scripts/T1Prep --no-surf sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii', but skip surface creation. 
-    Only segmentation maps are generated and saved in the same directory as the input files.
+    Process all files matching the pattern 'sTRIO*.nii', but skip surface 
+    creation. Only segmentation maps are generated and saved in the same 
+    directory as the input files.
 
 ```bash
   ./scripts/T1Prep --python python3.9 --no-overwrite "surf/lh.thickness." sTRIO*.nii
 ```
-    Process all files matching the pattern `'sTRIO*.nii'` and use python3.9. Skip processing
-    for files where 'surf/lh.thickness.*' already exists, and save new results in the same
-    directory as the input files.
+    Process all files matching the pattern `'sTRIO*.nii'` and use python3.9. 
+    Skip processing for files where 'surf/lh.thickness.*' already exists, and 
+    save new results in the same directory as the input files.
 
 ```bash
   ./scripts/T1Prep --lesion --no-sphere sTRIO*.nii
 ```
-   Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of spherical
-   registration, but additionally save lesion map (named p7sTRIO*.nii) in native space.
+   Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of 
+   spherical registration, but additionally save lesion map (named p7sTRIO*.nii) 
+   in native space.
 
 ```bash
   ./scripts/T1Prep --no-amap sTRIO*.nii
 ```
-   Process all files matching the pattern `'sTRIO*.nii'` and use DeppMriPrep instead of AMAP
-   segmentation.
+   Process all files matching the pattern `'sTRIO*.nii'` and use DeppMriPrep 
+   instead of AMAP segmentation.
   
 ```bash
   ./scripts/T1Prep --multi 8 --p --csf sTRIO*.nii
 ```
-    Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
-    in native space, including CSF segmentation. The processing pipeline involves two stages 
-    of parallelization:
+    Process all files matching the pattern 'sTRIO*.nii'. Additionally save 
+    segmentations in native space, including CSF segmentation. The processing 
+    pipeline involves two stages of parallelization:
     
-    1. Segmentation (Python-based): Runs best with about 24GB of memory per process. 
-       The number of processes is automatically estimated based on available memory to 
-       optimize resource usage.
+    1. Segmentation (Python-based): Runs best with about 24GB of memory per 
+       process. The number of processes is automatically estimated based on 
+       available memory to optimize resource usage.
   
-    2. Surface Extraction: This stage does not require significant memory and is fully 
-       distributed across all available processorsor limited to the defined number of
-     processes using the "--multi" flag.
+    2. Surface Extraction: This stage does not require significant memory and is
+       fully distributed across all available processorsor limited to the 
+       defined number of processes using the "--multi" flag.
   
-    If "--multi" is set to a specific number (e.g., 8), the system still estimates memory-based 
-    constraints for segmentation parallelization. However, the specified number of processes 
-    (e.g., 8) will be used for surface extraction, ensuring efficient parallelization across 
-    the two stages. The default setting is -1, which automatically estimates the number of
+    If "--multi" is set to a specific number (e.g., 8), the system still 
+    estimates memory-based constraints for segmentation parallelization. However,
+    the specified number of processes (e.g., 8) will be used for surface 
+    extraction, ensuring efficient parallelization across the two stages. The 
+    default setting is -1, which automatically estimates the number of
     available processors.
 
 
@@ -281,7 +290,8 @@ Download T1Prep_$version.zip from Github and unzip:
 ```bash
   unzip T1Prep_$version.zip -d your_installation_folder
 ```
-Install required Python packages (check that the correct Python version is being used):
+Install required Python packages (check that the correct Python version is being
+used):
 ```bash
 ./scripts/T1Prep --python python3.9 --install
 ```
@@ -295,5 +305,6 @@ python3.9 -m pip install -r requirements.txt
 For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
 
 ## License
-T1Prep is distributed under the terms of the [Apache License](https://www.apache.org/licenses/LICENSE-2.0) as published by the Apache Software Foundation.
+T1Prep is distributed under the terms of the [Apache License](https://www.apache.org/licenses/LICENSE-2.0) 
+as published by the Apache Software Foundation.
 
