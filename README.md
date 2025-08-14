@@ -1,15 +1,15 @@
-&lt;!--
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/T1Prep)
-![PyPI - License](https://img.shields.io/pypi/l/T1Prep)
-![PyPI - Version](https://img.shields.io/pypi/v/T1Prep)
---&gt;
+![Python 3.9](https://img.shields.io/badge/Python-3.9-3776AB?logo=python&logoColor=white)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
+<!--
+[![Tag](https://img.shields.io/github/v/tag/ChristianGaser/T1Prep?sort=semver)](https://github.com/ChristianGaser/T1Prep/tags)
+-->
+> [!WARNING]
+> This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
 
-![Alt-Text](T1Prep.png)
+<img src="T1Prep.png" alt="T1Prep logo" width="340"> 
 
-&gt; [!WARNING]
-&gt; This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
-
-# T1Prep: T1 PREProcessing Pipeline (aka PyCAT)
+# T1Prep: T1 PREProcessing Pipeline (aka PyCAT) 
 
 T1Prep is a pipeline that preprocesses T1-weighted MRI data and supports segmentation and cortical surface reconstruction. It provides a complete set of tools for efficiently processing structural MRI scans.
 
@@ -24,7 +24,7 @@ It is designed for both single-subject and batch processing, with optional paral
 CAT12 folder structures and the BIDS derivatives standard.
 
 ## Requirements
- Python 3.9 is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+ [Python 3.9](https://www.python.org/downloads/release/python-394/) is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
 
 ## Main Differences to CAT12
 - Implemented entirely in Python and C, eliminating the need for a Matlab license.
@@ -105,26 +105,26 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
     Default: the current working directory.
 
 Output folder structure depends on the input dataset type:
-• BIDS datasets (if the upper-level folder of the input files is 'anat'):
+* BIDS datasets (if the upper-level folder of the input files is 'anat'):
     Results are placed in a BIDS-compatible derivatives folder:
     inside &lt;DIR&gt;
     Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
-• Non-BIDS datasets:
+* Non-BIDS datasets:
     Results are placed in subfolders similar to CAT12 output
     (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
     output directory.
 
 If '--bids' is set, the BIDS derivatives substructure will always be used
-inside '<DIR>'.
+inside &lt;DIR&gt;.
 
 --bids                      
     Use BIDS derivatives naming conventions for all output files and folders
     instead of the default CAT12 style.
     
 Naming behaviour:
-• CAT12 style (default): Uses legacy folder and file names
+* CAT12 style (default): Uses legacy folder and file names
   (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
-• BIDS style: Uses standardized derivatives names, including 
+* BIDS style: Uses standardized derivatives names, including 
   subject/session identifiers, modality, and processing steps.
 
 The complete mapping between internal outputs and both naming conventions
