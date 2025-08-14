@@ -31,6 +31,8 @@
 version="0.2.0"
 script_dir=$(dirname "$0")
 
+seed=0
+
 # Load additional defaults
 cfg="${script_dir}/../T1Prep_defaults.txt"
 
@@ -147,6 +149,11 @@ parse_args()
       --multi*)
         exit_if_empty "$optname" "$optarg"
         multi=$optarg
+        shift
+        ;;
+      --seed)
+        exit_if_empty "$optname" "$optarg"
+        seed=$optarg
         shift
         ;;
       --atlas)
@@ -735,9 +742,9 @@ process()
       [ "${multi}" -ne -2 ] && cmd+=" --verbose"
       [ "${debug}" -eq 1 ] && cmd+=" --debug"
       [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
-      [ "${save_csf}" -eq 1 ] && cmd+=" --csf"   
-      
-      cmd+=" --vessel \"${vessel}\" --label_dir \"${label_dir}\""
+      [ "${save_csf}" -eq 1 ] && cmd+=" --csf"
+
+      cmd+=" --seed ${seed} --vessel \"${vessel}\" --label_dir \"${label_dir}\""
       cmd+=" --input \"${input}\" --mri_dir \"${mri_dir}\""
       cmd+=" --report_dir \"${report_dir}\" --atlas \"${atlas_vol}\""
       
@@ -914,14 +921,17 @@ ${BOLD}${GREEN}General Options:${NC}
       If you specify a value here and it is lower than the number of jobs 
       calculated based on --min-memory, your specified value will be used.
 
-  --min-memory <NUMBER>       
-      Set the minimum amount of memory (in GB) to reserve for each parallel 
-      job (default: $min_memory GB). This value is used to estimate the 
-      maximum number of jobs that can run in parallel without exceeding 
-      available system memory. Increase this value if your system runs 
+  --min-memory <NUMBER>
+      Set the minimum amount of memory (in GB) to reserve for each parallel
+      job (default: $min_memory GB). This value is used to estimate the
+      maximum number of jobs that can run in parallel without exceeding
+      available system memory. Increase this value if your system runs
       low on memory or becomes unresponsive during parallelization.
 
-  --debug                     
+  --seed <NUMBER>
+      Set the random seed for deterministic processing (default: $seed).
+
+  --debug
       Enable verbose output, retain all temporary files, and save additional
       debugging information for inspection.
 

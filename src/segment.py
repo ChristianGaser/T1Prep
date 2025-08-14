@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import fill_voids
 import json
+import random
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -147,18 +148,27 @@ class CustomPreprocess(Preprocess):
             "p0": reoriented_nifti(p0.cpu().numpy(), mask.affine, mask.header),
         }
 
-
-    def run_atlas_register(self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine):
+    def run_atlas_register(
+        self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
+    ):
         voxel_vol = np.prod(p1_large.affine[np.diag_indices(3)])
-        p1_large, p2_large, p3_large = [nifti_to_tensor(p).to(self.device) for p in [p1_large, p2_large, p3_large]]
-        inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float().to(self.device))
-        grid = F.affine_grid(inv_affine[None, :3], [1, 3, *t1.shape[:3]], align_corners=INTERP_KWARGS['align_corners'])
+        p1_large, p2_large, p3_large = [
+            nifti_to_tensor(p).to(self.device) for p in [p1_large, p2_large, p3_large]
+        ]
+        inv_affine = torch.linalg.inv(
+            torch.from_numpy(affine.values).float().to(self.device)
+        )
+        grid = F.affine_grid(
+            inv_affine[None, :3],
+            [1, 3, *t1.shape[:3]],
+            align_corners=INTERP_KWARGS["align_corners"],
+        )
         warp_yx = nib.as_closest_canonical(warp_yx)
         yx = nifti_to_tensor(warp_yx)[None].to(self.device)
         atlases, warps = {}, {}
-    
+
         atl_list = [
-            '_'.join(a.split('_')[:-1]) if a.endswith(('_affine', '_volumes')) else a
+            "_".join(a.split("_")[:-1]) if a.endswith(("_affine", "_volumes")) else a
             for a in atlas_list
         ]
         for atl in atl_list:
@@ -167,43 +177,61 @@ class CustomPreprocess(Preprocess):
                 atlas_path = atl
                 base_atl = os.path.splitext(os.path.basename(atl))[0]
             else:
-                atlas_path = f'{TEMPLATE_PATH_T1PREP}/{atl}.nii.gz'
+                atlas_path = f"{TEMPLATE_PATH_T1PREP}/{atl}.nii.gz"
                 base_atl = atl
             atlas = nib.as_closest_canonical(nib.load(atlas_path))
             header = atlas.header
             shape = tuple(shape_from_to(atlas, warp_yx))
             if shape not in warps:
-                scaled_yx = F.interpolate(yx.permute(0, 4, 1, 2, 3), shape, mode='trilinear', align_corners=False)
+                scaled_yx = F.interpolate(
+                    yx.permute(0, 4, 1, 2, 3),
+                    shape,
+                    mode="trilinear",
+                    align_corners=False,
+                )
                 warps[shape] = scaled_yx.permute(0, 2, 3, 4, 1)
             atlas = self.atlas_register(affine, warps[shape], atlas, t1.shape)
-            if f'{atl}_affine' in atlas_list:
-                atlases[f'{atl}_affine'] = atlas
+            if f"{atl}_affine" in atlas_list:
+                atlases[f"{atl}_affine"] = atlas
             atlas_tensor = nifti_to_tensor(atlas).to(self.device)
-            if f'{atl}_volumes' in atlas_list:
+            if f"{atl}_volumes" in atlas_list:
                 # Check for csf file and create dummy ROIs if not found
-                csv_path = f'{TEMPLATE_PATH_T1PREP}/{base_atl}.csv' if not os.path.isabs(atl) else os.path.splitext(atl)[0] + '.csv'
+                csv_path = (
+                    f"{TEMPLATE_PATH_T1PREP}/{base_atl}.csv"
+                    if not os.path.isabs(atl)
+                    else os.path.splitext(atl)[0] + ".csv"
+                )
                 if os.path.exists(csv_path):
-                    rois = pd.read_csv(csv_path, sep=';')[['ROIid', 'ROIname']]
+                    rois = pd.read_csv(csv_path, sep=";")[["ROIid", "ROIname"]]
                 else:
                     # Fallback: Dummy-ROI-list with increasing IDs
                     labels = torch.unique(atlas_tensor).cpu().numpy()
                     labels = labels[labels > 0]
-                    rois = pd.DataFrame({
-                        'ROIid': labels,
-                        'ROIname': [f'Region_{i}' for i in labels]
-                    })
-                volumes = voxel_vol * get_volumes(atlas_tensor, p1_large, p2_large, p3_large)
+                    rois = pd.DataFrame(
+                        {"ROIid": labels, "ROIname": [f"Region_{i}" for i in labels]}
+                    )
+                volumes = voxel_vol * get_volumes(
+                    atlas_tensor, p1_large, p2_large, p3_large
+                )
                 volumes *= wj_affine[0] / 1000
                 # Smart rounding
                 volumes = np.vectorize(smart_round)(volumes)
-                volumes = pd.DataFrame(volumes, columns=['gmv_cm3', 'wmv_cm3', 'csfv_cm3', 'region_cm3'])                
-                atlases[f'{atl}_volumes'] = pd.concat([rois, volumes], axis=1)
+                volumes = pd.DataFrame(
+                    volumes, columns=["gmv_cm3", "wmv_cm3", "csfv_cm3", "region_cm3"]
+                )
+                atlases[f"{atl}_volumes"] = pd.concat([rois, volumes], axis=1)
             if atl in atlas_list:
-                sample_kwargs = {'mode': 'nearest', 'align_corners': INTERP_KWARGS['align_corners']}
-                sampled_atlas = F.grid_sample(atlas_tensor[None, None], grid, **sample_kwargs)[0, 0]
-                atlases[atl] = reoriented_nifti(sampled_atlas.cpu().numpy(), t1.affine, header)
+                sample_kwargs = {
+                    "mode": "nearest",
+                    "align_corners": INTERP_KWARGS["align_corners"],
+                }
+                sampled_atlas = F.grid_sample(
+                    atlas_tensor[None, None], grid, **sample_kwargs
+                )[0, 0]
+                atlases[atl] = reoriented_nifti(
+                    sampled_atlas.cpu().numpy(), t1.affine, header
+                )
         return atlases
-
 
 
 def all_models_present():
@@ -268,6 +296,12 @@ def parse_arguments() -> argparse.Namespace:
         default=0.4,
         help="Initial threshold to isolate WM for vessel removal",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for random number generators",
+    )
     return parser.parse_args()
 
 
@@ -292,6 +326,7 @@ def prepare_model_files() -> None:
                 shutil.copy(
                     f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}"
                 )
+
 
 def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     """Align the input volume and create the preprocessing object."""
@@ -529,7 +564,7 @@ def handle_lesions(
 
         tmp_p3 = p3_large_uncorr.get_fdata().copy()
         tmp_p3[ind_csf_discrep] += csf_discrep_large[ind_csf_discrep]
-        
+
         # We have to normalize all tissue values to overall sum of one
         tmp_p1, tmp_p2, tmp_p3 = normalize_to_sum1(tmp_p1, tmp_p2, tmp_p3)
 
@@ -698,59 +733,59 @@ def save_results(
         )
 
     # Estimate raw volumes
-    vol_gm   = get_volume_native_space(p1_large, wj_affine[0])   # GM    (p1)
-    vol_wm   = get_volume_native_space(p2_large, wj_affine[0])   # WM    (p2)
-    vol_csf  = get_volume_native_space(p3_large, wj_affine[0])   # CSF   (p3)
+    vol_gm = get_volume_native_space(p1_large, wj_affine[0])  # GM    (p1)
+    vol_wm = get_volume_native_space(p2_large, wj_affine[0])  # WM    (p2)
+    vol_csf = get_volume_native_space(p3_large, wj_affine[0])  # CSF   (p3)
     if save_lesions and wmh_large is not None:
-        vol_wmh  = get_volume_native_space(wmh_large, wj_affine[0])  # WMHs  (lesions)
+        vol_wmh = get_volume_native_space(wmh_large, wj_affine[0])  # WMHs  (lesions)
     else:
         vol_wmh = 0
-    
+
     # treat WMHs as part of WM
     vol_wm_incl = vol_wm + vol_wmh
-    
+
     # Absolute volumes
     # Order: CSF-GM-WM(incl.WMH)-WMH
     vol_abs_CGW = [vol_csf, vol_gm, vol_wm_incl, vol_wmh]
-    
+
     # TIV contains CSF + GM + WM (already incl. WMH!)
     tiv_volume = vol_csf + vol_gm + vol_wm_incl
-    
+
     # Compute relative volumes as fractions
     # Fractions w. r. t. TIV
-    vol_rel_CGW = [v / tiv_volume for v in vol_abs_CGW]      # CSF, GM, WM, WMH
-    
+    vol_rel_CGW = [v / tiv_volume for v in vol_abs_CGW]  # CSF, GM, WM, WMH
+
     # Lesion load: WMH fraction w. r. t. WM (+WMH)
     wmh_rel_to_wm = vol_wmh / vol_wm_incl
-    
+
     # Mean intensities per tissue class
     mean_CGW = []
-    for label in (1, 2, 3):          # p0_large: 1=CSF, 2=GM, 3=WM
+    for label in (1, 2, 3):  # p0_large: 1=CSF, 2=GM, 3=WM
         mask_label = np.round(p0_large.get_fdata()) == label
         mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
-    
+
     # Prepare dictionary
     summary = {
         "vol_abs_CGW": {
             "value": [smart_round(x) for x in vol_abs_CGW],
-            "desc":  "[CSF, GM, WM+WMH, WMH]"
+            "desc": "[CSF, GM, WM+WMH, WMH]",
         },
         "vol_rel_CGW": {
             "value": [smart_round(x) for x in vol_rel_CGW],
-            "desc": "Relative volumes [CSF, GM, WM, WMH]/TIV"
+            "desc": "Relative volumes [CSF, GM, WM, WMH]/TIV",
         },
         "wmh_rel_WM": {
             "value": smart_round(wmh_rel_to_wm),
-            "desc": "WMH load relative to WM+WMH"
+            "desc": "WMH load relative to WM+WMH",
         },
-        "mean_CGW":  {
+        "mean_CGW": {
             "value": [smart_round(x) for x in mean_CGW],
-            "desc": "Mean intensity per tissue (p0 labels 1-3)"
+            "desc": "Mean intensity per tissue (p0 labels 1-3)",
         },
         "vol_tiv": {
             "value": smart_round(tiv_volume),
-            "desc": "Total intracranial volume (CSF+GM+WM incl. WMH)"
-        }
+            "desc": "Total intracranial volume (CSF+GM+WM incl. WMH)",
+        },
     }
 
     # Write to JSON file
@@ -767,17 +802,17 @@ def save_results(
         warp_xy = output_reg["warp_xy"]
         warp_mse = output_reg["warp_mse"]
 
-        if (atlas_list is not None): 
+        if atlas_list is not None:
             output_atlas = prep.run_atlas_register(
                 t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
             )
-    
+
             # Convert each DataFrame to a list of dicts:
             atlas_json = {
                 key.removesuffix("_volumes"): df.to_dict(orient="records")
                 for key, df in output_atlas.items()
             }
-    
+
             # Write to a single JSON file:
             atlas_name = code_vars.get("Atlas_ROI", "")
             with open(f"{label_dir}/{atlas_name}", "w") as f:
@@ -852,6 +887,12 @@ def run_segment():
 
     args = parse_arguments()
 
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+    torch.use_deterministic_algorithms(True)
+
     # Input/output parameters
     t1_name = args.input
     mri_dir = args.mri_dir
@@ -899,7 +940,9 @@ def run_segment():
     # Get atlas list (currently restricted to ROI estimation)
     atlas = tuple(x.strip(" '") for x in atlas.split(","))
     # Build atlas_list. Set atlas_list to None, if empty
-    atlas_list = tuple(f"{a}_volumes" for a in atlas) if any(atlas) and atlas != ("",) else None
+    atlas_list = (
+        tuple(f"{a}_volumes" for a in atlas) if any(atlas) and atlas != ("",) else None
+    )
 
     # Prepare filenames and load input MRI data
     out_name = os.path.basename(os.path.basename(t1_name).replace(".nii", "")).replace(
@@ -957,7 +1000,7 @@ def run_segment():
     )
     dim_target_res = header_resamp["dim"]
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
-    
+
     grid_target_res = F.affine_grid(
         inv_affine[None, :3],
         [1, 3, *dim_target_res[1:4]],
@@ -1049,7 +1092,7 @@ def run_segment():
     wj_affine = (
         np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
     )
-    
+
     wj_affine = pd.Series([wj_affine])
 
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) to refine segmentation
@@ -1066,11 +1109,7 @@ def run_segment():
             p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM
         )
     else:
-        tmp = (
-            p3_large.get_fdata()
-            + 2 * p1_large.get_fdata()
-            + 3 * p2_large.get_fdata()
-        )
+        tmp = p3_large.get_fdata() + 2 * p1_large.get_fdata() + 3 * p2_large.get_fdata()
         p0_large = nib.Nifti1Image(tmp, affine_resamp, header_resamp)
 
     if use_amap or save_lesions:
