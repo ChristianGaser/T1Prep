@@ -10,13 +10,14 @@ authors = [
     { name = "Christian Gaser", email = "christian.gaser@uni-jena.de" },
 ]
 license = {text = "Apache License Version 2.0"}
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 readme = "README.md"
 repository = "https://github.com/ChristianGaser/T1Prep"
 
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -24,16 +25,15 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Intended Audience :: Science/Research"
 ]
-exclude = ["Makefile"]
 
 dependencies = [
     "scipy>=1.10.1",
     "torch>=1.11.0",
     "deepbet>=1.0.2",
-    "torchreg>=0.1.2",
+    "torchreg>=0.1.3",
     "SplineSmooth3D>=0.1.1",
     "nxbc>=0.2.0",
-    "deepmriprep>=0.1.0",
+    "deepmriprep==0.2.0",
     "requests"
 ]
 

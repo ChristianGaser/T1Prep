@@ -1,4 +1,4 @@
-![Python 3.9](https://img.shields.io/badge/Python-3.9-3776AB?logo=python&logoColor=white)
+[![Python 3.9 | 3.10 | 3.11 | 3.12](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11%20|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
 <!--
@@ -24,7 +24,7 @@ It is designed for both single-subject and batch processing, with optional paral
 CAT12 folder structures and the BIDS derivatives standard.
 
 ## Requirements
- [Python 3.9](https://www.python.org/downloads/release/python-394/) is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+ [Python 3.9-3.12](https://www.python.org/downloads/) is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
 
 ## Main Differences to CAT12
 - Implemented entirely in Python and C, eliminating the need for a Matlab license.
@@ -288,14 +288,14 @@ Download T1Prep_$version.zip from Github and unzip:
 ```bash
   unzip T1Prep_$version.zip -d your_installation_folder
 ```
-Install required Python packages (check that the correct Python version is being
-used):
+Install required Python packages (check that the correct Python version 3.9-3.12
+is being used):
 ```bash
-./scripts/T1Prep --python python3.9 --install
+./scripts/T1Prep --python python3.12 --install
 ```
 Alternatively, install the dependencies manually:
 ```bash
-python3.9 -m pip install -r requirements.txt
+python3.12 -m pip install -r requirements.txt
 
 ```
 
