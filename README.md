@@ -4,13 +4,12 @@
 <!--
 [![Tag](https://img.shields.io/github/v/tag/ChristianGaser/T1Prep?sort=semver)](https://github.com/ChristianGaser/T1Prep/tags)
 -->
-
-<img src="T1Prep.png" alt="T1Prep logo" width="340">
-
 > [!WARNING]
 > This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
 
-# T1Prep: T1 PREProcessing Pipeline (aka PyCAT)
+<img src="T1Prep.png" alt="T1Prep logo" width="340"> 
+
+# T1Prep: T1 PREProcessing Pipeline (aka PyCAT) 
 
 T1Prep is a pipeline that preprocesses T1-weighted MRI data and supports segmentation and cortical surface reconstruction. It provides a complete set of tools for efficiently processing structural MRI scans.
 
