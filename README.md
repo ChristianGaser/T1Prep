@@ -1,7 +1,7 @@
 ![Alt-Text](T1Prep.png)
 
-&gt; [!WARNING]
-&gt; This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
+> [!WARNING]
+> This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
 
 # T1Prep: T1 PREProcessing Pipeline (aka PyCAT)
 
