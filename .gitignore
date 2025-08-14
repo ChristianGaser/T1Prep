@@ -1,12 +1,12 @@
 # custom
 .DS_Store
+env
 ideas.txt
 todo.txt
 log*
 *.nii
-data
-env
-bin
+#data
+#bin
 test
 __pycache__
 *.webloc

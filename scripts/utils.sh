@@ -176,28 +176,6 @@ get_no_processes () {
 }
 
 # ----------------------------------------------------------------------
-# Prepare binary folder for MacOS function
-# ----------------------------------------------------------------------
-
-prepare_MacOS_bin_folder() {
-  if [ "$(uname)" != "Darwin" ]; then
-    return 0
-  fi
-
-  if [ -z "$bin_path" ] || [ ! -d "$bin_path" ]; then
-    echo "Usage: prepare_bin_folder <folder-with-binaries>"
-    return 2
-  fi
-  
-  # Remove quarantine for all files in folder
-  if command -v xattr >/dev/null 2>&1; then
-    xattr -dr com.apple.quarantine "$bin_path" 2>/dev/null || true
-  else
-    echo "xattr not found; skipping quarantine removal."
-  fi
-}
-
-# ----------------------------------------------------------------------
 # Cleanup function
 # ----------------------------------------------------------------------
 
@@ -366,7 +344,7 @@ substitute_pattern() {
 check_python_libraries()
 {  
   # Remove T1pre-env if reinstallation is selected
-  #[[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]] &&  rm -r "${T1prep_env}"
+  [[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]] &&  rm -r "${T1prep_env}"
 
   if [ ! -d ${T1prep_env} ]; then
     $python -m venv ${T1prep_env}
