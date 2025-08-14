@@ -1,9 +1,3 @@
-&lt;!--
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/T1Prep)
-![PyPI - License](https://img.shields.io/pypi/l/T1Prep)
-![PyPI - Version](https://img.shields.io/pypi/v/T1Prep)
---&gt;
-
 ![Alt-Text](T1Prep.png)
 
 &gt; [!WARNING]
@@ -115,7 +109,7 @@ Output folder structure depends on the input dataset type:
     output directory.
 
 If '--bids' is set, the BIDS derivatives substructure will always be used
-inside '<DIR>'.
+inside &lt;DIR&gt;.
 
 --bids                      
     Use BIDS derivatives naming conventions for all output files and folders
