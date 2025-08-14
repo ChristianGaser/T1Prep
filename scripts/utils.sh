@@ -4,7 +4,6 @@
 #
 # FUNCTIONS:
 # - exit_if_empty: Checks if a command line argument is empty and exits with an error message if it is.
-# - check_python_cmd: Checks if the Python command is available.
 # - check_python: Checks if the specified Python command is available.
 # - check_python_module: Checks for python modules.
 # - check_python_libraries: Checks for python libraries.
@@ -185,13 +184,12 @@ prepare_MacOS_bin_folder() {
     return 0
   fi
 
-  local bin_path="$1"
   if [ -z "$bin_path" ] || [ ! -d "$bin_path" ]; then
     echo "Usage: prepare_bin_folder <folder-with-binaries>"
     return 2
   fi
   
-  # Remove qurantine for all files in folder
+  # Remove quarantine for all files in folder
   if command -v xattr >/dev/null 2>&1; then
     xattr -dr com.apple.quarantine "$bin_path" 2>/dev/null || true
   else
@@ -258,44 +256,30 @@ filter_arguments() {
 
 check_python_cmd()
 {
-  if [ -z "$1" ]; then
-    if command -v python3.9 &>/dev/null; then
+  if [ -z "$python" ]; then
+    if command -v python3.12 &>/dev/null; then
+      python="python3.12"
+    elif command -v python3.11 &>/dev/null; then
+      python="python3.11"
+    elif command -v python3.10 &>/dev/null; then
+      python="python3.10"
+    elif command -v python3.9 &>/dev/null; then
       python="python3.9"
     elif command -v python3 &>/dev/null; then
       python="python3"
     elif command -v python &>/dev/null; then
       python="python"
     else
-      echo "${RED}python or python3 not found. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
+      echo "${RED}Correct python version 3.9-3.12 was not found. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
       exit 1
     fi
   fi
   
-  python_version=$($python -V 2>&1 | grep -E '^Python 3\.9\.')
-  if [ -z "${python_version}" ]; then
-    echo "${RED}Only Python version 3.9 is supported. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
+  python_version=$($python -V 2>&1)
+  if ! echo "$python_version" | grep -qE '^Python 3\.(9|10|11|12)\.'; then
+    echo "${RED}Only Python version 3.9-3.12 is supported. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
     exit 1
   fi  
-}
-
-# ----------------------------------------------------------------------
-# Check for python
-# ----------------------------------------------------------------------
-
-check_python()
-{
-  local python=$1
-  if ! command -v "${python}" &>/dev/null; then
-    echo "${RED}ERROR: $python not found${NC}" >&2
-    exit 1
-  fi
-
-  required="3.9"
-  py_version="$(${python} -V 2>&1 | awk '{print $2}')"
-  if [ "$(printf '%s\n' "${required}" "${py_version}" | sort -V | head -n1)" != "${required}" ]; then
-    echo "${RED}ERROR: Python ${required} or newer is required (found ${py_version}).${NC}" >&2
-    exit 1
-  fi
 }
 
 # ----------------------------------------------------------------------
@@ -380,24 +364,21 @@ substitute_pattern() {
 # ----------------------------------------------------------------------
 
 check_python_libraries()
-{
-  local python=$1
-  local T1prep_env=$2
-  local re_install=$3
-  
+{  
   # Remove T1pre-env if reinstallation is selected
-  [[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]] &&  rm -r "${T1prep_env}"
+  #[[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]] &&  rm -r "${T1prep_env}"
 
   if [ ! -d ${T1prep_env} ]; then
     $python -m venv ${T1prep_env}
-    install_deepmriprep "$python" "${T1prep_env}"
+    install_deepmriprep
   fi
 
   source ${T1prep_env}/bin/activate
   
+  # Check that installation was successful and try it a 2nd time otherwise
   $python -c "import deepmriprep" &>/dev/null
   if [ $? -gt 0 ]; then
-    install_deepmriprep "$python" "${T1prep_env}"
+    install_deepmriprep
   fi
 }
 
@@ -407,9 +388,6 @@ check_python_libraries()
 
 install_deepmriprep()
 {
-  local pythom=$1
-  local T1prep_env=$2
-  
   echo "Install deepmriprep"
   $python -m venv ${T1prep_env}
   source ${T1prep_env}/bin/activate
@@ -427,7 +405,12 @@ install_deepmriprep()
   # Allow executable on MacOS
   case "$os_type" in
     Darwin*)  
-      find ${bin_dir}/MacOS -name "CAT*" -exec xattr -d com.apple.quarantine {} \;
+      # Remove quarantine for all files in folder
+      if command -v xattr >/dev/null 2>&1; then
+        xattr -dr com.apple.quarantine "$bin_path" 2>/dev/null || true
+      else
+        echo "xattr not found; skipping quarantine removal."
+      fi
       ;;
   esac
 }

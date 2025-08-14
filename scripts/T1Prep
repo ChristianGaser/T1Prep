@@ -50,19 +50,18 @@ main()
   check_python_cmd
   parse_args ${1+"$@"}
   check_python_cmd
+  get_OS
 
   if [[ "$multi" -ne -2 ]]; then
     logo
-    check_python ${python}
     check_python_module venv
     check_python_module pip
-    check_python_libraries "$python" "$T1prep_env" "$re_install"
+    check_python_libraries
     if [ "$re_install" -eq 1 ]; then
       exit 0
     fi
   fi
   check_files "${#ARRAY[@]}"
-  get_OS
   
   process "$@"
 
@@ -494,9 +493,6 @@ surface_estimation()
 
 process()
 {
-  # Check that binaries for MacOS are executable and not under quarantine
-  prepare_MacOS_bin_folder "${bin_dir}"
-  
   errors=0
   SIZE_OF_ARRAY="${#ARRAY[@]}"
   if [[ "$SIZE_OF_ARRAY" -lt 2 && "$multi" -ne -2 ]]; then
@@ -1138,8 +1134,8 @@ ${BOLD}Author:${NC}
 
 EOM
 
-check_python ${python}
-check_python_cmd ${python}
+check_python_cmd
+get_OS
 
 # Check whether local Python environment exists
 if [ ! -d "${T1prep_env}" ]; then
@@ -1153,7 +1149,7 @@ if [ ! -d "${T1prep_env}" ]; then
     [Yy]*)
       check_python_module venv
       check_python_module pip
-      check_python_libraries "$python" "${T1prep_env}" "${re_install}"
+      check_python_libraries
       ;;
   esac
 fi
