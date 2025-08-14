@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# PURPOSE: Define text colors
+# PURPOSE: Move utility functions from T1Prep for better code structure
 #
 # FUNCTIONS:
 # - exit_if_empty: Checks if a command line argument is empty and exits with an error message if it is.

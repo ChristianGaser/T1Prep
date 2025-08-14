@@ -112,7 +112,8 @@ class CustomPreprocess(Preprocess):
     sinc-interpolation
     """
 
-    def run_segment_brain(self, brain_large, mask, affine, mask_large):
+    # Currently not used, since sinc interpolation shows better results
+    def run_segment_brain_modified(self, brain_large, mask, affine, mask_large):
         brain_large = nifti_to_tensor(brain_large)
         mask_large = nifti_to_tensor(mask_large)
         p0_large = self.brain_segment(
@@ -293,6 +294,7 @@ def prepare_model_files() -> None:
                     f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}"
                 )
 
+
 def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     """Align the input volume and create the preprocessing object."""
 
@@ -303,6 +305,11 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     )
     t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
     prep = CustomPreprocess(no_gpu)
+    
+    # This is a bit faster since for initial segmentation the sinc-interpolation
+    # of the segmentations does not help and is slower
+    # Furthermore, skip self.run_patch_models(x, p0) which takes a lot of time 
+    # and is not needed for Amap segmentation.
     if use_amap:
         prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
     return t1, prep, ras_affine
