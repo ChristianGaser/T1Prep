@@ -25,7 +25,7 @@ It is designed for both single-subject and batch processing, with optional paral
 CAT12 folder structures and the BIDS derivatives standard.
 
 ## Requirements
- Python 3.9 is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+ [Python 3.9](https://www.python.org/downloads/release/python-394/) is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
 
 ## Main Differences to CAT12
 - Implemented entirely in Python and C, eliminating the need for a Matlab license.
