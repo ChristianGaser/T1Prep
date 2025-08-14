@@ -1,3 +1,9 @@
+<!--
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/T1Prep)
+![PyPI - License](https://img.shields.io/pypi/l/T1Prep)
+![PyPI - Version](https://img.shields.io/pypi/v/T1Prep)
+-->
+
 ![Alt-Text](T1Prep.png)
 
 > [!WARNING]
