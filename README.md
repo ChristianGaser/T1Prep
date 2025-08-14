@@ -1,8 +1,6 @@
-<!--
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/T1Prep)
-![PyPI - License](https://img.shields.io/pypi/l/T1Prep)
-![PyPI - Version](https://img.shields.io/pypi/v/T1Prep)
--->
+![Python 3.9](https://img.shields.io/badge/Python-3.9-3776AB?logo=python&logoColor=white)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag)](https://github.com/ChristianGaser/T1Prep/releases)
 
 ![Alt-Text](T1Prep.png)
 
