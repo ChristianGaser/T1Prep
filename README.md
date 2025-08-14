@@ -87,14 +87,17 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
     If you specify a value here and it is lower than the number of jobs 
     calculated based on --min-memory, your specified value will be used.
 
---min-memory &lt;NUMBER&gt;       
-    Set the minimum amount of memory (in GB) to reserve for each parallel 
-    job. This value is used to estimate the maximum number of jobs that 
-    can run in parallel without exceeding available system memory. 
-    Increase this value if your system runs low on memory or becomes 
+--min-memory &lt;NUMBER&gt;
+    Set the minimum amount of memory (in GB) to reserve for each parallel
+    job. This value is used to estimate the maximum number of jobs that
+    can run in parallel without exceeding available system memory.
+    Increase this value if your system runs low on memory or becomes
     unresponsive during parallelization.
 
---debug                     
+--seed &lt;NUMBER&gt;
+    Set the random seed for deterministic processing.
+
+--debug
     Enable verbose output, retain all temporary files, and save additional
     debugging information for inspection.
 
