@@ -5,7 +5,7 @@
 [![Tag](https://img.shields.io/github/v/tag/ChristianGaser/T1Prep?sort=semver)](https://github.com/ChristianGaser/T1Prep/tags)
 -->
 
-![Alt-Text](T1Prep.png)
+<img src="T1Prep.png" alt="T1Prep logo" width="340">
 
 > [!WARNING]
 > This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
