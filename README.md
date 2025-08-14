@@ -1,6 +1,7 @@
 ![Python 3.9](https://img.shields.io/badge/Python-3.9-3776AB?logo=python&logoColor=white)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag)](https://github.com/ChristianGaser/T1Prep/releases)
+[![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
+[![Tag](https://img.shields.io/github/v/tag/ChristianGaser/T1Prep?sort=semver)](https://github.com/ChristianGaser/T1Prep/tags)
 
 ![Alt-Text](T1Prep.png)
 
