@@ -1,13 +1,14 @@
 import math
+import torch
 import numpy as np
 import nibabel as nib
-import torch
 import torch.nn.functional as F
 import pandas as pd
 from scipy.ndimage import (
     binary_opening,
     binary_dilation,
     grey_opening,
+    grey_closing,
     binary_closing,
     generate_binary_structure,
     median_filter,
@@ -156,7 +157,7 @@ def piecewise_linear_scaling(input_img, label_img):
     return Ym / 3
 
 
-def correct_bias_field(brain, seg, steps=1000, spacing=1.0, get_discrepancy=False):
+def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy=False):
     """Apply bias field correction to a brain image."""
     subdivide = True
     bcl = True
@@ -169,8 +170,32 @@ def correct_bias_field(brain, seg, steps=1000, spacing=1.0, get_discrepancy=Fals
 
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
     brain0 = brain.get_fdata().copy()
-    seg0 = seg.get_fdata().copy()
-    mask = seg0 >= 2.75
+    
+    if seg is not None:
+        seg0 = seg.get_fdata().copy()
+        max_seg = np.max(seg0)
+        mask = seg0 >= 2.75/3.0 * max_seg
+    else:
+        # Obtain gradient and its magnitude
+        gx, gy, gz = np.gradient(brain0)
+        grad_mag = np.sqrt(gx**2 + gy**2 + gz**2)
+
+        # Mask out regions with high gradient (i.e. GM, sulci, vessels)
+        mask = brain0 * ((grad_mag / brain0) < 0.075)
+        
+        # Remove low intensity areas that are rather GM
+        thresh = np.quantile(mask[mask != 0], 0.3)
+        mask0 = mask > thresh
+        
+        # Close remaining holes using morphol. operations and remove filled areas
+        # from mask that are rather subcortical structures
+        mask0 = ~mask0 & binary_closing(mask0, generate_binary_structure(3, 3), 10)
+        mask[mask0] = 0
+        
+        # Remove thin structures by median filtering and finally create mask
+        mask = median_filter(mask, size=2)
+        mask = mask > 0
+        
     if subsamp:
         offset = 0
         dataSub = brain0[offset::subsamp, offset::subsamp, offset::subsamp]
@@ -250,7 +275,8 @@ def correct_bias_field(brain, seg, steps=1000, spacing=1.0, get_discrepancy=Fals
     bias0 = np.exp(predictor.predict())
     tissue_idx = bias0 != 0
     brain0[tissue_idx] /= bias0[tissue_idx]
-    brain0 = piecewise_linear_scaling(brain0, seg0)
+    if seg is not None:
+        brain0 = piecewise_linear_scaling(brain0, seg0)
     return nib.Nifti1Image(brain0, brain.affine, brain.header)
 
 
