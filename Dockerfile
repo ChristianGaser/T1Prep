@@ -18,13 +18,16 @@ RUN apt-get update \
 
 WORKDIR /opt/T1Prep
 
-# Copy repository into the image
+# Install Python dependencies first for better layer caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the repository into the image
 COPY . .
 
-# Install Python dependencies into a local virtual environment
-RUN scripts/T1Prep --install \
-    && ln -s /opt/T1Prep/scripts/T1Prep /usr/local/bin/T1Prep
+# Expose helper scripts on PATH so the entrypoint can locate them
+ENV PATH="/opt/T1Prep/scripts:${PATH}"
 
-ENTRYPOINT ["T1Prep"]
+ENTRYPOINT ["/opt/T1Prep/scripts/T1Prep"]
 CMD ["--help"]
 
