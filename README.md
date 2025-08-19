@@ -302,6 +302,31 @@ python3.12 -m pip install -r requirements.txt
 
 ```
 
+### Docker
+
+A Dockerfile is provided to build an image with all required dependencies.
+Build the image from the repository root:
+
+```bash
+docker build -t t1prep .
+```
+
+Run T1Prep by mounting your data directory into the container. Replace
+`/path/to/data` with the folder containing your images:
+
+```bash
+docker run --rm -v /path/to/data:/data t1prep --out-dir /data/out /data/file.nii.gz
+```
+
+Append `--gpus all` to `docker run` to enable GPU acceleration when available.
+
+You can review image vulnerabilities and recommendations with
+[Docker Scout](https://docs.docker.com/scout/):
+
+```bash
+docker scout quickview t1prep
+```
+
 ## Support
 For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
 
