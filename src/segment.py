@@ -8,13 +8,14 @@ import math
 import shutil
 import zipfile
 import urllib.request
+import fill_voids
+import json
+import random
+import time
 import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
-import fill_voids
-import json
-import random
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -752,14 +753,14 @@ def save_results(
 
     # Absolute volumes
     # Order: CSF-GM-WM(incl.WMH)-WMH
-    vol_abs_CGW = [vol_csf, vol_gm, vol_wm_incl, vol_wmh]
+    vol_CGW = [vol_csf, vol_gm, vol_wm_incl]
 
     # TIV contains CSF + GM + WM (already incl. WMH!)
-    tiv_volume = vol_csf + vol_gm + vol_wm_incl
+    vol_tiv = vol_csf + vol_gm + vol_wm_incl
 
     # Compute relative volumes as fractions
     # Fractions w. r. t. TIV
-    vol_rel_CGW = [v / tiv_volume for v in vol_abs_CGW]  # CSF, GM, WM, WMH
+    vol_rel_CGW = [v / vol_tiv for v in vol_CGW]  # CSF, GM, WM+WMH
 
     # Lesion load: WMH fraction w. r. t. WM (+WMH)
     wmh_rel_to_wm = vol_wmh / vol_wm_incl
@@ -772,27 +773,35 @@ def save_results(
 
     # Prepare dictionary
     summary = {
-        "vol_abs_CGW": {
-            "value": [smart_round(x) for x in vol_abs_CGW],
-            "desc": "[CSF, GM, WM+WMH, WMH]",
+        "vol_CGW": {
+            "value": [smart_round(x) for x in vol_CGW],
+            "desc": "Tissue volumes in mL (CSF, GM, WM incl. WMH)",
         },
         "vol_rel_CGW": {
             "value": [smart_round(x) for x in vol_rel_CGW],
-            "desc": "Relative volumes [CSF, GM, WM, WMH]/TIV",
-        },
-        "wmh_rel_WM": {
-            "value": smart_round(wmh_rel_to_wm),
-            "desc": "WMH load relative to WM+WMH",
+            "desc": "Relative tissue volumes ([CSF, GM, WM incl. WMH]/TIV)",
         },
         "mean_CGW": {
             "value": [smart_round(x) for x in mean_CGW],
             "desc": "Mean intensity per tissue (p0 labels 1-3)",
         },
         "vol_tiv": {
-            "value": smart_round(tiv_volume),
-            "desc": "Total intracranial volume (CSF+GM+WM incl. WMH)",
+            "value": smart_round(vol_tiv),
+            "desc": "Total intracranial volume in mL (CSF+GM+WM incl. WMH)",
         },
     }
+
+    if save_lesions and wmh_large is not None:
+        summary += {
+            "vol_wmh": {
+                "value": vol_wmh,
+                "desc": "WMH",
+            },
+            "wmh_rel_WM": {
+                "value": smart_round(wmh_rel_to_wm),
+                "desc": "WMH load relative to WM incl. WMH",
+            },
+        }
 
     # Write to JSON file
     report_name = code_vars.get("Report_file", "")
@@ -955,8 +964,9 @@ def run_segment():
         ".gz", ""
     )
 
+    start = time.perf_counter()
     t1 = nib.load(t1_name)
-
+    
     # Ensure required model files are available
     prepare_model_files()
 
@@ -966,7 +976,10 @@ def run_segment():
     # Step 1: Skull-stripping
     brain, mask, count = skull_strip(prep, t1, verbose, count, end_count)
 
-    # Step 2: Affine registration
+    # Step 2: Initial bias-correction
+    brain = correct_bias_field(brain)
+
+    # Step 3: Affine registration
     affine, brain_large, mask_large, affine_loss, count = affine_register(
         prep, brain, mask, verbose, count, end_count
     )
@@ -983,7 +996,7 @@ def run_segment():
     brain_value[~mask_value] = 0
     brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
 
-    # Step 3: Segmentation
+    # Step 4: Segmentation
     if verbose:
         count = progress_bar(
             count, end_count, "DeepMriPrep segmentation                  "
@@ -1019,13 +1032,12 @@ def run_segment():
         align_corners=INTERP_KWARGS["align_corners"],
     )
 
-    warp_template = nib.load(f"{DATA_PATH}/templates/Template_4_GS.nii.gz")
-
-    # Correct bias using label from deepmriprep
-    brain_large = correct_bias_field(brain_large, p0_large)
-
     # Conditional processing based on AMAP or lesion flag
     if use_amap or save_lesions:
+
+        # Correct bias using label from deepmriprep
+        brain_large = correct_bias_field(brain_large, p0_large)
+
         # AMAP segmentation pipeline
         amapdir = args.amapdir
 
@@ -1095,6 +1107,7 @@ def run_segment():
             device,
         )
 
+    warp_template = nib.load(f"{DATA_PATH}/templates/Template_4_GS.nii.gz")
     wj_affine = (
         np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
     )
@@ -1171,6 +1184,14 @@ def run_segment():
 
     final_cleanup(mri_dir, out_name, ext, use_amap, save_lesions, debug)
 
+    # Write to log file
+    end = time.perf_counter()
+    text = f"Execution time of volume pipeline: {end - start:.1f}s.\n"
+    code_vars = get_filenames(use_bids, out_name, "", "", "", ext)
+    log_name = code_vars.get("Log_file", "")
+    with open(f"{report_dir}/{log_name}", "a") as f:
+        f.write(text)
+    
 
 if __name__ == "__main__":
     run_segment()

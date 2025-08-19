@@ -11,6 +11,7 @@
 # - get_pattern: Get the pattern from the desired column in namefile
 # - substitute_pattern: Substitute variables in the pattern
 # - check_files: Checks if the input files exist.
+# - run_cmd_log: Run command and print output and execution time to report file
 #
 # ______________________________________________________________________
 #
@@ -173,6 +174,27 @@ get_no_processes () {
   if [ "$NUM_JOBS" -lt 1 ]; then
     NUM_JOBS=1
   fi
+}
+
+# ----------------------------------------------------------------------
+# Run command and log function
+# ----------------------------------------------------------------------
+
+run_cmd_log() {
+    local report_log="$1"
+    shift
+    local start_cmd end_cmd runtime
+
+    start_cmd=$(date +%s)
+
+    for cmd in "$@"; do
+        echo "${cmd}" >> "${report_log}"
+        eval "${cmd}" >> "${report_log}" 2>&1
+    done
+
+    end_cmd=$(date +%s)
+    runtime=$((end_cmd - start_cmd))
+    echo "Execution time: ${runtime}s" >> "${report_log}"
 }
 
 # ----------------------------------------------------------------------
