@@ -38,7 +38,7 @@ cfg="${script_dir}/../T1Prep_defaults.txt"
 
 # Use some external functions
 source "${script_dir}/utils.sh"
-source "${script_dir}/progress_bar.sh"
+progress_bar="${script_dir}/progress_bar_multi.sh"
 
 
 # ----------------------------------------------------------------------
@@ -296,9 +296,9 @@ surface_estimation()
     
   # Change number of commands if spherical registration is disabled
   if [ "${estimate_spherereg}" -eq 1 ]; then
-    ((end_count=8))
-  else
     ((end_count=6))
+  else
+    ((end_count=4))
   fi
   if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
     ((end_count++))
@@ -309,13 +309,19 @@ surface_estimation()
     verbose=" -verbose "
   fi
 
+  if [[ "$multi" -ne -2 && "$side" == "left" ]]; then
+    show_bar=1
+  else
+    show_bar=0
+  fi
+  
   # This section of the script checks if a specific hemisphere file exists within a given directory.
-  count=0
+  count=-1
   if [ -f "${mri_dir}/${Hemi_volume}" ]; then
 
     # Progress indication
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Calculate $side thickness        "; fi
+    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Calculate thickness            "; fi
   
     # Executes the 'CAT_VolThicknessPbt' tool with various options:
     # - ${verbose} toggles verbose output.
@@ -331,9 +337,9 @@ surface_estimation()
       return 1
     fi
 
-    # Updates progress to 'Extract $side surface'.
+    # Updates progress
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Extract $side surface             "; fi
+    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Extract surface                "; fi
   
     # Executes the 'CAT_VolMarchingCubes' tool to generate a surface mesh from volumetric data:
     # - '-median-filter' applies a median filter a specified number of times to reduce artifacts.
@@ -350,9 +356,9 @@ surface_estimation()
     cmd="${bin_dir}/CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
     run_cmd_log "${report_log}" "$cmd"
 
-    # Updates progress to 'Map $side thickness values'.
+    # Updates progress
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Map $side thickness values        "; fi
+    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Map thickness values           "; fi
 
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
@@ -367,9 +373,9 @@ surface_estimation()
       run_cmd_log "${report_log}" "$cmd"
     fi
 
-    # Updates progress to 'Deform $side surface'
+    # Updates progress
     ((count++))
-    if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side central surface       "; fi
+    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Refine central surface         "; fi
 
     # Obtain more accurate central surface by surface deformation to PPM image
     cmd="${bin_dir}/CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
@@ -384,9 +390,9 @@ surface_estimation()
     # - '-iter' sets the number of iterations.
     # - '-isovalue' sets the isovalue for mesh generation.
     if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
-      # Updates progress to 'Deform $side surface'
+      # Updates progress
       ((count++))
-      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Estimate $side pial and white surface     "; fi
+      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Estimate pial and white surface"; fi
       cmd=( "${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.4 -w3 0.3 -w4 0 -sigma 0.2 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
 
       # Get central surface by averaging pial and white matter surface
@@ -396,9 +402,9 @@ surface_estimation()
           
     # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
     if [ "${thickness_method}" -eq 2 ]; then
-      # Updates progress to 'Refine $side thickness'
+      # Updates progress
       ((count++))
-      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Refine $side thickness            "; fi
+      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Refine thickness               "; fi
       cmd="${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface} ${surf_dir}/${GMT_shape}"
       run_cmd_log "${report_log}" "$cmd"
     fi
@@ -421,16 +427,16 @@ surface_estimation()
   
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
     if [ "${estimate_spherereg}" -eq 1 ]; then
-      # Updates progress to 'Spherical inflation $side hemisphere'.
+      # Updates progress
       ((count++))
-      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical inflation $side hemisphere  "; fi
+      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Spherical inflation            "; fi
       # Inflates the surface to a sphere with additional areal smoothing.
       cmd="${bin_dir}/CAT_Surf2Sphere ${surf_dir}/${Mid_surface} ${surf_dir}/${Sphere_surface} 6"
       run_cmd_log "${report_log}" "$cmd"
   
-      # Updates progress to 'Spherical estimate_spherereg $side hemisphere'.
+      # Updates progress
       ((count++))
-      if [[ "$multi" -ne -2 ]]; then progress_bar $count $end_count "Spherical registration $side hemisphere"; fi
+      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Spherical registration         "; fi
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
       cmd="${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${surf_dir}/${Mid_surface} -is ${surf_dir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${surf_dir}/${Spherereg_surface}"
       run_cmd_log "${report_log}" "$cmd"
@@ -734,7 +740,7 @@ process()
 
       if [ "$seg_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
-          progress_bar $end_count $end_count "Segmentation failed" "" 1
+          ${script_dir}/progress_bar_multi.sh 1 "" $end_count $end_count "Segmentation failed" 40 1
         fi
         ((i++))
         ((errors++))
@@ -773,7 +779,7 @@ process()
 
       if [ "$surf_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
-          progress_bar $end_count $end_count "Surface estimation failed" "" 1
+          ${script_dir}/progress_bar_multi.sh 1 "" $end_count $end_count "Surface estimation failed" 40 1
         fi
         ((errors++))
         echo "Error in ${bname}"
@@ -1117,7 +1123,6 @@ ${BOLD}Used Functions:${NC}
   segment.py
   utils.py
   progress_bar_multi.sh
-  progress_bar.sh
   parallelize
 
 ${BOLD}Author:${NC}

@@ -280,14 +280,17 @@ do_parallelize ()
   fi
 
   if [ -z "${TEST}" ]; then
-    if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
+    cmd_name=$(basename $COMMAND)
+
+    # Start multi progress monitor
+    if [ "$NUM_JOBS" -gt 1 ]; then      
       mkdir -p "$PROGRESS_DIR"
       rm -f "$PROGRESS_DIR"/*.progress
       
-      cmd_name=$(basename $COMMAND)
-      # Start progress monitor
-      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" 40 $cmd_name &
+      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" 40 "$cmd_name" &
       progress_pid=$!
+    else
+      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "" 0 $SIZE_OF_ARRAY "$cmd_name" 40      
     fi
 
     # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
@@ -296,26 +299,18 @@ do_parallelize ()
     
   # If NUM_JOBS is 0, execute commands serially
   if [ "$NUM_JOBS" -lt 2 ]; then
-      echo "Executing serially..."
+      #echo "Executing serially..."
       i=0
       
-      # We have to call that before starting to already display the progress bar
-      # before the 1st process is finished.
-      if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
-        echo "$i/$SIZE_OF_ARRAY" > "$PROGRESS_DIR/job0.progress"
-        echo 0 > "$PROGRESS_DIR/job0.status"
-      fi
-
       for file in "${ARRAY[@]}"; do
           eval "$COMMAND \"$file\""  # Use eval to handle complex commands
           exit_code=$?
-          if [ $exit_code -ne 0 ]; then
-            echo 1 > "$PROGRESS_DIR/job0.status"
-          fi
           ((i++))
           
-          if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
-            echo "$i/$SIZE_OF_ARRAY" > "$PROGRESS_DIR/job0.progress"
+          if [ $exit_code -ne 0 ]; then
+            $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "" $i $SIZE_OF_ARRAY "$cmd_name" 40 1
+          else
+            $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "" $i $SIZE_OF_ARRAY "$cmd_name" 40
           fi
           pids=($!)
       done
@@ -333,9 +328,6 @@ do_parallelize ()
       
       # wait until progress bar is finished
       wait $progress_pid
-      if [ -z "${TEST}" ]; then
-        rm -r "$PROGRESS_DIR"  
-      fi
 
       # Display the result
       echo "${GREEN}-------------------------------------------------------${NC}"

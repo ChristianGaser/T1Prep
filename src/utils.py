@@ -36,6 +36,7 @@ codes = [
     "invDef_volume",
     "Atlas_ROI",
     "Report_file",
+    "Log_file",
 ]
 
 
