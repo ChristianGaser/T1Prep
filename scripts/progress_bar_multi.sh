@@ -21,10 +21,31 @@
 n_jobs=$1 
 PROGRESS_DIR=$2
 width=$3
-color=$4
-job_name=$5
-BOLD=$(tput bold)
-NC=$(tput sgr0) # Reset all attributes
+job_name=$4
+
+# Text formatting & colors with fallback
+if [ -t 1 ] && [ -n "$TERM" ] && command -v tput >/dev/null 2>&1; then
+  BOLD=$(tput bold)
+  NC=$(tput sgr0) # Reset all attributes
+
+  # Colors
+  DEFAULT_COLOR=$(tput setaf 2)   # green
+  FAIL_COLOR=$(tput setaf 1)      # red
+
+  # Cursor movement
+  move_up() { tput cuu "$1"; }
+else
+  BOLD='\033[1m'
+  NC='\033[0m'
+
+  # ANSI fallback
+  DEFAULT_COLOR='\033[0;32m'  # green
+  FAIL_COLOR='\033[0;31m'     # red
+
+  # Cursor movement fallback (no-op)
+  move_up() { :; }
+fi
+
 REFRESH_INTERVAL=2.0
 JOB_ID="jobrun_$(date +%s%N)"
 
@@ -40,20 +61,16 @@ main ()
   if [ -z "$PROGRESS_DIR" ]; then
     PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"; 
   fi
-  if [ -z "$color" ]; then color=2; fi
   if [ -z "$width" ]; then width=40; fi
   if [ -z "$job_name" ]; then job_name="Job"; fi
 
-  DEFAULT_COLOR=$(tput setaf $color)
-  FAIL_COLOR=$(tput setaf 1)
-  
   # Print empty lines for each job
   for ((i=0; i<n_jobs; i++)); do
     echo ""
   done
   
   while true; do
-    tput cuu "$n_jobs"  # Move cursor up N lines
+    move_up "$n_jobs"   # Move cursor up N lines
     all_done=true
     for ((i=0; i<n_jobs; i++)); do
       file="$PROGRESS_DIR/job${i}.progress"

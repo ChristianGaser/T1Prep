@@ -320,13 +320,6 @@ docker run --rm -v /path/to/data:/data t1prep --out-dir /data/out /data/file.nii
 
 Append `--gpus all` to `docker run` to enable GPU acceleration when available.
 
-You can review image vulnerabilities and recommendations with
-[Docker Scout](https://docs.docker.com/scout/):
-
-```bash
-docker scout quickview t1prep
-```
-
 ## Support
 For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
 

@@ -286,7 +286,7 @@ do_parallelize ()
       
       cmd_name=$(basename $COMMAND)
       # Start progress monitor
-      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" 40 2 $cmd_name &
+      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" 40 $cmd_name &
       progress_pid=$!
     fi
 
