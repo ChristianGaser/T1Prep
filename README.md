@@ -67,7 +67,7 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
 ```
 
 ## Options
-Simply call t1Prep to see available options
+Simply call T1Prep to see available options
 ```bash
 ./scripts/T1Prep
 ```
@@ -195,6 +195,11 @@ A Dockerfile is provided to build an image with all required dependencies.
 docker build -t t1prep:latest .
 ```
 
+**Default (release ZIP) for MacOS with Silicon processor:**
+```bash
+docker build --platform=linux/amd64 -t t1prep:latest .
+```
+
 **Latest GitHub source (e.g., main):**
 
 ```bash
@@ -218,7 +223,10 @@ docker build \
 Mount your data directory into the container (replace /path/to/data with your folder):
 
 ```bash
-docker run --rm -v /path/to/data:/data --rm -it tprep:latest --out-dir /data/out /data/file.nii.gz
+docker run --rm -it \
+  -v /path/to/data:/data \
+  t1prep:latest \
+  --out-dir /data/out /data/file.nii.gz
 ```
 Append `--gpus all` to `docker run` to enable GPU acceleration when available.
 ### Memory & performance
