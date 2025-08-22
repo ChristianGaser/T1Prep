@@ -328,7 +328,7 @@ surface_estimation()
     # - '-n-avgs 8' sets the number of averages for distance estimation.
     # - '-min-thickness' sets a minimum thickness threshold.
     # - '-fwhm' sets the FWHM for thickness smoothing.
-    cmd="${bin_dir}/CAT_VolThicknessPbt ${verbose} -correct-voxelsize -0.75 -median-filter ${median_filter} -sharpen 0 -downsample ${downsample} -n-avgs 8 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
+    cmd="CAT_VolThicknessPbt ${verbose} -correct-voxelsize -0.75 -median-filter ${median_filter} -sharpen 0 -downsample ${downsample} -n-avgs 8 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
     run_cmd_log "${report_log}" "$cmd"
     
     # Exit if nothing was saved from 1st command
@@ -347,13 +347,13 @@ surface_estimation()
     # - '-thresh' sets the isovalue for mesh generation.
     # - '-no-distopen' disables distance-based opening, a form of morphological operation.
     # - '-local-smoothing' applies additional local smoothing to the mesh.
-    cmd="${bin_dir}/CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}"
+    cmd="CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}"
     run_cmd_log "${report_log}" "$cmd"
 
     # Reduce surface mesh to smaller size:
     # - '-ratio' defines target triangle ratio in (0,1], e.g., 0.5 keeps ~50% of faces (default 0.25)
     # - '-aggr' defines aggressiveness of simplification (default 7)
-    cmd="${bin_dir}/CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
+    cmd="CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
     run_cmd_log "${report_log}" "$cmd"
 
     # Updates progress
@@ -362,14 +362,14 @@ surface_estimation()
 
     # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
     # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
-    cmd="${bin_dir}/CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${surf_dir}/${Mid_surface} ${mri_dir}/${GMT_volume} ${surf_dir}/${PBT_shape}"
+    cmd="CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${surf_dir}/${Mid_surface} ${mri_dir}/${GMT_volume} ${surf_dir}/${PBT_shape}"
     run_cmd_log "${report_log}" "$cmd"
     
     # For thickness_method==3 we use the pure PBT-measure
     if [ "${thickness_method}" -eq 3 ]; then
       cp ${surf_dir}/${PBT_shape} ${surf_dir}/${GMT_shape}
     else
-      cmd="${bin_dir}/CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${surf_dir}/${PBT_shape} ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape}"
+      cmd="CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${surf_dir}/${PBT_shape} ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape}"
       run_cmd_log "${report_log}" "$cmd"
     fi
 
@@ -378,7 +378,7 @@ surface_estimation()
     if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Refine central surface         "; fi
 
     # Obtain more accurate central surface by surface deformation to PPM image
-    cmd="${bin_dir}/CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
+    cmd="CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
     run_cmd_log "${report_log}" "$cmd"
 
     # Executes 'CAT_Surf2PialWhite' to estimate both pial and white matter surfaces.
@@ -393,10 +393,10 @@ surface_estimation()
       # Updates progress
       ((count++))
       if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Estimate pial and white surface"; fi
-      cmd=( "${bin_dir}/CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.4 -w3 0.3 -w4 0 -sigma 0.2 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
+      cmd=( "CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.4 -w3 0.3 -w4 0 -sigma 0.2 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
 
       # Get central surface by averaging pial and white matter surface
-      cmd+=( "${bin_dir}/CAT_SurfAverage -avg ${surf_dir}/${Mid_surface} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
+      cmd+=( "CAT_SurfAverage -avg ${surf_dir}/${Mid_surface} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
       run_cmd_log "${report_log}" "${cmd[@]}"
     fi
           
@@ -405,22 +405,22 @@ surface_estimation()
       # Updates progress
       ((count++))
       if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Refine thickness               "; fi
-      cmd="${bin_dir}/CAT_SurfDistance -max 6.0 -mean ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface} ${surf_dir}/${GMT_shape}"
+      cmd="CAT_SurfDistance -max 6.0 -mean ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface} ${surf_dir}/${GMT_shape}"
       run_cmd_log "${report_log}" "$cmd"
     fi
     
     # Correct cortical thickness that is influenced by folding
     if [ "${correct_folding}" -eq 1 ]; then
-      cmd="${bin_dir}/CAT_SurfCorrectThicknessFolding -max 6.0 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${surf_dir}/${GMT_shape}"
+      cmd="CAT_SurfCorrectThicknessFolding -max 6.0 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${surf_dir}/${GMT_shape}"
       run_cmd_log "${report_log}" "$cmd"
     fi
 
     # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
     if [[ "${debug}" -eq 1 && -f "${mri_dir}/${mT1_volume}" ]]; then
-      cmd=( "${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${Mid_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_Mid}" )
+      cmd=( "CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${Mid_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_Mid}" )
       if [ "${save_pial_white}" -eq 1 ]; then
-        cmd+=( "${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${Pial_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_Pial}" )
-        cmd+=( "${bin_dir}/CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${WM_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_WM}" )
+        cmd+=( "CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${Pial_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_Pial}" )
+        cmd+=( "CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${WM_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_WM}" )
       fi
       run_cmd_log "${report_log}" "${cmd[@]}"
     fi
@@ -431,14 +431,14 @@ surface_estimation()
       ((count++))
       if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Spherical inflation            "; fi
       # Inflates the surface to a sphere with additional areal smoothing.
-      cmd="${bin_dir}/CAT_Surf2Sphere ${surf_dir}/${Mid_surface} ${surf_dir}/${Sphere_surface} 6"
+      cmd="CAT_Surf2Sphere ${surf_dir}/${Mid_surface} ${surf_dir}/${Sphere_surface} 6"
       run_cmd_log "${report_log}" "$cmd"
   
       # Updates progress
       ((count++))
       if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Spherical registration         "; fi
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
-      cmd="${bin_dir}/CAT_SurfWarp ${verbose} -steps 2 -avg -i ${surf_dir}/${Mid_surface} -is ${surf_dir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${surf_dir}/${Spherereg_surface}"
+      cmd="CAT_SurfWarp ${verbose} -steps 2 -avg -i ${surf_dir}/${Mid_surface} -is ${surf_dir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${surf_dir}/${Spherereg_surface}"
       run_cmd_log "${report_log}" "$cmd"
       
       # Resamples atlases to individual surface space
@@ -450,7 +450,7 @@ surface_estimation()
         # Use eval to assign the result to a variable named after the code
         eval "${code}=\"\$value\""
 
-        cmd+=( "${bin_dir}/CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgatlas}.${atl}.annot ${surf_dir}/${ATLAS_label}" )
+        cmd+=( "CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgatlas}.${atl}.annot ${surf_dir}/${ATLAS_label}" )
       done
       run_cmd_log "${report_log}" "${cmd[@]}"
     fi

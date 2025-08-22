@@ -109,36 +109,31 @@ check_files()
 # get operation system
 # ----------------------------------------------------------------------
 
-get_OS() 
-{
-  # Determine CPU architecture
-  cpu_arch=$(uname -m)
+get_OS() {
+  local os_type cpu_arch
+  os_type="$(uname -s)"
+  cpu_arch="$(uname -m)"
 
   case "$os_type" in
-    Linux*)   
-      if [[ "$cpu_arch" == x86_64 ]]; then 
-        bin_dir="${root_dir}/bin/Linux"
-      else 
-        bin_dir="${root_dir}/bin/LinuxARM64"
-      fi
+    Linux*)
+      case "$cpu_arch" in
+        x86_64) bin_dir="${root_dir}/bin/Linux" ;;
+        aarch64|arm64) bin_dir="${root_dir}/bin/LinuxARM64" ;;
+        *) echo "Unsupported Linux arch: ${cpu_arch}" >&2; exit 1 ;;
+      esac
       ;;
-    Darwin*)  
-      if [[ "$cpu_arch" == arm64 ]]; then 
-        bin_dir="${root_dir}/bin/MacOS"
-      else 
-        echo "MacOS Intel not supported anymore"
-        exit 1
-      fi
+    Darwin*)
+      case "$cpu_arch" in
+        arm64) bin_dir="${root_dir}/bin/MacOS" ;;
+        *) echo "macOS Intel not supported anymore" >&2; exit 1 ;;
+      esac
       ;;
-    CYGWIN*|MINGW32*|MSYS*|MINGW*) 
-      bin_dir="${root_dir}/bin/Windows"
-      ;;
-    *)
-      echo "Unknown OS system"
-      exit 1
-      ;;
+    CYGWIN*|MINGW*|MSYS*) bin_dir="${root_dir}/bin/Windows" ;;
+    *) echo "Unknown OS: ${os_type}" >&2; exit 1 ;;
   esac
-  
+
+  export bin_dir
+  export PATH="${bin_dir}:$PATH"   # <= key change
 }
 
 # ----------------------------------------------------------------------
