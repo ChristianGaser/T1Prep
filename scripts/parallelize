@@ -501,6 +501,9 @@ ${BOLD}EXAMPLES:${NC}
        
     NOTE: You can automatically enable parallelization in T1Prep by using the '--multi' flag.
 
+${BOLD}Used Functions:${NC}
+  progress_bar_multi.sh
+
 ${BOLD}Author:${NC}
   Christian Gaser (christian.gaser@uni-jena.de)
 
