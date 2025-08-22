@@ -195,11 +195,6 @@ A Dockerfile is provided to build an image with all required dependencies.
 docker build -t t1prep:latest .
 ```
 
-**Default (release ZIP) for MacOS with Silicon processor:**
-```bash
-docker build --platform=linux/amd64 -t t1prep:latest .
-```
-
 **Latest GitHub source (e.g., main):**
 
 ```bash
@@ -229,9 +224,18 @@ docker run --rm -it \
   --out-dir /data/out /data/file.nii.gz
 ```
 Append `--gpus all` to `docker run` to enable GPU acceleration when available.
+
 ### Memory & performance
 
 Ensure the container has ≥ 12 GiB RAM available. If you use Docker Desktop/WSL2, raise the VM memory in settings.
+If you obtain an error that no space is left on device: /tmp/ you can try that:
+```bash
+docker run --rm -it \
+  --tmpfs /tmp:rw,exec,nosuid,nodev,size=16g
+  -v /path/to/data:/data \
+  t1prep:latest \
+  --out-dir /data/out /data/file.nii.gz
+```
 
 ## Support
 For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
