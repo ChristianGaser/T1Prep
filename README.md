@@ -227,7 +227,7 @@ Append `--gpus all` to `docker run` to enable GPU acceleration when available.
 
 ### Memory & performance
 
-Ensure the container has ≥ 12 GiB RAM available. If you use Docker Desktop/WSL2, raise the VM memory in settings.
+Make sure that the container has at least 12 GB of RAM available. If you are using Docker Desktop/WSL2, increase the VM memory in the settings. If you receive an error message stating that there is no space left on the device: /tmp/, you can try the following:
 If you obtain an error that no space is left on device: /tmp/ you can try that:
 ```bash
 docker run --rm -it \
