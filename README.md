@@ -67,46 +67,12 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
 ```
 
 ## Options
-**General Options**
+Simply call t1Prep to see available options
+```bash
+./scripts/T1Prep
+```
 
---defaults &lt;FILE&gt;           
-    Specify an alternative defaults file to override built-in settings.
-
---install                   
-    Install all required Python libraries.
-
---re-install                
-    Remove the existing installation and re-install all required Python libraries.
-
---python &lt;FILE&gt;             
-    Path to the Python interpreter to use.
-
---multi &lt;NUMBER&gt;            
-    Set the maximum number of parallel jobs. Use '-1' to automatically 
-    detect and use all available CPU cores.  
-    If you specify a value here and it is lower than the number of jobs 
-    calculated based on --min-memory, your specified value will be used.
-
---min-memory &lt;NUMBER&gt;
-    Set the minimum amount of memory (in GB) to reserve for each parallel
-    job. This value is used to estimate the maximum number of jobs that
-    can run in parallel without exceeding available system memory.
-    Increase this value if your system runs low on memory or becomes
-    unresponsive during parallelization.
-
---seed &lt;NUMBER&gt;
-    Set the random seed for deterministic processing.
-
---debug
-    Enable verbose output, retain all temporary files, and save additional
-    debugging information for inspection.
-
-**Save Options**
-
---out-dir &lt;DIR&gt;
-    Set the base output directory (relative or absolute).  
-    Default: the current working directory.
-
+## Output folders strcuture
 Output folder structure depends on the input dataset type:
 * BIDS datasets (if the upper-level folder of the input files is 'anat'):
     Results are placed in a BIDS-compatible derivatives folder:
@@ -120,11 +86,7 @@ Output folder structure depends on the input dataset type:
 If '--bids' is set, the BIDS derivatives substructure will always be used
 inside &lt;DIR&gt;.
 
---bids                      
-    Use BIDS derivatives naming conventions for all output files and folders
-    instead of the default CAT12 style.
-    
-Naming behaviour:
+## Naming behaviour
 * CAT12 style (default): Uses legacy folder and file names
   (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
 * BIDS style: Uses standardized derivatives names, including 
@@ -145,86 +107,6 @@ Default output (no --out-dir):
     /data/T1_images/mri/
 With --out-dir /results:
     /results/mri/
-
---no-overwrite &lt;STRING&gt;     
-    Prevent overwriting existing results by checking for the given filename 
-    pattern.
-
---gz                        
-    Save images in compressed NIfTI format (*.nii.gz).
-
---no-surf                   
-    Skip surface and cortical thickness estimation.
-
---no-seg                    
-    Skip tissue segmentation processing.
-
---no-sphere-reg             
-    Skip spherical surface registration.
-
---no-mwp                    
-    Skip estimation of modulated and warped segmentations.
-
---pial-white                
-    Additionally estimate pial and white matter surfaces during surface 
-    processing.
-
---hemisphere                
-    Additionally save hemispheric partitions of the segmentation.
-
---wp                        
-    Additionally save warped segmentations.
-
---rp                        
-    Additionally save affine-registered segmentations.
-
---p                         
-    Additionally save native-space segmentations.
-
---csf                       
-    Additionally save CSF segmentations (default: only GM/WM are saved).
-
---lesions                   
-    Additionally save WMH lesion segmentations.
-
---atlas                     
-    Specify a volumetric atlas list in the format `"'suit','cobra'"`.
-
---atlas-surf                
-    Specify a surface atlas list in the format 
-    `"'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"`
-
-**Expert Options**
-
---amap                      
-    Use DeepMRIPrep segmentation only as initialization, followed by AMAP 
-    segmentation.
-
---thickness-method &lt;NUMBER&gt; 
-    Set the cortical thickness estimation method:  
-      1 = Tfs-distance (FreeSurfer) for PBT-based measure  
-      2 = Tfs-distance (FreeSurfer) based on pial-to-white surface distance  
-      3 = Pure PBT-based approach
-
---no-correct-folding        
-    Disable cortical thickness correction for folding effects.
-
---pre-fwhm &lt;NUMBER&gt;         
-    Set the pre-smoothing kernel size (FWHM) for CAT_VolMarchingCubes.
-
---vessel &lt;NUMBER&gt;           
-    Set the initial white matter threshold for vessel removal:  
-      0.2 = mild cleanup  
-      0.5 = strong cleanup  
-      0   = disable vessel removal  
-
---median-filter &lt;NUMBER&gt;    
-    Apply the specified number of median filter passes to reduce topology 
-    artifacts.
-
---fast                      
-    Skip spherical registration, atlas estimation, and warped segmentation 
-    steps.
 
 ## Examples
 ```bash
@@ -302,23 +184,46 @@ python3.12 -m pip install -r requirements.txt
 
 ```
 
-### Docker
+## Docker
 
 A Dockerfile is provided to build an image with all required dependencies.
-Build the image from the repository root:
 
+### Build
+
+**Default (release ZIP):**
 ```bash
-docker build -t t1prep .
+docker build -t t1prep:latest .
 ```
 
-Run T1Prep by mounting your data directory into the container. Replace
-`/path/to/data` with the folder containing your images:
+**Latest GitHub source (e.g., main):**
 
 ```bash
-docker run --rm -v /path/to/data:/data t1prep --out-dir /data/out /data/file.nii.gz
+docker build \
+  --build-arg T1PREP_SOURCE=git \
+  --build-arg T1PREP_REF=main \
+  -t t1prep:git-main .
 ```
 
+**Specific release:**
+
+```bash
+docker build \
+  --build-arg T1PREP_VERSION=v0.2.0-beta \
+  --build-arg T1PREP_ZIP=T1Prep_0.2.0.zip \
+  -t t1prep:release .
+```
+
+### Run
+
+Mount your data directory into the container (replace /path/to/data with your folder):
+
+```bash
+docker run --rm -v /path/to/data:/data --rm -it tprep:latest --out-dir /data/out /data/file.nii.gz
+```
 Append `--gpus all` to `docker run` to enable GPU acceleration when available.
+### Memory & performance
+
+Ensure the container has ≥ 12 GiB RAM available. If you use Docker Desktop/WSL2, raise the VM memory in settings.
 
 ## Support
 For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
