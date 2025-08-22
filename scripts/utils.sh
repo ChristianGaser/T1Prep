@@ -116,7 +116,11 @@ get_OS()
 
   case "$os_type" in
     Linux*)   
-      bin_dir="${root_dir}/bin/Linux"
+      if [[ "$cpu_arch" == x86_64 ]]; then 
+        bin_dir="${root_dir}/bin/Linux"
+      else 
+        bin_dir="${root_dir}/bin/LinuxARM64"
+      fi
       ;;
     Darwin*)  
       if [[ "$cpu_arch" == arm64 ]]; then 
