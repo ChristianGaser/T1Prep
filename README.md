@@ -231,7 +231,7 @@ Ensure the container has ≥ 12 GiB RAM available. If you use Docker Desktop/WSL
 If you obtain an error that no space is left on device: /tmp/ you can try that:
 ```bash
 docker run --rm -it \
-  --tmpfs /tmp:rw,exec,nosuid,nodev,size=16g
+  --tmpfs /tmp:rw,exec,nosuid,nodev,size=16g \
   -v /path/to/data:/data \
   t1prep:latest \
   --out-dir /data/out /data/file.nii.gz
