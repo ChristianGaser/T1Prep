@@ -33,10 +33,6 @@ if [ -t 1 ] && [ -n "$TERM" ] && command -v tput >/dev/null 2>&1; then
   FAIL_COLOR=$(tput setaf 1)      # red
   move_up() { tput cuu "$1"; }
 else
-  BOLD='\033[1m'
-  NC='\033[0m'
-  DEFAULT_COLOR='\033[0;32m'
-  FAIL_COLOR='\033[0;31m'
   move_up() { :; }
 fi
 
