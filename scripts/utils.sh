@@ -133,7 +133,7 @@ get_OS() {
   esac
 
   export bin_dir
-  export PATH="${bin_dir}:$PATH"   # <= key change
+  export PATH="${bin_dir}:$PATH"
 }
 
 # ----------------------------------------------------------------------
