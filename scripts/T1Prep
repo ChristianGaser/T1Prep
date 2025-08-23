@@ -732,7 +732,12 @@ process()
       
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
-        run_cmd_log "${report_log}" "${cmd}"
+        echo "${cmd}" >> "${report_log}" 
+        if [[ "$multi" -ne -2 ]]; then
+          eval "${cmd}"
+        else
+          eval "${cmd}" 2>&1 | tee -a "${report_log}"
+        fi
         seg_status=$?
       else
         seg_status=0
