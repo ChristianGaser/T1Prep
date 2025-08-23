@@ -7,7 +7,6 @@ FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py
 DATA_FILES=data
 
 ZIPFILE=T1Prep_${VERSION}.zip
-DATA_ZIPFILE=T1Prep_Models.zip
 
 # print available commands
 help:
@@ -33,10 +32,6 @@ zip: clean
 	-@mkdir T1Prep
 	-@cp -rp ${FILES} T1Prep
 	-@zip ${ZIPFILE} -rm T1Prep
-#	-@mkdir T1Prep
-#	-@cp -rp ${DATA_FILES} T1Prep
-#	-@rm -r T1Prep/data/templates*
-#	-@zip ${DATA_ZIPFILE} -rm T1Prep
 
 # copy binaries after cross-compiling
 cp_binaries: 
