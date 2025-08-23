@@ -33,10 +33,10 @@ zip: clean
 	-@mkdir T1Prep
 	-@cp -rp ${FILES} T1Prep
 	-@zip ${ZIPFILE} -rm T1Prep
-	-@mkdir T1Prep
-	-@cp -rp ${DATA_FILES} T1Prep
-	-@rm -r T1Prep/data/templates*
-	-@zip ${DATA_ZIPFILE} -rm T1Prep
+#	-@mkdir T1Prep
+#	-@cp -rp ${DATA_FILES} T1Prep
+#	-@rm -r T1Prep/data/templates*
+#	-@zip ${DATA_ZIPFILE} -rm T1Prep
 
 # copy binaries after cross-compiling
 cp_binaries: 

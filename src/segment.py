@@ -964,6 +964,7 @@ def run_segment():
         ".gz", ""
     )
 
+    # Track running time
     start = time.perf_counter()
     t1 = nib.load(t1_name)
     
@@ -976,7 +977,8 @@ def run_segment():
     # Step 1: Skull-stripping
     brain, mask, count = skull_strip(prep, t1, verbose, count, end_count)
 
-    # Step 2: Initial bias-correction
+    # Step 2: Initial bias-correction that is benefitial for strong signal
+    # inhomogeneities (i.e. 7T data)
     brain = correct_bias_field(brain)
 
     # Step 3: Affine registration
@@ -987,8 +989,8 @@ def run_segment():
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
 
     # Ensure that minimum of brain is not negative (which can happen after sinc-interpolation)
-    brain_value = brain_large.get_fdata().copy()
-    mask_value = brain_large.get_fdata().copy() > 0.5
+    brain_value = brain_large.get_fdata()
+    mask_value = mask_large.get_fdata() > 0.5
     mask_value = binary_closing(mask_value, generate_binary_structure(3, 3), 7)
     min_brain = np.min(brain_value)
     if min_brain < 0:
@@ -1006,8 +1008,8 @@ def run_segment():
 
     # Due to sinc-interpolation we have to change values close to zero
     p0_value = p0_large.get_fdata()
-    if np.min(brain_value) < 0:
-        p0_value[~mask_value] = 0
+    if np.min(p0_value) < 0:
+        p0_value[p0_value < 0] = 0
         p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
     # Prepare for resampling
