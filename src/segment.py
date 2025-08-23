@@ -29,11 +29,7 @@ from deepmriprep.atlas import get_volumes, shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from scipy.ndimage import (
-    grey_opening,
-    median_filter,
-    binary_dilation,
     binary_closing,
-    binary_erosion,
     generate_binary_structure,
 )
 from utils import (
@@ -57,10 +53,9 @@ from segmentation_utils import (
     get_cerebellum,
     correct_label_map,
     apply_LAS,
+    handle_lesions,
     normalize_to_sum1,
 )
-
-from scipy.ndimage import label as label_image
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
 TMP_PATH = ROOT_PATH / "tmp_models/"
@@ -347,6 +342,7 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     # and is not needed for Amap segmentation.
     if use_amap:
         prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
+        
     return t1, prep, ras_affine
 
 
@@ -452,143 +448,6 @@ def final_cleanup(
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
 
-
-def handle_lesions(
-    t1: nib.Nifti1Image,
-    affine,
-    p0_large: nib.Nifti1Image,
-    p0_large_orig: nib.Nifti1Image,
-    p1_large: nib.Nifti1Image,
-    p2_large: nib.Nifti1Image,
-    p3_large: nib.Nifti1Image,
-    affine_resamp_reordered,
-    header_resamp_reordered,
-    mri_dir: str,
-    out_name: str,
-    ext: str,
-    use_amap: bool,
-    debug: bool,
-    device: torch.device,
-) -> tuple[
-    nib.Nifti1Image,
-    nib.Nifti1Image,
-    nib.Nifti1Image,
-    np.ndarray,
-    np.ndarray,
-]:
-    """Detect lesions and correct tissue probability maps."""
-
-    if debug:
-        p0_large_diff = (
-            p3_large.get_fdata().copy()
-            + 2 * p1_large.get_fdata().copy()
-            + 3 * p2_large.get_fdata().copy()
-            - p0_large_orig.get_fdata().copy()
-        )
-        p0_large_diff = median_filter(p0_large_diff, size=3)
-        p0_large_diff = nib.Nifti1Image(p0_large_diff, p0_large.affine, p0_large.header)
-        nib.save(
-            p0_large_diff,
-            f"{mri_dir}/{out_name}_brain_large_label-discrepancy.{ext}",
-        )
-
-    p0_value = p0_large_orig.get_fdata().copy()
-    wm = p0_value >= 2.5
-    wm = binary_closing(wm, generate_binary_structure(3, 3), 3)
-    wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
-    gm = (p0_value >= 1.5) & (p0_value < 2.5)
-    csf = (p0_value < 1.5) & (p0_value > 0)
-
-    if use_amap:
-        p1_large_uncorr = p1_large
-        p2_large_uncorr = p2_large
-        p3_large_uncorr = p3_large
-
-        p0_value = p0_large_orig.get_fdata().copy()
-        p0_value[csf | wm] = 1.5
-        p0_value -= 1.5
-        p1_large = nib.Nifti1Image(
-            p0_value, affine_resamp_reordered, header_resamp_reordered
-        )
-
-        p0_value = p0_large_orig.get_fdata().copy()
-        p0_value[~csf] = 0
-        p3_large = nib.Nifti1Image(
-            p0_value, affine_resamp_reordered, header_resamp_reordered
-        )
-    else:
-        p1_large_uncorr = nib.load(
-            f"{mri_dir}/{out_name}_brain_large_label-GM_probseg.{ext}"
-        )
-        p2_large_uncorr = nib.load(
-            f"{mri_dir}/{out_name}_brain_large_label-WM_probseg.{ext}"
-        )
-        p3_large_uncorr = nib.load(
-            f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}"
-        )
-
-    wmh_value = p1_large_uncorr.get_fdata().copy() - p1_large.get_fdata().copy()
-    wmh_value = median_filter(wmh_value, size=3)
-
-    deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
-    gm_border = binary_dilation(gm, generate_binary_structure(3, 3), 2)
-
-    atlas = get_atlas(
-        t1,
-        affine,
-        p0_large.header,
-        p0_large.affine,
-        "cat_wmh_miccai2017",
-        None,
-        device,
-    )
-    wmh_tpm = atlas.get_fdata().copy()
-    wmh_tpm /= np.max(wmh_tpm)
-
-    ind_wmh = ((wmh_value * wmh_tpm) > 0.025) & deep_wm & (~gm_border)
-
-    label_map, _ = label_image(ind_wmh)
-    sizes = np.bincount(label_map.ravel())
-    min_lesion_size = 500
-    remove = np.isin(label_map, np.where(sizes < min_lesion_size)[0])
-    ind_wmh[remove] = 0
-
-    wmh_value[~ind_wmh] = 0
-
-    if use_amap:
-        csf_discrep_large = (
-            p3_large_uncorr.get_fdata().copy() - p3_large.get_fdata().copy()
-        )
-        csf_discrep_large = median_filter(csf_discrep_large, size=3)
-        ind_csf_discrep = csf_discrep_large < 0
-
-        tmp_p1 = p1_large_uncorr.get_fdata().copy()
-        tmp_p1[ind_wmh] -= wmh_value[ind_wmh]
-        tmp_p1[ind_csf_discrep] -= csf_discrep_large[ind_csf_discrep]
-
-        tmp_p2 = p2_large_uncorr.get_fdata().copy()
-        tmp_p2[ind_wmh] += wmh_value[ind_wmh]
-
-        tmp_p3 = p3_large_uncorr.get_fdata().copy()
-        tmp_p3[ind_csf_discrep] += csf_discrep_large[ind_csf_discrep]
-
-        # We have to normalize all tissue values to overall sum of one
-        tmp_p1, tmp_p2, tmp_p3 = normalize_to_sum1(tmp_p1, tmp_p2, tmp_p3)
-
-        # Convert back to nifti
-        p1_large = nib.Nifti1Image(
-            tmp_p1, affine_resamp_reordered, header_resamp_reordered
-        )
-        p2_large = nib.Nifti1Image(
-            tmp_p2, affine_resamp_reordered, header_resamp_reordered
-        )
-        p3_large = nib.Nifti1Image(
-            tmp_p3, affine_resamp_reordered, header_resamp_reordered
-        )
-
-    return p1_large, p2_large, p3_large, wmh_value, ind_wmh
-
-
 def save_results(
     prep: CustomPreprocess,
     t1: nib.Nifti1Image,
@@ -598,6 +457,7 @@ def save_results(
     p2_large: nib.Nifti1Image,
     p3_large: nib.Nifti1Image,
     wmh_large: nib.Nifti1Image,
+    p0_large_diff: nib.Nifti1Image,
     mask: nib.Nifti1Image,
     brain_large: nib.Nifti1Image,
     grid_native,
@@ -728,7 +588,7 @@ def save_results(
                 clip=[0, 1],
             )
 
-    # Save lesion maps
+    # Save lesion and discrepancy maps
     if save_lesions and wmh_large is not None:
         wmh_name = code_vars.get("WMH_volume", "")
         resample_and_save_nifti(
@@ -737,6 +597,14 @@ def save_results(
             mask.affine,
             mask.header,
             f"{mri_dir}/{wmh_name}",
+        )
+        discrepance_name = code_vars.get("Discrepance_volume", "")
+        resample_and_save_nifti(
+            p0_large_diff,
+            grid_native,
+            mask.affine,
+            mask.header,
+            f"{mri_dir}/{discrepance_name}",
         )
 
     # Estimate raw volumes
@@ -792,12 +660,12 @@ def save_results(
     }
 
     if save_lesions and wmh_large is not None:
-        summary += {
-            "vol_wmh": {
+        summary |= {
+            "vol_WMH": {
                 "value": vol_wmh,
                 "desc": "WMH",
             },
-            "wmh_rel_WM": {
+            "WMH_rel_WM": {
                 "value": smart_round(wmh_rel_to_wm),
                 "desc": "WMH load relative to WM incl. WMH",
             },
@@ -1047,16 +915,20 @@ def run_segment():
             count = progress_bar(count, end_count, "Amap segmentation        ")
 
         p0_large_orig = p0_large
-        brain_large, p0_large = run_amap_segmentation(
-            amapdir,
-            p0_large,
-            brain_large,
-            mri_dir,
-            out_name,
-            ext,
-            verbose,
-            debug,
-        )
+        
+        if use_amap:
+            brain_large, p0_large = run_amap_segmentation(
+                amapdir,
+                p0_large,
+                brain_large,
+                mri_dir,
+                out_name,
+                ext,
+                verbose,
+                debug,
+            )
+        else:
+            brain_large = apply_LAS(brain_large, p0_large)
 
     else:
         if debug:
@@ -1089,11 +961,13 @@ def run_segment():
             p1_large,
             p2_large,
             p3_large,
+            p0_large_diff,
             wmh_value,
             ind_wmh,
         ) = handle_lesions(
             t1,
             affine,
+            brain_large,
             p0_large,
             p0_large_orig,
             p1_large,
@@ -1108,6 +982,8 @@ def run_segment():
             debug,
             device,
         )
+    else:
+        p0_large_diff = None
 
     warp_template = nib.load(f"{DATA_PATH}/templates/Template_4_GS.nii.gz")
     wj_affine = (
@@ -1156,6 +1032,7 @@ def run_segment():
         p2_large,
         p3_large,
         wmh_large,
+        p0_large_diff,
         mask,
         brain_large,
         grid_native,

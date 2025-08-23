@@ -4,24 +4,25 @@ import numpy as np
 import nibabel as nib
 import torch.nn.functional as F
 import pandas as pd
+import numpy as np
+import nibabel as nib
+
 from scipy.ndimage import (
     binary_opening,
     binary_dilation,
-    grey_opening,
     binary_closing,
+    binary_erosion,
     generate_binary_structure,
+    grey_opening,
     median_filter,
 )
+from scipy.ndimage import label as label_image
 from nxbc.filter import *
 from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
 from torchreg.utils import smooth_kernel
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
-
 from utils import DATA_PATH_T1PREP, TEMPLATE_PATH_T1PREP, find_largest_cluster
-
-import numpy as np
-import nibabel as nib
 from typing import Union, Tuple
 
 def normalize_to_sum1(
@@ -471,6 +472,7 @@ def unsmooth_kernel(factor=3.0, sigma=0.6, device="cpu"):
 def handle_lesions(
     t1: nib.Nifti1Image,
     affine,
+    brain_large: nib.Nifti1Image,
     p0_large: nib.Nifti1Image,
     p0_large_orig: nib.Nifti1Image,
     p1_large: nib.Nifti1Image,
@@ -493,28 +495,23 @@ def handle_lesions(
 ]:
     """Detect lesions and correct tissue probability maps."""
 
-    if debug:
-        p0_large_diff = (
-            p3_large.get_fdata().copy()
-            + 2 * p1_large.get_fdata().copy()
-            + 3 * p2_large.get_fdata().copy()
-            - p0_large_orig.get_fdata().copy()
-        )
-        p0_large_diff = median_filter(p0_large_diff, size=3)
-        p0_large_diff = nib.Nifti1Image(p0_large_diff, p0_large.affine, p0_large.header)
-        nib.save(
-            p0_large_diff,
-            f"{mri_dir}/{out_name}_brain_large_label-discrepancy.{ext}",
-        )
-
     p0_value = p0_large_orig.get_fdata().copy()
     wm = p0_value >= 2.5
+    # Fill WM holes to close potential WMH lesions
     wm = binary_closing(wm, generate_binary_structure(3, 3), 3)
+    # Get a conservative WM mask
     wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
     gm = (p0_value >= 1.5) & (p0_value < 2.5)
     csf = (p0_value < 1.5) & (p0_value > 0)
 
     if use_amap:
+        p0_large_diff_value = (
+            p3_large.get_fdata().copy()
+            + 2 * p1_large.get_fdata().copy()
+            + 3 * p2_large.get_fdata().copy()
+            - p0_large_orig.get_fdata().copy()
+        )
+
         p1_large_uncorr = p1_large
         p2_large_uncorr = p2_large
         p3_large_uncorr = p3_large
@@ -531,19 +528,30 @@ def handle_lesions(
         p3_large = nib.Nifti1Image(
             p0_value, affine_resamp_reordered, header_resamp_reordered
         )
+        wmh_value = p1_large_uncorr.get_fdata().copy() - p1_large.get_fdata().copy()
     else:
-        p1_large_uncorr = nib.load(
-            f"{mri_dir}/{out_name}_brain_large_label-GM_probseg.{ext}"
-        )
-        p2_large_uncorr = nib.load(
-            f"{mri_dir}/{out_name}_brain_large_label-WM_probseg.{ext}"
-        )
-        p3_large_uncorr = nib.load(
-            f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}"
+        # brain_large is for the deepmriprep method the LAS corrected orignal
+        # image which can be used here as proxi for p0_large_orig from AMAP
+        p0_large_diff_value = (
+            p3_large.get_fdata().copy()
+            + 2 * p1_large.get_fdata().copy()
+            + 3 * p2_large.get_fdata().copy()
+            - 3*brain_large.get_fdata().copy()
         )
 
-    wmh_value = p1_large_uncorr.get_fdata().copy() - p1_large.get_fdata().copy()
+        # WMH are where p0_large_diff_value shows a positive difference in WM
+        wmh_value = np.zeros_like(p0_value)
+        wmh_mask = wm & (p0_large_diff_value > 0)
+        wmh_value[wmh_mask] = p0_large_diff_value[wmh_mask]
+
+    # Apply median filter to remove noise
     wmh_value = median_filter(wmh_value, size=3)
+    p0_large_diff_value = median_filter(p0_large_diff_value, size=3)
+    wmh_value = np.clip(wmh_value, -1, 1)
+    p0_large_diff_value = np.clip(p0_large_diff, -1, 1)
+    p0_large_diff = nib.Nifti1Image(
+        p0_large_diff_value, affine_resamp_reordered, header_resamp_reordered
+    )
 
     deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
     gm_border = binary_dilation(gm, generate_binary_structure(3, 3), 2)
@@ -601,7 +609,7 @@ def handle_lesions(
             tmp_p3, affine_resamp_reordered, header_resamp_reordered
         )
 
-    return p1_large, p2_large, p3_large, wmh_value, ind_wmh
+    return p1_large, p2_large, p3_large, p0_large_diff, wmh_value, ind_wmh
 
 def get_atlas(
     t1, affine, target_header, target_affine, atlas_name, warp_yx=None, device="cpu"
