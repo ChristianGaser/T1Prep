@@ -287,7 +287,7 @@ do_parallelize ()
       mkdir -p "$PROGRESS_DIR"
       rm -f "$PROGRESS_DIR"/*.progress
       
-      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" 40 "$cmd_name" &
+      $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "$PROGRESS_DIR" 40 "$cmd_name" --overall &
       progress_pid=$!
     else
       $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "" 0 $SIZE_OF_ARRAY "$cmd_name" 40      

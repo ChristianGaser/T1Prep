@@ -9,6 +9,9 @@
 #   # Multi job:
 #   progress_bar_multi.sh n_jobs PROGRESS_DIR [Width Label]
 #
+#   # Multi job (overall bar only):
+#   progress_bar_multi.sh n_jobs PROGRESS_DIR [Width Label] --overall
+#
 # ______________________________________________________________________
 #
 # Christian Gaser
@@ -24,6 +27,8 @@ n_jobs=$1
 PROGRESS_DIR=$2
 width=$3
 job_name=$4
+overall=0
+[ "$5" = "--overall" ] && overall=1
 
 # Colors & cursor fallback
 if [ -t 1 ] && [ -n "$TERM" ] && command -v tput >/dev/null 2>&1; then
@@ -36,7 +41,7 @@ else
   move_up() { :; }
 fi
 
-REFRESH_INTERVAL=2.0
+REFRESH_INTERVAL=1.0
 JOB_ID="jobrun_$(date +%s%N)"
 
 # ----------------------------------------------------------------------
@@ -80,70 +85,121 @@ multi_job_bar() {
   [ -z "$width" ] && width=40
   [ -z "$job_name" ] && job_name="Job"
 
-  # Print empty lines for each job
+  local start_time=$(date +%s)
+
   if [ -t 1 ]; then
-    for ((i=0; i<n_jobs; i++)); do
+    if [ $overall -eq 0 ]; then
+      for ((i=0; i<n_jobs; i++)); do
+        echo ""
+      done
+    else
       echo ""
-    done
+    fi
   fi
 
   while true; do
-    # Only scroll up for terminal
     if [ -t 1 ]; then
-      move_up "$n_jobs"
+      if [ $overall -eq 0 ]; then
+        move_up "$n_jobs"
+      else
+        move_up 1
+      fi
     fi
-    
+
     all_done=true
+
+    if [ $overall -eq 1 ]; then
+      total_done=0
+      total_items_sum=0
+    fi
+
     for ((i=0; i<n_jobs; i++)); do
       file="$PROGRESS_DIR/job${i}.progress"
       if [[ -f "$file" ]]; then
         progress=$(cat "$file")
         done_items=$(echo "$progress" | cut -d/ -f1)
         total_items=$(echo "$progress" | cut -d/ -f2)
-        percent=$((100 * done_items / total_items))
-        filled=$((width * done_items / total_items))
-        unfilled=$((width - filled))
-        bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
-        bar+=$(printf "%${unfilled}s")
-        jobnumber=$((i+1))
 
-        if [ $n_jobs -gt 1 ]; then
-          printf -v jobstr "%2d" "$jobnumber"
-        fi
-        
-                printf -v percent_str "%3d" "$percent"
-        
-        # If process failed → red + faster refresh
-        status_file="$PROGRESS_DIR/job${i}.status"
-        status=0
-        [[ -f "$status_file" ]] && status=$(cat "$status_file")
-        if [[ "$status" -ne 0 ]]; then
-          BAR_COLOR=$FAIL_COLOR
-          REFRESH_INTERVAL=0.1
-        else
-          BAR_COLOR=$DEFAULT_COLOR
-          REFRESH_INTERVAL=2.0
-        fi
+        # Initialise missing or malformed files safely
+        [ -z "$done_items" ] && done_items=0
+        [ -z "$total_items" ] && total_items=1
 
-        if [ -t 1 ]; then
-          # Interaktiv: live-Balken
-          echo -ne "[${BAR_COLOR}${bar}${NC}] ${percent_str}% ${job_name} ${jobstr}\n"
+        if [ $overall -eq 1 ]; then
+          total_done=$((total_done + done_items))
+          total_items_sum=$((total_items_sum + total_items))
         else
-          # Non-TTY: nur bei 100% ausgeben
-          if [[ "$done_items" -eq "$total_items" ]]; then
-            echo "[${BAR_COLOR}${bar}${NC}] ${percent_str}% ${job_name} ${jobstr}"
+          percent=$((100 * done_items / total_items))
+          filled=$((width * done_items / total_items))
+          unfilled=$((width - filled))
+          bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
+          bar+=$(printf "%${unfilled}s")
+          jobnumber=$((i+1))
+
+          if [ $n_jobs -gt 1 ]; then
+            printf -v jobstr "%2d" "$jobnumber"
+          fi
+          printf -v percent_str "%3d" "$percent"
+
+          status_file="$PROGRESS_DIR/job${i}.status"
+          status=0
+          [[ -f "$status_file" ]] && status=$(cat "$status_file")
+          if [[ "$status" -ne 0 ]]; then
+            BAR_COLOR=$FAIL_COLOR
+            REFRESH_INTERVAL=0.1
+          else
+            BAR_COLOR=$DEFAULT_COLOR
+            REFRESH_INTERVAL=2.0
+          fi
+
+          if [ -t 1 ]; then
+            echo -ne "[${BAR_COLOR}${bar}${NC}] ${percent_str}% ${job_name} ${jobstr}\n"
+          else
+            if [[ "$done_items" -eq "$total_items" ]]; then
+              echo "[${BAR_COLOR}${bar}${NC}] ${percent_str}% ${job_name} ${jobstr}"
+            fi
           fi
         fi
-              
+
         [[ "$done_items" -lt "$total_items" ]] && all_done=false
-      else
-        if [ -t 1 ]; then
-          echo -ne "Job $((i+1)): [waiting...]\n"
-        fi
-        all_done=false
+    else
+      # Initialise progress file with 0/TOTAL = 1 to avoid div-by-0
+      echo "0/1" > "$PROGRESS_DIR/job${i}.progress"
+      if [ -t 1 ] && [ $overall -eq 0 ]; then
+        echo -ne "Job $((i+1)): [initialising...]\n"
+      fi
+      all_done=false
       fi
     done
     
+    if [ $overall -eq 1 ]; then
+      if [ "$total_items_sum" -gt 0 ]; then
+        percent=$((100 * total_done / total_items_sum))
+        filled=$((width * total_done / total_items_sum))
+      
+        # Compute ETA
+        if [ $total_done -gt 0 ] && [ $total_done -lt $total_items_sum ]; then
+          now=$(date +%s)
+          elapsed=$((now - start_time))
+          # Remaining time = elapsed * (total/so_far - 1)
+          remaining=$((elapsed * (total_items_sum - total_done) / total_done))
+      
+          # Format as HH:MM:SS
+          ETA=$(printf "%02d:%02d:%02d" $((remaining/3600)) $(( (remaining/60)%60 )) $((remaining%60)))
+        else
+          ETA=""
+        fi
+      else
+        percent=0
+        filled=0
+        ETA=""
+      fi
+      
+      unfilled=$((width - filled))
+      bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
+      bar+=$(printf "%${unfilled}s")
+      printf "[${DEFAULT_COLOR}${bar}${NC}] %3d%% %s ETA %s\n" "$percent" "$job_name" "$ETA"      
+    fi
+
     $all_done && break
     sleep "$REFRESH_INTERVAL"
   done
@@ -156,6 +212,12 @@ main() {
   if [ -z "$n_jobs" ]; then
     help
     exit 1
+  fi
+
+  # Hide cursor
+  if [ -t 1 ]; then
+    echo -ne "\033[?25l"
+    trap 'echo -ne "\033[?25h"' EXIT  # Ensure cursor restored on exit
   fi
 
   if [ "$n_jobs" -eq 1 ] && [ -z "$PROGRESS_DIR" ]; then
@@ -180,15 +242,19 @@ ${BOLD:-}USAGE:${NC}
   Multi job:
     $(basename "$0") n_jobs PROGRESS_DIR [Width Label]
 
-${BOLD:-}OPTIONS:${NC}
-  CURRENT     Current progress value (single job).
-  TOTAL       Maximum progress value (single job).
-  Label       Optional name of process (default "Progress"/"Job").
-  Width       Width of progress bar (default 40).
-  FailedFlag  Set to 1 to render the bar in red (single job only).
+  Multi job (overall bar only):
+    $(basename "$0") n_jobs PROGRESS_DIR [Width Label] --overall
 
-  n_jobs      Number of jobs to monitor in parallel (multi job).
+${BOLD:-}OPTIONS:${NC}
+  CURRENT      Current progress value (single job).
+  TOTAL        Maximum progress value (single job).
+  Label        Optional name of process (default "Progress"/"Job").
+  Width        Width of progress bar (default 40).
+  FailedFlag   Set to 1 to render the bar in red (single job only).
+
+  n_jobs       Number of jobs to monitor in parallel (multi job).
   PROGRESS_DIR Directory containing job*.progress and job*.status files.
+  --overall    Show only one combined progress bar for all jobs.
 
 ${BOLD:-}EXAMPLES:${NC}
 
