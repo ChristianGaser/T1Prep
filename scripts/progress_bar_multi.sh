@@ -7,10 +7,10 @@
 #   progress_bar_multi.sh 1 "" CURRENT TOTAL [Label Width FailedFlag]
 #
 #   # Multi job:
-#   progress_bar_multi.sh n_jobs PROGRESS_DIR [Width Label]
+#   progress_bar_multi.sh n_jobs PROGRESS_DIR [Width Label] --multi
 #
 #   # Multi job (overall bar only):
-#   progress_bar_multi.sh n_jobs PROGRESS_DIR [Width Label] --overall
+#   progress_bar_multi.sh n_jobs PROGRESS_DIR [Width Label]
 #
 # ______________________________________________________________________
 #
@@ -27,8 +27,8 @@ n_jobs=$1
 PROGRESS_DIR=$2
 width=$3
 job_name=$4
-overall=0
-[ "$5" = "--overall" ] && overall=1
+overall=1
+[ "$5" = "--multi" ] && overall=0
 
 # Colors & cursor fallback
 if [ -t 1 ] && [ -n "$TERM" ] && command -v tput >/dev/null 2>&1; then
@@ -240,10 +240,10 @@ ${BOLD:-}USAGE:${NC}
     $(basename "$0") 1 "" CURRENT TOTAL [Label Width FailedFlag]
 
   Multi job:
-    $(basename "$0") n_jobs PROGRESS_DIR [Width Label]
+    $(basename "$0") n_jobs PROGRESS_DIR [Width Label] --multi
 
   Multi job (overall bar only):
-    $(basename "$0") n_jobs PROGRESS_DIR [Width Label] --overall
+    $(basename "$0") n_jobs PROGRESS_DIR [Width Label]
 
 ${BOLD:-}OPTIONS:${NC}
   CURRENT      Current progress value (single job).
@@ -254,7 +254,7 @@ ${BOLD:-}OPTIONS:${NC}
 
   n_jobs       Number of jobs to monitor in parallel (multi job).
   PROGRESS_DIR Directory containing job*.progress and job*.status files.
-  --overall    Show only one combined progress bar for all jobs.
+  --multi      Show (multiple) progress bars for each job.
 
 ${BOLD:-}EXAMPLES:${NC}
 
