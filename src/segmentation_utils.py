@@ -548,7 +548,7 @@ def handle_lesions(
     wmh_value = median_filter(wmh_value, size=3)
     p0_large_diff_value = median_filter(p0_large_diff_value, size=3)
     wmh_value = np.clip(wmh_value, -1, 1)
-    p0_large_diff_value = np.clip(p0_large_diff, -1, 1)
+    p0_large_diff_value = np.clip(p0_large_diff_value, -1, 1)
     p0_large_diff = nib.Nifti1Image(
         p0_large_diff_value, affine_resamp_reordered, header_resamp_reordered
     )

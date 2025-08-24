@@ -457,7 +457,7 @@ def save_results(
     p2_large: nib.Nifti1Image,
     p3_large: nib.Nifti1Image,
     wmh_large: nib.Nifti1Image,
-    p0_large_diff: nib.Nifti1Image,
+    discrepancy_large: nib.Nifti1Image,
     mask: nib.Nifti1Image,
     brain_large: nib.Nifti1Image,
     grid_native,
@@ -600,7 +600,7 @@ def save_results(
         )
         discrepance_name = code_vars.get("Discrepance_volume", "")
         resample_and_save_nifti(
-            p0_large_diff,
+            discrepancy_large,
             grid_native,
             mask.affine,
             mask.header,
@@ -961,7 +961,7 @@ def run_segment():
             p1_large,
             p2_large,
             p3_large,
-            p0_large_diff,
+            discrepancy_large,
             wmh_value,
             ind_wmh,
         ) = handle_lesions(
@@ -983,7 +983,7 @@ def run_segment():
             device,
         )
     else:
-        p0_large_diff = None
+        discrepancy_large = None
 
     warp_template = nib.load(f"{DATA_PATH}/templates/Template_4_GS.nii.gz")
     wj_affine = (
@@ -1032,7 +1032,7 @@ def run_segment():
         p2_large,
         p3_large,
         wmh_large,
-        p0_large_diff,
+        discrepancy_large,
         mask,
         brain_large,
         grid_native,
