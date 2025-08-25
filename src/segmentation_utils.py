@@ -99,32 +99,112 @@ def normalize_to_sum1(
             wrap_nifti(norm3, nifti3))
 
 
-def cleanup(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
-    """Clean CSF, GM and WM probability maps."""
+def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
+    """
+    Clean/regularize CSF, GM, and WM probability maps by removing vessel-like
+    misclassifications in CSF spaces *outside the cerebellum*, while preserving
+    cortical/cerebellar parenchyma.
+
+    Pipeline summary
+    ----------------
+    1) WM core: Threshold WM and keep only the largest connected component, then
+       dilate once (26-connectivity) to obtain a robust parenchyma core.
+    2) Vessel-targeting mask: Voxels that are (a) outside the WM core,
+       (b) outside the cerebellum (if provided), and (c) likely CSF per a TPM
+       (> 2.5% on a 0–255 scale, if provided).
+    3) WM→GM inside that mask: Collapse thin/high-intensity vessel fragments
+       that were misclassified as WM in CSF spaces.
+    4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by 
+       filling) and are estimated as WM. Vessels in WM are moved into CSF.
+    5) Parenchyma support: Grayscale opening of (GM+WM) to remove narrow bridges
+       (e.g., vessels), then keep the largest component and union with the
+       cerebellum mask (if provided).
+    6) GM→CSF outside the parenchyma support: This removes remaining GM vessel
+       fragments in CSF spaces; prior WM→GM reassignment ensures WM vessels are
+       also absorbed.
+    7) Renormalize probabilities to sum to 1 per voxel and return images.
+
+    Parameters
+    ----------
+    gm0, wm0, csf0 : nib.Nifti1Image
+        Input gray matter, white matter, and CSF *probability* maps (same shape,
+        affine, and header). Values are expected in [0, 1].
+    threshold_wm : float, optional
+        WM threshold used to build the robust WM core (default: 0.4).
+        Higher values make the core more conservative.
+    cerebellum : np.ndarray or None, optional
+        Binary (0/1) array in the same space, where >0 denotes cerebellum voxels.
+        When provided, cleanup avoids acting *inside* the cerebellum and later
+        explicitly keeps cerebellar voxels as parenchyma.
+    csf_TPM : np.ndarray or None, optional
+        CSF tissue probability map in the same space, *scaled 0–255* (e.g., SPM).
+        If provided, vessel cleanup is restricted to voxels with CSF probability
+        ≥ 2.5% (i.e., >= 0.025 * 255). Omit to apply outside-WM-core everywhere
+        outside the cerebellum.
+
+    Returns
+    -------
+    label : nib.Nifti1Image
+        Soft-encoded label image (csf + 2*gm + 3*wm). This is NOT a hard label;
+        use argmax over (csf, gm, wm) if a discrete map is required.
+    gm, wm, csf : nib.Nifti1Image
+        Cleaned GM, WM, and CSF probability maps, renormalized to sum to 1
+        per voxel.
+
+    Notes
+    -----
+    - Connectivity: `find_largest_cluster` is assumed to use 26-connectivity in 3D.
+    - Morphology: `binary_dilation` uses a full 3x3x3 structuring element
+      (`generate_binary_structure(3, 3)`) for one iteration.
+    - Grayscale opening: `grey_opening(gm + wm, size=[3,3,3])` suppresses thin
+      vessel-like bridges/spurs prior to component selection.
+    - Assumes gm0/wm0/csf0 share shape/affine/header. No resampling is performed.
+    - If you need a discrete label map, compute `np.argmax([csf, gm, wm], axis=0)`.
+
+    """
     gm = gm0.get_fdata().copy()
     wm = wm0.get_fdata().copy()
     csf = csf0.get_fdata().copy()
 
+    # 1) Robust WM core from the largest component, slightly dilated (26-connectivity).
     wm_morph = find_largest_cluster(wm > threshold_wm)
     wm_morph = binary_dilation(wm_morph, generate_binary_structure(3, 3), 1)
-    
+
+    # 2) Vessel-targeting mask: outside WM core, outside cerebellum, and (optionally) CSF-like.
     mask = ~wm_morph
     if cerebellum is not None:
         mask = mask & (cerebellum == 0)
     if csf_TPM is not None:
         mask = mask & (csf_TPM >= 0.025 * 255)
 
+    # 3) Collapse WM vessels in CSF spaces to GM (to be pushed to CSF in step 6 if outside parenchyma).
     gm[mask] += wm[mask]
     wm[mask] = 0
+
+    # 4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by 
+    # filling) and are estimated as WM. Move vessels in WM into CSF.
+    lbl = np.argmax(np.stack([csf, gm, wm], axis=0), axis=0)
+    csf_label = (lbl == 0)
+    gm_label  = (lbl == 1)
+    wm_label  = (lbl == 2)
+    csf_filled = binary_closing(csf_label, generate_binary_structure(3, 3), 2)
+    gm_filled = binary_closing(gm_label, generate_binary_structure(3, 3), 2)
+    vessels = wm_label & binary_dilation(gm_filled & csf_filled, generate_binary_structure(3, 3), 1)
+    csf[vessels] += wm[vessels]
+    wm[vessels] = 0
+    
+    # 5) Build parenchyma support via grayscale opening and largest component, keep cerebellum.
     gm_wm = grey_opening(gm + wm, size=[3, 3, 3])
     gm_wm = find_largest_cluster(gm_wm > 0.5)
     if cerebellum is not None:
         gm_wm = gm_wm | (cerebellum > 0)
+
+    # 6) Move GM outside parenchyma support into CSF (removes residual vessel fragments).
     csf[~gm_wm] += gm[~gm_wm]
     gm[~gm_wm] = 0
 
+    # 7) Renormalize and package outputs.
     gm, wm, csf = normalize_to_sum1(gm, wm, csf)
-
     label = csf + 2 * gm + 3 * wm
 
     gm = nib.Nifti1Image(gm, gm0.affine, gm0.header)

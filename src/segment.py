@@ -49,7 +49,7 @@ from segmentation_utils import (
     unsmooth_kernel,
     get_atlas,
     get_partition,
-    cleanup,
+    cleanup_vessels,
     get_cerebellum,
     correct_label_map,
     apply_LAS,
@@ -1002,7 +1002,7 @@ def run_segment():
             t1, affine, p0_large.header, p0_large.affine, "csf_TPM", None, device
         )
         csf_TPM = atlas.get_fdata().copy()
-        p0_large, p1_large, p2_large, p3_large = cleanup(
+        p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
             p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM
         )
     else:
