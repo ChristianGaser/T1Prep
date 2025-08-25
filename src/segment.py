@@ -710,8 +710,8 @@ def save_results(
             nib.save(mwp2, f"{mri_dir}/{wm_name}")
             if save_csf:
                 csf_name = code_vars_warped_modulated.get("CSF_volume", "")
-                mwp3 = output_reg["mwp3"]
-                nib.save(mwp3, f"{mri_dir}/{csf_name}")
+                #mwp3 = output_reg["mwp3"]
+                #nib.save(mwp3, f"{mri_dir}/{csf_name}")
 
         if save_wp:
             gm_name = code_vars_warped.get("GM_volume", "")
@@ -722,8 +722,8 @@ def save_results(
             nib.save(wp2, f"{mri_dir}/{wm_name}")
             if save_csf:
                 csf_name = code_vars_warped.get("CSF_volume", "")
-                wp3 = output_reg["wp3"]
-                nib.save(wp3, f"{mri_dir}/{csf_name}")
+                #wp3 = output_reg["wp3"]
+                #nib.save(wp3, f"{mri_dir}/{csf_name}")
 
         def_name = code_vars.get("Def_volume", "")
         nib.save(warp_xy, f"{mri_dir}/{def_name}")
