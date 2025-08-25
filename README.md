@@ -28,7 +28,8 @@ CAT12 folder structures and the BIDS derivatives standard.
 
 ## Main Differences to CAT12
 - Implemented entirely in Python and C, eliminating the need for a Matlab license.
-- New developed pipeline to estimate cortical surface and thickness.
+- Newly developed pipeline to estimate cortical surface and thickness.
+- Skull-stripping, segmentation and non-linear spatial registration uses DeepMriPrep
 - Does not yet support longitudinal pipelines.
 - No quality assessment implemented yet.
 - Only T1 MRI data supported.
