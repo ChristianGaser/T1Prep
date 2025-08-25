@@ -280,7 +280,7 @@ do_parallelize ()
   fi
 
   if [ -z "${TEST}" ]; then
-    cmd_name=$(basename "$(printf '%s\n' "$COMMAND" | head -n1)")
+    cmd_name=$(basename "$(printf '%s\n' "$COMMAND" | head -n1)") | cut -f1 -d' '
 
     # Start multi progress monitor
     if [ "$NUM_JOBS" -gt 1 ]; then      
