@@ -1013,9 +1013,11 @@ ${BOLD}${GREEN}Save Options:${NC}
 
   --csf                       
       Additionally save CSF segmentations (default: only GM/WM are saved).
+      This works currently only for native-space and affine-registered segmentations.
 
   --lesions                   
       Additionally save WMH lesion segmentations.
+      This works currently only for native-space and affine-registered segmentations.
 
   --atlas                     
       Specify a volumetric atlas list in the format 
@@ -1081,7 +1083,7 @@ ${BLUE}${root_dir}/T1Prep --no-amap sTRIO*.nii${NC}
 
 ${BLUE}${root_dir}/T1Prep --multi 8 --p --csf --atlas "'neuromorphometrics', 'suit'" sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
-  in native space, including CSF segmentationand estimate ROI volumes for the defined atlases.
+  in native space, including CSF segmentation and estimate ROI volumes for the defined atlases.
   The processing pipeline involves two stages 
   of parallelization:
   
