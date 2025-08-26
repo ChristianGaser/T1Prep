@@ -210,7 +210,6 @@ docker build \
 ```bash
 docker build \
   --build-arg T1PREP_VERSION=v0.2.0-beta \
-  --build-arg T1PREP_ZIP=T1Prep_0.2.0.zip \
   -t t1prep:release .
 ```
 
