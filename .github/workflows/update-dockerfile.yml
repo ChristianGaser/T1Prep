@@ -14,7 +14,7 @@ jobs:
         run: |
           tag=${{ github.event.release.tag_name }}
           sed -i -E "s/ARG T1PREP_VERSION=.*/ARG T1PREP_VERSION=${tag}/" Dockerfile
-          git config user.name "ChristianGaser"
+          git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git commit -am "chore: bump Dockerfile to ${tag}"
           git push
