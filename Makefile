@@ -1,7 +1,7 @@
-.PHONY: help clean zip cp_binaries
+.PHONY: help release clean zip cp_binaries
 .DEFAULT: help
 
-VERSION='0.2.0'
+VERSION="0.2.1"
 
 FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py T1Prep_defaults.txt
 DATA_FILES=data
@@ -20,12 +20,16 @@ clean:
 	-@find . -type f \( -name "*.sh" \) -exec chmod a+x {} \;
 
 # zip release
-zip: clean
+zip: release
 	-@echo zip
 	-@test ! -d T1Prep || rm -r T1Prep
 	-@mkdir T1Prep
 	-@cp -rp ${FILES} T1Prep
 	-@zip ${ZIPFILE} -rm T1Prep
+
+# prepare a release
+release: clean
+	-@sed -i "" "s/version=.*/version=${VERSION}/" scripts/T1Prep
 
 # copy binaries after cross-compiling
 cp_binaries: 
