@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+Makefile export-ignore
+tests export-ignore
+Agents.md export-ignore
