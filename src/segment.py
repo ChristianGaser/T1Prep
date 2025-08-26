@@ -335,14 +335,14 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     )
     t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
     prep = CustomPreprocess(no_gpu)
-    
+
     # This is a bit faster since for initial segmentation the sinc-interpolation
     # of the segmentations does not help and is slower
-    # Furthermore, skip self.run_patch_models(x, p0) which takes a lot of time 
+    # Furthermore, skip self.run_patch_models(x, p0) which takes a lot of time
     # and is not needed for Amap segmentation.
     if use_amap:
         prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
-        
+
     return t1, prep, ras_affine
 
 
@@ -447,6 +447,7 @@ def final_cleanup(
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-GM_probseg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
+
 
 def save_results(
     prep: CustomPreprocess,
@@ -710,8 +711,8 @@ def save_results(
             nib.save(mwp2, f"{mri_dir}/{wm_name}")
             if save_csf:
                 csf_name = code_vars_warped_modulated.get("CSF_volume", "")
-                #mwp3 = output_reg["mwp3"]
-                #nib.save(mwp3, f"{mri_dir}/{csf_name}")
+                # mwp3 = output_reg["mwp3"]
+                # nib.save(mwp3, f"{mri_dir}/{csf_name}")
 
         if save_wp:
             gm_name = code_vars_warped.get("GM_volume", "")
@@ -722,8 +723,8 @@ def save_results(
             nib.save(wp2, f"{mri_dir}/{wm_name}")
             if save_csf:
                 csf_name = code_vars_warped.get("CSF_volume", "")
-                #wp3 = output_reg["wp3"]
-                #nib.save(wp3, f"{mri_dir}/{csf_name}")
+                # wp3 = output_reg["wp3"]
+                # nib.save(wp3, f"{mri_dir}/{csf_name}")
 
         def_name = code_vars.get("Def_volume", "")
         nib.save(warp_xy, f"{mri_dir}/{def_name}")
@@ -835,7 +836,7 @@ def run_segment():
     # Track running time
     start = time.perf_counter()
     t1 = nib.load(t1_name)
-    
+
     # Ensure required model files are available
     prepare_model_files()
 
@@ -915,7 +916,7 @@ def run_segment():
             count = progress_bar(count, end_count, "Amap segmentation        ")
 
         p0_large_orig = p0_large
-        
+
         if use_amap:
             brain_large, p0_large = run_amap_segmentation(
                 amapdir,
@@ -1070,7 +1071,7 @@ def run_segment():
     log_name = code_vars.get("Log_file", "")
     with open(f"{report_dir}/{log_name}", "a") as f:
         f.write(text)
-    
+
 
 if __name__ == "__main__":
     run_segment()

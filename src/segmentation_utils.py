@@ -25,14 +25,15 @@ from deepmriprep.atlas import shape_from_to, AtlasRegistration
 from utils import DATA_PATH_T1PREP, TEMPLATE_PATH_T1PREP, find_largest_cluster
 from typing import Union, Tuple
 
+
 def normalize_to_sum1(
     data1: Union[np.ndarray, nib.Nifti1Image],
     data2: Union[np.ndarray, nib.Nifti1Image],
-    data3: Union[np.ndarray, nib.Nifti1Image]
+    data3: Union[np.ndarray, nib.Nifti1Image],
 ):
     """
     Normalize three input arrays or Nifti1Images so that their sum is 1 at each voxel/data point.
-    
+
     Each output is calculated as:
         paraX_norm = paraX / (data1 + data2 + data3)   (element-wise)
 
@@ -66,6 +67,7 @@ def normalize_to_sum1(
     - The input data are first clipped to a range of 0..1
 
     """
+
     def extract_data(x):
         if isinstance(x, nib.Nifti1Image):
             return x.get_fdata(), x
@@ -94,9 +96,11 @@ def normalize_to_sum1(
         else:
             return norm
 
-    return (wrap_nifti(norm1, nifti1),
-            wrap_nifti(norm2, nifti2),
-            wrap_nifti(norm3, nifti3))
+    return (
+        wrap_nifti(norm1, nifti1),
+        wrap_nifti(norm2, nifti2),
+        wrap_nifti(norm3, nifti3),
+    )
 
 
 def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
@@ -114,7 +118,7 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
        (> 2.5% on a 0–255 scale, if provided).
     3) WM→GM inside that mask: Collapse thin/high-intensity vessel fragments
        that were misclassified as WM in CSF spaces.
-    4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by 
+    4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by
        filling) and are estimated as WM. Vessels in WM are moved into CSF.
     5) Parenchyma support: Grayscale opening of (GM+WM) to remove narrow bridges
        (e.g., vessels), then keep the largest component and union with the
@@ -181,18 +185,20 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
     gm[mask] += wm[mask]
     wm[mask] = 0
 
-    # 4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by 
+    # 4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by
     # filling) and are estimated as WM. Move vessels in WM into CSF.
     lbl = np.argmax(np.stack([csf, gm, wm], axis=0), axis=0)
-    csf_label = (lbl == 0)
-    gm_label  = (lbl == 1)
-    wm_label  = (lbl == 2)
+    csf_label = lbl == 0
+    gm_label = lbl == 1
+    wm_label = lbl == 2
     csf_filled = binary_closing(csf_label, generate_binary_structure(3, 3), 2)
     gm_filled = binary_closing(gm_label, generate_binary_structure(3, 3), 2)
-    vessels = wm_label & binary_dilation(gm_filled & csf_filled, generate_binary_structure(3, 3), 1)
+    vessels = wm_label & binary_dilation(
+        gm_filled & csf_filled, generate_binary_structure(3, 3), 1
+    )
     csf[vessels] += wm[vessels]
     wm[vessels] = 0
-    
+
     # 5) Build parenchyma support via grayscale opening and largest component, keep cerebellum.
     gm_wm = grey_opening(gm + wm, size=[3, 3, 3])
     gm_wm = find_largest_cluster(gm_wm > 0.5)
@@ -250,11 +256,11 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
 
     dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
     brain0 = brain.get_fdata().copy()
-    
+
     if seg is not None:
         seg0 = seg.get_fdata().copy()
         max_seg = np.max(seg0)
-        mask = seg0 >= 2.75/3.0 * max_seg
+        mask = seg0 >= 2.75 / 3.0 * max_seg
     else:
         # Obtain gradient and its magnitude
         gx, gy, gz = np.gradient(brain0)
@@ -262,20 +268,20 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
 
         # Mask out regions with high gradient (i.e. GM, sulci, vessels)
         mask = brain0 * ((grad_mag / brain0) < 0.075)
-        
+
         # Remove low intensity areas that are rather GM
         thresh = np.quantile(mask[mask != 0], 0.3)
         mask0 = mask > thresh
-        
+
         # Close remaining holes using morphol. operations and remove filled areas
         # from mask that are rather subcortical structures
         mask0 = ~mask0 & binary_closing(mask0, generate_binary_structure(3, 3), 10)
         mask[mask0] = 0
-        
+
         # Remove thin structures by median filtering and finally create mask
         mask = median_filter(mask, size=2)
         mask = mask > 0
-        
+
     if subsamp:
         offset = 0
         dataSub = brain0[offset::subsamp, offset::subsamp, offset::subsamp]
@@ -616,7 +622,7 @@ def handle_lesions(
             p3_large.get_fdata().copy()
             + 2 * p1_large.get_fdata().copy()
             + 3 * p2_large.get_fdata().copy()
-            - 3*brain_large.get_fdata().copy()
+            - 3 * brain_large.get_fdata().copy()
         )
 
         # WMH are where p0_large_diff_value shows a positive difference in WM
@@ -690,6 +696,7 @@ def handle_lesions(
         )
 
     return p1_large, p2_large, p3_large, p0_large_diff, wmh_value, ind_wmh
+
 
 def get_atlas(
     t1, affine, target_header, target_affine, atlas_name, warp_yx=None, device="cpu"
