@@ -1,0 +1,21 @@
+name: Update Dockerfile
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  bump-dockerfile:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
+      - name: Update Dockerfile
+        run: |
+          sed -i -E "s/ARG T1PREP_VERSION=.*/ARG T1PREP_VERSION=${{ env.TAG }}/" Dockerfile
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git commit -am "chore: bump Dockerfile to ${{ env.TAG }}"
+          git push

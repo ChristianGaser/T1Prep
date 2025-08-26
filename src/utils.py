@@ -256,9 +256,7 @@ def find_largest_cluster(binary_volume, min_size=None, max_n_cluster=1):
         valid_labels = valid_labels[component_sizes > 0]
 
     # Sort clusters by size, descending
-    sorted_labels = valid_labels[
-        np.argsort(component_sizes[valid_labels])[::-1]
-    ]
+    sorted_labels = valid_labels[np.argsort(component_sizes[valid_labels])[::-1]]
 
     # Apply max_n_cluster if set
     if max_n_cluster is not None:
@@ -319,9 +317,7 @@ def crop_nifti_image_with_border(img, border=5, threshold=0):
     cropped_affine[:3, 3] += np.dot(affine[:3, :3], min_coords)
 
     # Create a new NIfTI image
-    cropped_img = nib.Nifti1Image(
-        cropped_data, affine=cropped_affine, header=header
-    )
+    cropped_img = nib.Nifti1Image(cropped_data, affine=cropped_affine, header=header)
 
     # Update header dimensions
     cropped_img.header.set_data_shape(cropped_data.shape)
@@ -353,9 +349,9 @@ def resample_and_save_nifti(
     tensor = nifti_to_tensor(nifti_obj)[None, None]
 
     # Step 2: Resample using grid
-    tensor = F.grid_sample(
-        tensor, grid, align_corners=INTERP_KWARGS["align_corners"]
-    )[0, 0]
+    tensor = F.grid_sample(tensor, grid, align_corners=INTERP_KWARGS["align_corners"])[
+        0, 0
+    ]
 
     if clip is not None:
         if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
@@ -421,9 +417,7 @@ def get_resampled_header(header, aff, new_vox_size, ras_aff, reorder_method=1):
     aff2 = aff.copy()
     for c in range(3):
         aff2[:-1, c] = aff2[:-1, c] / factor[c]
-    aff2[:-1, -1] = aff2[:-1, -1] - np.matmul(
-        aff2[:-1, :-1], 0.5 * (factor - 1)
-    )
+    aff2[:-1, -1] = aff2[:-1, -1] - np.matmul(aff2[:-1, :-1], 0.5 * (factor - 1))
 
     # Update header transformation fields
     header2["srow_x"] = aff2[0, :]
@@ -472,16 +466,12 @@ def align_brain(data, aff, header, aff_ref, do_flip=1):
             # Find the corresponding axis in the input affine matrix
             matching_axis_idx = np.where(ras_aff == axis_ref)[0][0]
             reordered_aff[:dim, i] = (
-                dirs_ref[i]
-                * dirs_aff[matching_axis_idx]
-                * aff[:dim, matching_axis_idx]
+                dirs_ref[i] * dirs_aff[matching_axis_idx] * aff[:dim, matching_axis_idx]
             )
 
     else:
         for i, axis in enumerate(ras_ref):
-            reordered_aff[:dim, i] = aff[
-                :dim, np.where(ras_aff == axis)[0][0]
-            ]
+            reordered_aff[:dim, i] = aff[:dim, np.where(ras_aff == axis)[0][0]]
 
     # Copy the translation vector
     reordered_aff[:dim, 3] = aff[:dim, 3]
