@@ -6,9 +6,7 @@ FROM python:3.12-slim
 #         'git' clones the repo at the ref you specify (branch/tag/commit).
 ARG T1PREP_SOURCE=release
 ARG T1PREP_VERSION=v0.2.0-beta
-ARG T1PREP_ZIP=T1Prep_0.2.0.zip
 ARG T1PREP_REF=main              # used only when T1PREP_SOURCE=git
-ARG T1PREP_SHA256=""             # optional integrity check for the ZIP case
 
 LABEL org.opencontainers.image.authors="Christian Gaser <christian.gaser@uni-jena.de>"
 LABEL org.opencontainers.image.source="https://github.com/ChristianGaser/T1Prep"
@@ -42,15 +40,13 @@ RUN set -eux; \
         git clone --depth=1 --branch "${T1PREP_REF}" https://github.com/ChristianGaser/T1Prep.git /opt/T1Prep; \
         rm -rf /opt/T1Prep/.git; \
     else \
-        echo "Downloading release ${T1PREP_VERSION} (${T1PREP_ZIP})..."; \
+        echo "Downloading release ${T1PREP_VERSION}..."; \
         wget -q --progress=dot:giga \
-          "https://github.com/ChristianGaser/T1Prep/releases/download/${T1PREP_VERSION}/${T1PREP_ZIP}" \
-          -O "/opt/${T1PREP_ZIP}"; \
-        if [ -n "${T1PREP_SHA256}" ]; then \
-          echo "${T1PREP_SHA256}  ${T1PREP_ZIP}" | sha256sum -c -; \
-        fi; \
-        unzip -q "/opt/${T1PREP_ZIP}" -d /opt; \
-        rm -f "/opt/${T1PREP_ZIP}"; \
+          "https://github.com/ChristianGaser/T1Prep/archive/refs/tags/${T1PREP_VERSION}.zip" \
+          -O /opt/source.zip; \
+        unzip -q /opt/source.zip -d /opt; \
+        mv /opt/T1Prep-* /opt/T1Prep; \
+        rm /opt/source.zip; \
     fi; \
     /opt/T1Prep/scripts/T1Prep --install
 
