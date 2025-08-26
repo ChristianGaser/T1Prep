@@ -187,12 +187,13 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
 
     # 4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by
     # filling) and are estimated as WM. Move vessels in WM into CSF.
+    
     lbl = np.argmax(np.stack([csf, gm, wm], axis=0), axis=0)
     csf_label = lbl == 0
     gm_label = lbl == 1
     wm_label = lbl == 2
-    csf_filled = binary_closing(csf_label, generate_binary_structure(3, 3), 2)
-    gm_filled = binary_closing(gm_label, generate_binary_structure(3, 3), 2)
+    csf_filled = binary_closing(csf_label, generate_binary_structure(3, 3), 1)
+    gm_filled = binary_closing(gm_label, generate_binary_structure(3, 3), 1)
     vessels = wm_label & binary_dilation(
         gm_filled & csf_filled, generate_binary_structure(3, 3), 1
     )
