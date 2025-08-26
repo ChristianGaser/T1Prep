@@ -185,19 +185,22 @@ multi_job_bar() {
       
           # Format as HH:MM:SS
           ETA=$(printf "%02d:%02d:%02d" $((remaining/3600)) $(( (remaining/60)%60 )) $((remaining%60)))
+          ETA_str="ETA"
         else
           ETA=""
+          ETA_str=""
         fi
       else
         percent=0
         filled=0
         ETA=""
+        ETA_str=""
       fi
       
       unfilled=$((width - filled))
       bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
       bar+=$(printf "%${unfilled}s")
-      printf "[${DEFAULT_COLOR}${bar}${NC}] %3d%% %s ETA %s\n" "$percent" "$job_name" "$ETA"      
+      printf "[${DEFAULT_COLOR}${bar}${NC}] %3d%% %s %s %s\n" "$percent" "$job_name" "$ETA_str" "$ETA"      
     fi
 
     $all_done && break
