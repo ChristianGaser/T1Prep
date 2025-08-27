@@ -19,5 +19,6 @@ jobs:
           sed -i -E "s/version=.*/version=${{ env.TAG }}/" scripts/T1Prep
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+          git add Dockerfile
           git commit -am "chore: bump Dockerfile to ${{ env.TAG }}"
-          git push
+          git push origin HEAD:${GITHUB_REF#refs/heads/}
