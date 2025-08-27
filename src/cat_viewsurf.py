@@ -788,7 +788,7 @@ class Viewer(QtWidgets.QMainWindow):
         act = QAction("Show Controls", self)
         act.setCheckable(True)
         act.setChecked(self.opts.panel)
-        act.setShortcut("Ctrl+Shift+C")   # change if you prefer
+        act.setShortcut("Ctrl+D")   # change if you prefer
         self.addAction(act)               # make shortcut active globally
         act.triggered.connect(self._toggle_controls)
         menu.addAction(act)

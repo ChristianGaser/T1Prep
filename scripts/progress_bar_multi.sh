@@ -200,7 +200,7 @@ multi_job_bar() {
       unfilled=$((width - filled))
       bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
       bar+=$(printf "%${unfilled}s")
-      printf "[${DEFAULT_COLOR}${bar}${NC}] %3d%% %s %s %s\n" "$percent" "$job_name" "$ETA_str" "$ETA"      
+      printf "[${DEFAULT_COLOR}${bar}${NC}] %4d%% %s %s %s\n" "$percent" "$job_name" "$ETA_str" "$ETA"      
     fi
 
     $all_done && break
