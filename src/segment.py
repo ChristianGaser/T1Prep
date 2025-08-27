@@ -858,8 +858,8 @@ def run_segment():
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
 
     # Ensure that minimum of brain is not negative (which can happen after sinc-interpolation)
-    brain_value = brain_large.get_fdata()
-    mask_value = mask_large.get_fdata() > 0.5
+    brain_value = brain_large.get_fdata().copy()
+    mask_value = brain_large.get_fdata().copy() > 0.0
     mask_value = binary_closing(mask_value, generate_binary_structure(3, 3), 7)
     min_brain = np.min(brain_value)
     if min_brain < 0:
@@ -879,6 +879,7 @@ def run_segment():
     p0_value = p0_large.get_fdata()
     if np.min(p0_value) < 0:
         p0_value[p0_value < 0] = 0
+        #p0_value[~mask_value] = 0
         p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
     # Prepare for resampling

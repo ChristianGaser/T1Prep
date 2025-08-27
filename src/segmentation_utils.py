@@ -187,7 +187,7 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
 
     # 4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by
     # filling) and are estimated as WM. Move vessels in WM into CSF.
-    
+    '''
     lbl = np.argmax(np.stack([csf, gm, wm], axis=0), axis=0)
     csf_label = lbl == 0
     gm_label = lbl == 1
@@ -199,7 +199,8 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
     )
     csf[vessels] += wm[vessels]
     wm[vessels] = 0
-
+    '''
+    
     # 5) Build parenchyma support via grayscale opening and largest component, keep cerebellum.
     gm_wm = grey_opening(gm + wm, size=[3, 3, 3])
     gm_wm = find_largest_cluster(gm_wm > 0.5)
@@ -282,6 +283,8 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
         # Remove thin structures by median filtering and finally create mask
         mask = median_filter(mask, size=2)
         mask = mask > 0
+
+        mask = find_largest_cluster(mask) # excluding 4.27951/4.90316
 
     if subsamp:
         offset = 0
