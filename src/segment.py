@@ -902,38 +902,32 @@ def run_segment():
         align_corners=INTERP_KWARGS["align_corners"],
     )
 
-    # Conditional processing based on AMAP or lesion flag
-    if use_amap or save_lesions:
+    # Correct bias using label from deepmriprep
+    brain_large = correct_bias_field(brain_large, p0_large)
 
-        # Correct bias using label from deepmriprep
-        brain_large = correct_bias_field(brain_large, p0_large)
+    if verbose:
+        count = progress_bar(count, end_count, "Amap segmentation        ")
 
-        # AMAP segmentation pipeline
+    p0_large_orig = p0_large
+
+    if use_amap:
         amapdir = args.amapdir
-
-        if verbose:
-            count = progress_bar(count, end_count, "Amap segmentation        ")
-
-        p0_large_orig = p0_large
-
-        if use_amap:
-            brain_large, p0_large = run_amap_segmentation(
-                amapdir,
-                p0_large,
-                brain_large,
-                mri_dir,
-                out_name,
-                ext,
-                verbose,
-                debug,
-            )
-        else:
-            brain_large = apply_LAS(brain_large, p0_large)
-
+        brain_large, p0_large = run_amap_segmentation(
+            amapdir,
+            p0_large,
+            brain_large,
+            mri_dir,
+            out_name,
+            ext,
+            verbose,
+            debug,
+        )
     else:
-        if debug:
-            nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
-            nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
+        brain_large = apply_LAS(brain_large, p0_large)
+
+    if debug:
+        nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
+        nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
 
     if use_amap:
         # Load Amap label
