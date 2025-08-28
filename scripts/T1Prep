@@ -1048,7 +1048,8 @@ ${BOLD}${GREEN}Expert Options:${NC}
   --vessel <NUMBER>           
       Set the initial white matter threshold for vessel removal:  
         0.2 = mild cleanup  
-        0.5 = strong cleanup  
+        0.4 = medium cleanup  
+        0.6 = strong cleanup  
         0   = disable vessel removal  
       (default: $vessel)
 
