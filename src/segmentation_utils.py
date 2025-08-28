@@ -195,7 +195,7 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
     csf_filled = binary_closing(csf_label, generate_binary_structure(3, 3), 2)
     gm_filled = binary_closing(gm_label, generate_binary_structure(3, 3), 2)
     vessels = wm_label & binary_dilation(
-        gm_filled & csf_filled, generate_binary_structure(3, 3), 2
+        gm_filled & csf_filled, generate_binary_structure(3, 3), 1
     )
     csf[vessels] += wm[vessels]
     wm[vessels] = 0    
