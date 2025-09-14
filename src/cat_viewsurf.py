@@ -431,6 +431,20 @@ class ControlPanel(QtWidgets.QWidget):
         self.layout.addStretch(1)
     def _wrap(self, hbox: QtWidgets.QHBoxLayout) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget(); w.setLayout(hbox); return w
+    
+    def set_overlay_controls_enabled(self, enabled: bool):
+        """Enable or disable overlay-related controls based on whether an overlay is loaded."""
+        # Range controls
+        self.range_min.setEnabled(enabled)
+        self.range_max.setEnabled(enabled)
+        # Clip controls
+        self.clip_min.setEnabled(enabled)
+        self.clip_max.setEnabled(enabled)
+        # Colorbar and stats controls
+        self.cb_colorbar.setEnabled(enabled)
+        self.cb_stats.setEnabled(enabled)
+        # Inverse control
+        self.cb_inverse.setEnabled(enabled)
 
 # ---- Viewer ----
 class Viewer(QtWidgets.QMainWindow):
@@ -723,6 +737,10 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.cb_colorbar.setChecked(self.opts.colorbar)
         self.ctrl.cb_stats.setChecked(self.opts.stats)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
+        
+        # Enable/disable overlay controls based on whether overlay is loaded
+        has_overlay = self.opts.overlay is not None and self.scal_l is not None
+        self.ctrl.set_overlay_controls_enabled(has_overlay)
     
         # Signals
         self.ctrl.apply_btn.clicked.connect(self._apply_controls)
@@ -783,6 +801,21 @@ class Viewer(QtWidgets.QMainWindow):
         new_overlay = self.ctrl.overlay_path.text().strip()
         if new_overlay and new_overlay != (self.opts.overlay or ""):
             self._load_overlay(new_overlay)
+        elif not new_overlay and self.opts.overlay:
+            # Overlay was cleared, remove overlay and disable controls
+            self.opts.overlay = None
+            self.scal_l = None
+            self.scal_r = None
+            # Remove overlay actors
+            for actor in (self.actor_ov_l, self.actor_ov_r):
+                if actor:
+                    self.ren.RemoveActor(actor)
+            self.actor_ov_l = None
+            self.actor_ov_r = None
+            # Disable overlay controls
+            self.ctrl.set_overlay_controls_enabled(False)
+            # Remove colorbar if it exists
+            self._remove_colorbar()
         # Toggles
         self.opts.colorbar = self.ctrl.cb_colorbar.isChecked()
         self.opts.stats = self.ctrl.cb_stats.isChecked()
@@ -849,6 +882,13 @@ class Viewer(QtWidgets.QMainWindow):
                 left_only = vtkDoubleArray(); left_only.SetNumberOfTuples(nL)
                 for i in range(nL): left_only.SetValue(i, arr.GetValue(i))
                 scal_l = left_only
+        except Exception as e:
+            # If loading fails, clear the overlay and disable controls
+            print(f"Failed to load overlay: {e}")
+            self.opts.overlay = None
+            if hasattr(self, 'ctrl'):
+                self.ctrl.set_overlay_controls_enabled(False)
+            return
         finally:
             os.chdir(cwd)
         # inverse
@@ -876,6 +916,11 @@ class Viewer(QtWidgets.QMainWindow):
                 actor.GetMapper().SetLookupTable(self.lut_overlay_l)
                 if self.overlay_range[1] > self.overlay_range[0]: actor.GetMapper().SetScalarRange(self.overlay_range)
         if self.opts.colorbar: self._ensure_colorbar()
+        
+        # Enable overlay controls since we now have an overlay loaded
+        if hasattr(self, 'ctrl'):
+            self.ctrl.set_overlay_controls_enabled(True)
+        
         self.rw.Render()
 
     # -- Save PNG --
