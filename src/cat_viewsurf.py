@@ -234,7 +234,11 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
             parts = remaining.split('.')
             if len(parts) >= 2:
                 # Skip the first part (thickness, pbt, etc.) and use the rest as base name
-                base_name = '.'.join(parts[1:])
+                # Remove file extension if present
+                base_parts = parts[1:]
+                if base_parts and base_parts[-1] in ['txt', 'gii']:
+                    base_parts = base_parts[:-1]
+                base_name = '.'.join(base_parts) if base_parts else parts[1]
             else:
                 base_name = remaining
         elif name.startswith('rh.'):
@@ -244,7 +248,11 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
             parts = remaining.split('.')
             if len(parts) >= 2:
                 # Skip the first part (thickness, pbt, etc.) and use the rest as base name
-                base_name = '.'.join(parts[1:])
+                # Remove file extension if present
+                base_parts = parts[1:]
+                if base_parts and base_parts[-1] in ['txt', 'gii']:
+                    base_parts = base_parts[:-1]
+                base_name = '.'.join(base_parts) if base_parts else parts[1]
             else:
                 base_name = remaining
         else:
@@ -272,11 +280,23 @@ def is_overlay_file(filename: str) -> bool:
     Returns:
         bool: True if it appears to be an overlay file
     """
-    filename_lower = filename.lower()
+    # Extract just the filename from the path
+    filename_only = Path(filename).name
+    filename_lower = filename_only.lower()
+    
+    # Check for FreeSurfer shape pattern: [l|r]h.shape_type.name (with or without extension)
+    import re
+    parts = filename_lower.split('.')
+    
+    # Check if it matches the pattern [l|r]h.shape_type.name
+    if len(parts) >= 3 and parts[0] in ['lh', 'rh']:
+        # Check if it's not a mesh file (central, pial, white, etc.)
+        mesh_types = ['central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc']
+        if parts[1] not in mesh_types:
+            return True
     
     # Overlay file patterns
     overlay_patterns = [
-        '.thickness.', '.pbt.',  # FreeSurfer shape files
         '_desc-thickness.', '_desc-pbt.',  # BIDS shape files
         '.annot',  # Annotation files
         '_label-',  # BIDS label files
