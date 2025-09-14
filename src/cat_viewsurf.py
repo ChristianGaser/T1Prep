@@ -32,8 +32,7 @@ except Exception:  # pragma: no cover
     from PyQt5.QtCore import Qt
 
 try:
-    from PyQt6.QtGui import QAction, QKeySequence
-    from PyQt6.QtWidgets import QShortcut
+    from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 except Exception:
     from PyQt5.QtWidgets import QAction, QShortcut
     from PyQt5.QtGui import QKeySequence
@@ -439,43 +438,8 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
     def OnKeyPress(self):
-        rwi = self.GetInteractor()
-        sym = rwi.GetKeySym()  # e.g., 'Left', 'Right', 'u', 'U', 'w', '3'
-        camera: vtkCamera = self._renderer.GetActiveCamera()
-        shift = rwi.GetShiftKey(); ctrl = rwi.GetControlKey()
-        def do_render(): self._renderer.ResetCameraClippingRange(); rwi.Render()
-        # Built-in keys should still work
-        if sym in ('q','Q','e','E','p','P','s','S','t','T','j','J','w','W','m','M','f','F','3'):
-            super().OnKeyPress(); return
-        # Camera controls
-        if sym in ('u','U'):
-            camera.Elevation(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
-        if sym in ('d','D'):
-            camera.Elevation(-180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); do_render(); return
-        if sym in ('l','L'):
-            camera.Azimuth(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
-        if sym in ('r','R'):
-            camera.Azimuth(180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); do_render(); return
-        if sym in ('o','O'):
-            self._renderer.ResetCamera(); camera.OrthogonalizeViewUp(); camera.Zoom(2.0); do_render(); return
-        if sym in ('b','B'):
-            actors = self._renderer.GetActors(); actors.InitTraversal(); n = actors.GetNumberOfItems(); actors.InitTraversal()
-            for _ in range(n):
-                a = actors.GetNextActor();
-                if a is not None: a.RotateX(180)
-            camera.OrthogonalizeViewUp(); do_render(); return
-        if sym in ('g','G'):
-            win = rwi.GetRenderWindow(); name = Path(win.GetWindowName() or 'screenshot').with_suffix('.png')
-            w2i = vtkWindowToImageFilter(); w2i.SetInput(win); w2i.Update()
-            png = vtkPNGWriter(); png.SetFileName(str(name)); png.SetInputConnection(w2i.GetOutputPort()); png.Write()
-            print(f"Saved {name}"); return
-        if sym in ('h','H'):
-            print("KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation"); return
-        # Arrow key navigation for overlays
-        if sym == 'Left' and self._viewer:
-            self._viewer._prev_overlay(); return
-        if sym == 'Right' and self._viewer:
-            self._viewer._next_overlay(); return
+        # Defer to default behavior; our app-specific keys are handled by interactor observers
+        super().OnKeyPress()
         # Fallback
         super().OnKeyPress()
 
@@ -750,6 +714,14 @@ class Viewer(QtWidgets.QMainWindow):
         # interactor style
         self.iren: vtkRenderWindowInteractor = self.rw.GetInteractor()
         style = CustomInteractorStyle(); style.SetRenderer(self.ren); style.SetViewer(self); self.iren.SetInteractorStyle(style)
+        # Also observe key events explicitly for overlay navigation only (avoid duplicates)
+        def _on_keypress(obj, ev):
+            try:
+                sym = self.iren.GetKeySym()
+            except Exception:
+                sym = None
+            self._handle_key(sym)
+        self.iren.AddObserver("KeyPressEvent", _on_keypress)
 
         # Load surfaces (LH + optional RH)
         # Check if the input is an overlay file or mesh file
@@ -1060,6 +1032,44 @@ class Viewer(QtWidgets.QMainWindow):
         self._dock_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
         self._dock_shortcut.activated.connect(lambda d=dock: self._toggle_controls(not d.isVisible()))
 
+    def _handle_key(self, sym: Optional[str]):
+        if not sym:
+            return
+        # Normalize special names
+        # sym can be like 'Left', 'Right', or single letters
+        camera: vtkCamera = self.ren.GetActiveCamera()
+        shift = self.iren.GetShiftKey(); ctrl = self.iren.GetControlKey()
+        def do_render(): self.ren.ResetCameraClippingRange(); self.rw.Render()
+        s = str(sym)
+        # Overlay navigation
+        if s == 'Left':
+            self._prev_overlay(); return
+        if s == 'Right':
+            self._next_overlay(); return
+        # Camera/control keys (accept both upper/lower)
+        if s in ('u','U'):
+            camera.Elevation(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
+        if s in ('d','D'):
+            camera.Elevation(-180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); do_render(); return
+        if s in ('l','L'):
+            camera.Azimuth(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
+        if s in ('r','R'):
+            camera.Azimuth(180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); do_render(); return
+        if s in ('o','O'):
+            self.ren.ResetCamera(); camera.OrthogonalizeViewUp(); camera.Zoom(2.0); do_render(); return
+        if s in ('b','B'):
+            actors = self.ren.GetActors(); actors.InitTraversal(); n = actors.GetNumberOfItems(); actors.InitTraversal()
+            for _ in range(n):
+                a = actors.GetNextActor();
+                if a is not None: a.RotateX(180)
+            camera.OrthogonalizeViewUp(); do_render(); return
+        if s in ('g','G'):
+            w2i = vtkWindowToImageFilter(); w2i.SetInput(self.rw); w2i.Update()
+            name = Path(self.rw.GetWindowName() or 'screenshot').with_suffix('.png')
+            png = vtkPNGWriter(); png.SetFileName(str(name)); png.SetInputConnection(w2i.GetOutputPort()); png.Write(); print(f"Saved {name}"); return
+        if s in ('h','H'):
+            print("KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation"); return
+
     def _reset_camera(self):
         self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0); self.rw.Render()
 
@@ -1072,6 +1082,7 @@ class Viewer(QtWidgets.QMainWindow):
         """Switch to next overlay in the list."""
         if len(self.overlay_list) > 1:
             self.current_overlay_index = (self.current_overlay_index + 1) % len(self.overlay_list)
+            self._maybe_switch_mesh_for_overlay(self.overlay_list[self.current_overlay_index])
             self._load_overlay(self.overlay_list[self.current_overlay_index])
             self._update_overlay_info()
             # Update control panel with current overlay range
@@ -1083,6 +1094,7 @@ class Viewer(QtWidgets.QMainWindow):
         """Switch to previous overlay in the list."""
         if len(self.overlay_list) > 1:
             self.current_overlay_index = (self.current_overlay_index - 1) % len(self.overlay_list)
+            self._maybe_switch_mesh_for_overlay(self.overlay_list[self.current_overlay_index])
             self._load_overlay(self.overlay_list[self.current_overlay_index])
             self._update_overlay_info()
             # Update control panel with current overlay range
@@ -1098,6 +1110,63 @@ class Viewer(QtWidgets.QMainWindow):
             # Update window title to show current overlay
             overlay_name = Path(current_overlay).name
             self.setWindowTitle(f"{overlay_name} ({self.current_overlay_index + 1}/{len(self.overlay_list)})")
+
+    def _maybe_switch_mesh_for_overlay(self, overlay_path: str):
+        """If the overlay implies a different mesh, switch meshes and rebuild mappers/actors.
+
+        This allows cycling across overlays from different subjects/runs where the mesh files differ.
+        """
+        try:
+            new_mesh = convert_filename_to_mesh(overlay_path)
+        except Exception:
+            return
+        if not new_mesh:
+            return
+        new_mesh_path = Path(new_mesh)
+        # If the target mesh is the same file, do nothing
+        if new_mesh_path.exists() and str(new_mesh_path) == str(Path(self.opts.mesh_left)):
+            return
+        if not new_mesh_path.exists():
+            return
+        # Load new left mesh
+        self.poly_l = read_gifti_mesh(str(new_mesh_path))
+        # Attempt right mesh detection similar to __init__
+        self.poly_r = None
+        rh_candidate: Optional[Path] = None
+        name = new_mesh_path.name
+        if 'lh.' in name:
+            rh_candidate = new_mesh_path.with_name(name.replace('lh.', 'rh.'))
+        elif 'left' in name:
+            rh_candidate = new_mesh_path.with_name(name.replace('left', 'right'))
+        elif '_hemi-L_' in name:
+            rh_candidate = new_mesh_path.with_name(name.replace('_hemi-L_', '_hemi-R_'))
+        elif '_hemi-R_' in name:
+            rh_candidate = new_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
+        if rh_candidate and rh_candidate.exists():
+            self.poly_r = read_gifti_mesh(str(rh_candidate))
+        # Recompute curvature and background on the new meshes
+        self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
+        self.curv_l_out = self.curv_l.GetOutput()
+        if self.bkg_scalar_l is not None:
+            self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
+        self.curv_r = None; self.curv_r_out = None
+        if self.poly_r is not None:
+            self.curv_r = vtkCurvatures(); self.curv_r.SetInputData(self.poly_r); self.curv_r.SetCurvatureTypeToMean(); self.curv_r.Update()
+            self.curv_r_out = self.curv_r.GetOutput()
+            if self.bkg_scalar_r is not None:
+                self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
+        # Update mappers for background actors
+        if self.actor_bkg_l is not None:
+            self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
+        if self.actor_bkg_r is not None and self.curv_r_out is not None:
+            self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
+        # Update mappers for overlay actors if present
+        if self.actor_ov_l is not None:
+            self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
+        if self.actor_ov_r is not None and self.poly_r is not None:
+            self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
+        # Keep the stored mesh_left updated for subsequent comparisons
+        self.opts.mesh_left = str(new_mesh_path)
 
     def _apply_controls(self):
         # Overlay range
