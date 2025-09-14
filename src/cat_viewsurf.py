@@ -498,8 +498,21 @@ class Options:
     fix_scaling: bool = False  # Fix scaling across overlays
 
 def parse_args(argv: List[str]) -> Options:
-    p = argparse.ArgumentParser(prog='cat_viewsurf.py', description='Render LH/RH surfaces with optional overlays (CAT_ViewSurf.py)')
-    p.add_argument('mesh_left', help='Left hemisphere GIFTI mesh (.gii) or overlay file (.gii, .txt). Right is auto-detected via lh.→rh. or left→right.')
+    p = argparse.ArgumentParser(
+        prog='cat_viewsurf.py',
+        description='Render LH/RH surfaces with optional overlays (CAT_ViewSurf.py).\n\n'
+                    'Usage examples:\n'
+                    '  • Single mesh: src/cat_viewsurf.py lh.central.name.gii\n'
+                    '  • Single overlay: src/cat_viewsurf.py lh.thickness.name1\n'
+                    '  • Multiple overlays (navigate with ←/→): src/cat_viewsurf.py lh.thickness.name1 lh.thickness.name2 ...',
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    # Accept one or more positional inputs. If more than one is given, treat all as overlays
+    # and derive the mesh from the first overlay via naming rules.
+    p.add_argument(
+        'inputs', nargs='+',
+        help='Mesh or overlay(s). If multiple values are provided, they are treated as overlays.'
+    )
     p.add_argument('-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
     p.add_argument('-overlays', dest='overlays', nargs='+', help='Multiple overlay files for navigation')
     p.add_argument('-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
@@ -540,10 +553,43 @@ def parse_args(argv: List[str]) -> Options:
     if d:
         d = int(math.pow(2, d + 2))  # 32,16,8,4
 
+    # Derive mesh/overlay list from positional inputs
+    pos_inputs: List[str] = list(a.inputs)
+    overlays_from_pos: List[str] = []
+    if len(pos_inputs) == 1:
+        # Single input can be either a mesh or an overlay. Detect overlay and derive mesh.
+        single = pos_inputs[0]
+        if is_overlay_file(single):
+            try:
+                mesh_left_resolved = convert_filename_to_mesh(single)
+            except Exception:
+                mesh_left_resolved = single
+            # If it's an overlay, record it unless other overlay flags are used
+            overlay_single_from_pos = single
+        else:
+            mesh_left_resolved = single
+            overlay_single_from_pos = None
+    else:
+        overlays_from_pos = pos_inputs
+        try:
+            mesh_left_resolved = convert_filename_to_mesh(overlays_from_pos[0])
+        except Exception:
+            # Fall back to first argument as-is if conversion fails
+            mesh_left_resolved = overlays_from_pos[0]
+
+    # Priority for overlays: positional list > -overlays > -overlay
+    overlay_list_final: List[str] = overlays_from_pos or (a.overlays or [])
+    # Prefer an explicit list; else use single overlay from positional if detected; else -overlay flag
+    overlay_single_final: Optional[str] = None
+    if not overlay_list_final:
+        overlay_single_final = (locals().get('overlay_single_from_pos')
+                                if 'overlay_single_from_pos' in locals() and locals()['overlay_single_from_pos']
+                                else a.overlay)
+
     return Options(
-        mesh_left=a.mesh_left,
-        overlay=a.overlay,
-        overlays=a.overlays or [],
+        mesh_left=mesh_left_resolved,
+        overlay=overlay_single_final,
+        overlays=overlay_list_final,
         overlay_bkg=a.overlay_bkg,
         range=tuple(a.range),
         range_bkg=tuple(a.range_bkg),
