@@ -462,7 +462,8 @@ class Options:
     output: Optional[str] = None
     fontsize: int = 0
     opacity: float = 0.8
-    stats: bool = False
+    stats: bool = False  # legacy flag; if true and no title_mode set, implies 'stats'
+    title_mode: str = 'shape'  # 'shape' | 'stats' | 'none'
     inverse: bool = False
     colorbar: bool = False
     discrete: int = 0
@@ -500,7 +501,9 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-output','-save', dest='output')
     p.add_argument('-fontsize','-fs', dest='fontsize', type=int, default=0)
     p.add_argument('-opacity','-op', dest='opacity', type=float, default=0.8)
-    p.add_argument('-stats', action='store_true')
+    p.add_argument('-stats', action='store_true', help='Deprecated: same as --title-mode stats when colorbar is shown')
+    p.add_argument('--title-mode', dest='title_mode', choices=['shape','stats','none'], default='shape',
+                   help='Colorbar title: shape (filename), stats, or none')
     p.add_argument('-inverse', action='store_true')
     p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true')
     p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=0)
@@ -565,6 +568,10 @@ def parse_args(argv: List[str]) -> Options:
                                 if 'overlay_single_from_pos' in locals() and locals()['overlay_single_from_pos']
                                 else a.overlay)
 
+    # Map legacy -stats flag into title_mode if specified
+    title_mode_arg = getattr(a, 'title_mode', 'shape')
+    if getattr(a, 'stats', False):
+        title_mode_arg = 'stats'
     return Options(
         mesh_left=mesh_left_resolved,
         overlay=overlay_single_final,
@@ -578,7 +585,8 @@ def parse_args(argv: List[str]) -> Options:
         output=a.output,
         fontsize=a.fontsize,
         opacity=a.opacity,
-        stats=bool(a.stats),
+    stats=bool(a.stats),
+    title_mode=title_mode_arg,
         inverse=bool(a.inverse),
         colorbar=bool(a.colorbar),
         discrete=d,
@@ -622,11 +630,17 @@ class ControlPanel(QtWidgets.QWidget):
         form.addRow("Overlay", self._wrap(ov_box))
         # Toggles
         self.cb_colorbar = QtWidgets.QCheckBox("Show colorbar")
-        self.cb_stats = QtWidgets.QCheckBox("Show stats on colorbar")
+        # Title mode selector (shape | stats | none)
+        self.title_mode = QtWidgets.QComboBox(); self.title_mode.addItems(["shape","stats","none"])
         self.cb_inverse = QtWidgets.QCheckBox("Inverse (flip sign)")
         self.cb_fix_scaling = QtWidgets.QCheckBox("Fix scaling")
-        form.addRow(self.cb_colorbar)
-        form.addRow(self.cb_stats)
+        # Put Show colorbar and Colorbar title on one row (aligned with other checkboxes)
+        row = QtWidgets.QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(8)
+        row.addWidget(self.cb_colorbar)
+        row.addStretch(1)
+        row.addWidget(QtWidgets.QLabel("Colorbar title"))
+        row.addWidget(self.title_mode)
+        form.addRow(self._wrap(row))
         form.addRow(self.cb_inverse)
         form.addRow(self.cb_fix_scaling)
         self.layout.addLayout(form)
@@ -648,9 +662,15 @@ class ControlPanel(QtWidgets.QWidget):
         # Clip controls
         self.clip_min.setEnabled(enabled)
         self.clip_max.setEnabled(enabled)
-        # Colorbar and stats controls
+        # Colorbar and title controls
         self.cb_colorbar.setEnabled(enabled)
-        self.cb_stats.setEnabled(enabled)
+        self.title_mode.setEnabled(enabled and self.cb_colorbar.isChecked())
+        # Keep title selector in sync when user toggles colorbar
+        try:
+            self.cb_colorbar.toggled.disconnect()
+        except Exception:
+            pass
+        self.cb_colorbar.toggled.connect(lambda v: self.title_mode.setEnabled(bool(v) and self.cb_colorbar.isEnabled()))
         # Inverse control
         self.cb_inverse.setEnabled(enabled)
 
@@ -1004,7 +1024,8 @@ class Viewer(QtWidgets.QMainWindow):
         else:
             self.ctrl.overlay_path.setText(self.opts.overlay or "")
         self.ctrl.cb_colorbar.setChecked(self.opts.colorbar)
-        self.ctrl.cb_stats.setChecked(self.opts.stats)
+        # Initialize title mode combo
+        self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
         self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
         
@@ -1237,7 +1258,8 @@ class Viewer(QtWidgets.QMainWindow):
             self._remove_colorbar()
         # Toggles
         self.opts.colorbar = self.ctrl.cb_colorbar.isChecked()
-        self.opts.stats = self.ctrl.cb_stats.isChecked()
+        # Persist title mode
+        self.opts.title_mode = self.ctrl.title_mode.currentText()
         inv = self.ctrl.cb_inverse.isChecked()
         if inv != self.opts.inverse:
             self.opts.inverse = inv; self._apply_inverse()
@@ -1247,8 +1269,10 @@ class Viewer(QtWidgets.QMainWindow):
             # Store the current range as fixed
             self.fixed_overlay_range = list(self.overlay_range)
         # Colorbar
-        if self.opts.colorbar: self._ensure_colorbar()
-        else: self._remove_colorbar()
+        if self.opts.colorbar:
+            self._ensure_colorbar()
+        else:
+            self._remove_colorbar()
         self.rw.Render()
 
     def _apply_inverse(self):
@@ -1262,26 +1286,85 @@ class Viewer(QtWidgets.QMainWindow):
         for actor in (self.actor_ov_l, self.actor_ov_r):
             if actor and self.overlay_range[1] > self.overlay_range[0]:
                 actor.GetMapper().SetScalarRange(self.overlay_range)
+        # Sync control panel fields to reflect the updated range
+        if hasattr(self, 'ctrl') and self.overlay_range[1] > self.overlay_range[0]:
+            self.ctrl.range_min.setValue(float(self.overlay_range[0]))
+            self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+        # Update colorbar if visible
+        if self.opts.colorbar:
+            self._ensure_colorbar()
 
     def _ensure_colorbar(self):
         if self.scalar_bar is not None:
-            if self.opts.stats and self.scal_l is not None:
-                info = f"Mean={get_mean(self.scal_l):.3f} Median={get_median(self.scal_l):.3f} SD={get_std(self.scal_l):.3f}"
-                self.scalar_bar.SetTitle(info)
-            self.rw.Render(); return
+            # Update existing colorbar's LUT (colormap/opacity) and range
+            lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            if self.overlay_range[1] > self.overlay_range[0]:
+                lut_cb.SetTableRange(self.overlay_range)
+            self.scalar_bar.SetLookupTable(lut_cb)
+
+            # Update title according to title_mode (only if colorbar is enabled)
+            title_mode = self.opts.title_mode
+            if title_mode == 'none':
+                # Reserve title space with a single space to keep layout consistent
+                self.scalar_bar.SetTitle(" ")
+            elif title_mode == 'stats' or (self.opts.stats and self.scal_l is not None):
+                if self.scal_l is not None:
+                    info = f"Mean={get_mean(self.scal_l):.3f} Median={get_median(self.scal_l):.3f} SD={get_std(self.scal_l):.3f}"
+                    self.scalar_bar.SetTitle(info)
+                else:
+                    self.scalar_bar.SetTitle("")
+            else:
+                self.scalar_bar.SetTitle(Path(self.opts.overlay or self.opts.mesh_left).name)
+
+            # Ensure fonts are normalized even when title is empty
+            base_fs = self.opts.fontsize if self.opts.fontsize else 12
+            tp = self.scalar_bar.GetLabelTextProperty(); tp.SetFontSize(base_fs)
+            tp2 = self.scalar_bar.GetTitleTextProperty(); tp2.SetFontSize(base_fs)
+            # Prevent VTK from auto-scaling label text based on available space
+            try:
+                self.scalar_bar.SetAnnotationTextScaling(False)
+            except Exception:
+                pass
+            self.rw.Render()
+            return
+
+        # Create a new scalar bar
         lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        if self.overlay_range[1] > self.overlay_range[0]: lut_cb.SetTableRange(self.overlay_range)
-        sb = vtkScalarBarActor(); sb.SetOrientationToHorizontal(); sb.SetLookupTable(lut_cb)
-        sb.SetWidth(0.3); sb.SetHeight(0.05); sb.SetPosition(0.35, 0.05)
-        if self.opts.fontsize:
-            tp = sb.GetLabelTextProperty(); tp.SetFontSize(self.opts.fontsize)
-            tp2 = sb.GetTitleTextProperty(); tp2.SetFontSize(self.opts.fontsize)
-        if self.opts.stats and self.scal_l is not None:
-            info = f"Mean={get_mean(self.scal_l):.3f} Median={get_median(self.scal_l):.3f} SD={get_std(self.scal_l):.3f}"
-            sb.SetTitle(info)
+        if self.overlay_range[1] > self.overlay_range[0]:
+            lut_cb.SetTableRange(self.overlay_range)
+        sb = vtkScalarBarActor()
+        sb.SetOrientationToHorizontal()
+        sb.SetLookupTable(lut_cb)
+        sb.SetWidth(0.3)
+        sb.SetHeight(0.05)
+        sb.SetPosition(0.35, 0.05)
+
+        base_fs = self.opts.fontsize if self.opts.fontsize else 12
+        tp = sb.GetLabelTextProperty(); tp.SetFontSize(base_fs)
+        tp2 = sb.GetTitleTextProperty(); tp2.SetFontSize(base_fs)
+
+        # Title according to title_mode
+        title_mode = self.opts.title_mode
+        if title_mode == 'none':
+            # Use a single space to maintain consistent layout even without visible title
+            sb.SetTitle(" ")
+        elif title_mode == 'stats' or (self.opts.stats and self.scal_l is not None):
+            if self.scal_l is not None:
+                info = f"Mean={get_mean(self.scal_l):.3f} Median={get_median(self.scal_l):.3f} SD={get_std(self.scal_l):.3f}"
+                sb.SetTitle(info)
+            else:
+                sb.SetTitle("")
         else:
             sb.SetTitle(Path(self.opts.overlay or self.opts.mesh_left).name)
-        self.scalar_bar = sb; self.ren.AddViewProp(sb)
+
+        # Prevent auto-scaling of label text so font size remains consistent
+        try:
+            sb.SetAnnotationTextScaling(False)
+        except Exception:
+            pass
+
+        self.scalar_bar = sb
+        self.ren.AddViewProp(sb)
 
     def _remove_colorbar(self):
         if self.scalar_bar is not None:
