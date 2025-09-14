@@ -452,16 +452,12 @@ class Viewer(QtWidgets.QMainWindow):
         if checked == current:
             return  # nothing to do
     
-        w = getattr(self, '_dock_width', dock.sizeHint().width())
-    
-        self._resize_guard = True  # prevent visibilityChanged handler from resizing again
+        # Simply show/hide the dock without resizing the window
+        # The dock will overlay on the right side of the window
         if checked:
             dock.show()
-            self.resize(self.width() + w, self.height())
         else:
-            self.resize(max(self.minimumWidth(), self.width() - w), self.height())
             dock.hide()
-        self._resize_guard = False
 
 
     def _on_dock_visibility_changed(self, visible: bool):
@@ -470,38 +466,8 @@ class Viewer(QtWidgets.QMainWindow):
             self.act_show_controls.setChecked(visible)
             self.act_show_controls.blockSignals(False)
     
-        if getattr(self, '_resize_guard', False):
-            return  # resizing already performed by _toggle_controls
-    
-        # Only resize here if the user toggled via mouse (dock close/undock)
-        dock = self.dock_controls
-        w = getattr(self, '_dock_width', dock.sizeHint().width() if visible else dock.size().width())
-        if visible:
-            self.resize(self.width() + w, self.height())
-        else:
-            self.resize(max(self.minimumWidth(), self.width() - w), self.height())
+        # No window resizing needed - dock overlays on the right side
 
-    def _freeze_render_width(self):
-        # remember current render (VTK widget) width as the target to preserve
-        self._render_width_target = self.vtk_widget.width()
-    
-    def _restore_render_width(self):
-        # nudge the main window so central render width returns to the target
-        target = getattr(self, "_render_width_target", None)
-        if target is None:
-            return
-        # a couple passes helps on macOS where geometry settles after events
-        for _ in range(2):
-            cw = self.vtk_widget.width()
-            delta = target - cw
-            if delta == 0:
-                break
-            self.resize(self.width() + delta, self.height())
-            QtWidgets.QApplication.processEvents()
-    
-    def _remember_dock_width(self, dock):
-        # record dock width we’ll use when expanding/shrinking the outer window
-        self._dock_width = getattr(self, "_dock_width", dock.sizeHint().width())
 
 class Viewer(QtWidgets.QMainWindow):
     def __init__(self, opts: Options):
@@ -656,8 +622,6 @@ class Viewer(QtWidgets.QMainWindow):
         # Camera
         self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0)
 
-        self._resize_guard = False
-
         # Right-side control panel (dock)
         self._build_control_panel()
 
@@ -698,40 +662,16 @@ class Viewer(QtWidgets.QMainWindow):
         self.addDockWidget(DOCK_RIGHT, dock)
     
         # ---------- local helpers (closures) ----------
-        # keep the current VTK canvas width constant across show/hide
-        target = {"w": self.vtk_widget.width()}
-    
-        def freeze_render_width():
-            target["w"] = self.vtk_widget.width()
-    
-        def restore_render_width():
-            # compensate window size so vtk_widget width returns to target
-            for _ in range(2):  # two passes help on macOS
-                cw = self.vtk_widget.width()
-                delta = target["w"] - cw
-                if delta == 0:
-                    break
-                self.resize(self.width() + delta, self.height())
-                QtWidgets.QApplication.processEvents()
-    
-        if not hasattr(self, "_dock_width"):
-            self._dock_width = dock.sizeHint().width()
-        if not hasattr(self, "_resize_guard"):
-            self._resize_guard = False
-    
         # programmatic toggle (menu/shortcut)
         def _toggle_controls_local(checked: bool):
             if checked == dock.isVisible():
                 return
-            freeze_render_width()
-            self._resize_guard = True
+            # Simply show/hide the dock without resizing the window
+            # The dock will overlay on the right side of the window
             if checked:
                 dock.show()
-                self._dock_width = dock.sizeHint().width()
             else:
                 dock.hide()
-            self._resize_guard = False
-            restore_render_width()
     
         self._toggle_controls = _toggle_controls_local
     
@@ -743,14 +683,7 @@ class Viewer(QtWidgets.QMainWindow):
                 self.act_show_controls.setChecked(visible)
                 self.act_show_controls.blockSignals(False)
     
-            if getattr(self, "_resize_guard", False):
-                return  # already handled by _toggle_controls_local
-    
-            # preserve render width on user action too
-            freeze_render_width()
-            if visible:
-                self._dock_width = dock.sizeHint().width()
-            restore_render_width()
+            # No window resizing needed - dock overlays on the right side
     
         dock.visibilityChanged.connect(_on_vis_changed_local)
         # ----------------------------------------------
@@ -775,10 +708,9 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.reset_btn.clicked.connect(self._reset_camera)
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
     
-        # Start state (preserve render width)
+        # Start state
         if self.opts.panel:
             dock.show()
-            self._dock_width = dock.sizeHint().width()
         else:
             dock.hide()
     
