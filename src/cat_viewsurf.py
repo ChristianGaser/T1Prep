@@ -468,7 +468,7 @@ class Options:
     discrete: int = 0
     log: bool = False
     white: bool = False
-    panel: bool = True  # show right-side control dock at startup
+    panel: bool = False  # start with control dock hidden by default
     colormap: int = JET
     debug: bool = False
     fix_scaling: bool = False  # Fix scaling across overlays
@@ -506,7 +506,10 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=0)
     p.add_argument('-log', action='store_true')
     p.add_argument('-white', action='store_true')
-    p.add_argument('--no-panel', dest='panel', action='store_false', help='Start with the control panel hidden')
+    # Control panel visibility (default: hidden)
+    p.add_argument('--panel', dest='panel', action='store_true', help='Start with the control panel shown')
+    p.add_argument('--no-panel', dest='panel', action='store_false', help='Start with the control panel hidden (default)')
+    p.set_defaults(panel=False)
     p.add_argument('-fire', action='store_true')
     p.add_argument('-bipolar', action='store_true')
     p.add_argument('-c1', action='store_true')
@@ -900,6 +903,8 @@ class Viewer(QtWidgets.QMainWindow):
                                              else Qt.CustomContextMenu)
         self.vtk_widget.customContextMenuRequested.connect(self._show_view_context_menu)
 
+        # Focus is set during initialization; no extra activation timer needed
+
         # Optional snapshot
         if opts.output: self.save_png(opts.output)
         
@@ -928,9 +933,7 @@ class Viewer(QtWidgets.QMainWindow):
             | getattr(DockFeature, "DockWidgetClosable")
         )
         dock.setAllowedAreas(DOCK_RIGHT | DOCK_LEFT)
-        
-        # Make the dock float by default so it overlays on the content
-        # This prevents the central widget from shifting when dock is shown
+        # Float by default so the dock does not affect the render view layout
         dock.setFloating(True)
         
         # Position the floating dock on the right side of the main window
@@ -942,10 +945,14 @@ class Viewer(QtWidgets.QMainWindow):
                 dock_x = main_geometry.x() + main_geometry.width() - dock_width
                 dock_y = main_geometry.y()
                 dock.setGeometry(dock_x, dock_y, dock_width, dock_height)
-        
-        # Connect to show event to position the dock
-        dock.showEvent = lambda event: (super(QtWidgets.QDockWidget, dock).showEvent(event), position_dock())
-        
+
+        # Connect to show event to position the dock with a proper void-returning handler
+        def _dock_show_event(event):
+            # Call the base implementation correctly, then position
+            QtWidgets.QDockWidget.showEvent(dock, event)
+            position_dock()
+        dock.showEvent = _dock_show_event
+
         self.addDockWidget(DOCK_RIGHT, dock)
     
         # ---------- local helpers (closures) ----------
@@ -953,14 +960,15 @@ class Viewer(QtWidgets.QMainWindow):
         def _toggle_controls_local(checked: bool):
             if checked == dock.isVisible():
                 return
-            # Simply show/hide the dock without resizing the window
-            # The dock will overlay on the right side of the window
+            # Show/hide the dock as a floating window (no layout shift)
             if checked:
-                dock.setFloating(True)  # Ensure it stays floating
+                dock.setFloating(True)
                 dock.show()
-                position_dock()  # Position it correctly
+                position_dock()
             else:
                 dock.hide()
+            # Update status bar hint
+            self._update_status_message(checked)
     
         self._toggle_controls = _toggle_controls_local
     
@@ -973,6 +981,8 @@ class Viewer(QtWidgets.QMainWindow):
                 self.act_show_controls.blockSignals(False)
     
             # No window resizing needed - dock overlays on the right side
+            # Update status bar hint
+            self._update_status_message(visible)
     
         dock.visibilityChanged.connect(_on_vis_changed_local)
         # ----------------------------------------------
@@ -1007,13 +1017,15 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.reset_btn.clicked.connect(self._reset_camera)
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
     
-        # Start state
+        # Start state based on CLI flag --panel (default hidden)
         if self.opts.panel:
-            dock.setFloating(True)  # Ensure it starts floating
+            dock.setFloating(True)
             dock.show()
-            position_dock()  # Position it correctly
+            position_dock()
         else:
             dock.hide()
+        # Initial status hint
+        self._update_status_message(self.opts.panel)
     
         # View menu + keyboard shortcut (uses QAction shim)
         menubar = self.menuBar()
@@ -1021,16 +1033,30 @@ class Viewer(QtWidgets.QMainWindow):
         act = QAction("Show Controls", self)
         act.setCheckable(True)
         act.setChecked(self.opts.panel)
-        act.setShortcut("Ctrl+D")   # On macOS, Qt maps this to Command+D automatically
-        self.addAction(act)               # make shortcut active globally
+        # Do not attach a shortcut to the QAction to avoid double-triggering with QShortcut
+        self.addAction(act)               # register action (no keybinding)
         act.triggered.connect(self._toggle_controls)
         menu.addAction(act)
         self.act_show_controls = act
 
         # Add a direct QShortcut to toggle dock visibility reliably with one key press
         # This avoids any interference from focused VTK interactor or QAction state.
+        # Shortcut on main window (Ctrl/Command+D)
         self._dock_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        try:
+            self._dock_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        except Exception:
+            self._dock_shortcut.setContext(Qt.ApplicationShortcut)
         self._dock_shortcut.activated.connect(lambda d=dock: self._toggle_controls(not d.isVisible()))
+
+    def _update_status_message(self, controls_visible: bool):
+        """Show a small hint about the controls shortcut in the window status bar."""
+        sb = self.statusBar()
+        if controls_visible:
+            sb.showMessage("Controls visible — press Ctrl/Cmd+D to hide")
+        else:
+            sb.showMessage("Controls hidden — press Ctrl/Cmd+D to show")
+        # Single application-wide shortcut should suffice
 
     def _handle_key(self, sym: Optional[str]):
         if not sym:
