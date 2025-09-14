@@ -52,6 +52,11 @@ except Exception:
 # --- Numpy ---
 import numpy as np
 
+# --- Import naming utilities ---
+import sys
+sys.path.append(str(Path(__file__).parent))
+from utils import load_namefile, get_filenames
+
 # --- VTK imports (module-accurate for common wheels) ---
 from vtkmodules.util.numpy_support import vtk_to_numpy, numpy_to_vtk
 from vtkmodules.vtkCommonCore import vtkLookupTable, vtkDoubleArray, vtkPoints
@@ -140,6 +145,149 @@ def get_lookup_table(colormap: int, alpha: float) -> LookupTableWithEnabling:
     else:
         lut.Build()
     return lut
+
+# ---- Naming helpers ----
+def detect_naming_scheme(filename: str) -> bool:
+    """
+    Detect whether a filename uses BIDS naming convention.
+    
+    Args:
+        filename: The filename to analyze
+        
+    Returns:
+        bool: True if BIDS naming, False if FreeSurfer naming
+    """
+    # BIDS naming patterns
+    bids_patterns = [
+        '_hemi-L_', '_hemi-R_',  # hemisphere indicators
+        '_space-',  # space indicators
+        '_desc-',   # description indicators
+        '_label-',  # label indicators
+        '.surf.gii', '.shape.gii', '.label.gii'  # BIDS surface extensions
+    ]
+    
+    # FreeSurfer naming patterns
+    freesurfer_patterns = [
+        'lh.', 'rh.',  # hemisphere prefixes
+        '.central.', '.pial.', '.white.',  # surface types
+        '.thickness.', '.pbt.',  # shape types
+        '.annot'  # annotation files
+    ]
+    
+    filename_lower = filename.lower()
+    
+    # Check for BIDS patterns
+    for pattern in bids_patterns:
+        if pattern in filename_lower:
+            return True
+    
+    # Check for FreeSurfer patterns
+    for pattern in freesurfer_patterns:
+        if pattern in filename_lower:
+            return False
+    
+    # Default to FreeSurfer if no clear pattern found
+    return False
+
+def convert_filename_to_mesh(overlay_filename: str) -> str:
+    """
+    Convert an overlay filename to the corresponding mesh filename.
+    
+    Args:
+        overlay_filename: The overlay file (e.g., thickness, pbt, etc.)
+        
+    Returns:
+        str: The corresponding mesh filename
+    """
+    overlay_path = Path(overlay_filename)
+    is_bids = detect_naming_scheme(overlay_filename)
+    
+    if is_bids:
+        # BIDS naming: convert to midthickness surface
+        # Example: sub-01_hemi-L_desc-thickness.shape.gii -> sub-01_hemi-L_space-MNI152NLin2009cAsym_desc-midthickness.surf.gii
+        name_parts = overlay_path.stem.split('_')
+        
+        # Find hemisphere
+        hemi_part = None
+        for part in name_parts:
+            if part.startswith('hemi-'):
+                hemi_part = part
+                break
+        
+        if hemi_part:
+            hemi = hemi_part.split('-')[1]  # L or R
+            # Build mesh filename
+            base_parts = [p for p in name_parts if not p.startswith('hemi-') and not p.startswith('desc-')]
+            base_name = '_'.join(base_parts)
+            mesh_filename = f"{base_name}_{hemi_part}_space-MNI152NLin2009cAsym_desc-midthickness.surf.gii"
+            return str(overlay_path.parent / mesh_filename)
+    else:
+        # FreeSurfer naming: convert to central surface
+        # Example: lh.thickness.name -> lh.central.name.gii
+        name = overlay_path.name
+        
+        # Extract hemisphere and base name
+        if name.startswith('lh.'):
+            hemi = 'lh'
+            # Remove 'lh.' and find the base name after the overlay type
+            remaining = name[3:]  # Remove 'lh.'
+            parts = remaining.split('.')
+            if len(parts) >= 2:
+                # Skip the first part (thickness, pbt, etc.) and use the rest as base name
+                base_name = '.'.join(parts[1:])
+            else:
+                base_name = remaining
+        elif name.startswith('rh.'):
+            hemi = 'rh'
+            # Remove 'rh.' and find the base name after the overlay type
+            remaining = name[3:]  # Remove 'rh.'
+            parts = remaining.split('.')
+            if len(parts) >= 2:
+                # Skip the first part (thickness, pbt, etc.) and use the rest as base name
+                base_name = '.'.join(parts[1:])
+            else:
+                base_name = remaining
+        else:
+            # Try to extract from filename
+            parts = name.split('.')
+            if len(parts) >= 3:
+                hemi = parts[0]
+                base_name = '.'.join(parts[2:])  # Skip the middle part (thickness, pbt, etc.)
+            else:
+                return str(overlay_path)  # Return original if can't parse
+        
+        # Build mesh filename
+        mesh_filename = f"{hemi}.central.{base_name}.gii"
+        return str(overlay_path.parent / mesh_filename)
+    
+    return str(overlay_path)  # Return original if conversion fails
+
+def is_overlay_file(filename: str) -> bool:
+    """
+    Check if a filename appears to be an overlay file rather than a mesh file.
+    
+    Args:
+        filename: The filename to check
+        
+    Returns:
+        bool: True if it appears to be an overlay file
+    """
+    filename_lower = filename.lower()
+    
+    # Overlay file patterns
+    overlay_patterns = [
+        '.thickness.', '.pbt.',  # FreeSurfer shape files
+        '_desc-thickness.', '_desc-pbt.',  # BIDS shape files
+        '.annot',  # Annotation files
+        '_label-',  # BIDS label files
+        '.txt'  # Text overlay files
+    ]
+    
+    for pattern in overlay_patterns:
+        if pattern in filename_lower:
+            return True
+    
+    return False
 
 # ---- I/O helpers ----
 def read_gifti_mesh(filename: str) -> vtkPolyData:
@@ -322,7 +470,7 @@ class Options:
 
 def parse_args(argv: List[str]) -> Options:
     p = argparse.ArgumentParser(prog='cat_viewsurf.py', description='Render LH/RH surfaces with optional overlays (CAT_ViewSurf.py)')
-    p.add_argument('mesh_left', help='Left hemisphere GIFTI mesh (.gii). Right is auto-detected via lh.→rh. or left→right.')
+    p.add_argument('mesh_left', help='Left hemisphere GIFTI mesh (.gii) or overlay file (.gii, .txt). Right is auto-detected via lh.→rh. or left→right.')
     p.add_argument('-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
     p.add_argument('-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
     p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0])
@@ -488,7 +636,8 @@ class Viewer(QtWidgets.QMainWindow):
     def __init__(self, opts: Options):
         super().__init__()
         self.opts = opts
-        name_part = Path((getattr(self.opts, 'overlay', None) or self.opts.mesh_left)).name
+        # Use the original input file for the window title
+        name_part = Path(self.opts.mesh_left).name
         self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
         self.resize(*opts.size)
 
@@ -505,8 +654,25 @@ class Viewer(QtWidgets.QMainWindow):
         style = CustomInteractorStyle(); style.SetRenderer(self.ren); self.iren.SetInteractorStyle(style)
 
         # Load surfaces (LH + optional RH)
-        left_mesh_path = Path(opts.mesh_left)
-        if not left_mesh_path.exists(): raise FileNotFoundError(f"File not found: {left_mesh_path}")
+        # Check if the input is an overlay file or mesh file
+        input_path = Path(opts.mesh_left)
+        if not input_path.exists(): 
+            raise FileNotFoundError(f"File not found: {input_path}")
+        
+        # Determine if input is an overlay file
+        if is_overlay_file(str(input_path)):
+            # Input is an overlay file, find the corresponding mesh
+            mesh_path = convert_filename_to_mesh(str(input_path))
+            mesh_path_obj = Path(mesh_path)
+            if not mesh_path_obj.exists():
+                raise FileNotFoundError(f"Corresponding mesh file not found: {mesh_path}")
+            left_mesh_path = mesh_path_obj
+            # Set the overlay to the original input file
+            opts.overlay = str(input_path)
+        else:
+            # Input is a mesh file
+            left_mesh_path = input_path
+        
         self.poly_l = read_gifti_mesh(str(left_mesh_path))
         self.poly_r = None
         rh_candidate: Optional[Path] = None
@@ -515,7 +681,12 @@ class Viewer(QtWidgets.QMainWindow):
             rh_candidate = left_mesh_path.with_name(name.replace('lh.', 'rh.'))
         elif 'left' in name:
             rh_candidate = left_mesh_path.with_name(name.replace('left', 'right'))
-        if rh_candidate and rh_candidate.exists(): self.poly_r = read_gifti_mesh(str(rh_candidate))
+        elif '_hemi-L_' in name:
+            rh_candidate = left_mesh_path.with_name(name.replace('_hemi-L_', '_hemi-R_'))
+        elif '_hemi-R_' in name:
+            rh_candidate = left_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
+        if rh_candidate and rh_candidate.exists(): 
+            self.poly_r = read_gifti_mesh(str(rh_candidate))
 
         # Normalize Y-origin similar to C++ utility
         def shift_y_to(poly: vtkPolyData, to_value: float = -100.0):
