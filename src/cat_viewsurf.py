@@ -32,9 +32,11 @@ except Exception:  # pragma: no cover
     from PyQt5.QtCore import Qt
 
 try:
-    from PyQt6.QtGui import QAction
+    from PyQt6.QtGui import QAction, QKeySequence
+    from PyQt6.QtWidgets import QShortcut
 except Exception:
-    from PyQt5.QtWidgets import QAction
+    from PyQt5.QtWidgets import QAction, QShortcut
+    from PyQt5.QtGui import QKeySequence
 
 # PyQt5/6 compatibility shims
 try:
@@ -436,40 +438,50 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
         self._viewer = None  # Reference to the main viewer
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
-    def OnChar(self):
-        rwi = self.GetInteractor(); key = rwi.GetKeyCode(); camera: vtkCamera = self._renderer.GetActiveCamera()
+    def OnKeyPress(self):
+        rwi = self.GetInteractor()
+        sym = rwi.GetKeySym()  # e.g., 'Left', 'Right', 'u', 'U', 'w', '3'
+        camera: vtkCamera = self._renderer.GetActiveCamera()
         shift = rwi.GetShiftKey(); ctrl = rwi.GetControlKey()
         def do_render(): self._renderer.ResetCameraClippingRange(); rwi.Render()
-        if key in ('Q','q','E','e','P','p','S','s','T','t','J','j','W','w','M','m','F','f','3'):
-            super().OnChar(); return
-        if key in ('u','U'):
+        # Built-in keys should still work
+        if sym in ('q','Q','e','E','p','P','s','S','t','T','j','J','w','W','m','M','f','F','3'):
+            super().OnKeyPress(); return
+        # Camera controls
+        if sym in ('u','U'):
             camera.Elevation(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
-        if key in ('d','D'):
+        if sym in ('d','D'):
             camera.Elevation(-180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); do_render(); return
-        if key in ('l','L'):
+        if sym in ('l','L'):
             camera.Azimuth(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
-        if key in ('r','R'):
+        if sym in ('r','R'):
             camera.Azimuth(180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); do_render(); return
-        if key in ('o','O'):
+        if sym in ('o','O'):
             self._renderer.ResetCamera(); camera.OrthogonalizeViewUp(); camera.Zoom(2.0); do_render(); return
-        if key == 'b':
+        if sym in ('b','B'):
             actors = self._renderer.GetActors(); actors.InitTraversal(); n = actors.GetNumberOfItems(); actors.InitTraversal()
             for _ in range(n):
                 a = actors.GetNextActor();
                 if a is not None: a.RotateX(180)
             camera.OrthogonalizeViewUp(); do_render(); return
-        if key == 'g':
+        if sym in ('g','G'):
             win = rwi.GetRenderWindow(); name = Path(win.GetWindowName() or 'screenshot').with_suffix('.png')
             w2i = vtkWindowToImageFilter(); w2i.SetInput(win); w2i.Update()
             png = vtkPNGWriter(); png.SetFileName(str(name)); png.SetInputConnection(w2i.GetOutputPort()); png.Write()
             print(f"Saved {name}"); return
-        if key == 'h':
+        if sym in ('h','H'):
             print("KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation"); return
         # Arrow key navigation for overlays
-        if key == 'Left' and self._viewer:
+        if sym == 'Left' and self._viewer:
             self._viewer._prev_overlay(); return
-        if key == 'Right' and self._viewer:
+        if sym == 'Right' and self._viewer:
             self._viewer._next_overlay(); return
+        # Fallback
+        super().OnKeyPress()
+
+    def OnChar(self):
+        # Keep default behavior for any remaining character events
+        super().OnChar()
 
 # ---- Options & CLI ----
 @dataclass
@@ -726,6 +738,11 @@ class Viewer(QtWidgets.QMainWindow):
         self.frame = QtWidgets.QFrame(); self.vl = QtWidgets.QVBoxLayout(); self.vl.setContentsMargins(0,0,0,0)
         self.frame.setLayout(self.vl); self.setCentralWidget(self.frame)
         self.vtk_widget = QVTKRenderWindowInteractor(self.frame); self.vl.addWidget(self.vtk_widget)
+        # Ensure the VTK widget can accept keyboard focus
+        try:
+            self.vtk_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        except Exception:
+            self.vtk_widget.setFocusPolicy(Qt.StrongFocus)
 
         self.ren = vtkRenderer(); self.ren.SetBackground(1,1,1) if opts.white else self.ren.SetBackground(0,0,0)
         self.rw: vtkRenderWindow = self.vtk_widget.GetRenderWindow(); self.rw.AddRenderer(self.ren)
@@ -904,7 +921,7 @@ class Viewer(QtWidgets.QMainWindow):
         self._build_control_panel()
 
         # Start interactor
-        self.vtk_widget.Initialize(); self.vtk_widget.Start()
+        self.vtk_widget.Initialize(); self.vtk_widget.Start(); self.vtk_widget.setFocus()
 
         self.vtk_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu
                                              if hasattr(Qt, "ContextMenuPolicy")
@@ -928,6 +945,8 @@ class Viewer(QtWidgets.QMainWindow):
         dock = QtWidgets.QDockWidget("Controls", self)
         dock.setObjectName("ControlsDock")
         dock.setWidget(self.ctrl)
+        # Expose as attribute for any external references
+        self.dock_controls = dock
     
         # Dock features: PyQt5/6 compatibility
         DockFeature = getattr(QtWidgets.QDockWidget, "DockWidgetFeature", QtWidgets.QDockWidget)
@@ -1030,11 +1049,16 @@ class Viewer(QtWidgets.QMainWindow):
         act = QAction("Show Controls", self)
         act.setCheckable(True)
         act.setChecked(self.opts.panel)
-        act.setShortcut("Ctrl+D")   # change if you prefer
+        act.setShortcut("Ctrl+D")   # On macOS, Qt maps this to Command+D automatically
         self.addAction(act)               # make shortcut active globally
         act.triggered.connect(self._toggle_controls)
         menu.addAction(act)
         self.act_show_controls = act
+
+        # Add a direct QShortcut to toggle dock visibility reliably with one key press
+        # This avoids any interference from focused VTK interactor or QAction state.
+        self._dock_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        self._dock_shortcut.activated.connect(lambda d=dock: self._toggle_controls(not d.isVisible()))
 
     def _reset_camera(self):
         self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0); self.rw.Render()
