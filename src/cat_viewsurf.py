@@ -850,11 +850,15 @@ class Viewer(QtWidgets.QMainWindow):
             self.overlay_list = opts.overlays
         elif opts.overlay:
             self.overlay_list = [opts.overlay]
+        # Enforce initial fix scaling policy based on overlay count
+        self._enforce_fix_scaling_policy()
         
         # Overlay scalars
         self.scal_l = None; self.scal_r = None
         if self.overlay_list:
             self._load_overlay(self.overlay_list[0])
+            # After initial load, enforce again since scalars are present now
+            self._enforce_fix_scaling_policy()
 
         # Overlay range (auto if unset)
         if not (self.overlay_range[1] > self.overlay_range[0]) and (self.scal_l is not None):
@@ -1032,6 +1036,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Enable/disable overlay controls based on whether overlay is loaded
         has_overlay = (self.overlay_list or self.opts.overlay) and self.scal_l is not None
         self.ctrl.set_overlay_controls_enabled(has_overlay)
+        # Ensure fix scaling checkbox state reflects current overlay count/availability
+        self._enforce_fix_scaling_policy()
     
         # Signals
         self.ctrl.apply_btn.clicked.connect(self._apply_controls)
@@ -1156,7 +1162,35 @@ class Viewer(QtWidgets.QMainWindow):
             self.ctrl.overlay_path.setText(current_overlay)
             # Update window title to show current overlay
             overlay_name = Path(current_overlay).name
-            self.setWindowTitle(f"{overlay_name} ({self.current_overlay_index + 1}/{len(self.overlay_list)})")
+            if len(self.overlay_list) > 1:
+                self.setWindowTitle(f"{overlay_name} ({self.current_overlay_index + 1}/{len(self.overlay_list)})")
+            else:
+                # If only one overlay chosen, do not show index numbers
+                self.setWindowTitle(overlay_name)
+            # Also enforce fix scaling policy based on overlay count
+            self._enforce_fix_scaling_policy()
+
+    def _enforce_fix_scaling_policy(self):
+        """Disable fix scaling when only one overlay is available.
+
+        - If len(overlay_list) <= 1: uncheck and disable the checkbox, clear fixed range, and force opts.fix_scaling=False.
+        - If multiple overlays: enable the checkbox (only when overlay controls are enabled).
+        """
+        multiple = len(self.overlay_list) > 1
+        has_overlay = (self.overlay_list or self.opts.overlay) and (getattr(self, 'scal_l', None) is not None)
+        if hasattr(self, 'ctrl'):
+            # Enable only when multiple overlays and overlay controls are enabled
+            self.ctrl.cb_fix_scaling.setEnabled(multiple and has_overlay)
+            if not multiple:
+                # Uncheck visually without emitting signals
+                try:
+                    self.ctrl.cb_fix_scaling.blockSignals(True)
+                    self.ctrl.cb_fix_scaling.setChecked(False)
+                finally:
+                    self.ctrl.cb_fix_scaling.blockSignals(False)
+        if not multiple:
+            self.opts.fix_scaling = False
+            self.fixed_overlay_range = None
 
     def _maybe_switch_mesh_for_overlay(self, overlay_path: str):
         """If the overlay implies a different mesh, switch meshes and rebuild mappers/actors.
@@ -1241,6 +1275,8 @@ class Viewer(QtWidgets.QMainWindow):
         new_overlay = self.ctrl.overlay_path.text().strip()
         if new_overlay and new_overlay != (self.opts.overlay or ""):
             self._load_overlay(new_overlay)
+            # Overlay list may be single; ensure fix scaling disabled when not applicable
+            self._enforce_fix_scaling_policy()
         elif not new_overlay and self.opts.overlay:
             # Overlay was cleared, remove overlay and disable controls
             self.opts.overlay = None
@@ -1256,6 +1292,8 @@ class Viewer(QtWidgets.QMainWindow):
             self.ctrl.set_overlay_controls_enabled(False)
             # Remove colorbar if it exists
             self._remove_colorbar()
+            # Enforce fix scaling policy for zero overlays
+            self._enforce_fix_scaling_policy()
         # Toggles
         self.opts.colorbar = self.ctrl.cb_colorbar.isChecked()
         # Persist title mode
@@ -1431,6 +1469,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Enable overlay controls since we now have an overlay loaded
         if hasattr(self, 'ctrl'):
             self.ctrl.set_overlay_controls_enabled(True)
+            # Enforce fix scaling enable/disable based on overlay count and availability
+            self._enforce_fix_scaling_policy()
         
         self.rw.Render()
 
