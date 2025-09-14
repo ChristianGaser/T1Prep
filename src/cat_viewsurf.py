@@ -433,7 +433,9 @@ from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
     def __init__(self, parent=None):
         super().__init__(); self._renderer: Optional[vtkRenderer] = None
+        self._viewer = None  # Reference to the main viewer
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
+    def SetViewer(self, viewer): self._viewer = viewer
     def OnChar(self):
         rwi = self.GetInteractor(); key = rwi.GetKeyCode(); camera: vtkCamera = self._renderer.GetActiveCamera()
         shift = rwi.GetShiftKey(); ctrl = rwi.GetControlKey()
@@ -462,13 +464,19 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
             png = vtkPNGWriter(); png.SetFileName(str(name)); png.SetInputConnection(w2i.GetOutputPort()); png.Write()
             print(f"Saved {name}"); return
         if key == 'h':
-            print("KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot"); return
+            print("KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation"); return
+        # Arrow key navigation for overlays
+        if key == 'Left' and self._viewer:
+            self._viewer._prev_overlay(); return
+        if key == 'Right' and self._viewer:
+            self._viewer._next_overlay(); return
 
 # ---- Options & CLI ----
 @dataclass
 class Options:
     mesh_left: str
     overlay: Optional[str] = None
+    overlays: List[str] = None  # Multiple overlays
     overlay_bkg: Optional[str] = None
     range: Tuple[float, float] = (0.0, -1.0)
     range_bkg: Tuple[float, float] = (0.0, -1.0)
@@ -487,11 +495,13 @@ class Options:
     panel: bool = True  # show right-side control dock at startup
     colormap: int = JET
     debug: bool = False
+    fix_scaling: bool = False  # Fix scaling across overlays
 
 def parse_args(argv: List[str]) -> Options:
     p = argparse.ArgumentParser(prog='cat_viewsurf.py', description='Render LH/RH surfaces with optional overlays (CAT_ViewSurf.py)')
     p.add_argument('mesh_left', help='Left hemisphere GIFTI mesh (.gii) or overlay file (.gii, .txt). Right is auto-detected via lh.→rh. or left→right.')
     p.add_argument('-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
+    p.add_argument('-overlays', dest='overlays', nargs='+', help='Multiple overlay files for navigation')
     p.add_argument('-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
     p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0])
     p.add_argument('-range-bkg','-rb', dest='range_bkg', nargs=2, type=float, default=[0.0, -1.0])
@@ -513,6 +523,7 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-c1', action='store_true')
     p.add_argument('-c2', action='store_true')
     p.add_argument('-c3', action='store_true')
+    p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true', help='Fix scaling across all overlays')
     p.add_argument('-debug', action='store_true')
     a = p.parse_args(argv)
 
@@ -532,6 +543,7 @@ def parse_args(argv: List[str]) -> Options:
     return Options(
         mesh_left=a.mesh_left,
         overlay=a.overlay,
+        overlays=a.overlays or [],
         overlay_bkg=a.overlay_bkg,
         range=tuple(a.range),
         range_bkg=tuple(a.range_bkg),
@@ -550,6 +562,7 @@ def parse_args(argv: List[str]) -> Options:
         panel=bool(a.panel),
         colormap=cm,
         debug=bool(a.debug),
+        fix_scaling=bool(a.fix_scaling),
     )
 
 # ---- Control Panel ----
@@ -586,9 +599,11 @@ class ControlPanel(QtWidgets.QWidget):
         self.cb_colorbar = QtWidgets.QCheckBox("Show colorbar")
         self.cb_stats = QtWidgets.QCheckBox("Show stats on colorbar")
         self.cb_inverse = QtWidgets.QCheckBox("Inverse (flip sign)")
+        self.cb_fix_scaling = QtWidgets.QCheckBox("Fix scaling")
         form.addRow(self.cb_colorbar)
         form.addRow(self.cb_stats)
         form.addRow(self.cb_inverse)
+        form.addRow(self.cb_fix_scaling)
         self.layout.addLayout(form)
         # Action buttons
         btns = QtWidgets.QHBoxLayout()
@@ -671,7 +686,7 @@ class Viewer(QtWidgets.QMainWindow):
 
         # interactor style
         self.iren: vtkRenderWindowInteractor = self.rw.GetInteractor()
-        style = CustomInteractorStyle(); style.SetRenderer(self.ren); self.iren.SetInteractorStyle(style)
+        style = CustomInteractorStyle(); style.SetRenderer(self.ren); style.SetViewer(self); self.iren.SetInteractorStyle(style)
 
         # Load surfaces (LH + optional RH)
         # Check if the input is an overlay file or mesh file
@@ -767,10 +782,21 @@ class Viewer(QtWidgets.QMainWindow):
         self.actor_ov_l = None
         self.actor_ov_r = None
 
+        # Overlay management
+        self.overlay_list = []
+        self.current_overlay_index = 0
+        self.fixed_overlay_range = None  # Store fixed range when fix_scaling is enabled
+        
+        # Initialize overlay list
+        if opts.overlays:
+            self.overlay_list = opts.overlays
+        elif opts.overlay:
+            self.overlay_list = [opts.overlay]
+        
         # Overlay scalars
         self.scal_l = None; self.scal_r = None
-        if opts.overlay:
-            self._load_overlay(opts.overlay)
+        if self.overlay_list:
+            self._load_overlay(self.overlay_list[0])
 
         # Overlay range (auto if unset)
         if not (self.overlay_range[1] > self.overlay_range[0]) and (self.scal_l is not None):
@@ -924,13 +950,19 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.bkg_min.setValue(float(self.range_bkg[0]))
         self.ctrl.bkg_max.setValue(float(self.range_bkg[1]))
         self.ctrl.opacity.setValue(int(self.opts.opacity * 100))
-        self.ctrl.overlay_path.setText(self.opts.overlay or "")
+        # Set initial overlay path
+        if self.overlay_list:
+            self.ctrl.overlay_path.setText(self.overlay_list[0])
+            self._update_overlay_info()
+        else:
+            self.ctrl.overlay_path.setText(self.opts.overlay or "")
         self.ctrl.cb_colorbar.setChecked(self.opts.colorbar)
         self.ctrl.cb_stats.setChecked(self.opts.stats)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
+        self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
         
         # Enable/disable overlay controls based on whether overlay is loaded
-        has_overlay = self.opts.overlay is not None and self.scal_l is not None
+        has_overlay = (self.overlay_list or self.opts.overlay) and self.scal_l is not None
         self.ctrl.set_overlay_controls_enabled(has_overlay)
     
         # Signals
@@ -965,6 +997,37 @@ class Viewer(QtWidgets.QMainWindow):
         start_dir = self.ctrl.overlay_path.text() or str(Path(self.opts.mesh_left).parent)
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose overlay", start_dir)
         if path: self.ctrl.overlay_path.setText(path)
+
+    def _next_overlay(self):
+        """Switch to next overlay in the list."""
+        if len(self.overlay_list) > 1:
+            self.current_overlay_index = (self.current_overlay_index + 1) % len(self.overlay_list)
+            self._load_overlay(self.overlay_list[self.current_overlay_index])
+            self._update_overlay_info()
+            # Update control panel with current overlay range
+            if hasattr(self, 'ctrl'):
+                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
+                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+
+    def _prev_overlay(self):
+        """Switch to previous overlay in the list."""
+        if len(self.overlay_list) > 1:
+            self.current_overlay_index = (self.current_overlay_index - 1) % len(self.overlay_list)
+            self._load_overlay(self.overlay_list[self.current_overlay_index])
+            self._update_overlay_info()
+            # Update control panel with current overlay range
+            if hasattr(self, 'ctrl'):
+                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
+                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+
+    def _update_overlay_info(self):
+        """Update the overlay path display and window title."""
+        if self.overlay_list:
+            current_overlay = self.overlay_list[self.current_overlay_index]
+            self.ctrl.overlay_path.setText(current_overlay)
+            # Update window title to show current overlay
+            overlay_name = Path(current_overlay).name
+            self.setWindowTitle(f"{overlay_name} ({self.current_overlay_index + 1}/{len(self.overlay_list)})")
 
     def _apply_controls(self):
         # Overlay range
@@ -1013,6 +1076,11 @@ class Viewer(QtWidgets.QMainWindow):
         inv = self.ctrl.cb_inverse.isChecked()
         if inv != self.opts.inverse:
             self.opts.inverse = inv; self._apply_inverse()
+        # Fix scaling
+        self.opts.fix_scaling = self.ctrl.cb_fix_scaling.isChecked()
+        if self.opts.fix_scaling and self.fixed_overlay_range is None:
+            # Store the current range as fixed
+            self.fixed_overlay_range = list(self.overlay_range)
         # Colorbar
         if self.opts.colorbar: self._ensure_colorbar()
         else: self._remove_colorbar()
@@ -1099,9 +1167,13 @@ class Viewer(QtWidgets.QMainWindow):
         self.scal_l = scal_l; self.scal_r = scal_r
         if scal_l is not None: self.poly_l.GetPointData().SetScalars(scal_l)
         if scal_r is not None and self.poly_r is not None: self.poly_r.GetPointData().SetScalars(scal_r)
-        # recompute overlay range if needed
+        # recompute overlay range if needed and fix scaling is not enabled
         if not (self.overlay_range[1] > self.overlay_range[0]) and (self.scal_l is not None):
-            r = [0.0,0.0]; self.poly_l.GetScalarRange(r); self.overlay_range = r
+            if not self.opts.fix_scaling:
+                r = [0.0,0.0]; self.poly_l.GetScalarRange(r); self.overlay_range = r
+            elif self.fixed_overlay_range is not None:
+                # Use the fixed range
+                self.overlay_range = list(self.fixed_overlay_range)
         for actor in (self.actor_ov_l, self.actor_ov_r):
             if actor:
                 actor.GetMapper().SetLookupTable(self.lut_overlay_l)
