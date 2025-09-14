@@ -732,7 +732,18 @@ class Viewer(QtWidgets.QMainWindow):
             self.vtk_widget.setFocusPolicy(Qt.StrongFocus)
 
         self.ren = vtkRenderer(); self.ren.SetBackground(1,1,1) if opts.white else self.ren.SetBackground(0,0,0)
-        self.rw: vtkRenderWindow = self.vtk_widget.GetRenderWindow(); self.rw.AddRenderer(self.ren)
+        self.rw: vtkRenderWindow = self.vtk_widget.GetRenderWindow();
+        # Use two layers: main 3D in layer 0, UI (colorbar) in layer 1 to keep camera bounds stable
+        self.rw.SetNumberOfLayers(2)
+        self.ren.SetLayer(0)
+        self.rw.AddRenderer(self.ren)
+        self.ren_ui = vtkRenderer(); self.ren_ui.SetLayer(1); self.ren_ui.SetInteractive(0)
+        # Match UI renderer background to transparent overlay-like look
+        try:
+            self.ren_ui.SetBackgroundAlpha(0.0)
+        except Exception:
+            pass
+        self.rw.AddRenderer(self.ren_ui)
 
         # interactor style
         self.iren: vtkRenderWindowInteractor = self.rw.GetInteractor()
@@ -782,14 +793,9 @@ class Viewer(QtWidgets.QMainWindow):
             self.poly_r = read_gifti_mesh(str(rh_candidate))
 
         # Normalize Y-origin similar to C++ utility
-        def shift_y_to(poly: vtkPolyData, to_value: float = -100.0):
-            b = [0]*6; poly.GetBounds(b); y_shift = to_value - b[2]
-            pts = poly.GetPoints()
-            for i in range(pts.GetNumberOfPoints()):
-                x,y,z = pts.GetPoint(i); pts.SetPoint(i, x, y+y_shift, z)
-            poly.SetPoints(pts)
-        shift_y_to(self.poly_l);  
-        if self.poly_r is not None: shift_y_to(self.poly_r)
+        self._shift_y_to(self.poly_l)
+        if self.poly_r is not None:
+            self._shift_y_to(self.poly_r)
 
         # Background curvature
         self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
@@ -911,10 +917,17 @@ class Viewer(QtWidgets.QMainWindow):
 
         # Colorbar (lazy create)
         self.scalar_bar = None
-        if opts.colorbar: self._ensure_colorbar()
+        if opts.colorbar:
+            self._ensure_colorbar()
 
         # Camera
-        self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0)
+        self.ren.ResetCamera()
+        self.ren.GetActiveCamera().Zoom(2.0)
+        # Track camera state to preserve view across overlay switches
+        self._cam_state = None
+        # Capture baseline camera right after initial setup
+        self._capture_camera_state()
+        self._base_cam_state = dict(self._cam_state) if self._cam_state else None
 
         # Right-side control panel (dock)
         self._build_control_panel()
@@ -930,7 +943,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Focus is set during initialization; no extra activation timer needed
 
         # Optional snapshot
-        if opts.output: self.save_png(opts.output)
+        if opts.output:
+            self.save_png(opts.output)
         
     def _show_view_context_menu(self, pos):
         menu = QtWidgets.QMenu(self)
@@ -1126,6 +1140,71 @@ class Viewer(QtWidgets.QMainWindow):
     def _reset_camera(self):
         self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0); self.rw.Render()
 
+    # --- Geometry normalization helper ---
+    def _shift_y_to(self, poly: vtkPolyData, to_value: float = -100.0):
+        """Shift mesh in Y so its minimum Y aligns with to_value.
+
+        Keeps montage layout consistent across mesh switches by anchoring meshes
+        to a common Y-origin. This mirrors the normalization used at startup.
+        """
+        if poly is None:
+            return
+        b = [0.0]*6
+        poly.GetBounds(b)
+        y_shift = to_value - b[2]
+        if abs(y_shift) < 1e-9:
+            return
+        pts = poly.GetPoints()
+        if pts is None:
+            return
+        n = pts.GetNumberOfPoints()
+        for i in range(n):
+            x, y, z = pts.GetPoint(i)
+            pts.SetPoint(i, x, y + y_shift, z)
+        poly.SetPoints(pts)
+
+    # --- Camera state helpers to preserve view across overlay/mesh changes ---
+    def _capture_camera_state(self):
+        cam = self.ren.GetActiveCamera()
+        try:
+            self._cam_state = {
+                'position': cam.GetPosition(),
+                'focal_point': cam.GetFocalPoint(),
+                'view_up': cam.GetViewUp(),
+                'clipping_range': cam.GetClippingRange(),
+                'window_center': cam.GetWindowCenter(),
+                'view_angle': cam.GetViewAngle(),
+                'parallel_projection': bool(cam.GetParallelProjection()),
+                'parallel_scale': cam.GetParallelScale(),
+            }
+        except Exception:
+            self._cam_state = None
+
+    def _apply_camera_state(self):
+        if not getattr(self, '_cam_state', None):
+            return
+        cam = self.ren.GetActiveCamera()
+        st = self._cam_state
+        try:
+            cam.SetPosition(*st['position'])
+            cam.SetFocalPoint(*st['focal_point'])
+            cam.SetViewUp(*st['view_up'])
+            # Keep the same window center to avoid subtle panning shifts
+            if 'window_center' in st and isinstance(st['window_center'], (tuple, list)):
+                cam.SetWindowCenter(float(st['window_center'][0]), float(st['window_center'][1]))
+            # Preserve projection mode and scale/view angle
+            if st['parallel_projection']:
+                cam.SetParallelProjection(True)
+                cam.SetParallelScale(st['parallel_scale'])
+            else:
+                cam.SetParallelProjection(False)
+                cam.SetViewAngle(st['view_angle'])
+            # Let VTK manage clipping range for the new scene bounds to reduce jitter
+        except Exception:
+            pass
+        # Ensure proper rendering (avoid ResetCameraClippingRange to prevent subtle shifts)
+        self.rw.Render()
+
     def _pick_overlay(self):
         start_dir = self.ctrl.overlay_path.text() or str(Path(self.opts.mesh_left).parent)
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose overlay", start_dir)
@@ -1134,6 +1213,7 @@ class Viewer(QtWidgets.QMainWindow):
     def _next_overlay(self):
         """Switch to next overlay in the list."""
         if len(self.overlay_list) > 1:
+            self._capture_camera_state()
             self.current_overlay_index = (self.current_overlay_index + 1) % len(self.overlay_list)
             self._maybe_switch_mesh_for_overlay(self.overlay_list[self.current_overlay_index])
             self._load_overlay(self.overlay_list[self.current_overlay_index])
@@ -1142,10 +1222,13 @@ class Viewer(QtWidgets.QMainWindow):
             if hasattr(self, 'ctrl'):
                 self.ctrl.range_min.setValue(float(self.overlay_range[0]))
                 self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+            # Restore camera state
+            self._apply_camera_state()
 
     def _prev_overlay(self):
         """Switch to previous overlay in the list."""
         if len(self.overlay_list) > 1:
+            self._capture_camera_state()
             self.current_overlay_index = (self.current_overlay_index - 1) % len(self.overlay_list)
             self._maybe_switch_mesh_for_overlay(self.overlay_list[self.current_overlay_index])
             self._load_overlay(self.overlay_list[self.current_overlay_index])
@@ -1154,6 +1237,8 @@ class Viewer(QtWidgets.QMainWindow):
             if hasattr(self, 'ctrl'):
                 self.ctrl.range_min.setValue(float(self.overlay_range[0]))
                 self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+            # Restore camera state
+            self._apply_camera_state()
 
     def _update_overlay_info(self):
         """Update the overlay path display and window title."""
@@ -1211,6 +1296,8 @@ class Viewer(QtWidgets.QMainWindow):
             return
         # Load new left mesh
         self.poly_l = read_gifti_mesh(str(new_mesh_path))
+        # Normalize Y-origin to match initial alignment
+        self._shift_y_to(self.poly_l)
         # Attempt right mesh detection similar to __init__
         self.poly_r = None
         rh_candidate: Optional[Path] = None
@@ -1225,6 +1312,8 @@ class Viewer(QtWidgets.QMainWindow):
             rh_candidate = new_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
         if rh_candidate and rh_candidate.exists():
             self.poly_r = read_gifti_mesh(str(rh_candidate))
+            # Normalize Y-origin for right mesh too
+            self._shift_y_to(self.poly_r)
         # Recompute curvature and background on the new meshes
         self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
         self.curv_l_out = self.curv_l.GetOutput()
@@ -1274,7 +1363,11 @@ class Viewer(QtWidgets.QMainWindow):
         # Overlay path
         new_overlay = self.ctrl.overlay_path.text().strip()
         if new_overlay and new_overlay != (self.opts.overlay or ""):
+            self._capture_camera_state()
+            # If the new overlay maps to a different mesh, switch meshes first
+            self._maybe_switch_mesh_for_overlay(new_overlay)
             self._load_overlay(new_overlay)
+            self._apply_camera_state()
             # Overlay list may be single; ensure fix scaling disabled when not applicable
             self._enforce_fix_scaling_policy()
         elif not new_overlay and self.opts.overlay:
@@ -1402,13 +1495,24 @@ class Viewer(QtWidgets.QMainWindow):
             pass
 
         self.scalar_bar = sb
-        self.ren.AddViewProp(sb)
+        # Add to UI renderer (layer 1) so it doesn't affect main scene bounds/camera
+        try:
+            self.ren_ui.AddViewProp(sb)
+        except Exception:
+            # Fallback to main renderer if UI renderer not available
+            self.ren.AddViewProp(sb)
 
     def _remove_colorbar(self):
         if self.scalar_bar is not None:
-            self.ren.RemoveViewProp(self.scalar_bar); self.scalar_bar = None
+            try:
+                self.ren_ui.RemoveViewProp(self.scalar_bar)
+            except Exception:
+                self.ren.RemoveViewProp(self.scalar_bar)
+            self.scalar_bar = None
 
     def _load_overlay(self, overlay_path: str):
+        # Capture camera before modifying actors/ranges
+        self._capture_camera_state()
         self.opts.overlay = overlay_path
         cwd = os.getcwd()
         try:
@@ -1472,6 +1576,8 @@ class Viewer(QtWidgets.QMainWindow):
             # Enforce fix scaling enable/disable based on overlay count and availability
             self._enforce_fix_scaling_policy()
         
+        # Restore camera and render
+        self._apply_camera_state()
         self.rw.Render()
 
     # -- Save PNG --
