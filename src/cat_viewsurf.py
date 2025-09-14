@@ -85,7 +85,7 @@ import vtkmodules.vtkRenderingFreeType  # text rendering for labels/ScalarBar
 
 # --- Enums & defaults ---
 C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY = range(8)
-DEFAULT_WINDOW_SIZE = (1800, 1000)
+DEFAULT_WINDOW_SIZE = (1800, 800)
 
 # ---- Lookup table helper ----
 class LookupTableWithEnabling(vtkLookupTable):
@@ -455,6 +455,7 @@ class Viewer(QtWidgets.QMainWindow):
         # Simply show/hide the dock without resizing the window
         # The dock will overlay on the right side of the window
         if checked:
+            dock.setFloating(True)  # Ensure it stays floating
             dock.show()
         else:
             dock.hide()
@@ -659,6 +660,24 @@ class Viewer(QtWidgets.QMainWindow):
             | getattr(DockFeature, "DockWidgetClosable")
         )
         dock.setAllowedAreas(DOCK_RIGHT | DOCK_LEFT)
+        
+        # Make the dock float by default so it overlays on the content
+        # This prevents the central widget from shifting when dock is shown
+        dock.setFloating(True)
+        
+        # Position the floating dock on the right side of the main window
+        def position_dock():
+            if dock.isFloating():
+                main_geometry = self.geometry()
+                dock_width = dock.sizeHint().width()
+                dock_height = dock.sizeHint().height()
+                dock_x = main_geometry.x() + main_geometry.width() - dock_width
+                dock_y = main_geometry.y()
+                dock.setGeometry(dock_x, dock_y, dock_width, dock_height)
+        
+        # Connect to show event to position the dock
+        dock.showEvent = lambda event: (super(QtWidgets.QDockWidget, dock).showEvent(event), position_dock())
+        
         self.addDockWidget(DOCK_RIGHT, dock)
     
         # ---------- local helpers (closures) ----------
@@ -669,7 +688,9 @@ class Viewer(QtWidgets.QMainWindow):
             # Simply show/hide the dock without resizing the window
             # The dock will overlay on the right side of the window
             if checked:
+                dock.setFloating(True)  # Ensure it stays floating
                 dock.show()
+                position_dock()  # Position it correctly
             else:
                 dock.hide()
     
@@ -710,7 +731,9 @@ class Viewer(QtWidgets.QMainWindow):
     
         # Start state
         if self.opts.panel:
+            dock.setFloating(True)  # Ensure it starts floating
             dock.show()
+            position_dock()  # Position it correctly
         else:
             dock.hide()
     
