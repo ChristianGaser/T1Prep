@@ -12,19 +12,19 @@ ENV_DIR="$PROJECT_DIR/env"
 # Function to check if we're in the virtual environment
 check_environment() {
     if [[ "$VIRTUAL_ENV" == "$ENV_DIR" ]]; then
-        echo "✅ Virtual environment is already activated: $VIRTUAL_ENV"
         return 0
     else
-        echo "⚠️  Virtual environment not activated or wrong environment"
-        echo "   Current VIRTUAL_ENV: ${VIRTUAL_ENV:-"Not set"}"
-        echo "   Expected: $ENV_DIR"
-        return 1
+        if [[ ! -d "$ENV_DIR" ]]; then
+            echo "❌ Error: Virtual environment not found: $ENV_DIR"
+            exit 1
+        fi
+        
+        source "$ENV_DIR/bin/activate"
     fi
 }
 
 # Function to activate the environment
 activate_environment() {
-    echo "🔄 Activating virtual environment..."
     
     if [[ ! -d "$ENV_DIR" ]]; then
         echo "❌ Error: Virtual environment directory not found: $ENV_DIR"
@@ -38,34 +38,16 @@ activate_environment() {
     fi
     
     # Source the activation script
-    source "$ENV_DIR/bin/activate"
-    
-    # Verify activation
-    if [[ "$VIRTUAL_ENV" == "$ENV_DIR" ]]; then
-        echo "✅ Virtual environment activated successfully"
-        echo "   Python: $(which python)"
-        echo "   Python version: $(python --version)"
-    else
-        echo "❌ Error: Failed to activate virtual environment"
-        exit 1
-    fi
+    source "$ENV_DIR/bin/activate"    
 }
 
 # Main execution
 main() {
-    echo "🚀 CAT_ViewSurf Wrapper Script"
-    echo "   Project directory: $PROJECT_DIR"
-    echo "   Environment directory: $ENV_DIR"
-    echo ""
     
     # Check if environment is already activated
     if ! check_environment; then
         activate_environment
     fi
-    
-    echo ""
-    echo "🎯 Running cat_viewsurf.py with arguments: $*"
-    echo ""
     
     # Change to project directory and run the script
     cd "$PROJECT_DIR"

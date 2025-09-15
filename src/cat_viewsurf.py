@@ -12,7 +12,7 @@ Features:
   • Right-side docked control panel: range, clip, colorbar toggle, overlay picker, opacity, bkg range, stats, inverse.
   • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, g screenshot, plus standard VTK keys.
 
-Requires: vtk (>=9), PyQt6 or PyQt5; nibabel (for GIFTI fallback + FreeSurfer morphs if VTK lacks vtkGIFTIReader).
+Requires: vtk (>=9), PyQt6; nibabel (for GIFTI fallback + FreeSurfer morphs if VTK lacks vtkGIFTIReader).
 """
 from __future__ import annotations
 import argparse
@@ -23,31 +23,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-# --- Qt setup (prefer PyQt6, fallback to PyQt5) ---
-try:
-    from PyQt6 import QtWidgets
-    from PyQt6.QtCore import Qt
-except Exception:  # pragma: no cover
-    from PyQt5 import QtWidgets
-    from PyQt5.QtCore import Qt
+# --- Qt setup ---
+from PyQt6 import QtWidgets
+from PyQt6.QtCore import Qt
 
-try:
-    from PyQt6.QtGui import QAction, QKeySequence, QShortcut
-except Exception:
-    from PyQt5.QtWidgets import QAction, QShortcut
-    from PyQt5.QtGui import QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 
-# PyQt5/6 compatibility shims
-try:
-    ORIENT_H = Qt.Orientation.Horizontal  # PyQt6
-except Exception:
-    ORIENT_H = Qt.Horizontal              # PyQt5
-try:
-    DOCK_RIGHT = Qt.DockWidgetArea.RightDockWidgetArea  # PyQt6
-    DOCK_LEFT = Qt.DockWidgetArea.LeftDockWidgetArea    # PyQt6
-except Exception:
-    DOCK_RIGHT = getattr(Qt, 'RightDockWidgetArea', None) or Qt.RightDockWidgetArea  # PyQt5
-    DOCK_LEFT  = getattr(Qt, 'LeftDockWidgetArea', None) or Qt.LeftDockWidgetArea   # PyQt5
+# PyQt6 compatibility shims
+ORIENT_H = Qt.Orientation.Horizontal
+DOCK_RIGHT = Qt.DockWidgetArea.RightDockWidgetArea
+DOCK_LEFT = Qt.DockWidgetArea.LeftDockWidgetArea
 
 
 # --- Numpy ---
@@ -435,17 +420,53 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
     def __init__(self, parent=None):
         super().__init__(); self._renderer: Optional[vtkRenderer] = None
         self._viewer = None  # Reference to the main viewer
+        # Keys handled by the Viewer (suppress default VTK behavior for these)
+        self._viewer_keys = {
+            'u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
+        }
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
     def OnKeyPress(self):
-        # Defer to default behavior; our app-specific keys are handled by interactor observers
-        super().OnKeyPress()
-        # Fallback
-        super().OnKeyPress()
+        # Suppress default handling for keys that our viewer manages (e.g., 'r' reset)
+        try:
+            sym = self.GetInteractor().GetKeySym()
+        except Exception:
+            sym = None
+        try:
+            code = self.GetInteractor().GetKeyCode()
+        except Exception:
+            code = None
+        if sym in self._viewer_keys or (isinstance(code, str) and code in 'uUdDlLrRoObBgGhH'):
+            return
+        return super().OnKeyPress()
 
     def OnChar(self):
-        # Keep default behavior for any remaining character events
-        super().OnChar()
+        # Suppress default handling for keys that our viewer manages
+        try:
+            sym = self.GetInteractor().GetKeySym()
+        except Exception:
+            sym = None
+        try:
+            code = self.GetInteractor().GetKeyCode()
+        except Exception:
+            code = None
+        if sym in self._viewer_keys or (isinstance(code, str) and code in 'uUdDlLrRoObBgGhH'):
+            return
+        return super().OnChar()
+
+    def OnKeyDown(self):
+        # Suppress default handling on key-down as some styles act here
+        try:
+            sym = self.GetInteractor().GetKeySym()
+        except Exception:
+            sym = None
+        try:
+            code = self.GetInteractor().GetKeyCode()
+        except Exception:
+            code = None
+        if sym in self._viewer_keys or (isinstance(code, str) and code in 'uUdDlLrRoObBgGhH'):
+            return
+        return super().OnKeyDown()
 
 # ---- Options & CLI ----
 @dataclass
@@ -831,6 +852,9 @@ class Viewer(QtWidgets.QMainWindow):
         self._actors: List[vtkActor] = []
         self.lut_overlay_l = get_lookup_table(opts.colormap, opts.opacity)
         self.lut_overlay_r = get_lookup_table(opts.colormap, opts.opacity)
+        # Apply discrete bands to overlay LUTs if requested
+        self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
+        self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
         lut_bkg = vtkLookupTable(); lut_bkg.SetHueRange(0,0); lut_bkg.SetSaturationRange(0,0); lut_bkg.SetValueRange(0,1); lut_bkg.Build()
 
         # Background scalar range
@@ -903,17 +927,24 @@ class Viewer(QtWidgets.QMainWindow):
         posy = [0, 0, 0.8*shifts[1], 0.8*shifts[1], 0.6*shifts[1], 0.6*shifts[1]]
         rotx = [270, 270, 270, 270, 0, 0]; rotz = [90, -90, -90, 90, 0, 0]
         order = [0,1,0,1,0,1]
-        def add_clone(actor: vtkActor, px, py, rx, rz):
-            a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a)
+        # Keep track of clones per view index for selective operations (e.g., key 'b')
+        self._montage_bkg: List[Optional[vtkActor]] = [None]*views
+        self._montage_ov: List[Optional[vtkActor]] = [None]*views
+        def add_clone(actor: vtkActor, px, py, rx, rz) -> vtkActor:
+            a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a); return a
         for i in range(views):
             if self.poly_r is None and (i % 2 == 1): continue
             src = self.actor_bkg_r if (order[i] == 1 and self.actor_bkg_r is not None) else self.actor_bkg_l
-            add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+            if src is not None:
+                a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+                self._montage_bkg[i] = a
         if self.actor_ov_l is not None or self.actor_ov_r is not None:
             for i in range(views):
                 if self.poly_r is None and (i % 2 == 1): continue
                 src = self.actor_ov_r if (order[i] == 1 and self.actor_ov_r is not None) else self.actor_ov_l
-                if src is not None: add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+                if src is not None:
+                    a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+                    self._montage_ov[i] = a
 
         # Colorbar (lazy create)
         self.scalar_bar = None
@@ -963,7 +994,7 @@ class Viewer(QtWidgets.QMainWindow):
         # Expose as attribute for any external references
         self.dock_controls = dock
     
-        # Dock features: PyQt5/6 compatibility
+        # Dock features: PyQt6 compatibility
         DockFeature = getattr(QtWidgets.QDockWidget, "DockWidgetFeature", QtWidgets.QDockWidget)
         dock.setFeatures(
             getattr(DockFeature, "DockWidgetMovable")
@@ -1121,15 +1152,20 @@ class Viewer(QtWidgets.QMainWindow):
         if s in ('l','L'):
             camera.Azimuth(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
         if s in ('r','R'):
-            camera.Azimuth(180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); do_render(); return
+            # Rotate right only; do not reset view. Keep small step with Shift, large with Ctrl.
+            camera.Azimuth(180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); self.rw.Render(); return
         if s in ('o','O'):
             self.ren.ResetCamera(); camera.OrthogonalizeViewUp(); camera.Zoom(2.0); do_render(); return
         if s in ('b','B'):
-            actors = self.ren.GetActors(); actors.InitTraversal(); n = actors.GetNumberOfItems(); actors.InitTraversal()
-            for _ in range(n):
-                a = actors.GetNextActor();
-                if a is not None: a.RotateX(180)
-            camera.OrthogonalizeViewUp(); do_render(); return
+            # Flip only the middle views (indices 4 and 5) for both background and overlay clones
+            for idx in (4, 5):
+                a_b = self._montage_bkg[idx] if hasattr(self, '_montage_bkg') else None
+                a_o = self._montage_ov[idx] if hasattr(self, '_montage_ov') else None
+                if a_b is not None:
+                    a_b.RotateX(180)
+                if a_o is not None:
+                    a_o.RotateX(180)
+            camera.OrthogonalizeViewUp(); self.rw.Render(); return
         if s in ('g','G'):
             w2i = vtkWindowToImageFilter(); w2i.SetInput(self.rw); w2i.Update()
             name = Path(self.rw.GetWindowName() or 'screenshot').with_suffix('.png')
@@ -1162,6 +1198,26 @@ class Viewer(QtWidgets.QMainWindow):
             x, y, z = pts.GetPoint(i)
             pts.SetPoint(i, x, y + y_shift, z)
         poly.SetPoints(pts)
+
+    # --- LUT helpers ---
+    def _apply_discrete_to_overlay_lut(self, lut: vtkLookupTable):
+        """Flatten LUT into discrete bands if -discrete is enabled.
+
+        This mimics the discrete overlay behavior of the C++ implementation by
+        sampling the color at the start of each block and reusing it across the
+        block, leaving boundary indices as-is (they can be used as visual gaps
+        in the colorbar logic).
+        """
+        steps = int(getattr(self.opts, 'discrete', 0) or 0)
+        if steps <= 0:
+            return
+        for i in range(256):
+            base = (i // steps) * steps
+            if base > 255:
+                base = 255
+            r, g, b, a = lut.GetTableValue(base)
+            if (i % steps) != 0:
+                lut.SetTableValue(i, r, g, b, a)
 
     # --- Camera state helpers to preserve view across overlay/mesh changes ---
     def _capture_camera_state(self):
@@ -1355,11 +1411,16 @@ class Viewer(QtWidgets.QMainWindow):
         self.opts.opacity = max(0.0, min(1.0, self.ctrl.opacity.value()/100.0))
         self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
         self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        for actor in (self.actor_ov_l, self.actor_ov_r):
-            if actor:
-                actor.GetMapper().SetLookupTable(self.lut_overlay_l)
-                if self.overlay_range[1] > self.overlay_range[0]:
-                    actor.GetMapper().SetScalarRange(self.overlay_range)
+        self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
+        self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+        if self.actor_ov_l is not None:
+            self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+            if self.overlay_range[1] > self.overlay_range[0]:
+                self.actor_ov_l.GetMapper().SetScalarRange(self.overlay_range)
+        if self.actor_ov_r is not None:
+            self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
+            if self.overlay_range[1] > self.overlay_range[0]:
+                self.actor_ov_r.GetMapper().SetScalarRange(self.overlay_range)
         # Overlay path
         new_overlay = self.ctrl.overlay_path.text().strip()
         if new_overlay and new_overlay != (self.opts.overlay or ""):
@@ -1426,8 +1487,11 @@ class Viewer(QtWidgets.QMainWindow):
             self._ensure_colorbar()
 
     def _ensure_colorbar(self):
+        # Ensure attribute exists for first-time calls during initialization
+        if not hasattr(self, 'scalar_bar'):
+            self.scalar_bar = None
         if self.scalar_bar is not None:
-            # Update existing colorbar's LUT (colormap/opacity) and range
+            # Simple continuous colorbar LUT based on current colormap/opacity and range
             lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
             if self.overlay_range[1] > self.overlay_range[0]:
                 lut_cb.SetTableRange(self.overlay_range)
@@ -1503,7 +1567,7 @@ class Viewer(QtWidgets.QMainWindow):
             self.ren.AddViewProp(sb)
 
     def _remove_colorbar(self):
-        if self.scalar_bar is not None:
+        if hasattr(self, 'scalar_bar') and self.scalar_bar is not None:
             try:
                 self.ren_ui.RemoveViewProp(self.scalar_bar)
             except Exception:
