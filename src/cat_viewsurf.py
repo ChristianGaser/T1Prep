@@ -736,16 +736,6 @@ class ControlPanel(QtWidgets.QWidget):
         self.cb_colorbar.setEnabled(enabled)
         self.cb_discrete.setEnabled(enabled and self.cb_colorbar.isChecked())
         self.title_mode.setEnabled(enabled and self.cb_colorbar.isChecked())
-        # Keep title selector in sync when user toggles colorbar
-        try:
-            self.cb_colorbar.toggled.disconnect()
-        except Exception:
-            pass
-        def _on_cb_colorbar_toggled(v: bool):
-            en = bool(v) and self.cb_colorbar.isEnabled()
-            self.title_mode.setEnabled(en)
-            self.cb_discrete.setEnabled(en)
-        self.cb_colorbar.toggled.connect(_on_cb_colorbar_toggled)
         # Inverse control
         self.cb_inverse.setEnabled(enabled)
 
@@ -1034,6 +1024,10 @@ class Viewer(QtWidgets.QMainWindow):
         self._actors: List[vtkActor] = []
         self.lut_overlay_l = get_lookup_table(opts.colormap, opts.opacity)
         self.lut_overlay_r = get_lookup_table(opts.colormap, opts.opacity)
+        # If inverse is requested, flip the LUTs (do not modify data/ranges)
+        if self.opts.inverse:
+            self._invert_lut(self.lut_overlay_l)
+            self._invert_lut(self.lut_overlay_r)
         # Apply discrete bands to overlay LUTs if requested
         self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
@@ -1280,6 +1274,9 @@ class Viewer(QtWidgets.QMainWindow):
                 # Rebuild overlay LUTs with new discrete setting
                 self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
                 self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
+                if self.opts.inverse:
+                    self._invert_lut(self.lut_overlay_l)
+                    self._invert_lut(self.lut_overlay_r)
                 self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
                 self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
                 if self.actor_ov_l is not None:
@@ -1294,6 +1291,131 @@ class Viewer(QtWidgets.QMainWindow):
                     self._ensure_colorbar()
                 self.rw.Render()
             self.ctrl.cb_discrete.toggled.connect(_on_discrete_toggled)
+
+        # Live: overlay range (spin + slider)
+        def _on_overlay_range_changed():
+            r0 = float(self.ctrl.range_min.value()); r1 = float(self.ctrl.range_max.value())
+            if r1 > r0:
+                self.overlay_range = [r0, r1]
+                for actor in (self.actor_ov_l, self.actor_ov_r):
+                    if actor:
+                        actor.GetMapper().SetScalarRange(self.overlay_range)
+                if self.scalar_bar is not None:
+                    lut_cb = self.scalar_bar.GetLookupTable()
+                    if lut_cb is not None:
+                        lut_cb.SetTableRange(self.overlay_range)
+                self.rw.Render()
+        self.ctrl.range_min.valueChanged.connect(lambda _=None: _on_overlay_range_changed())
+        self.ctrl.range_max.valueChanged.connect(lambda _=None: _on_overlay_range_changed())
+        self.ctrl.range_slider_min.valueChanged.connect(lambda _=None: _on_overlay_range_changed())
+        self.ctrl.range_slider_max.valueChanged.connect(lambda _=None: _on_overlay_range_changed())
+
+        # Live: background range (spin + slider)
+        def _on_bkg_range_changed():
+            b0 = float(self.ctrl.bkg_min.value()); b1 = float(self.ctrl.bkg_max.value())
+            if b1 > b0:
+                self.range_bkg = [b0, b1]
+                for actor in (getattr(self, 'actor_bkg_l', None), getattr(self, 'actor_bkg_r', None)):
+                    if actor:
+                        actor.GetMapper().SetScalarRange(self.range_bkg)
+                self.rw.Render()
+        self.ctrl.bkg_min.valueChanged.connect(lambda _=None: _on_bkg_range_changed())
+        self.ctrl.bkg_max.valueChanged.connect(lambda _=None: _on_bkg_range_changed())
+        self.ctrl.bkg_slider_min.valueChanged.connect(lambda _=None: _on_bkg_range_changed())
+        self.ctrl.bkg_slider_max.valueChanged.connect(lambda _=None: _on_bkg_range_changed())
+
+        # Live: opacity
+        def _on_opacity_changed(val: int):
+            self.opts.opacity = max(0.0, min(1.0, float(val)/100.0))
+            self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            if self.opts.inverse:
+                self._invert_lut(self.lut_overlay_l)
+                self._invert_lut(self.lut_overlay_r)
+            self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
+            self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+            if self.actor_ov_l is not None:
+                self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+            if self.actor_ov_r is not None:
+                self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
+            if self.opts.colorbar:
+                self._ensure_colorbar()
+            self.rw.Render()
+        self.ctrl.opacity.valueChanged.connect(_on_opacity_changed)
+
+        # Live: colorbar toggle
+        def _on_colorbar_toggled(checked: bool):
+            self.opts.colorbar = bool(checked)
+            if self.opts.colorbar:
+                self._ensure_colorbar()
+            else:
+                self._remove_colorbar()
+            # Keep control states in sync
+            try:
+                en = bool(checked) and self.ctrl.cb_colorbar.isEnabled()
+                self.ctrl.title_mode.setEnabled(en)
+                self.ctrl.cb_discrete.setEnabled(en)
+            except Exception:
+                pass
+            self.rw.Render()
+        self.ctrl.cb_colorbar.toggled.connect(_on_colorbar_toggled)
+
+        # Live: title mode change
+        def _on_title_mode_changed(_text: str):
+            self.opts.title_mode = _text
+            if self.opts.colorbar:
+                self._ensure_colorbar()
+                self.rw.Render()
+        self.ctrl.title_mode.currentTextChanged.connect(_on_title_mode_changed)
+
+        # Live: inverse toggle
+        def _on_inverse_toggled(checked: bool):
+            if bool(self.opts.inverse) == bool(checked):
+                return
+            self.opts.inverse = bool(checked)
+            self._apply_inverse()
+            self.rw.Render()
+        self.ctrl.cb_inverse.toggled.connect(_on_inverse_toggled)
+
+        # Live: fix scaling toggle
+        def _on_fix_scaling_toggled(checked: bool):
+            self.opts.fix_scaling = bool(checked)
+            if self.opts.fix_scaling:
+                # capture current as fixed
+                self.fixed_overlay_range = list(self.overlay_range)
+            else:
+                # recompute from current data
+                if self.scal_l is not None:
+                    r = [0.0, 0.0]
+                    self.poly_l.GetScalarRange(r)
+                    self.overlay_range = [float(r[0]), float(r[1])] if r[1] > r[0] else self.overlay_range
+            # Apply to actors and UI
+            for actor in (self.actor_ov_l, self.actor_ov_r):
+                if actor and self.overlay_range[1] > self.overlay_range[0]:
+                    actor.GetMapper().SetScalarRange(self.overlay_range)
+            if hasattr(self, 'ctrl') and self.overlay_range[1] > self.overlay_range[0]:
+                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
+                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+            if self.opts.colorbar:
+                self._ensure_colorbar()
+            self.rw.Render()
+        self.ctrl.cb_fix_scaling.toggled.connect(_on_fix_scaling_toggled)
+
+        # Live-ish: clip window — apply on slider release or editing finished
+        def _apply_clip_live():
+            c0 = float(self.ctrl.clip_min.value()); c1 = float(self.ctrl.clip_max.value())
+            # Treat (0,0) as disabled, same convention as _apply_controls
+            self.opts.clip = (c0, c1) if c1 > c0 else (0.0, 0.0)
+            if self.opts.overlay:
+                # Reload overlay to re-apply clip without destructive accumulation
+                self._capture_camera_state()
+                self._load_overlay(self.opts.overlay)
+                self._apply_camera_state()
+                self.rw.Render()
+        self.ctrl.clip_slider_min.sliderReleased.connect(_apply_clip_live)
+        self.ctrl.clip_slider_max.sliderReleased.connect(_apply_clip_live)
+        self.ctrl.clip_min.editingFinished.connect(_apply_clip_live)
+        self.ctrl.clip_max.editingFinished.connect(_apply_clip_live)
     
         # Start state based on CLI flag --panel (default hidden)
         if self.opts.panel:
@@ -1427,6 +1549,22 @@ class Viewer(QtWidgets.QMainWindow):
             r, g, b, a = lut.GetTableValue(start)
             for i in range(start, end):
                 lut.SetTableValue(i, r, g, b, a)
+
+    def _invert_lut(self, lut: vtkLookupTable):
+        """Reverse the order of colors in a LUT in-place.
+
+        This flips how scalars map to colors without changing data values
+        or scalar ranges. Alpha values are preserved with their colors.
+        """
+        try:
+            n = int(lut.GetNumberOfTableValues())
+            for i in range(n // 2):
+                r1, g1, b1, a1 = lut.GetTableValue(i)
+                r2, g2, b2, a2 = lut.GetTableValue(n - 1 - i)
+                lut.SetTableValue(i, r2, g2, b2, a2)
+                lut.SetTableValue(n - 1 - i, r1, g1, b1, a1)
+        except Exception:
+            pass
 
     # --- Camera state helpers to preserve view across overlay/mesh changes ---
     def _capture_camera_state(self):
@@ -1620,6 +1758,9 @@ class Viewer(QtWidgets.QMainWindow):
         self.opts.opacity = max(0.0, min(1.0, self.ctrl.opacity.value()/100.0))
         self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
         self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
+        if self.opts.inverse:
+            self._invert_lut(self.lut_overlay_l)
+            self._invert_lut(self.lut_overlay_r)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
         if self.actor_ov_l is not None:
@@ -1680,23 +1821,19 @@ class Viewer(QtWidgets.QMainWindow):
         self.rw.Render()
 
     def _apply_inverse(self):
-        for poly in (self.poly_l, self.poly_r if self.poly_r is not None else None):
-            if poly is None: continue
-            arr = poly.GetPointData().GetScalars()
-            if arr is None: continue
-            for i in range(arr.GetNumberOfTuples()): arr.SetValue(i, -float(arr.GetValue(i)))
-        if self.overlay_range[1] > self.overlay_range[0]:
-            self.overlay_range = [-self.overlay_range[1], -self.overlay_range[0]]
-        for actor in (self.actor_ov_l, self.actor_ov_r):
-            if actor and self.overlay_range[1] > self.overlay_range[0]:
-                actor.GetMapper().SetScalarRange(self.overlay_range)
-        # Sync control panel fields to reflect the updated range
-        if hasattr(self, 'ctrl') and self.overlay_range[1] > self.overlay_range[0]:
-            self.ctrl.range_min.setValue(float(self.overlay_range[0]))
-            self.ctrl.range_max.setValue(float(self.overlay_range[1]))
-            # Also update slider bounds/positions based on data
-            self._update_slider_bounds()
-        # Update colorbar if visible
+        """Flip colormap without changing data or scalar ranges."""
+        # Rebuild LUTs to ensure consistent base, then invert
+        self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
+        self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
+        if self.opts.inverse:
+            self._invert_lut(self.lut_overlay_l)
+            self._invert_lut(self.lut_overlay_r)
+        self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
+        self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+        if self.actor_ov_l is not None:
+            self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+        if self.actor_ov_r is not None:
+            self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
         if self.opts.colorbar:
             self._ensure_colorbar()
 
@@ -1707,6 +1844,8 @@ class Viewer(QtWidgets.QMainWindow):
         if self.scalar_bar is not None:
             # Simple continuous colorbar LUT based on current colormap/opacity and range
             lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            if self.opts.inverse:
+                self._invert_lut(lut_cb)
             # Apply discrete bands to colorbar LUT if requested
             try:
                 steps = int(getattr(self.opts, 'discrete', 0) or 0)
@@ -1746,6 +1885,8 @@ class Viewer(QtWidgets.QMainWindow):
 
         # Create a new scalar bar
         lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
+        if self.opts.inverse:
+            self._invert_lut(lut_cb)
         # Apply discrete bands to colorbar LUT if requested
         try:
             steps = int(getattr(self.opts, 'discrete', 0) or 0)
@@ -1832,11 +1973,7 @@ class Viewer(QtWidgets.QMainWindow):
             return
         finally:
             os.chdir(cwd)
-        # inverse
-        if self.opts.inverse and scal_l is not None:
-            for i in range(scal_l.GetNumberOfTuples()): scal_l.SetValue(i, -scal_l.GetValue(i))
-        if self.opts.inverse and scal_r is not None:
-            for i in range(scal_r.GetNumberOfTuples()): scal_r.SetValue(i, -scal_r.GetValue(i))
+        # Do not invert scalars; inversion is handled by flipping LUTs
         # clip
         if self.opts.clip[1] > self.opts.clip[0]:
             def clip_it(arr: vtkDoubleArray):
@@ -1852,11 +1989,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Predefined ranges for recognized overlays (thickness, pbt)
         kind = detect_overlay_kind(overlay_path)
         if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
-            # Apply requested defaults: overlay 1..5 (or -5..-1 if inverse); clip 0..0; bkg -1..1
-            ov_range = [1.0, 5.0]
-            if self.opts.inverse:
-                ov_range = [-5.0, -1.0]
-            self.overlay_range = ov_range
+            # Apply requested defaults: overlay 1..5; clip 0..0; bkg -1..1
+            self.overlay_range = [1.0, 5.0]
             self.opts.clip = (0.0, 0.0)
             self.range_bkg = [-1.0, 1.0]
         else:
