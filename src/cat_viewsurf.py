@@ -121,6 +121,9 @@ def get_lookup_table(colormap: int, alpha: float) -> LookupTableWithEnabling:
         pts = [(0,0/255,143/255,213/255),(25,111/255,190/255,70/255),(50,1,220/255,45/255),(75,252/255,171/255,23/255),(100,238/255,28/255,58/255)]; _fill_from_ctf(lut, pts, alpha)
     elif colormap == JET:
         pts = [(0,0,0,0.5625),(16.67,0,0,1),(33.33,0,1,1),(50,0.5,1,0.5),(66.67,1,1,0),(83.33,1,0,0),(100,0.5,0,0)]; _fill_from_ctf(lut, pts, alpha)
+    elif colormap == HOT:
+        # Classic HOT: black -> red -> yellow -> white
+        pts = [(0,0,0,0),(33.33,1,0,0),(66.67,1,1,0),(100,1,1,1)]; _fill_from_ctf(lut, pts, alpha)
     elif colormap == FIRE:
         pts = [(0,0,0,0),(25,0.5,0,0),(50,1,0,0),(75,1,0.5,0),(100,1,1,0)]; _fill_from_ctf(lut, pts, alpha)
     elif colormap == BIPOLAR:
@@ -677,6 +680,9 @@ class ControlPanel(QtWidgets.QWidget):
         # Toggles
         self.cb_colorbar = QtWidgets.QCheckBox("Show colorbar")
         self.cb_discrete = QtWidgets.QCheckBox("Discrete")
+        # Colormap selector
+        self.colormap = QtWidgets.QComboBox()
+        self.colormap.addItems(["JET","HOT","FIRE","BIPOLAR","GRAY","C1","C2","C3"])  # order visible to user
         # Title mode selector (shape | stats | none)
         self.title_mode = QtWidgets.QComboBox(); self.title_mode.addItems(["shape","stats","none"])
         self.cb_inverse = QtWidgets.QCheckBox("Inverse (flip sign)")
@@ -686,6 +692,8 @@ class ControlPanel(QtWidgets.QWidget):
         row.addWidget(self.cb_colorbar)
         row.addWidget(self.cb_discrete)
         row.addStretch(1)
+        row.addWidget(QtWidgets.QLabel("Colormap"))
+        row.addWidget(self.colormap)
         row.addWidget(QtWidgets.QLabel("Colorbar title"))
         row.addWidget(self.title_mode)
         form.addRow(self._wrap(row))
@@ -736,6 +744,8 @@ class ControlPanel(QtWidgets.QWidget):
         self.cb_colorbar.setEnabled(enabled)
         self.cb_discrete.setEnabled(enabled and self.cb_colorbar.isChecked())
         self.title_mode.setEnabled(enabled and self.cb_colorbar.isChecked())
+        # Colormap selector
+        self.colormap.setEnabled(enabled)
         # Inverse control
         self.cb_inverse.setEnabled(enabled)
 
@@ -1031,6 +1041,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Apply discrete bands to overlay LUTs if requested
         self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+        # Apply clip transparency to overlay LUTs (values inside clip become transparent)
+        self._apply_clip_to_overlay_luts()
         lut_bkg = vtkLookupTable(); lut_bkg.SetHueRange(0,0); lut_bkg.SetSaturationRange(0,0); lut_bkg.SetValueRange(0,1); lut_bkg.Build()
 
         # Background scalar range
@@ -1253,6 +1265,21 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
         self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
+        # Initialize colormap selector based on opts.colormap
+        try:
+            cm_index_map = {
+                JET: 0,
+                HOT: 1,
+                FIRE: 2,
+                BIPOLAR: 3,
+                GRAY: 4,
+                C1: 5,
+                C2: 6,
+                C3: 7,
+            }
+            self.ctrl.colormap.setCurrentIndex(cm_index_map.get(self.opts.colormap, 0))
+        except Exception:
+            pass
         # Initialize discrete checkbox from opts (consider non-zero as on)
         if hasattr(self.ctrl, 'cb_discrete'):
             disc = int(getattr(self.opts, 'discrete', 0) or 0)
@@ -1268,6 +1295,28 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.apply_btn.clicked.connect(self._apply_controls)
         self.ctrl.reset_btn.clicked.connect(self._reset_camera)
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
+        # Colormap selection handler
+        def _on_colormap_changed(idx: int):
+            # Map UI index back to enum
+            idx_to_cm = {0: JET, 1: HOT, 2: FIRE, 3: BIPOLAR, 4: GRAY, 5: C1, 6: C2, 7: C3}
+            self.opts.colormap = idx_to_cm.get(int(idx), JET)
+            # Rebuild LUTs respecting inverse and discrete
+            self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            if self.opts.inverse:
+                self._invert_lut(self.lut_overlay_l)
+                self._invert_lut(self.lut_overlay_r)
+            self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
+            self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+            self._apply_clip_to_overlay_luts()
+            if self.actor_ov_l is not None:
+                self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+            if self.actor_ov_r is not None:
+                self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
+            if self.opts.colorbar:
+                self._ensure_colorbar()
+            self.rw.Render()
+        self.ctrl.colormap.currentIndexChanged.connect(_on_colormap_changed)
         if hasattr(self.ctrl, 'cb_discrete'):
             def _on_discrete_toggled(checked: bool):
                 self.opts.discrete = 4 if checked else 0
@@ -1406,12 +1455,22 @@ class Viewer(QtWidgets.QMainWindow):
             c0 = float(self.ctrl.clip_min.value()); c1 = float(self.ctrl.clip_max.value())
             # Treat (0,0) as disabled, same convention as _apply_controls
             self.opts.clip = (c0, c1) if c1 > c0 else (0.0, 0.0)
-            if self.opts.overlay:
-                # Reload overlay to re-apply clip without destructive accumulation
-                self._capture_camera_state()
-                self._load_overlay(self.opts.overlay)
-                self._apply_camera_state()
-                self.rw.Render()
+            # Re-apply clip by updating LUT alpha (no data mutation)
+            self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            if self.opts.inverse:
+                self._invert_lut(self.lut_overlay_l)
+                self._invert_lut(self.lut_overlay_r)
+            self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
+            self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+            self._apply_clip_to_overlay_luts()
+            if self.actor_ov_l is not None:
+                self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+            if self.actor_ov_r is not None:
+                self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
+            if self.opts.colorbar:
+                self._ensure_colorbar()
+            self.rw.Render()
         self.ctrl.clip_slider_min.sliderReleased.connect(_apply_clip_live)
         self.ctrl.clip_slider_max.sliderReleased.connect(_apply_clip_live)
         self.ctrl.clip_min.editingFinished.connect(_apply_clip_live)
@@ -1565,6 +1624,42 @@ class Viewer(QtWidgets.QMainWindow):
                 lut.SetTableValue(n - 1 - i, r1, g1, b1, a1)
         except Exception:
             pass
+
+    def _apply_clip_to_overlay_luts(self):
+        """Make values inside the clip range transparent and gray in colorbar.
+
+        - For overlay LUTs: set alpha=0 for indices mapping to scalars in (clip_min, clip_max).
+        - For colorbar LUT: reuse same logic; the gray band is applied in _ensure_colorbar.
+        """
+        c0, c1 = self.opts.clip
+        if not (c1 > c0):
+            return
+        # Determine scalar range used for mapping
+        if self.overlay_range[1] > self.overlay_range[0]:
+            smin, smax = float(self.overlay_range[0]), float(self.overlay_range[1])
+        else:
+            # fallback to data range from poly_l if available
+            r = [0.0, 0.0]
+            try:
+                self.poly_l.GetScalarRange(r)
+            except Exception:
+                return
+            if not (r[1] > r[0]):
+                return
+            smin, smax = float(r[0]), float(r[1])
+        def apply(lut: vtkLookupTable):
+            n = int(lut.GetNumberOfTableValues())
+            for i in range(n):
+                t = i / (n - 1 if n > 1 else 1)
+                val = smin + t * (smax - smin)
+                r, g, b, a = lut.GetTableValue(i)
+                if c0 < val < c1:
+                    # Transparent in overlay
+                    lut.SetTableValue(i, r, g, b, 0.0)
+        if self.lut_overlay_l is not None:
+            apply(self.lut_overlay_l)
+        if self.lut_overlay_r is not None:
+            apply(self.lut_overlay_r)
 
     # --- Camera state helpers to preserve view across overlay/mesh changes ---
     def _capture_camera_state(self):
@@ -1756,6 +1851,13 @@ class Viewer(QtWidgets.QMainWindow):
                 if actor: actor.GetMapper().SetScalarRange(self.range_bkg)
         # Opacity
         self.opts.opacity = max(0.0, min(1.0, self.ctrl.opacity.value()/100.0))
+        # Colormap from UI combobox
+        try:
+            idx = int(self.ctrl.colormap.currentIndex())
+            idx_to_cm = {0: JET, 1: HOT, 2: FIRE, 3: BIPOLAR, 4: GRAY, 5: C1, 6: C2, 7: C3}
+            self.opts.colormap = idx_to_cm.get(idx, self.opts.colormap)
+        except Exception:
+            pass
         self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
         self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
         if self.opts.inverse:
@@ -1763,6 +1865,7 @@ class Viewer(QtWidgets.QMainWindow):
             self._invert_lut(self.lut_overlay_r)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+        self._apply_clip_to_overlay_luts()
         if self.actor_ov_l is not None:
             self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
             if self.overlay_range[1] > self.overlay_range[0]:
@@ -1855,6 +1958,19 @@ class Viewer(QtWidgets.QMainWindow):
                 self._apply_discrete_to_overlay_lut(lut_cb)
             if self.overlay_range[1] > self.overlay_range[0]:
                 lut_cb.SetTableRange(self.overlay_range)
+            # Gray out clip span on the colorbar (keep alpha opaque so the bar shows gray)
+            c0, c1 = self.opts.clip
+            if c1 > c0 and self.overlay_range[1] > self.overlay_range[0]:
+                smin, smax = float(self.overlay_range[0]), float(self.overlay_range[1])
+                n = int(lut_cb.GetNumberOfTableValues())
+                for i in range(n):
+                    t = i / (n - 1 if n > 1 else 1)
+                    val = smin + t * (smax - smin)
+                    if c0 < val < c1:
+                        # set to gray with original alpha
+                        r, g, b, a = lut_cb.GetTableValue(i)
+                        gray = 0.5
+                        lut_cb.SetTableValue(i, gray, gray, gray, a)
             self.scalar_bar.SetLookupTable(lut_cb)
 
             # Update title according to title_mode (only if colorbar is enabled)
@@ -1896,6 +2012,18 @@ class Viewer(QtWidgets.QMainWindow):
             self._apply_discrete_to_overlay_lut(lut_cb)
         if self.overlay_range[1] > self.overlay_range[0]:
             lut_cb.SetTableRange(self.overlay_range)
+        # Gray out clip span on the colorbar
+        c0, c1 = self.opts.clip
+        if c1 > c0 and self.overlay_range[1] > self.overlay_range[0]:
+            smin, smax = float(self.overlay_range[0]), float(self.overlay_range[1])
+            n = int(lut_cb.GetNumberOfTableValues())
+            for i in range(n):
+                t = i / (n - 1 if n > 1 else 1)
+                val = smin + t * (smax - smin)
+                if c0 < val < c1:
+                    r, g, b, a = lut_cb.GetTableValue(i)
+                    gray = 0.5
+                    lut_cb.SetTableValue(i, gray, gray, gray, a)
         sb = vtkScalarBarActor()
         sb.SetOrientationToHorizontal()
         sb.SetLookupTable(lut_cb)
@@ -1974,14 +2102,7 @@ class Viewer(QtWidgets.QMainWindow):
         finally:
             os.chdir(cwd)
         # Do not invert scalars; inversion is handled by flipping LUTs
-        # clip
-        if self.opts.clip[1] > self.opts.clip[0]:
-            def clip_it(arr: vtkDoubleArray):
-                for i in range(arr.GetNumberOfTuples()):
-                    v = float(arr.GetValue(i))
-                    if (self.opts.clip[0] < v < self.opts.clip[1]) or math.isnan(v): arr.SetValue(i, 0.0)
-            if scal_l is not None: clip_it(scal_l)
-            if scal_r is not None: clip_it(scal_r)
+        # Clip is rendered via LUT alpha; do not mutate scalar arrays
         # attach
         self.scal_l = scal_l; self.scal_r = scal_r
         if scal_l is not None: self.poly_l.GetPointData().SetScalars(scal_l)
@@ -2011,6 +2132,11 @@ class Viewer(QtWidgets.QMainWindow):
                 if actor:
                     actor.GetMapper().SetScalarRange(self.range_bkg)
         if self.opts.colorbar: self._ensure_colorbar()
+        # Apply clip transparency and refresh LUTs on actors
+        self._apply_clip_to_overlay_luts()
+        for actor in (self.actor_ov_l, self.actor_ov_r):
+            if actor:
+                actor.GetMapper().SetLookupTable(self.lut_overlay_l)
         
         # Enable overlay controls since we now have an overlay loaded
         if hasattr(self, 'ctrl'):
