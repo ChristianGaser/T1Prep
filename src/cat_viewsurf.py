@@ -523,7 +523,7 @@ def parse_args(argv: List[str]) -> Options:
     # Accept one or more positional inputs. If more than one is given, treat all as overlays
     # and derive the mesh from the first overlay via naming rules.
     p.add_argument(
-        'inputs', nargs='+',
+        'inputs', nargs='*',
         help='Mesh or overlay(s). If multiple values are provided, they are treated as overlays.'
     )
     p.add_argument('-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
@@ -542,7 +542,8 @@ def parse_args(argv: List[str]) -> Options:
                    help='Colorbar title: shape (filename), stats, or none')
     p.add_argument('-inverse', action='store_true')
     p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true')
-    p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=0)
+    p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=2,
+                   help='Number of discrete color levels (0 to disable). Default: 2')
     p.add_argument('-log', action='store_true')
     p.add_argument('-white', action='store_true')
     # Control panel visibility (default: hidden)
@@ -556,7 +557,104 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-c3', action='store_true')
     p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true', help='Fix scaling across all overlays')
     p.add_argument('-debug', action='store_true')
+    # External defaults file for viewer settings (key=value lines)
+    p.add_argument('--defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
     a = p.parse_args(argv)
+    # Guard: require at least one positional input or an explicit overlay list
+    if not a.inputs and not a.overlay and not a.overlays:
+        p.error('You must provide at least one input (mesh or overlay), or use -overlay/-overlays.')
+
+    # Optionally load external defaults and apply only for values not explicitly provided on CLI
+    def _parse_bool(s: str) -> bool:
+        return str(s).strip().lower() in ('1','true','yes','on')
+
+    def _parse_floats_csv(s: str, n_expected: int = None) -> Tuple[float, ...]:
+        parts = [p for p in re.split(r'[;,\s]+', str(s).strip()) if p]
+        vals = tuple(float(p) for p in parts)
+        if n_expected and len(vals) != n_expected:
+            raise ValueError(f'Expected {n_expected} numbers, got {len(vals)}')
+        return vals
+
+    def _cm_from_name(name: str) -> int:
+        name_u = str(name).strip().upper()
+        mapping = {
+            'JET': JET, 'HOT': HOT, 'FIRE': FIRE, 'BIPOLAR': BIPOLAR, 'GRAY': GRAY,
+            'C1': C1, 'C2': C2, 'C3': C3
+        }
+        if name_u in mapping:
+            return mapping[name_u]
+        # allow numeric index
+        try:
+            v = int(name_u)
+            return v if v in mapping.values() else JET
+        except Exception:
+            return JET
+
+    def _load_defaults_file(path: str) -> dict:
+        cfg = {}
+        try:
+            with open(path, 'r') as f:
+                for line in f:
+                    s = line.strip()
+                    if not s or s.startswith('#'):
+                        continue
+                    if '=' not in s:
+                        continue
+                    key, val = s.split('=', 1)
+                    cfg[key.strip()] = val.strip().strip('"\'')
+        except Exception:
+            return {}
+        return cfg
+
+    def _apply_defaults_cfg(cfg: dict, ns: argparse.Namespace, defaults_ns: argparse.Namespace):
+        if not cfg:
+            return
+        def _apply_if_default(attr: str, parser: callable):
+            if hasattr(ns, attr):
+                if getattr(ns, attr) == getattr(defaults_ns, attr):
+                    try:
+                        setattr(ns, attr, parser(cfg[attr]))
+                    except Exception:
+                        pass
+        # Scalars / toggles
+        if 'opacity' in cfg: _apply_if_default('opacity', float)
+        if 'discrete' in cfg: _apply_if_default('discrete', int)
+        if 'inverse' in cfg: _apply_if_default('inverse', _parse_bool)
+        if 'colorbar' in cfg: _apply_if_default('colorbar', _parse_bool)
+        if 'fontsize' in cfg: _apply_if_default('fontsize', int)
+        if 'panel' in cfg: _apply_if_default('panel', _parse_bool)
+        if 'fix_scaling' in cfg: _apply_if_default('fix_scaling', _parse_bool)
+        if 'white' in cfg: _apply_if_default('white', _parse_bool)
+        if 'log' in cfg: _apply_if_default('log', _parse_bool)
+        if 'debug' in cfg: _apply_if_default('debug', _parse_bool)
+        # Enums / tuples
+        if 'title_mode' in cfg: _apply_if_default('title_mode', str)
+        if 'range' in cfg: _apply_if_default('range', lambda s: tuple(_parse_floats_csv(s, 2)))
+        if 'range_bkg' in cfg: _apply_if_default('range_bkg', lambda s: tuple(_parse_floats_csv(s, 2)))
+        if 'clip' in cfg: _apply_if_default('clip', lambda s: tuple(_parse_floats_csv(s, 2)))
+        if 'size' in cfg: _apply_if_default('size', lambda s: tuple(int(x) for x in _parse_floats_csv(s, 2)))
+        if 'colormap' in cfg: _apply_if_default('colormap', _cm_from_name)
+
+    # Build a defaults namespace to detect which args were explicitly set by user
+    defaults_ns = p.parse_args([])
+    if getattr(a, 'defaults', None):
+        import re  # lazy import for simple parsing
+        cfg = _load_defaults_file(a.defaults)
+        _apply_defaults_cfg(cfg, a, defaults_ns)
+    else:
+        # If no explicit defaults file given, try to load project default
+        import re  # for parsing floats
+        script_dir = Path(__file__).resolve().parent
+        candidates = [
+            script_dir.parent / 'cat_viewsurf_defaults.txt',
+            script_dir / 'cat_viewsurf_defaults.txt',
+            Path.cwd() / 'cat_viewsurf_defaults.txt',
+        ]
+        for c in candidates:
+            if c.exists():
+                cfg = _load_defaults_file(str(c))
+                _apply_defaults_cfg(cfg, a, defaults_ns)
+                break
 
     cm = JET
     if a.fire: cm = FIRE
@@ -565,11 +663,9 @@ def parse_args(argv: List[str]) -> Options:
     if a.c2: cm = C2
     if a.c3: cm = C3
 
-    d = a.discrete
-    if d < 0 or d > 4:
-        p.error("Parameter -discrete/-dsc should be 0..4")
-    if d:
-        d = int(math.pow(2, d + 2))  # 32,16,8,4
+    d = int(a.discrete)
+    if d < 0 or d > 256:
+        p.error("Parameter -discrete/-dsc should be 0..256")
 
     # Derive mesh/overlay list from positional inputs
     pos_inputs: List[str] = list(a.inputs)
@@ -879,15 +975,55 @@ class ControlPanel(QtWidgets.QWidget):
 
 # ---- Viewer ----
 class Viewer(QtWidgets.QMainWindow):
+    def _install_toggle_shortcuts(self):
+        # Install explicit QShortcuts so we don't depend on QAction shortcut routing
+        self._toggle_shortcuts: List[QShortcut] = []
+        seqs: List[str]
+        if sys.platform == 'darwin':
+            # Support both Cmd+D (primary) and legacy Cmd+K
+            seqs = ["Meta+D", "Meta+K"]
+        else:
+            seqs = ["Ctrl+D"]
+
+        def add(parent):
+            for s in seqs:
+                try:
+                    sc = QShortcut(QKeySequence(s), parent)
+                except Exception:
+                    continue
+                try:
+                    sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
+                except Exception:
+                    sc.setContext(Qt.ApplicationShortcut)
+                sc.activated.connect(lambda d=getattr(self, 'dock_controls', None): d is not None and self._toggle_controls(not d.isVisible()))
+                self._toggle_shortcuts.append(sc)
+
+        # Add on both the main window and the VTK widget to cover focus cases
+        add(self)
+        if hasattr(self, 'vtk_widget'):
+            add(self.vtk_widget)
     def _setup_view_menu(self):
         menubar = self.menuBar()
         menu = menubar.addMenu("View")
         act = QAction("Show Controls", self)
         act.setCheckable(True)
         act.setChecked(self.opts.panel)
+        # Platform-specific shortcut: macOS = Cmd+;  | others = Ctrl+D
+        # Do not attach a shortcut to the QAction — use a QShortcut instead
         act.triggered.connect(self._toggle_controls)
         menu.addAction(act)
         self.act_show_controls = act
+
+        # Add a direct QShortcut to toggle dock visibility (Ctrl+D on all, mapped to Cmd+D on macOS)
+        self._dock_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        try:
+            self._dock_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        except Exception:
+            self._dock_shortcut.setContext(Qt.ApplicationShortcut)
+        self._dock_shortcut.activated.connect(lambda: (
+            self._toggle_controls(not self.dock_controls.isVisible())
+            if hasattr(self, 'dock_controls') and self.dock_controls is not None else None
+        ))
 
     def _toggle_controls(self, checked: bool):
         if not hasattr(self, 'dock_controls'):
@@ -953,8 +1089,18 @@ class Viewer(QtWidgets.QMainWindow):
         style = CustomInteractorStyle(); style.SetRenderer(self.ren); style.SetViewer(self); self.iren.SetInteractorStyle(style)
         # Also observe key events explicitly for overlay navigation only (avoid duplicates)
         def _on_keypress(obj, ev):
+            # Prefer handling our toggle here if modifiers are pressed and match
             try:
-                sym = self.iren.GetKeySym()
+                sym = None
+                try:
+                    sym = self.iren.GetKeySym()
+                except Exception:
+                    sym = None
+            except Exception:
+                pass
+            try:
+                if sym is None:
+                    sym = self.iren.GetKeySym()
             except Exception:
                 sym = None
             self._handle_key(sym)
@@ -1164,6 +1310,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Optional snapshot
         if opts.output:
             self.save_png(opts.output)
+
+        # (Shortcuts/event filter reverted to previous behavior)
         
     def _show_view_context_menu(self, pos):
         menu = QtWidgets.QMenu(self)
@@ -1319,7 +1467,8 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.colormap.currentIndexChanged.connect(_on_colormap_changed)
         if hasattr(self.ctrl, 'cb_discrete'):
             def _on_discrete_toggled(checked: bool):
-                self.opts.discrete = 4 if checked else 0
+                # Use 2 levels by default when checked
+                self.opts.discrete = 16 if checked else 0
                 # Rebuild overlay LUTs with new discrete setting
                 self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
                 self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
@@ -1328,6 +1477,8 @@ class Viewer(QtWidgets.QMainWindow):
                     self._invert_lut(self.lut_overlay_r)
                 self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
                 self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+                # Reapply clip transparency so values inside clip window stay transparent
+                self._apply_clip_to_overlay_luts()
                 if self.actor_ov_l is not None:
                     self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
                     if self.overlay_range[1] > self.overlay_range[0]:
@@ -1383,6 +1534,8 @@ class Viewer(QtWidgets.QMainWindow):
                 self._invert_lut(self.lut_overlay_r)
             self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
             self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+            # Reapply clip transparency after opacity change
+            self._apply_clip_to_overlay_luts()
             if self.actor_ov_l is not None:
                 self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
             if self.actor_ov_r is not None:
@@ -1489,35 +1642,41 @@ class Viewer(QtWidgets.QMainWindow):
         # Initialize slider bounds from current data
         self._update_slider_bounds()
     
-        # View menu + keyboard shortcut (uses QAction shim)
+        # View menu + keyboard shortcut
         menubar = self.menuBar()
         menu = menubar.addMenu("View")
         act = QAction("Show Controls", self)
         act.setCheckable(True)
         act.setChecked(self.opts.panel)
-        # Do not attach a shortcut to the QAction to avoid double-triggering with QShortcut
-        self.addAction(act)               # register action (no keybinding)
+        # No direct shortcut on the QAction — QShortcuts handle the key bindings reliably
         act.triggered.connect(self._toggle_controls)
         menu.addAction(act)
+        # Register action with the window so its shortcut is active
+        self.addAction(act)
         self.act_show_controls = act
 
-        # Add a direct QShortcut to toggle dock visibility reliably with one key press
-        # This avoids any interference from focused VTK interactor or QAction state.
-        # Shortcut on main window (Ctrl/Command+D)
-        self._dock_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        # Add a single QShortcut on the main window (Ctrl+D -> mapped to Cmd+D on macOS)
         try:
-            self._dock_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            self._dock_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+            try:
+                self._dock_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            except Exception:
+                self._dock_shortcut.setContext(Qt.ApplicationShortcut)
+            self._dock_shortcut.activated.connect(lambda: (
+                self._toggle_controls(not self.dock_controls.isVisible())
+                if hasattr(self, 'dock_controls') and self.dock_controls is not None else None
+            ))
         except Exception:
-            self._dock_shortcut.setContext(Qt.ApplicationShortcut)
-        self._dock_shortcut.activated.connect(lambda d=dock: self._toggle_controls(not d.isVisible()))
+            pass
 
     def _update_status_message(self, controls_visible: bool):
         """Show a small hint about the controls shortcut in the window status bar."""
         sb = self.statusBar()
+        shortcut_hint = "Ctrl/Cmd+D"
         if controls_visible:
-            sb.showMessage("Controls visible — press Ctrl/Cmd+D to hide")
+            sb.showMessage(f"Controls visible — press {shortcut_hint} to hide")
         else:
-            sb.showMessage("Controls hidden — press Ctrl/Cmd+D to show")
+            sb.showMessage(f"Controls hidden — press {shortcut_hint} to show")
         # Single application-wide shortcut should suffice
 
     def _handle_key(self, sym: Optional[str]):
@@ -1561,7 +1720,8 @@ class Viewer(QtWidgets.QMainWindow):
             name = Path(self.rw.GetWindowName() or 'screenshot').with_suffix('.png')
             png = vtkPNGWriter(); png.SetFileName(str(name)); png.SetInputConnection(w2i.GetOutputPort()); png.Write(); print(f"Saved {name}"); return
         if s in ('h','H'):
-            print("KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation"); return
+            hint = '⌘D' if sys.platform == 'darwin' else 'Ctrl+D'
+            print(f"KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation, toggle controls: {hint}"); return
 
     def _reset_camera(self):
         self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0); self.rw.Render()
@@ -1905,7 +2065,8 @@ class Viewer(QtWidgets.QMainWindow):
         self.opts.colorbar = self.ctrl.cb_colorbar.isChecked()
         # Discrete levels from checkbox; checked means 4 bands by default
         if hasattr(self.ctrl, 'cb_discrete'):
-            self.opts.discrete = 4 if self.ctrl.cb_discrete.isChecked() else 0
+            # Checked uses 2 levels by default to match Options default
+            self.opts.discrete = 2 if self.ctrl.cb_discrete.isChecked() else 0
         # Persist title mode
         self.opts.title_mode = self.ctrl.title_mode.currentText()
         inv = self.ctrl.cb_inverse.isChecked()
