@@ -7,5 +7,6 @@ spline-resize>=0.1.1
 SplineSmooth3D>=0.1.1
 nxbc>=0.2.0
 PySide6>=6.5
+vtk>=9.0.0
 requests
 --extra-index-url https://pypi.ngc.nvidia.com

@@ -294,6 +294,19 @@ def is_overlay_file(filename: str) -> bool:
     
     return False
 
+def detect_overlay_kind(filename: str) -> Optional[str]:
+    """Detect overlay kind such as 'thickness' or 'pbt' from filename.
+
+    Returns: 'thickness' | 'pbt' | None
+    """
+    name = Path(filename).name.lower()
+    # BIDS style
+    if '_desc-thickness' in name or '.thickness.' in name or name.endswith('thickness'):
+        return 'thickness'
+    if '_desc-pbt' in name or '.pbt.' in name or name.endswith('pbt'):
+        return 'pbt'
+    return None
+
 # ---- I/O helpers ----
 def read_gifti_mesh(filename: str) -> vtkPolyData:
     if HAVE_VTK_GIFTI:
@@ -626,20 +639,33 @@ class ControlPanel(QtWidgets.QWidget):
         self.layout = QtWidgets.QVBoxLayout(self)
         self.layout.setContentsMargins(10,10,10,10)
         form = QtWidgets.QFormLayout()
+        # Internal bounds for slider mapping (min,max)
+        self._overlay_bounds = (-1.0, 1.0)
+        self._clip_bounds = (-1.0, 1.0)
+        self._bkg_bounds = (-1.0, 1.0)
+
         # Range (overlay)
         self.range_min = QtWidgets.QDoubleSpinBox(); self.range_min.setDecimals(6); self.range_min.setRange(-1e9, 1e9)
         self.range_max = QtWidgets.QDoubleSpinBox(); self.range_max.setDecimals(6); self.range_max.setRange(-1e9, 1e9)
-        range_box = QtWidgets.QHBoxLayout(); range_box.addWidget(self.range_min); range_box.addWidget(self.range_max)
+        self.range_slider_min = QtWidgets.QSlider(ORIENT_H); self.range_slider_min.setRange(0, 1000)
+        self.range_slider_max = QtWidgets.QSlider(ORIENT_H); self.range_slider_max.setRange(0, 1000)
+        range_box = QtWidgets.QHBoxLayout(); range_box.addWidget(self.range_min); range_box.addWidget(self.range_slider_min); range_box.addWidget(self.range_slider_max); range_box.addWidget(self.range_max)
         form.addRow("Range (overlay)", self._wrap(range_box))
+
         # Clip
         self.clip_min = QtWidgets.QDoubleSpinBox(); self.clip_min.setDecimals(6); self.clip_min.setRange(-1e9, 1e9)
         self.clip_max = QtWidgets.QDoubleSpinBox(); self.clip_max.setDecimals(6); self.clip_max.setRange(-1e9, 1e9)
-        clip_box = QtWidgets.QHBoxLayout(); clip_box.addWidget(self.clip_min); clip_box.addWidget(self.clip_max)
+        self.clip_slider_min = QtWidgets.QSlider(ORIENT_H); self.clip_slider_min.setRange(0, 1000)
+        self.clip_slider_max = QtWidgets.QSlider(ORIENT_H); self.clip_slider_max.setRange(0, 1000)
+        clip_box = QtWidgets.QHBoxLayout(); clip_box.addWidget(self.clip_min); clip_box.addWidget(self.clip_slider_min); clip_box.addWidget(self.clip_slider_max); clip_box.addWidget(self.clip_max)
         form.addRow("Clip window", self._wrap(clip_box))
+
         # Range bkg
         self.bkg_min = QtWidgets.QDoubleSpinBox(); self.bkg_min.setDecimals(6); self.bkg_min.setRange(-1e9, 1e9)
         self.bkg_max = QtWidgets.QDoubleSpinBox(); self.bkg_max.setDecimals(6); self.bkg_max.setRange(-1e9, 1e9)
-        bkg_box = QtWidgets.QHBoxLayout(); bkg_box.addWidget(self.bkg_min); bkg_box.addWidget(self.bkg_max)
+        self.bkg_slider_min = QtWidgets.QSlider(ORIENT_H); self.bkg_slider_min.setRange(0, 1000)
+        self.bkg_slider_max = QtWidgets.QSlider(ORIENT_H); self.bkg_slider_max.setRange(0, 1000)
+        bkg_box = QtWidgets.QHBoxLayout(); bkg_box.addWidget(self.bkg_min); bkg_box.addWidget(self.bkg_slider_min); bkg_box.addWidget(self.bkg_slider_max); bkg_box.addWidget(self.bkg_max)
         form.addRow("Range (bkg)", self._wrap(bkg_box))
         # Opacity
         self.opacity = QtWidgets.QSlider(ORIENT_H); self.opacity.setRange(0,100); self.opacity.setValue(80)
@@ -671,6 +697,24 @@ class ControlPanel(QtWidgets.QWidget):
         btns.addWidget(self.apply_btn); btns.addWidget(self.reset_btn)
         self.layout.addLayout(btns)
         self.layout.addStretch(1)
+
+        # --- Wiring: bidirectional sync between sliders and spin boxes ---
+        # Overlay range
+        self.range_slider_min.valueChanged.connect(lambda v: self._slider_to_spin('overlay', 'min', v))
+        self.range_slider_max.valueChanged.connect(lambda v: self._slider_to_spin('overlay', 'max', v))
+        self.range_min.valueChanged.connect(lambda v: self._spin_to_slider('overlay', 'min', float(v)))
+        self.range_max.valueChanged.connect(lambda v: self._spin_to_slider('overlay', 'max', float(v)))
+        # Clip window
+        self.clip_slider_min.valueChanged.connect(lambda v: self._slider_to_spin('clip', 'min', v))
+        self.clip_slider_max.valueChanged.connect(lambda v: self._slider_to_spin('clip', 'max', v))
+        self.clip_min.valueChanged.connect(lambda v: self._spin_to_slider('clip', 'min', float(v)))
+        self.clip_max.valueChanged.connect(lambda v: self._spin_to_slider('clip', 'max', float(v)))
+        # Background
+        self.bkg_slider_min.valueChanged.connect(lambda v: self._slider_to_spin('bkg', 'min', v))
+        self.bkg_slider_max.valueChanged.connect(lambda v: self._slider_to_spin('bkg', 'max', v))
+        self.bkg_min.valueChanged.connect(lambda v: self._spin_to_slider('bkg', 'min', float(v)))
+        self.bkg_max.valueChanged.connect(lambda v: self._spin_to_slider('bkg', 'max', float(v)))
+
     def _wrap(self, hbox: QtWidgets.QHBoxLayout) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget(); w.setLayout(hbox); return w
     
@@ -679,9 +723,13 @@ class ControlPanel(QtWidgets.QWidget):
         # Range controls
         self.range_min.setEnabled(enabled)
         self.range_max.setEnabled(enabled)
+        self.range_slider_min.setEnabled(enabled)
+        self.range_slider_max.setEnabled(enabled)
         # Clip controls
         self.clip_min.setEnabled(enabled)
         self.clip_max.setEnabled(enabled)
+        self.clip_slider_min.setEnabled(enabled)
+        self.clip_slider_max.setEnabled(enabled)
         # Colorbar and title controls
         self.cb_colorbar.setEnabled(enabled)
         self.title_mode.setEnabled(enabled and self.cb_colorbar.isChecked())
@@ -693,6 +741,134 @@ class ControlPanel(QtWidgets.QWidget):
         self.cb_colorbar.toggled.connect(lambda v: self.title_mode.setEnabled(bool(v) and self.cb_colorbar.isEnabled()))
         # Inverse control
         self.cb_inverse.setEnabled(enabled)
+
+    # ---- Slider helpers ----
+    def _bounds(self, which: str):
+        return {
+            'overlay': self._overlay_bounds,
+            'clip': self._clip_bounds,
+            'bkg': self._bkg_bounds,
+        }[which]
+
+    @staticmethod
+    def _to_slider(value: float, bounds: tuple) -> int:
+        a, b = bounds
+        if b <= a:
+            return 0
+        t = (float(value) - float(a)) / (float(b) - float(a))
+        t = max(0.0, min(1.0, t))
+        return int(round(t * 1000.0))
+
+    @staticmethod
+    def _from_slider(ticks: int, bounds: tuple) -> float:
+        a, b = bounds
+        if b <= a:
+            return float(a)
+        t = max(0, min(1000, int(ticks))) / 1000.0
+        return float(a) + t * (float(b) - float(a))
+
+    def _slider_to_spin(self, which: str, part: str, ticks: int):
+        bounds = self._bounds(which)
+        val = self._from_slider(ticks, bounds)
+        if which == 'overlay':
+            if part == 'min':
+                # Enforce min <= max
+                if self.range_slider_min.value() > self.range_slider_max.value():
+                    self.range_slider_max.blockSignals(True)
+                    self.range_slider_max.setValue(self.range_slider_min.value())
+                    self.range_slider_max.blockSignals(False)
+                self.range_min.blockSignals(True); self.range_min.setValue(val); self.range_min.blockSignals(False)
+            else:
+                if self.range_slider_max.value() < self.range_slider_min.value():
+                    self.range_slider_min.blockSignals(True)
+                    self.range_slider_min.setValue(self.range_slider_max.value())
+                    self.range_slider_min.blockSignals(False)
+                self.range_max.blockSignals(True); self.range_max.setValue(val); self.range_max.blockSignals(False)
+        elif which == 'clip':
+            if part == 'min':
+                if self.clip_slider_min.value() > self.clip_slider_max.value():
+                    self.clip_slider_max.blockSignals(True)
+                    self.clip_slider_max.setValue(self.clip_slider_min.value())
+                    self.clip_slider_max.blockSignals(False)
+                self.clip_min.blockSignals(True); self.clip_min.setValue(val); self.clip_min.blockSignals(False)
+            else:
+                if self.clip_slider_max.value() < self.clip_slider_min.value():
+                    self.clip_slider_min.blockSignals(True)
+                    self.clip_slider_min.setValue(self.clip_slider_max.value())
+                    self.clip_slider_min.blockSignals(False)
+                self.clip_max.blockSignals(True); self.clip_max.setValue(val); self.clip_max.blockSignals(False)
+        elif which == 'bkg':
+            if part == 'min':
+                if self.bkg_slider_min.value() > self.bkg_slider_max.value():
+                    self.bkg_slider_max.blockSignals(True)
+                    self.bkg_slider_max.setValue(self.bkg_slider_min.value())
+                    self.bkg_slider_max.blockSignals(False)
+                self.bkg_min.blockSignals(True); self.bkg_min.setValue(val); self.bkg_min.blockSignals(False)
+            else:
+                if self.bkg_slider_max.value() < self.bkg_slider_min.value():
+                    self.bkg_slider_min.blockSignals(True)
+                    self.bkg_slider_min.setValue(self.bkg_slider_max.value())
+                    self.bkg_slider_min.blockSignals(False)
+                self.bkg_max.blockSignals(True); self.bkg_max.setValue(val); self.bkg_max.blockSignals(False)
+
+    def _spin_to_slider(self, which: str, part: str, value: float):
+        bounds = self._bounds(which)
+        ticks = self._to_slider(value, bounds)
+        if which == 'overlay':
+            if part == 'min':
+                if ticks > self.range_slider_max.value():
+                    self.range_slider_max.blockSignals(True)
+                    self.range_slider_max.setValue(ticks)
+                    self.range_slider_max.blockSignals(False)
+                self.range_slider_min.blockSignals(True); self.range_slider_min.setValue(ticks); self.range_slider_min.blockSignals(False)
+            else:
+                if ticks < self.range_slider_min.value():
+                    self.range_slider_min.blockSignals(True)
+                    self.range_slider_min.setValue(ticks)
+                    self.range_slider_min.blockSignals(False)
+                self.range_slider_max.blockSignals(True); self.range_slider_max.setValue(ticks); self.range_slider_max.blockSignals(False)
+        elif which == 'clip':
+            if part == 'min':
+                if ticks > self.clip_slider_max.value():
+                    self.clip_slider_max.blockSignals(True)
+                    self.clip_slider_max.setValue(ticks)
+                    self.clip_slider_max.blockSignals(False)
+                self.clip_slider_min.blockSignals(True); self.clip_slider_min.setValue(ticks); self.clip_slider_min.blockSignals(False)
+            else:
+                if ticks < self.clip_slider_min.value():
+                    self.clip_slider_min.blockSignals(True)
+                    self.clip_slider_min.setValue(ticks)
+                    self.clip_slider_min.blockSignals(False)
+                self.clip_slider_max.blockSignals(True); self.clip_slider_max.setValue(ticks); self.clip_slider_max.blockSignals(False)
+        elif which == 'bkg':
+            if part == 'min':
+                if ticks > self.bkg_slider_max.value():
+                    self.bkg_slider_max.blockSignals(True)
+                    self.bkg_slider_max.setValue(ticks)
+                    self.bkg_slider_max.blockSignals(False)
+                self.bkg_slider_min.blockSignals(True); self.bkg_slider_min.setValue(ticks); self.bkg_slider_min.blockSignals(False)
+            else:
+                if ticks < self.bkg_slider_min.value():
+                    self.bkg_slider_min.blockSignals(True)
+                    self.bkg_slider_min.setValue(ticks)
+                    self.bkg_slider_min.blockSignals(False)
+                self.bkg_slider_max.blockSignals(True); self.bkg_slider_max.setValue(ticks); self.bkg_slider_max.blockSignals(False)
+
+    # Public: set slider bounds (min,max) and align slider positions to current spin values
+    def set_overlay_bounds(self, vmin: float, vmax: float):
+        self._overlay_bounds = (float(vmin), float(vmax))
+        self._spin_to_slider('overlay', 'min', float(self.range_min.value()))
+        self._spin_to_slider('overlay', 'max', float(self.range_max.value()))
+
+    def set_clip_bounds(self, vmin: float, vmax: float):
+        self._clip_bounds = (float(vmin), float(vmax))
+        self._spin_to_slider('clip', 'min', float(self.clip_min.value()))
+        self._spin_to_slider('clip', 'max', float(self.clip_max.value()))
+
+    def set_bkg_bounds(self, vmin: float, vmax: float):
+        self._bkg_bounds = (float(vmin), float(vmax))
+        self._spin_to_slider('bkg', 'min', float(self.bkg_min.value()))
+        self._spin_to_slider('bkg', 'max', float(self.bkg_max.value()))
 
 # ---- Viewer ----
 class Viewer(QtWidgets.QMainWindow):
@@ -1097,6 +1273,9 @@ class Viewer(QtWidgets.QMainWindow):
             dock.hide()
         # Initial status hint
         self._update_status_message(self.opts.panel)
+        
+        # Initialize slider bounds from current data
+        self._update_slider_bounds()
     
         # View menu + keyboard shortcut (uses QAction shim)
         menubar = self.menuBar()
@@ -1152,7 +1331,7 @@ class Viewer(QtWidgets.QMainWindow):
             camera.Azimuth(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
         if s in ('r','R'):
             # Rotate right only; do not reset view. Keep small step with Shift, large with Ctrl.
-            camera.Azimuth(180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); self.rw.Render(); return
+            camera.Azimuth(180 if ctrl else (-1.0 if shift else -45.0)); camera.OrthogonalizeViewUp(); do_render(); return
         if s in ('o','O'):
             self.ren.ResetCamera(); camera.OrthogonalizeViewUp(); camera.Zoom(2.0); do_render(); return
         if s in ('b','B'):
@@ -1481,6 +1660,8 @@ class Viewer(QtWidgets.QMainWindow):
         if hasattr(self, 'ctrl') and self.overlay_range[1] > self.overlay_range[0]:
             self.ctrl.range_min.setValue(float(self.overlay_range[0]))
             self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+            # Also update slider bounds/positions based on data
+            self._update_slider_bounds()
         # Update colorbar if visible
         if self.opts.colorbar:
             self._ensure_colorbar()
@@ -1620,28 +1801,89 @@ class Viewer(QtWidgets.QMainWindow):
         self.scal_l = scal_l; self.scal_r = scal_r
         if scal_l is not None: self.poly_l.GetPointData().SetScalars(scal_l)
         if scal_r is not None and self.poly_r is not None: self.poly_r.GetPointData().SetScalars(scal_r)
-        # recompute overlay range if needed and fix scaling is not enabled
-        if not (self.overlay_range[1] > self.overlay_range[0]) and (self.scal_l is not None):
-            if not self.opts.fix_scaling:
-                r = [0.0,0.0]; self.poly_l.GetScalarRange(r); self.overlay_range = r
-            elif self.fixed_overlay_range is not None:
-                # Use the fixed range
-                self.overlay_range = list(self.fixed_overlay_range)
+        # Predefined ranges for recognized overlays (thickness, pbt)
+        kind = detect_overlay_kind(overlay_path)
+        if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
+            # Apply requested defaults: overlay 1..5 (or -5..-1 if inverse); clip 0..0; bkg -1..1
+            ov_range = [1.0, 5.0]
+            if self.opts.inverse:
+                ov_range = [-5.0, -1.0]
+            self.overlay_range = ov_range
+            self.opts.clip = (0.0, 0.0)
+            self.range_bkg = [-1.0, 1.0]
+        else:
+            # recompute overlay range if needed and fix scaling is not enabled
+            if not (self.overlay_range[1] > self.overlay_range[0]) and (self.scal_l is not None):
+                if not self.opts.fix_scaling:
+                    r = [0.0,0.0]; self.poly_l.GetScalarRange(r); self.overlay_range = r
+                elif self.fixed_overlay_range is not None:
+                    # Use the fixed range
+                    self.overlay_range = list(self.fixed_overlay_range)
         for actor in (self.actor_ov_l, self.actor_ov_r):
             if actor:
                 actor.GetMapper().SetLookupTable(self.lut_overlay_l)
                 if self.overlay_range[1] > self.overlay_range[0]: actor.GetMapper().SetScalarRange(self.overlay_range)
+        # Apply background range to background actors when set (if already created)
+        if self.range_bkg[1] > self.range_bkg[0]:
+            for actor in (getattr(self, 'actor_bkg_l', None), getattr(self, 'actor_bkg_r', None)):
+                if actor:
+                    actor.GetMapper().SetScalarRange(self.range_bkg)
         if self.opts.colorbar: self._ensure_colorbar()
         
         # Enable overlay controls since we now have an overlay loaded
         if hasattr(self, 'ctrl'):
             self.ctrl.set_overlay_controls_enabled(True)
+            # Update spin boxes to current overlay range
+            if self.overlay_range[1] > self.overlay_range[0]:
+                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
+                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+            # If we applied predefined defaults, reflect them in the UI
+            if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
+                self.ctrl.clip_min.setValue(0.0); self.ctrl.clip_max.setValue(0.0)
+                self.ctrl.bkg_min.setValue(-1.0); self.ctrl.bkg_max.setValue(1.0)
+            # Update slider bounds from data and align to spins
+            self._update_slider_bounds()
             # Enforce fix scaling enable/disable based on overlay count and availability
             self._enforce_fix_scaling_policy()
         
         # Restore camera and render
         self._apply_camera_state()
         self.rw.Render()
+
+    def _update_slider_bounds(self):
+        """Compute data-driven bounds and apply to control panel sliders.
+
+        - Overlay/Clip sliders span the current overlay data range (from left hemi).
+        - Background sliders span the current background data range.
+        """
+        if not hasattr(self, 'ctrl'):
+            return
+        # Overlay/Clip bounds from current poly_l scalars if present
+        ov_bounds = (-1.0, 1.0)
+        try:
+            r = [0.0, 0.0]
+            if self.poly_l is not None and self.poly_l.GetPointData().GetScalars() is not None:
+                self.poly_l.GetScalarRange(r)
+                ov_bounds = (float(r[0]), float(r[1]))
+                if not (ov_bounds[1] > ov_bounds[0]):
+                    ov_bounds = (-1.0, 1.0)
+        except Exception:
+            pass
+        self.ctrl.set_overlay_bounds(*ov_bounds)
+        self.ctrl.set_clip_bounds(*ov_bounds)
+
+        # Background bounds from curvature/bkg output
+        bkg_bounds = (-1.0, 1.0)
+        try:
+            r2 = [0.0, 0.0]
+            if hasattr(self, 'curv_l_out') and self.curv_l_out is not None:
+                self.curv_l_out.GetScalarRange(r2)
+                bkg_bounds = (float(r2[0]), float(r2[1]))
+                if not (bkg_bounds[1] > bkg_bounds[0]):
+                    bkg_bounds = (-1.0, 1.0)
+        except Exception:
+            pass
+        self.ctrl.set_bkg_bounds(*bkg_bounds)
 
     # -- Save PNG --
     def save_png(self, path: str):
