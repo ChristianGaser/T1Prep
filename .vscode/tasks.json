@@ -33,6 +33,28 @@
 				"-q",
 				"src"
 			]
+		},
+		{
+			"label": "Compile Python sources",
+			"type": "shell",
+			"command": "/Users/gaser/Library/CloudStorage/Dropbox/GitHub/T1prep/env/bin/python",
+			"args": [
+				"-m",
+				"compileall",
+				"-q",
+				"src"
+			]
+		},
+		{
+			"label": "Compile Python sources",
+			"type": "shell",
+			"command": "/Users/gaser/Library/CloudStorage/Dropbox/GitHub/T1prep/env/bin/python",
+			"args": [
+				"-m",
+				"compileall",
+				"-q",
+				"src"
+			]
 		}
 	]
 }

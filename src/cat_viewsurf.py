@@ -676,6 +676,7 @@ class ControlPanel(QtWidgets.QWidget):
         form.addRow("Overlay", self._wrap(ov_box))
         # Toggles
         self.cb_colorbar = QtWidgets.QCheckBox("Show colorbar")
+        self.cb_discrete = QtWidgets.QCheckBox("Discrete")
         # Title mode selector (shape | stats | none)
         self.title_mode = QtWidgets.QComboBox(); self.title_mode.addItems(["shape","stats","none"])
         self.cb_inverse = QtWidgets.QCheckBox("Inverse (flip sign)")
@@ -683,6 +684,7 @@ class ControlPanel(QtWidgets.QWidget):
         # Put Show colorbar and Colorbar title on one row (aligned with other checkboxes)
         row = QtWidgets.QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(8)
         row.addWidget(self.cb_colorbar)
+        row.addWidget(self.cb_discrete)
         row.addStretch(1)
         row.addWidget(QtWidgets.QLabel("Colorbar title"))
         row.addWidget(self.title_mode)
@@ -732,13 +734,18 @@ class ControlPanel(QtWidgets.QWidget):
         self.clip_slider_max.setEnabled(enabled)
         # Colorbar and title controls
         self.cb_colorbar.setEnabled(enabled)
+        self.cb_discrete.setEnabled(enabled and self.cb_colorbar.isChecked())
         self.title_mode.setEnabled(enabled and self.cb_colorbar.isChecked())
         # Keep title selector in sync when user toggles colorbar
         try:
             self.cb_colorbar.toggled.disconnect()
         except Exception:
             pass
-        self.cb_colorbar.toggled.connect(lambda v: self.title_mode.setEnabled(bool(v) and self.cb_colorbar.isEnabled()))
+        def _on_cb_colorbar_toggled(v: bool):
+            en = bool(v) and self.cb_colorbar.isEnabled()
+            self.title_mode.setEnabled(en)
+            self.cb_discrete.setEnabled(en)
+        self.cb_colorbar.toggled.connect(_on_cb_colorbar_toggled)
         # Inverse control
         self.cb_inverse.setEnabled(enabled)
 
@@ -1252,6 +1259,10 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
         self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
+        # Initialize discrete checkbox from opts (consider non-zero as on)
+        if hasattr(self.ctrl, 'cb_discrete'):
+            disc = int(getattr(self.opts, 'discrete', 0) or 0)
+            self.ctrl.cb_discrete.setChecked(disc > 0)
         
         # Enable/disable overlay controls based on whether overlay is loaded
         has_overlay = (self.overlay_list or self.opts.overlay) and self.scal_l is not None
@@ -1263,6 +1274,26 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.apply_btn.clicked.connect(self._apply_controls)
         self.ctrl.reset_btn.clicked.connect(self._reset_camera)
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
+        if hasattr(self.ctrl, 'cb_discrete'):
+            def _on_discrete_toggled(checked: bool):
+                self.opts.discrete = 4 if checked else 0
+                # Rebuild overlay LUTs with new discrete setting
+                self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
+                self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
+                self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
+                self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+                if self.actor_ov_l is not None:
+                    self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+                    if self.overlay_range[1] > self.overlay_range[0]:
+                        self.actor_ov_l.GetMapper().SetScalarRange(self.overlay_range)
+                if self.actor_ov_r is not None:
+                    self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
+                    if self.overlay_range[1] > self.overlay_range[0]:
+                        self.actor_ov_r.GetMapper().SetScalarRange(self.overlay_range)
+                if self.opts.colorbar:
+                    self._ensure_colorbar()
+                self.rw.Render()
+            self.ctrl.cb_discrete.toggled.connect(_on_discrete_toggled)
     
         # Start state based on CLI flag --panel (default hidden)
         if self.opts.panel:
@@ -1379,22 +1410,22 @@ class Viewer(QtWidgets.QMainWindow):
 
     # --- LUT helpers ---
     def _apply_discrete_to_overlay_lut(self, lut: vtkLookupTable):
-        """Flatten LUT into discrete bands if -discrete is enabled.
+        """Flatten LUT into 'levels' discrete bands if discrete > 0.
 
-        This mimics the discrete overlay behavior of the C++ implementation by
-        sampling the color at the start of each block and reusing it across the
-        block, leaving boundary indices as-is (they can be used as visual gaps
-        in the colorbar logic).
+        Interprets opts.discrete as the number of bands (1..4). For N levels,
+        the 256-entry table is divided into N segments and each segment is
+        filled with a representative color sampled at its start index.
         """
-        steps = int(getattr(self.opts, 'discrete', 0) or 0)
-        if steps <= 0:
+        levels = int(getattr(self.opts, 'discrete', 0) or 0)
+        if levels <= 0:
             return
-        for i in range(256):
-            base = (i // steps) * steps
-            if base > 255:
-                base = 255
-            r, g, b, a = lut.GetTableValue(base)
-            if (i % steps) != 0:
+        levels = max(1, min(256, levels))
+        n = 256
+        for k in range(levels):
+            start = int(k * n / levels)
+            end = int((k + 1) * n / levels) if k < levels - 1 else n
+            r, g, b, a = lut.GetTableValue(start)
+            for i in range(start, end):
                 lut.SetTableValue(i, r, g, b, a)
 
     # --- Camera state helpers to preserve view across overlay/mesh changes ---
@@ -1628,6 +1659,9 @@ class Viewer(QtWidgets.QMainWindow):
             self._enforce_fix_scaling_policy()
         # Toggles
         self.opts.colorbar = self.ctrl.cb_colorbar.isChecked()
+        # Discrete levels from checkbox; checked means 4 bands by default
+        if hasattr(self.ctrl, 'cb_discrete'):
+            self.opts.discrete = 4 if self.ctrl.cb_discrete.isChecked() else 0
         # Persist title mode
         self.opts.title_mode = self.ctrl.title_mode.currentText()
         inv = self.ctrl.cb_inverse.isChecked()
@@ -1673,6 +1707,13 @@ class Viewer(QtWidgets.QMainWindow):
         if self.scalar_bar is not None:
             # Simple continuous colorbar LUT based on current colormap/opacity and range
             lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
+            # Apply discrete bands to colorbar LUT if requested
+            try:
+                steps = int(getattr(self.opts, 'discrete', 0) or 0)
+            except Exception:
+                steps = 0
+            if steps > 0:
+                self._apply_discrete_to_overlay_lut(lut_cb)
             if self.overlay_range[1] > self.overlay_range[0]:
                 lut_cb.SetTableRange(self.overlay_range)
             self.scalar_bar.SetLookupTable(lut_cb)
@@ -1705,6 +1746,13 @@ class Viewer(QtWidgets.QMainWindow):
 
         # Create a new scalar bar
         lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
+        # Apply discrete bands to colorbar LUT if requested
+        try:
+            steps = int(getattr(self.opts, 'discrete', 0) or 0)
+        except Exception:
+            steps = 0
+        if steps > 0:
+            self._apply_discrete_to_overlay_lut(lut_cb)
         if self.overlay_range[1] > self.overlay_range[0]:
             lut_cb.SetTableRange(self.overlay_range)
         sb = vtkScalarBarActor()
