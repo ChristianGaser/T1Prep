@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CAT_ViewSurf — PyQt + VTK port with right-side control panel
+CAT_ViewSurf — PySide6 + VTK port with right-side control panel
 
 Features:
   • Load LH mesh (.gii). Auto-detect RH mesh via name pattern ("lh."→"rh.", "left"→"right").
@@ -12,7 +12,7 @@ Features:
   • Right-side docked control panel: range, clip, colorbar toggle, overlay picker, opacity, bkg range, stats, inverse.
   • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, g screenshot, plus standard VTK keys.
 
-Requires: vtk (>=9), PyQt6; nibabel (for GIFTI fallback + FreeSurfer morphs if VTK lacks vtkGIFTIReader).
+Requires: vtk (>=9), PySide6; nibabel (for GIFTI fallback + FreeSurfer morphs if VTK lacks vtkGIFTIReader).
 """
 from __future__ import annotations
 import argparse
@@ -23,13 +23,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-# --- Qt setup ---
-from PyQt6 import QtWidgets
-from PyQt6.QtCore import Qt
+# --- Qt setup (PySide6 only) ---
+from PySide6 import QtWidgets
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut
-
-# PyQt6 compatibility shims
+# Qt compatibility shims
 ORIENT_H = Qt.Orientation.Horizontal
 DOCK_RIGHT = Qt.DockWidgetArea.RightDockWidgetArea
 DOCK_LEFT = Qt.DockWidgetArea.LeftDockWidgetArea
@@ -700,7 +699,7 @@ class Viewer(QtWidgets.QMainWindow):
     def _setup_view_menu(self):
         menubar = self.menuBar()
         menu = menubar.addMenu("View")
-        act = QtWidgets.QAction("Show Controls", self)
+        act = QAction("Show Controls", self)
         act.setCheckable(True)
         act.setChecked(self.opts.panel)
         act.triggered.connect(self._toggle_controls)
