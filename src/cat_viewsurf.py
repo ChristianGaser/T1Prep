@@ -1290,6 +1290,12 @@ class Viewer(QtWidgets.QMainWindow):
                 pass
         # Render once so initial visibility is applied
         try:
+            # Explicitly render the UI layer to reflect scalar bar visibility immediately
+            if hasattr(self, 'ren_ui') and self.ren_ui is not None:
+                try:
+                    self.ren_ui.Render()
+                except Exception:
+                    pass
             self.rw.Render()
         except Exception:
             pass
@@ -1572,6 +1578,12 @@ class Viewer(QtWidgets.QMainWindow):
                 en = bool(checked) and self.ctrl.cb_colorbar.isEnabled()
                 self.ctrl.title_mode.setEnabled(en)
                 self.ctrl.cb_discrete.setEnabled(en)
+            except Exception:
+                pass
+            # Render UI layer explicitly to avoid delayed updates on some platforms
+            try:
+                if hasattr(self, 'ren_ui') and self.ren_ui is not None:
+                    self.ren_ui.Render()
             except Exception:
                 pass
             self.rw.Render()
