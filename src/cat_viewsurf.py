@@ -486,7 +486,7 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
 # ---- Options & CLI ----
 @dataclass
 class Options:
-    mesh_left: str
+    mesh_left: Optional[str]
     overlay: Optional[str] = None
     overlays: List[str] = None  # Multiple overlays
     overlay_bkg: Optional[str] = None
@@ -560,9 +560,6 @@ def parse_args(argv: List[str]) -> Options:
     # External defaults file for viewer settings (key=value lines)
     p.add_argument('--defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
     a = p.parse_args(argv)
-    # Guard: require at least one positional input or an explicit overlay list
-    if not a.inputs and not a.overlay and not a.overlays:
-        p.error('You must provide at least one input (mesh or overlay), or use -overlay/-overlays.')
 
     # Optionally load external defaults and apply only for values not explicitly provided on CLI
     def _parse_bool(s: str) -> bool:
@@ -667,9 +664,11 @@ def parse_args(argv: List[str]) -> Options:
     if d < 0 or d > 256:
         p.error("Parameter -discrete/-dsc should be 0..256")
 
-    # Derive mesh/overlay list from positional inputs
+    # Derive mesh/overlay list from positional inputs (optional)
     pos_inputs: List[str] = list(a.inputs)
     overlays_from_pos: List[str] = []
+    mesh_left_resolved: str = ''
+    overlay_single_from_pos: Optional[str] = None
     if len(pos_inputs) == 1:
         # Single input can be either a mesh or an overlay. Detect overlay and derive mesh.
         single = pos_inputs[0]
@@ -683,13 +682,16 @@ def parse_args(argv: List[str]) -> Options:
         else:
             mesh_left_resolved = single
             overlay_single_from_pos = None
-    else:
+    elif len(pos_inputs) > 1:
         overlays_from_pos = pos_inputs
         try:
             mesh_left_resolved = convert_filename_to_mesh(overlays_from_pos[0])
         except Exception:
             # Fall back to first argument as-is if conversion fails
             mesh_left_resolved = overlays_from_pos[0]
+    else:
+        # no positional inputs; mesh will be chosen later via GUI
+        mesh_left_resolved = ''
 
     # Priority for overlays: positional list > -overlays > -overlay
     overlay_list_final: List[str] = overlays_from_pos or (a.overlays or [])
@@ -743,6 +745,20 @@ class ControlPanel(QtWidgets.QWidget):
         self._clip_bounds = (-1.0, 1.0)
         self._bkg_bounds = (-1.0, 1.0)
 
+        # Overlay selector (editable combo for long names + direct selection) — FIRST ROW
+        self.overlay_combo = QtWidgets.QComboBox()
+        self.overlay_combo.setEditable(True)
+        self.overlay_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.overlay_combo.setMinimumContentsLength(50)
+        try:
+            # Widen dropdown popup for long paths
+            self.overlay_combo.view().setMinimumWidth(600)
+        except Exception:
+            pass
+        self.overlay_btn = QtWidgets.QPushButton("…")
+        ov_box = QtWidgets.QHBoxLayout(); ov_box.addWidget(self.overlay_combo, 1); ov_box.addWidget(self.overlay_btn)
+        form.addRow("Overlay", self._wrap(ov_box))
+
         # Range (overlay)
         self.range_min = QtWidgets.QDoubleSpinBox(); self.range_min.setDecimals(6); self.range_min.setRange(-1e9, 1e9)
         self.range_max = QtWidgets.QDoubleSpinBox(); self.range_max.setDecimals(6); self.range_max.setRange(-1e9, 1e9)
@@ -769,19 +785,6 @@ class ControlPanel(QtWidgets.QWidget):
         # Opacity
         self.opacity = QtWidgets.QSlider(ORIENT_H); self.opacity.setRange(0,100); self.opacity.setValue(80)
         form.addRow("Opacity", self.opacity)
-        # Overlay selector (editable combo for long names + direct selection)
-        self.overlay_combo = QtWidgets.QComboBox()
-        self.overlay_combo.setEditable(True)
-        self.overlay_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.overlay_combo.setMinimumContentsLength(50)
-        try:
-            # Widen dropdown popup for long paths
-            self.overlay_combo.view().setMinimumWidth(600)
-        except Exception:
-            pass
-        self.overlay_btn = QtWidgets.QPushButton("…")
-        ov_box = QtWidgets.QHBoxLayout(); ov_box.addWidget(self.overlay_combo, 1); ov_box.addWidget(self.overlay_btn)
-        form.addRow("Overlay", self._wrap(ov_box))
         # Toggles
         self.cb_colorbar = QtWidgets.QCheckBox("Show colorbar")
         self.cb_discrete = QtWidgets.QCheckBox("Discrete")
@@ -805,7 +808,7 @@ class ControlPanel(QtWidgets.QWidget):
         form.addRow(self.cb_inverse)
         form.addRow(self.cb_fix_scaling)
         self.layout.addLayout(form)
-    # Action buttons (none for now)
+        # Action buttons (none for now)
         self.layout.addStretch(1)
 
         # --- Wiring: bidirectional sync between sliders and spin boxes ---
@@ -842,12 +845,22 @@ class ControlPanel(QtWidgets.QWidget):
         self.clip_slider_max.setEnabled(enabled)
         # Colorbar and title controls
         self.cb_colorbar.setEnabled(enabled)
-        self.cb_discrete.setEnabled(enabled and self.cb_colorbar.isChecked())
+        # Discrete applies to the overlay LUT regardless of colorbar visibility
+        self.cb_discrete.setEnabled(enabled)
+        # Title is relevant only when the colorbar is shown
         self.title_mode.setEnabled(enabled and self.cb_colorbar.isChecked())
         # Colormap selector
         self.colormap.setEnabled(enabled)
         # Inverse control
         self.cb_inverse.setEnabled(enabled)
+        # Background and opacity are also not meaningful until data is loaded
+        self.bkg_min.setEnabled(enabled)
+        self.bkg_max.setEnabled(enabled)
+        self.bkg_slider_min.setEnabled(enabled)
+        self.bkg_slider_max.setEnabled(enabled)
+        self.opacity.setEnabled(enabled)
+        # Fix scaling only makes sense with at least one overlay
+        self.cb_fix_scaling.setEnabled(enabled)
 
     # ---- Slider helpers ----
     def _bounds(self, which: str):
@@ -1110,45 +1123,44 @@ class Viewer(QtWidgets.QMainWindow):
             self._handle_key(sym)
         self.iren.AddObserver("KeyPressEvent", _on_keypress)
 
-        # Load surfaces (LH + optional RH)
-        # Check if the input is an overlay file or mesh file
-        input_path = Path(opts.mesh_left)
-        if not input_path.exists(): 
-            raise FileNotFoundError(f"File not found: {input_path}")
-        
-        # Determine if input is an overlay file
-        if is_overlay_file(str(input_path)):
-            # Input is an overlay file, find the corresponding mesh
-            mesh_path = convert_filename_to_mesh(str(input_path))
-            mesh_path_obj = Path(mesh_path)
-            if not mesh_path_obj.exists():
-                raise FileNotFoundError(f"Corresponding mesh file not found: {mesh_path}")
-            left_mesh_path = mesh_path_obj
-            # Set the overlay to the original input file
-            opts.overlay = str(input_path)
-        else:
-            # Input is a mesh file
-            left_mesh_path = input_path
-        
-        self.poly_l = read_gifti_mesh(str(left_mesh_path))
+        # Load surfaces (LH + optional RH) if provided; otherwise start empty
+        self.poly_l = None
         self.poly_r = None
-        rh_candidate: Optional[Path] = None
-        name = left_mesh_path.name
-        if 'lh.' in name:
-            rh_candidate = left_mesh_path.with_name(name.replace('lh.', 'rh.'))
-        elif 'left' in name:
-            rh_candidate = left_mesh_path.with_name(name.replace('left', 'right'))
-        elif '_hemi-L_' in name:
-            rh_candidate = left_mesh_path.with_name(name.replace('_hemi-L_', '_hemi-R_'))
-        elif '_hemi-R_' in name:
-            rh_candidate = left_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
-        if rh_candidate and rh_candidate.exists(): 
-            self.poly_r = read_gifti_mesh(str(rh_candidate))
-
-        # Normalize Y-origin similar to C++ utility
-        self._shift_y_to(self.poly_l)
-        if self.poly_r is not None:
-            self._shift_y_to(self.poly_r)
+        if self.opts.mesh_left:
+            # Check if the input is an overlay file or mesh file
+            input_path = Path(opts.mesh_left)
+            if not input_path.exists(): 
+                raise FileNotFoundError(f"File not found: {input_path}")
+            # Determine if input is an overlay file
+            if is_overlay_file(str(input_path)):
+                # Input is an overlay file, find the corresponding mesh
+                mesh_path = convert_filename_to_mesh(str(input_path))
+                mesh_path_obj = Path(mesh_path)
+                if not mesh_path_obj.exists():
+                    raise FileNotFoundError(f"Corresponding mesh file not found: {mesh_path}")
+                left_mesh_path = mesh_path_obj
+                # Set the overlay to the original input file
+                opts.overlay = str(input_path)
+            else:
+                # Input is a mesh file
+                left_mesh_path = input_path
+            self.poly_l = read_gifti_mesh(str(left_mesh_path))
+            rh_candidate: Optional[Path] = None
+            name = left_mesh_path.name
+            if 'lh.' in name:
+                rh_candidate = left_mesh_path.with_name(name.replace('lh.', 'rh.'))
+            elif 'left' in name:
+                rh_candidate = left_mesh_path.with_name(name.replace('left', 'right'))
+            elif '_hemi-L_' in name:
+                rh_candidate = left_mesh_path.with_name(name.replace('_hemi-L_', '_hemi-R_'))
+            elif '_hemi-R_' in name:
+                rh_candidate = left_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
+            if rh_candidate and rh_candidate.exists(): 
+                self.poly_r = read_gifti_mesh(str(rh_candidate))
+            # Normalize Y-origin similar to C++ utility
+            self._shift_y_to(self.poly_l)
+            if self.poly_r is not None:
+                self._shift_y_to(self.poly_r)
 
         # Background curvature
         self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
@@ -1233,10 +1245,12 @@ class Viewer(QtWidgets.QMainWindow):
             r = [0.0,0.0]; self.poly_l.GetScalarRange(r); self.overlay_range = r
 
         # Mappers/actors
-        mapper_bkg_l = vtkPolyDataMapper(); mapper_bkg_l.SetInputData(self.curv_l_out); mapper_bkg_l.SetLookupTable(lut_bkg); mapper_bkg_l.SetScalarRange(self.range_bkg)
-        self.actor_bkg_l = vtkActor(); self.actor_bkg_l.SetMapper(mapper_bkg_l)
-        self.actor_bkg_l.GetProperty().SetAmbient(0.8); self.actor_bkg_l.GetProperty().SetDiffuse(0.7)
-        self._actors.append(self.actor_bkg_l)
+        self.actor_bkg_l = None
+        if hasattr(self, 'curv_l_out') and self.curv_l_out is not None:
+            mapper_bkg_l = vtkPolyDataMapper(); mapper_bkg_l.SetInputData(self.curv_l_out); mapper_bkg_l.SetLookupTable(lut_bkg); mapper_bkg_l.SetScalarRange(self.range_bkg)
+            self.actor_bkg_l = vtkActor(); self.actor_bkg_l.SetMapper(mapper_bkg_l)
+            self.actor_bkg_l.GetProperty().SetAmbient(0.8); self.actor_bkg_l.GetProperty().SetDiffuse(0.7)
+            self._actors.append(self.actor_bkg_l)
 
         self.actor_ov_l = None
         if self.scal_l is not None:
@@ -1247,7 +1261,7 @@ class Viewer(QtWidgets.QMainWindow):
             self._actors.append(self.actor_ov_l)
 
         self.actor_bkg_r = None; self.actor_ov_r = None
-        if self.poly_r is not None:
+        if self.poly_r is not None and hasattr(self, 'curv_r_out') and self.curv_r_out is not None:
             mapper_bkg_r = vtkPolyDataMapper(); mapper_bkg_r.SetInputData(self.curv_r_out); mapper_bkg_r.SetLookupTable(lut_bkg); mapper_bkg_r.SetScalarRange(self.range_bkg)
             self.actor_bkg_r = vtkActor(); self.actor_bkg_r.SetMapper(mapper_bkg_r)
             self.actor_bkg_r.GetProperty().SetAmbient(0.8); self.actor_bkg_r.GetProperty().SetDiffuse(0.7)
@@ -1503,7 +1517,7 @@ class Viewer(QtWidgets.QMainWindow):
         if hasattr(self.ctrl, 'cb_discrete'):
             def _on_discrete_toggled(checked: bool):
                 # Use 2 levels by default when checked
-                self.opts.discrete = 16 if checked else 0
+                self.opts.discrete = 2 if checked else 0
                 # Rebuild overlay LUTs with new discrete setting
                 self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
                 self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
@@ -1592,8 +1606,9 @@ class Viewer(QtWidgets.QMainWindow):
             # Keep control states in sync with colorbar visibility
             try:
                 en = bool(checked) and self.ctrl.cb_colorbar.isEnabled()
+                # Title only matters when colorbar is visible
                 self.ctrl.title_mode.setEnabled(en)
-                self.ctrl.cb_discrete.setEnabled(en)
+                # Discrete remains enabled independent of colorbar visibility
             except Exception:
                 pass
             self.rw.Render()
@@ -2161,7 +2176,12 @@ class Viewer(QtWidgets.QMainWindow):
             if self.overlay_range[1] > self.overlay_range[0]:
                 self.actor_ov_r.GetMapper().SetScalarRange(self.overlay_range)
         # Overlay path
-        new_overlay = self.ctrl.overlay_path.text().strip()
+        # Overlay path now comes from the editable combo box
+        new_overlay = ""
+        try:
+            new_overlay = self.ctrl.overlay_combo.currentText().strip()
+        except Exception:
+            new_overlay = ""
         if new_overlay and new_overlay != (self.opts.overlay or ""):
             self._capture_camera_state()
             # If the new overlay maps to a different mesh, switch meshes first
