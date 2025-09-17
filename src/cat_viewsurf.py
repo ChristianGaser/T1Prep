@@ -769,9 +769,18 @@ class ControlPanel(QtWidgets.QWidget):
         # Opacity
         self.opacity = QtWidgets.QSlider(ORIENT_H); self.opacity.setRange(0,100); self.opacity.setValue(80)
         form.addRow("Opacity", self.opacity)
-        # Overlay picker
-        self.overlay_path = QtWidgets.QLineEdit(); self.overlay_btn = QtWidgets.QPushButton("…")
-        ov_box = QtWidgets.QHBoxLayout(); ov_box.addWidget(self.overlay_path); ov_box.addWidget(self.overlay_btn)
+        # Overlay selector (editable combo for long names + direct selection)
+        self.overlay_combo = QtWidgets.QComboBox()
+        self.overlay_combo.setEditable(True)
+        self.overlay_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.overlay_combo.setMinimumContentsLength(50)
+        try:
+            # Widen dropdown popup for long paths
+            self.overlay_combo.view().setMinimumWidth(600)
+        except Exception:
+            pass
+        self.overlay_btn = QtWidgets.QPushButton("…")
+        ov_box = QtWidgets.QHBoxLayout(); ov_box.addWidget(self.overlay_combo, 1); ov_box.addWidget(self.overlay_btn)
         form.addRow("Overlay", self._wrap(ov_box))
         # Toggles
         self.cb_colorbar = QtWidgets.QCheckBox("Show colorbar")
@@ -1406,12 +1415,23 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.bkg_min.setValue(float(self.range_bkg[0]))
         self.ctrl.bkg_max.setValue(float(self.range_bkg[1]))
         self.ctrl.opacity.setValue(int(self.opts.opacity * 100))
-        # Set initial overlay path
-        if self.overlay_list:
-            self.ctrl.overlay_path.setText(self.overlay_list[0])
-            self._update_overlay_info()
-        else:
-            self.ctrl.overlay_path.setText(self.opts.overlay or "")
+        # Populate overlay selector with current overlays and selection
+        try:
+            self.ctrl.overlay_combo.clear()
+            # If multiple overlays are provided, list them all for direct selection
+            if self.overlay_list:
+                for p in self.overlay_list:
+                    self.ctrl.overlay_combo.addItem(p)
+                self.ctrl.overlay_combo.setCurrentIndex(0)
+                self._update_overlay_info()
+            else:
+                # Fall back to a single path if present
+                single = self.opts.overlay or ""
+                if single:
+                    self.ctrl.overlay_combo.addItem(single)
+                self.ctrl.overlay_combo.setEditText(single)
+        except Exception:
+            pass
         self.ctrl.cb_colorbar.setChecked(self.opts.colorbar)
         # Initialize title mode combo
         self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
@@ -1448,9 +1468,14 @@ class Viewer(QtWidgets.QMainWindow):
         # Signals
     # Removed reset button; reset available via keyboard 'o' or menu if needed
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
-        # Auto-load overlay when path is edited (Enter or focus leave)
+        # Auto-load overlay when selection changes
         try:
-            self.ctrl.overlay_path.editingFinished.connect(self._on_overlay_path_edited)
+            self.ctrl.overlay_combo.currentIndexChanged.connect(self._on_overlay_combo_changed)
+        except Exception:
+            pass
+        # Auto-load overlay when edit text changes (Enter or focus leave)
+        try:
+            self.ctrl.overlay_combo.lineEdit().editingFinished.connect(self._on_overlay_combo_edited)
         except Exception:
             pass
         # Colormap selection handler
@@ -1876,15 +1901,23 @@ class Viewer(QtWidgets.QMainWindow):
         self.rw.Render()
 
     def _pick_overlay(self):
-        start_dir = self.ctrl.overlay_path.text() or str(Path(self.opts.mesh_left).parent)
+        start_dir = (self.ctrl.overlay_combo.currentText().strip()
+                     or str(Path(self.opts.mesh_left).parent))
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose overlay", start_dir)
         if path:
-            # Update field and load immediately
-            self.ctrl.overlay_path.setText(path)
+            # Update selector and load immediately
+            if self.ctrl.overlay_combo.findText(path) < 0:
+                self.ctrl.overlay_combo.addItem(path)
+            self.ctrl.overlay_combo.setCurrentText(path)
             self._set_overlay_from_path(path)
 
-    def _on_overlay_path_edited(self):
-        path = self.ctrl.overlay_path.text().strip()
+    def _on_overlay_combo_changed(self, _idx: int):
+        path = self.ctrl.overlay_combo.currentText().strip()
+        if path:
+            self._set_overlay_from_path(path)
+
+    def _on_overlay_combo_edited(self):
+        path = self.ctrl.overlay_combo.currentText().strip()
         self._set_overlay_from_path(path)
 
     def _set_overlay_from_path(self, new_overlay: str):
@@ -1955,7 +1988,12 @@ class Viewer(QtWidgets.QMainWindow):
         """Update the overlay path display and window title."""
         if self.overlay_list:
             current_overlay = self.overlay_list[self.current_overlay_index]
-            self.ctrl.overlay_path.setText(current_overlay)
+            try:
+                if self.ctrl.overlay_combo.findText(current_overlay) < 0:
+                    self.ctrl.overlay_combo.addItem(current_overlay)
+                self.ctrl.overlay_combo.setCurrentText(current_overlay)
+            except Exception:
+                pass
             # Update window title to show current overlay
             overlay_name = Path(current_overlay).name
             if len(self.overlay_list) > 1:
