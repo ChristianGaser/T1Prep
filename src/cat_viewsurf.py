@@ -1903,13 +1903,26 @@ class Viewer(QtWidgets.QMainWindow):
     def _pick_overlay(self):
         start_dir = (self.ctrl.overlay_combo.currentText().strip()
                      or str(Path(self.opts.mesh_left).parent))
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose overlay", start_dir)
-        if path:
-            # Update selector and load immediately
-            if self.ctrl.overlay_combo.findText(path) < 0:
-                self.ctrl.overlay_combo.addItem(path)
-            self.ctrl.overlay_combo.setCurrentText(path)
-            self._set_overlay_from_path(path)
+        dlg = QtWidgets.QFileDialog(self, "Choose overlay(s)", start_dir)
+        dlg.setFileMode(QtWidgets.QFileDialog.ExistingFiles)
+        if dlg.exec():
+            paths = dlg.selectedFiles()
+            if not paths:
+                return
+            # Update overlay list with selected files
+            self.overlay_list = list(paths)
+            self.current_overlay_index = 0
+            # Populate combo with all and select the first
+            try:
+                self.ctrl.overlay_combo.clear()
+                for p in self.overlay_list:
+                    self.ctrl.overlay_combo.addItem(p)
+                self.ctrl.overlay_combo.setCurrentIndex(0)
+            except Exception:
+                pass
+            # Load the first selection immediately
+            first = self.overlay_list[0]
+            self._set_overlay_from_path(first)
 
     def _on_overlay_combo_changed(self, _idx: int):
         path = self.ctrl.overlay_combo.currentText().strip()
@@ -1933,6 +1946,11 @@ class Viewer(QtWidgets.QMainWindow):
             self._apply_camera_state()
             # Ensure fix scaling policy reflects current overlays
             self._enforce_fix_scaling_policy()
+            # Update title to current overlay
+            try:
+                self.setWindowTitle(Path(new_overlay).name)
+            except Exception:
+                pass
             return
         if not new_overlay and self.opts.overlay:
             # Clear overlay and disable controls
@@ -1952,6 +1970,12 @@ class Viewer(QtWidgets.QMainWindow):
             self._detach_colorbar()
             # Enforce fix scaling policy for zero overlays
             self._enforce_fix_scaling_policy()
+            # Revert window title to mesh name when overlay cleared
+            try:
+                name_part = Path(self.opts.mesh_left).name
+                self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
+            except Exception:
+                pass
             self.rw.Render()
 
     def _next_overlay(self):
@@ -2003,6 +2027,17 @@ class Viewer(QtWidgets.QMainWindow):
                 self.setWindowTitle(overlay_name)
             # Also enforce fix scaling policy based on overlay count
             self._enforce_fix_scaling_policy()
+        else:
+            # Single overlay or none — keep combo text and update title if present
+            path = self.opts.overlay or ""
+            if path:
+                try:
+                    if self.ctrl.overlay_combo.findText(path) < 0:
+                        self.ctrl.overlay_combo.addItem(path)
+                    self.ctrl.overlay_combo.setCurrentText(path)
+                except Exception:
+                    pass
+                self.setWindowTitle(Path(path).name)
 
     def _enforce_fix_scaling_policy(self):
         """Disable fix scaling when only one overlay is available.
