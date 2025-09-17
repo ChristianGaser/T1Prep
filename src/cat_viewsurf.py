@@ -1280,22 +1280,16 @@ class Viewer(QtWidgets.QMainWindow):
                     a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
                     self._montage_ov[i] = a
 
-        # Colorbar: create once and toggle visibility only
+        # Colorbar: create once and attach/detach based on option
         self.scalar_bar = None
+        self._scalar_bar_added = False
         self._ensure_colorbar()
-        if self.scalar_bar is not None:
-            try:
-                self.scalar_bar.SetVisibility(bool(opts.colorbar))
-            except Exception:
-                pass
-        # Render once so initial visibility is applied
+        if bool(opts.colorbar):
+            self._attach_colorbar()
+        else:
+            self._detach_colorbar()
+        # Render once so initial state is applied
         try:
-            # Explicitly render the UI layer to reflect scalar bar visibility immediately
-            if hasattr(self, 'ren_ui') and self.ren_ui is not None:
-                try:
-                    self.ren_ui.Render()
-                except Exception:
-                    pass
             self.rw.Render()
         except Exception:
             pass
@@ -1565,25 +1559,17 @@ class Viewer(QtWidgets.QMainWindow):
         # Live: colorbar toggle
         def _on_colorbar_toggled(checked: bool):
             self.opts.colorbar = bool(checked)
-            # Ensure the actor exists and is up to date
+            # Ensure the actor exists and is up to date, then attach/detach
             self._ensure_colorbar()
-            if self.scalar_bar is not None:
-                try:
-                    self.scalar_bar.SetVisibility(bool(checked))
-                    self.scalar_bar.Modified()
-                except Exception:
-                    pass
+            if bool(checked):
+                self._attach_colorbar()
+            else:
+                self._detach_colorbar()
             # Keep control states in sync with colorbar visibility
             try:
                 en = bool(checked) and self.ctrl.cb_colorbar.isEnabled()
                 self.ctrl.title_mode.setEnabled(en)
                 self.ctrl.cb_discrete.setEnabled(en)
-            except Exception:
-                pass
-            # Render UI layer explicitly to avoid delayed updates on some platforms
-            try:
-                if hasattr(self, 'ren_ui') and self.ren_ui is not None:
-                    self.ren_ui.Render()
             except Exception:
                 pass
             self.rw.Render()
@@ -2084,8 +2070,8 @@ class Viewer(QtWidgets.QMainWindow):
             self.actor_ov_r = None
             # Disable overlay controls
             self.ctrl.set_overlay_controls_enabled(False)
-            # Remove colorbar if it exists
-            self._remove_colorbar()
+            # Detach colorbar if it exists
+            self._detach_colorbar()
             # Enforce fix scaling policy for zero overlays
             self._enforce_fix_scaling_policy()
         # Toggles
@@ -2108,7 +2094,7 @@ class Viewer(QtWidgets.QMainWindow):
         if self.opts.colorbar:
             self._ensure_colorbar()
         else:
-            self._remove_colorbar()
+            self._detach_colorbar()
         self.rw.Render()
 
     def _apply_inverse(self):
@@ -2244,29 +2230,41 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             pass
 
-        # Store and add to UI renderer; caller manages visibility
+        # Store; caller manages attaching/detaching
         self.scalar_bar = sb
-        try:
-            self.ren_ui.AddViewProp(sb)
-        except Exception:
-            self.ren.AddViewProp(sb)
-    def _remove_colorbar(self):
-        """Hide the scalar bar actor instead of removing it.
+        self._scalar_bar_added = False
 
-        Keeping the actor allows instant re-show without re-creating VTK props.
-        """
-        if hasattr(self, 'scalar_bar') and self.scalar_bar is not None:
+    def _attach_colorbar(self):
+        """Attach scalar bar to the appropriate renderer if not already attached."""
+        if getattr(self, 'scalar_bar', None) is None:
+            return
+        if getattr(self, '_scalar_bar_added', False):
+            return
+        try:
+            self.ren_ui.AddViewProp(self.scalar_bar)
+        except Exception:
+            self.ren.AddViewProp(self.scalar_bar)
+        self._scalar_bar_added = True
+        try:
+            self.scalar_bar.Modified()
+        except Exception:
+            pass
+
+    def _detach_colorbar(self):
+        """Detach scalar bar from renderer if attached."""
+        if getattr(self, 'scalar_bar', None) is None:
+            return
+        if not getattr(self, '_scalar_bar_added', False):
+            return
+        try:
+            self.ren_ui.RemoveViewProp(self.scalar_bar)
+        except Exception:
             try:
-                self.scalar_bar.SetVisibility(False)
-                self.scalar_bar.Modified()
+                self.ren.RemoveViewProp(self.scalar_bar)
             except Exception:
-                # Fallback to removing if visibility fails
-                try:
-                    self.ren_ui.RemoveViewProp(self.scalar_bar)
-                except Exception:
-                    self.ren.RemoveViewProp(self.scalar_bar)
-                self.scalar_bar = None
-            self.rw.Render()
+                pass
+        self._scalar_bar_added = False
+    # _remove_colorbar removed; use _detach_colorbar instead
 
     def _load_overlay(self, overlay_path: str):
         # Capture camera before modifying actors/ranges
