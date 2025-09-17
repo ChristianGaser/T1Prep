@@ -1280,10 +1280,19 @@ class Viewer(QtWidgets.QMainWindow):
                     a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
                     self._montage_ov[i] = a
 
-        # Colorbar (lazy create)
+        # Colorbar: create once and toggle visibility only
         self.scalar_bar = None
-        if opts.colorbar:
-            self._ensure_colorbar()
+        self._ensure_colorbar()
+        if self.scalar_bar is not None:
+            try:
+                self.scalar_bar.SetVisibility(bool(opts.colorbar))
+            except Exception:
+                pass
+        # Render once so initial visibility is applied
+        try:
+            self.rw.Render()
+        except Exception:
+            pass
 
         # Camera
         self.ren.ResetCamera()
@@ -1412,6 +1421,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Initialize title mode combo
         self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
+       
+
         self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
         # Initialize colormap selector based on opts.colormap
         try:
@@ -1548,11 +1559,15 @@ class Viewer(QtWidgets.QMainWindow):
         # Live: colorbar toggle
         def _on_colorbar_toggled(checked: bool):
             self.opts.colorbar = bool(checked)
-            if self.opts.colorbar:
-                self._ensure_colorbar()
-            else:
-                self._remove_colorbar()
-            # Keep control states in sync
+            # Ensure the actor exists and is up to date
+            self._ensure_colorbar()
+            if self.scalar_bar is not None:
+                try:
+                    self.scalar_bar.SetVisibility(bool(checked))
+                    self.scalar_bar.Modified()
+                except Exception:
+                    pass
+            # Keep control states in sync with colorbar visibility
             try:
                 en = bool(checked) and self.ctrl.cb_colorbar.isEnabled()
                 self.ctrl.title_mode.setEnabled(en)
@@ -2102,6 +2117,10 @@ class Viewer(QtWidgets.QMainWindow):
             self._ensure_colorbar()
 
     def _ensure_colorbar(self):
+        """Create the scalar bar if needed and update its properties.
+
+        Does not force visibility; callers control SetVisibility().
+        """
         # Ensure attribute exists for first-time calls during initialization
         if not hasattr(self, 'scalar_bar'):
             self.scalar_bar = None
@@ -2128,7 +2147,6 @@ class Viewer(QtWidgets.QMainWindow):
                     t = i / (n - 1 if n > 1 else 1)
                     val = smin + t * (smax - smin)
                     if c0 < val < c1:
-                        # set to gray with original alpha
                         r, g, b, a = lut_cb.GetTableValue(i)
                         gray = 0.5
                         lut_cb.SetTableValue(i, gray, gray, gray, a)
@@ -2137,7 +2155,6 @@ class Viewer(QtWidgets.QMainWindow):
             # Update title according to title_mode (only if colorbar is enabled)
             title_mode = self.opts.title_mode
             if title_mode == 'none':
-                # Reserve title space with a single space to keep layout consistent
                 self.scalar_bar.SetTitle(" ")
             elif title_mode == 'stats' or (self.opts.stats and self.scal_l is not None):
                 if self.scal_l is not None:
@@ -2152,19 +2169,21 @@ class Viewer(QtWidgets.QMainWindow):
             base_fs = self.opts.fontsize if self.opts.fontsize else 12
             tp = self.scalar_bar.GetLabelTextProperty(); tp.SetFontSize(base_fs)
             tp2 = self.scalar_bar.GetTitleTextProperty(); tp2.SetFontSize(base_fs)
-            # Prevent VTK from auto-scaling label text based on available space
             try:
                 self.scalar_bar.SetAnnotationTextScaling(False)
             except Exception:
                 pass
-            self.rw.Render()
+            # Mark actor modified; do not force visibility here
+            try:
+                self.scalar_bar.Modified()
+            except Exception:
+                pass
             return
 
-        # Create a new scalar bar
+        # Create a new scalar bar actor
         lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
         if self.opts.inverse:
             self._invert_lut(lut_cb)
-        # Apply discrete bands to colorbar LUT if requested
         try:
             steps = int(getattr(self.opts, 'discrete', 0) or 0)
         except Exception:
@@ -2173,7 +2192,6 @@ class Viewer(QtWidgets.QMainWindow):
             self._apply_discrete_to_overlay_lut(lut_cb)
         if self.overlay_range[1] > self.overlay_range[0]:
             lut_cb.SetTableRange(self.overlay_range)
-        # Gray out clip span on the colorbar
         c0, c1 = self.opts.clip
         if c1 > c0 and self.overlay_range[1] > self.overlay_range[0]:
             smin, smax = float(self.overlay_range[0]), float(self.overlay_range[1])
@@ -2185,6 +2203,7 @@ class Viewer(QtWidgets.QMainWindow):
                     r, g, b, a = lut_cb.GetTableValue(i)
                     gray = 0.5
                     lut_cb.SetTableValue(i, gray, gray, gray, a)
+
         sb = vtkScalarBarActor()
         sb.SetOrientationToHorizontal()
         sb.SetLookupTable(lut_cb)
@@ -2196,10 +2215,8 @@ class Viewer(QtWidgets.QMainWindow):
         tp = sb.GetLabelTextProperty(); tp.SetFontSize(base_fs)
         tp2 = sb.GetTitleTextProperty(); tp2.SetFontSize(base_fs)
 
-        # Title according to title_mode
         title_mode = self.opts.title_mode
         if title_mode == 'none':
-            # Use a single space to maintain consistent layout even without visible title
             sb.SetTitle(" ")
         elif title_mode == 'stats' or (self.opts.stats and self.scal_l is not None):
             if self.scal_l is not None:
@@ -2210,27 +2227,34 @@ class Viewer(QtWidgets.QMainWindow):
         else:
             sb.SetTitle(Path(self.opts.overlay or self.opts.mesh_left).name)
 
-        # Prevent auto-scaling of label text so font size remains consistent
         try:
             sb.SetAnnotationTextScaling(False)
         except Exception:
             pass
 
+        # Store and add to UI renderer; caller manages visibility
         self.scalar_bar = sb
-        # Add to UI renderer (layer 1) so it doesn't affect main scene bounds/camera
         try:
             self.ren_ui.AddViewProp(sb)
         except Exception:
-            # Fallback to main renderer if UI renderer not available
             self.ren.AddViewProp(sb)
-
     def _remove_colorbar(self):
+        """Hide the scalar bar actor instead of removing it.
+
+        Keeping the actor allows instant re-show without re-creating VTK props.
+        """
         if hasattr(self, 'scalar_bar') and self.scalar_bar is not None:
             try:
-                self.ren_ui.RemoveViewProp(self.scalar_bar)
+                self.scalar_bar.SetVisibility(False)
+                self.scalar_bar.Modified()
             except Exception:
-                self.ren.RemoveViewProp(self.scalar_bar)
-            self.scalar_bar = None
+                # Fallback to removing if visibility fails
+                try:
+                    self.ren_ui.RemoveViewProp(self.scalar_bar)
+                except Exception:
+                    self.ren.RemoveViewProp(self.scalar_bar)
+                self.scalar_bar = None
+            self.rw.Render()
 
     def _load_overlay(self, overlay_path: str):
         # Capture camera before modifying actors/ranges
