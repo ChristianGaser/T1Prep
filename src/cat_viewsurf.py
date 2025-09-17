@@ -796,12 +796,7 @@ class ControlPanel(QtWidgets.QWidget):
         form.addRow(self.cb_inverse)
         form.addRow(self.cb_fix_scaling)
         self.layout.addLayout(form)
-        # Action buttons
-        btns = QtWidgets.QHBoxLayout()
-        self.apply_btn = QtWidgets.QPushButton("Apply")
-        self.reset_btn = QtWidgets.QPushButton("Reset view")
-        btns.addWidget(self.apply_btn); btns.addWidget(self.reset_btn)
-        self.layout.addLayout(btns)
+    # Action buttons (none for now)
         self.layout.addStretch(1)
 
         # --- Wiring: bidirectional sync between sliders and spin boxes ---
@@ -1451,9 +1446,13 @@ class Viewer(QtWidgets.QMainWindow):
         self._enforce_fix_scaling_policy()
     
         # Signals
-        self.ctrl.apply_btn.clicked.connect(self._apply_controls)
-        self.ctrl.reset_btn.clicked.connect(self._reset_camera)
+    # Removed reset button; reset available via keyboard 'o' or menu if needed
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
+        # Auto-load overlay when path is edited (Enter or focus leave)
+        try:
+            self.ctrl.overlay_path.editingFinished.connect(self._on_overlay_path_edited)
+        except Exception:
+            pass
         # Colormap selection handler
         def _on_colormap_changed(idx: int):
             # Map UI index back to enum
@@ -1879,7 +1878,48 @@ class Viewer(QtWidgets.QMainWindow):
     def _pick_overlay(self):
         start_dir = self.ctrl.overlay_path.text() or str(Path(self.opts.mesh_left).parent)
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose overlay", start_dir)
-        if path: self.ctrl.overlay_path.setText(path)
+        if path:
+            # Update field and load immediately
+            self.ctrl.overlay_path.setText(path)
+            self._set_overlay_from_path(path)
+
+    def _on_overlay_path_edited(self):
+        path = self.ctrl.overlay_path.text().strip()
+        self._set_overlay_from_path(path)
+
+    def _set_overlay_from_path(self, new_overlay: str):
+        """Load or clear overlay based on provided path, updating UI and actors.
+
+        - If path is non-empty and different from current, switch meshes if needed and load overlay.
+        - If empty and an overlay is present, clear overlay and detach colorbar.
+        """
+        if new_overlay and new_overlay != (self.opts.overlay or ""):
+            self._capture_camera_state()
+            self._maybe_switch_mesh_for_overlay(new_overlay)
+            self._load_overlay(new_overlay)
+            self._apply_camera_state()
+            # Ensure fix scaling policy reflects current overlays
+            self._enforce_fix_scaling_policy()
+            return
+        if not new_overlay and self.opts.overlay:
+            # Clear overlay and disable controls
+            self.opts.overlay = None
+            self.scal_l = None
+            self.scal_r = None
+            # Remove overlay actors
+            for actor in (self.actor_ov_l, self.actor_ov_r):
+                if actor:
+                    self.ren.RemoveActor(actor)
+            self.actor_ov_l = None
+            self.actor_ov_r = None
+            # Disable overlay controls
+            if hasattr(self, 'ctrl'):
+                self.ctrl.set_overlay_controls_enabled(False)
+            # Detach colorbar if present
+            self._detach_colorbar()
+            # Enforce fix scaling policy for zero overlays
+            self._enforce_fix_scaling_policy()
+            self.rw.Render()
 
     def _next_overlay(self):
         """Switch to next overlay in the list."""
