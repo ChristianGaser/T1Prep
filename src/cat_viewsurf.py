@@ -437,7 +437,7 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
         self._viewer = None  # Reference to the main viewer
         # Keys handled by the Viewer (suppress default VTK behavior for these)
         self._viewer_keys = {
-            'u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
+            'q','Q','u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
         }
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
@@ -542,8 +542,8 @@ def parse_args(argv: List[str]) -> Options:
                    help='Colorbar title: shape (filename), stats, or none')
     p.add_argument('-inverse', action='store_true')
     p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true')
-    p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=2,
-                   help='Number of discrete color levels (0 to disable). Default: 2')
+    p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=16,
+                   help='Number of discrete color levels (0 to disable). Default: 16')
     p.add_argument('-log', action='store_true')
     p.add_argument('-white', action='store_true')
     # Control panel visibility (default: hidden)
@@ -755,7 +755,7 @@ class ControlPanel(QtWidgets.QWidget):
             self.overlay_combo.view().setMinimumWidth(600)
         except Exception:
             pass
-        self.overlay_btn = QtWidgets.QPushButton("…")
+        self.overlay_btn = QtWidgets.QPushButton("File")
         ov_box = QtWidgets.QHBoxLayout(); ov_box.addWidget(self.overlay_combo, 1); ov_box.addWidget(self.overlay_btn)
         form.addRow("Overlay", self._wrap(ov_box))
 
@@ -992,6 +992,93 @@ class ControlPanel(QtWidgets.QWidget):
 
 # ---- Viewer ----
 class Viewer(QtWidgets.QMainWindow):
+    # --- helper: whether an overlay is loaded ---
+    def _has_overlay(self) -> bool:
+        try:
+            return self.scal_l is not None or self.actor_ov_l is not None or self.actor_ov_r is not None
+        except Exception:
+            return False
+
+    # --- helper: (re)build 6-view montage clones ---
+    def _build_or_update_montage(self):
+        """Rebuilds the montage clones from current source actors.
+
+        Called at init and whenever meshes/overlays change so clones reflect
+        the latest mappers and LUTs.
+        """
+        # Clear entire scene if requested to avoid overdraw artifacts
+        if getattr(self, '_clear_scene_next', False):
+            try:
+                self._detach_colorbar()
+            except Exception:
+                pass
+            try:
+                self.ren.RemoveAllViewProps()
+            except Exception:
+                pass
+            self._clear_scene_next = False
+        # Remove existing clones
+        def _remove_list(lst):
+            if not lst:
+                return
+            for a in lst:
+                if a is not None:
+                    try:
+                        self.ren.RemoveActor(a)
+                    except Exception:
+                        pass
+        # Consider we "had any" only if previous clone lists contained a real actor
+        prev_bkg = getattr(self, '_montage_bkg', []) or []
+        prev_ov = getattr(self, '_montage_ov', []) or []
+        had_any = any((a is not None) for a in (list(prev_bkg) + list(prev_ov)))
+        _remove_list(getattr(self, '_montage_bkg', []))
+        _remove_list(getattr(self, '_montage_ov', []))
+        # Prepare new lists
+        views = 6
+        self._montage_bkg = [None] * views
+        self._montage_ov = [None] * views
+        # Layout
+        shifts = (180.0, 180.0)
+        posx = [0, 2 * shifts[0], 0.15 * shifts[0], 1.85 * shifts[0], shifts[0], shifts[0]]
+        posy = [0, 0, 0.8 * shifts[1], 0.8 * shifts[1], 0.6 * shifts[1], 0.6 * shifts[1]]
+        rotx = [270, 270, 270, 270, 0, 0]
+        rotz = [90, -90, -90, 90, 0, 0]
+        order = [0, 1, 0, 1, 0, 1]
+        # Add clones
+        def add_clone(actor: vtkActor, px, py, rx, rz) -> vtkActor:
+            a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a); return a
+        # Overlay clones first (reduces flicker of background-only frame)
+        if (getattr(self, 'actor_ov_l', None) is not None) or (getattr(self, 'actor_ov_r', None) is not None):
+            for i in range(views):
+                if self.poly_r is None and (i % 2 == 1):
+                    continue
+                actor_ov_l = getattr(self, 'actor_ov_l', None)
+                actor_ov_r = getattr(self, 'actor_ov_r', None)
+                src = actor_ov_r if (order[i] == 1 and actor_ov_r is not None) else actor_ov_l
+                if src is not None:
+                    self._montage_ov[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+        # Background clones
+        for i in range(views):
+            if self.poly_r is None and (i % 2 == 1):
+                continue
+            actor_bkg_l = getattr(self, 'actor_bkg_l', None)
+            actor_bkg_r = getattr(self, 'actor_bkg_r', None)
+            src = actor_bkg_r if (order[i] == 1 and actor_bkg_r is not None) else actor_bkg_l
+            if src is not None:
+                self._montage_bkg[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+        # Reset camera on first build with any actor
+        any_added = any(a is not None for a in self._montage_bkg + self._montage_ov)
+        if any_added:
+            if not had_any:
+                try:
+                    self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0)
+                except Exception:
+                    pass
+            try:
+                self.ren.ResetCameraClippingRange()
+            except Exception:
+                pass
+            # Do not force a render here; callers render after batch updates
     def _install_toggle_shortcuts(self):
         # Install explicit QShortcuts so we don't depend on QAction shortcut routing
         self._toggle_shortcuts: List[QShortcut] = []
@@ -1069,6 +1156,93 @@ class Viewer(QtWidgets.QMainWindow):
 
 
 class Viewer(QtWidgets.QMainWindow):
+    # Duplicate helpers in this active class definition
+    def _has_overlay(self) -> bool:
+        try:
+            return self.scal_l is not None or self.actor_ov_l is not None or self.actor_ov_r is not None
+        except Exception:
+            return False
+
+    def _build_or_update_montage(self):
+        """Rebuilds the montage clones from current source actors.
+
+        Called at init and whenever meshes/overlays change so clones reflect
+        the latest mappers and LUTs.
+        """
+        # Clear entire scene if requested to avoid overdraw artifacts
+        if getattr(self, '_clear_scene_next', False):
+            try:
+                self._detach_colorbar()
+            except Exception:
+                pass
+            try:
+                self.ren.RemoveAllViewProps()
+            except Exception:
+                pass
+            self._clear_scene_next = False
+        # Remove existing clones
+        def _remove_list(lst):
+            if not lst:
+                return
+            for a in lst:
+                if a is not None:
+                    try:
+                        self.ren.RemoveActor(a)
+                    except Exception:
+                        pass
+        # Consider we "had any" only if previous clone lists contained a real actor
+        prev_bkg = getattr(self, '_montage_bkg', []) or []
+        prev_ov = getattr(self, '_montage_ov', []) or []
+        had_any = any((a is not None) for a in (list(prev_bkg) + list(prev_ov)))
+        _remove_list(getattr(self, '_montage_bkg', []))
+        _remove_list(getattr(self, '_montage_ov', []))
+        # Prepare new lists
+        views = 6
+        self._montage_bkg = [None] * views
+        self._montage_ov = [None] * views
+        # Layout
+        shifts = (180.0, 180.0)
+        posx = [0, 2 * shifts[0], 0.15 * shifts[0], 1.85 * shifts[0], shifts[0], shifts[0]]
+        posy = [0, 0, 0.8 * shifts[1], 0.8 * shifts[1], 0.6 * shifts[1], 0.6 * shifts[1]]
+        rotx = [270, 270, 270, 270, 0, 0]
+        rotz = [90, -90, -90, 90, 0, 0]
+        order = [0, 1, 0, 1, 0, 1]
+        # Add clones
+        def add_clone(actor: vtkActor, px, py, rx, rz) -> vtkActor:
+            a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a); return a
+        # Overlay clones first (reduces flicker of background-only frame)
+        if (getattr(self, 'actor_ov_l', None) is not None) or (getattr(self, 'actor_ov_r', None) is not None):
+            for i in range(views):
+                if self.poly_r is None and (i % 2 == 1):
+                    continue
+                actor_ov_l = getattr(self, 'actor_ov_l', None)
+                actor_ov_r = getattr(self, 'actor_ov_r', None)
+                src = actor_ov_r if (order[i] == 1 and actor_ov_r is not None) else actor_ov_l
+                if src is not None:
+                    self._montage_ov[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+        # Background clones
+        for i in range(views):
+            if self.poly_r is None and (i % 2 == 1):
+                continue
+            actor_bkg_l = getattr(self, 'actor_bkg_l', None)
+            actor_bkg_r = getattr(self, 'actor_bkg_r', None)
+            src = actor_bkg_r if (order[i] == 1 and actor_bkg_r is not None) else actor_bkg_l
+            if src is not None:
+                self._montage_bkg[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+        # Reset camera on first build with any actor
+        any_added = any(a is not None for a in self._montage_bkg + self._montage_ov)
+        if any_added:
+            if not had_any:
+                try:
+                    self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0)
+                except Exception:
+                    pass
+            try:
+                self.ren.ResetCameraClippingRange()
+            except Exception:
+                pass
+            # Do not force a render here; callers render after batch updates
+
     def __init__(self, opts: Options):
         super().__init__()
         self.opts = opts
@@ -1162,9 +1336,11 @@ class Viewer(QtWidgets.QMainWindow):
             if self.poly_r is not None:
                 self._shift_y_to(self.poly_r)
 
-        # Background curvature
-        self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
+        # Background curvature (guarded for empty startup)
+        self.curv_l = None
         self.curv_r = None
+        if self.poly_l is not None:
+            self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
         if self.poly_r is not None:
             self.curv_r = vtkCurvatures(); self.curv_r.SetInputData(self.poly_r); self.curv_r.SetCurvatureTypeToMean(); self.curv_r.Update()
 
@@ -1185,8 +1361,11 @@ class Viewer(QtWidgets.QMainWindow):
                 for i in range(nL): left_only.SetValue(i, arr.GetValue(i))
                 self.bkg_scalar_l = left_only
 
-        self.curv_l_out = self.curv_l.GetOutput();  
-        if self.bkg_scalar_l is not None: self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
+        self.curv_l_out = None
+        if self.curv_l is not None:
+            self.curv_l_out = self.curv_l.GetOutput()
+            if self.bkg_scalar_l is not None:
+                self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
         self.curv_r_out = None
         if self.curv_r is not None:
             self.curv_r_out = self.curv_r.GetOutput();
@@ -1210,13 +1389,21 @@ class Viewer(QtWidgets.QMainWindow):
         # Background scalar range
         self.range_bkg = list(opts.range_bkg)
         if not (self.range_bkg[1] > self.range_bkg[0]):
-            r = [0.0,0.0]; self.curv_l_out.GetScalarRange(r); self.range_bkg = r
+            r = [0.0,0.0]
+            if self.curv_l_out is not None:
+                self.curv_l_out.GetScalarRange(r)
+                self.range_bkg = r
+            else:
+                # Reasonable default when no data yet
+                self.range_bkg = [-1.0, 1.0]
         if self.range_bkg[0] < 0 < self.range_bkg[1]:
             m = max(abs(self.range_bkg[0]), abs(self.range_bkg[1])); self.range_bkg = [-m, m]
         lut_bkg.SetTableRange(self.range_bkg)
         # Overlay range (init before calling _load_overlay)
         self.overlay_range = list(opts.range)
-        # Predefine overlay actors (referenced in _load_overlay)
+        # Predefine actor attributes before any potential montage or overlay calls
+        self.actor_bkg_l = None
+        self.actor_bkg_r = None
         self.actor_ov_l = None
         self.actor_ov_r = None
 
@@ -1245,7 +1432,6 @@ class Viewer(QtWidgets.QMainWindow):
             r = [0.0,0.0]; self.poly_l.GetScalarRange(r); self.overlay_range = r
 
         # Mappers/actors
-        self.actor_bkg_l = None
         if hasattr(self, 'curv_l_out') and self.curv_l_out is not None:
             mapper_bkg_l = vtkPolyDataMapper(); mapper_bkg_l.SetInputData(self.curv_l_out); mapper_bkg_l.SetLookupTable(lut_bkg); mapper_bkg_l.SetScalarRange(self.range_bkg)
             self.actor_bkg_l = vtkActor(); self.actor_bkg_l.SetMapper(mapper_bkg_l)
@@ -1273,36 +1459,17 @@ class Viewer(QtWidgets.QMainWindow):
                 self.actor_ov_r.GetProperty().SetAmbient(0.3); self.actor_ov_r.GetProperty().SetDiffuse(0.7)
                 self._actors.append(self.actor_ov_r)
 
-        # Build 6-view montage
-        views = 6; shifts = (180.0, 180.0)
-        posx = [0, 2*shifts[0], 0.15*shifts[0], 1.85*shifts[0], shifts[0], shifts[0]]
-        posy = [0, 0, 0.8*shifts[1], 0.8*shifts[1], 0.6*shifts[1], 0.6*shifts[1]]
-        rotx = [270, 270, 270, 270, 0, 0]; rotz = [90, -90, -90, 90, 0, 0]
-        order = [0,1,0,1,0,1]
-        # Keep track of clones per view index for selective operations (e.g., key 'b')
-        self._montage_bkg: List[Optional[vtkActor]] = [None]*views
-        self._montage_ov: List[Optional[vtkActor]] = [None]*views
-        def add_clone(actor: vtkActor, px, py, rx, rz) -> vtkActor:
-            a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a); return a
-        for i in range(views):
-            if self.poly_r is None and (i % 2 == 1): continue
-            src = self.actor_bkg_r if (order[i] == 1 and self.actor_bkg_r is not None) else self.actor_bkg_l
-            if src is not None:
-                a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
-                self._montage_bkg[i] = a
-        if self.actor_ov_l is not None or self.actor_ov_r is not None:
-            for i in range(views):
-                if self.poly_r is None and (i % 2 == 1): continue
-                src = self.actor_ov_r if (order[i] == 1 and self.actor_ov_r is not None) else self.actor_ov_l
-                if src is not None:
-                    a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
-                    self._montage_ov[i] = a
+        # Build 6-view montage (deferred to helper for reuse)
+        self._montage_bkg: List[Optional[vtkActor]] = []
+        self._montage_ov: List[Optional[vtkActor]] = []
+        self._build_or_update_montage()
 
         # Colorbar: create once and attach/detach based on option
         self.scalar_bar = None
         self._scalar_bar_added = False
         self._ensure_colorbar()
-        if bool(opts.colorbar):
+        # Only show colorbar when an overlay is present
+        if bool(opts.colorbar) and self._has_overlay():
             self._attach_colorbar()
         else:
             self._detach_colorbar()
@@ -1474,13 +1641,13 @@ class Viewer(QtWidgets.QMainWindow):
             self.ctrl.cb_discrete.setChecked(disc > 0)
         
         # Enable/disable overlay controls based on whether overlay is loaded
-        has_overlay = (self.overlay_list or self.opts.overlay) and self.scal_l is not None
-        self.ctrl.set_overlay_controls_enabled(has_overlay)
+        has_overlay = (self.scal_l is not None)
+        self.ctrl.set_overlay_controls_enabled(bool(has_overlay))
         # Ensure fix scaling checkbox state reflects current overlay count/availability
         self._enforce_fix_scaling_policy()
     
         # Signals
-    # Removed reset button; reset available via keyboard 'o' or menu if needed
+        # Removed reset button; reset available via keyboard 'o' or menu if needed
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
         # Auto-load overlay when selection changes
         try:
@@ -1517,7 +1684,7 @@ class Viewer(QtWidgets.QMainWindow):
         if hasattr(self.ctrl, 'cb_discrete'):
             def _on_discrete_toggled(checked: bool):
                 # Use 2 levels by default when checked
-                self.opts.discrete = 2 if checked else 0
+                self.opts.discrete = 16 if checked else 0
                 # Rebuild overlay LUTs with new discrete setting
                 self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
                 self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
@@ -1599,7 +1766,7 @@ class Viewer(QtWidgets.QMainWindow):
             self.opts.colorbar = bool(checked)
             # Ensure the actor exists and is up to date, then attach/detach
             self._ensure_colorbar()
-            if bool(checked):
+            if bool(checked) and self._has_overlay():
                 self._attach_colorbar()
             else:
                 self._detach_colorbar()
@@ -1745,6 +1912,34 @@ class Viewer(QtWidgets.QMainWindow):
             self._prev_overlay(); return
         if s == 'Right':
             self._next_overlay(); return
+        if s in ('q','Q'):
+            # Gracefully close viewer and quit application
+            try:
+                # Stop interactor loop if running
+                if hasattr(self, 'iren') and self.iren is not None:
+                    try:
+                        self.iren.TerminateApp()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                self.close()
+            except Exception:
+                pass
+            try:
+                app = QtWidgets.QApplication.instance()
+                if app is not None:
+                    app.quit()
+                else:
+                    raise RuntimeError('No QApplication instance')
+            except Exception:
+                try:
+                    import sys as _sys
+                    _sys.exit(0)
+                except Exception:
+                    pass
+            return
         # Camera/control keys (accept both upper/lower)
         if s in ('u','U'):
             camera.Elevation(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
@@ -1955,10 +2150,13 @@ class Viewer(QtWidgets.QMainWindow):
         - If empty and an overlay is present, clear overlay and detach colorbar.
         """
         if new_overlay and new_overlay != (self.opts.overlay or ""):
+            # Only restore camera if there was already a scene; on first scene keep ResetCamera
+            had_overlay_before = self._has_overlay()
             self._capture_camera_state()
             self._maybe_switch_mesh_for_overlay(new_overlay)
             self._load_overlay(new_overlay)
-            self._apply_camera_state()
+            if had_overlay_before:
+                self._apply_camera_state()
             # Ensure fix scaling policy reflects current overlays
             self._enforce_fix_scaling_policy()
             # Update title to current overlay
@@ -1997,8 +2195,11 @@ class Viewer(QtWidgets.QMainWindow):
         """Switch to next overlay in the list."""
         if len(self.overlay_list) > 1:
             self._capture_camera_state()
+            self._clear_scene_next = True
             self.current_overlay_index = (self.current_overlay_index + 1) % len(self.overlay_list)
             self._maybe_switch_mesh_for_overlay(self.overlay_list[self.current_overlay_index])
+            # Clear again before loading to avoid residuals across two-stage rebuilds
+            self._clear_scene_next = True
             self._load_overlay(self.overlay_list[self.current_overlay_index])
             self._update_overlay_info()
             # Update control panel with current overlay range
@@ -2012,8 +2213,11 @@ class Viewer(QtWidgets.QMainWindow):
         """Switch to previous overlay in the list."""
         if len(self.overlay_list) > 1:
             self._capture_camera_state()
+            self._clear_scene_next = True
             self.current_overlay_index = (self.current_overlay_index - 1) % len(self.overlay_list)
             self._maybe_switch_mesh_for_overlay(self.overlay_list[self.current_overlay_index])
+            # Clear again before loading to avoid residuals across two-stage rebuilds
+            self._clear_scene_next = True
             self._load_overlay(self.overlay_list[self.current_overlay_index])
             self._update_overlay_info()
             # Update control panel with current overlay range
@@ -2124,16 +2328,40 @@ class Viewer(QtWidgets.QMainWindow):
             self.curv_r_out = self.curv_r.GetOutput()
             if self.bkg_scalar_r is not None:
                 self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
-        # Update mappers for background actors
+        # Update or create background actors
         if self.actor_bkg_l is not None:
             self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
+        elif self.curv_l_out is not None:
+            lut_bkg = vtkLookupTable(); lut_bkg.SetHueRange(0, 0); lut_bkg.SetSaturationRange(0, 0); lut_bkg.SetValueRange(0, 1); lut_bkg.Build()
+            mapper_bkg_l = vtkPolyDataMapper(); mapper_bkg_l.SetInputData(self.curv_l_out); mapper_bkg_l.SetLookupTable(lut_bkg); mapper_bkg_l.SetScalarRange(self.range_bkg)
+            self.actor_bkg_l = vtkActor(); self.actor_bkg_l.SetMapper(mapper_bkg_l)
+            self.actor_bkg_l.GetProperty().SetAmbient(0.8); self.actor_bkg_l.GetProperty().SetDiffuse(0.7)
         if self.actor_bkg_r is not None and self.curv_r_out is not None:
             self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
-        # Update mappers for overlay actors if present
-        if self.actor_ov_l is not None:
-            self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
-        if self.actor_ov_r is not None and self.poly_r is not None:
-            self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
+        elif self.curv_r_out is not None and self.poly_r is not None and self.actor_bkg_r is None:
+            lut_bkg = vtkLookupTable(); lut_bkg.SetHueRange(0, 0); lut_bkg.SetSaturationRange(0, 0); lut_bkg.SetValueRange(0, 1); lut_bkg.Build()
+            mapper_bkg_r = vtkPolyDataMapper(); mapper_bkg_r.SetInputData(self.curv_r_out); mapper_bkg_r.SetLookupTable(lut_bkg); mapper_bkg_r.SetScalarRange(self.range_bkg)
+            self.actor_bkg_r = vtkActor(); self.actor_bkg_r.SetMapper(mapper_bkg_r)
+            self.actor_bkg_r.GetProperty().SetAmbient(0.8); self.actor_bkg_r.GetProperty().SetDiffuse(0.7)
+        # Update or create overlay actors
+        if self.scal_l is not None:
+            if self.actor_ov_l is None:
+                mapper_ov_l = vtkPolyDataMapper(); mapper_ov_l.SetInputData(self.poly_l); mapper_ov_l.SetLookupTable(self.lut_overlay_l)
+                if self.overlay_range[1] > self.overlay_range[0]: mapper_ov_l.SetScalarRange(self.overlay_range)
+                self.actor_ov_l = vtkActor(); self.actor_ov_l.SetMapper(mapper_ov_l)
+                self.actor_ov_l.GetProperty().SetAmbient(0.3); self.actor_ov_l.GetProperty().SetDiffuse(0.7)
+            else:
+                self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
+        if self.scal_r is not None and self.poly_r is not None:
+            if self.actor_ov_r is None:
+                mapper_ov_r = vtkPolyDataMapper(); mapper_ov_r.SetInputData(self.poly_r); mapper_ov_r.SetLookupTable(self.lut_overlay_r)
+                if self.overlay_range[1] > self.overlay_range[0]: mapper_ov_r.SetScalarRange(self.overlay_range)
+                self.actor_ov_r = vtkActor(); self.actor_ov_r.SetMapper(mapper_ov_r)
+                self.actor_ov_r.GetProperty().SetAmbient(0.3); self.actor_ov_r.GetProperty().SetDiffuse(0.7)
+            else:
+                self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
+        # Rebuild montage so clones reflect new actors
+        self._build_or_update_montage()
         # Keep the stored mesh_left updated for subsequent comparisons
         self.opts.mesh_left = str(new_mesh_path)
 
@@ -2183,11 +2411,14 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             new_overlay = ""
         if new_overlay and new_overlay != (self.opts.overlay or ""):
+            # Only restore camera if a scene existed before; on first scene keep ResetCamera
+            had_overlay_before = self._has_overlay()
             self._capture_camera_state()
             # If the new overlay maps to a different mesh, switch meshes first
             self._maybe_switch_mesh_for_overlay(new_overlay)
             self._load_overlay(new_overlay)
-            self._apply_camera_state()
+            if had_overlay_before:
+                self._apply_camera_state()
             # Overlay list may be single; ensure fix scaling disabled when not applicable
             self._enforce_fix_scaling_policy()
         elif not new_overlay and self.opts.overlay:
@@ -2304,9 +2535,10 @@ class Viewer(QtWidgets.QMainWindow):
                 self.scalar_bar.SetAnnotationTextScaling(False)
             except Exception:
                 pass
-            # Mark actor modified; do not force visibility here
+            # Mark actor modified and render to ensure UI text refreshes immediately
             try:
                 self.scalar_bar.Modified()
+                self.rw.Render()
             except Exception:
                 pass
             return
@@ -2373,10 +2605,14 @@ class Viewer(QtWidgets.QMainWindow):
             return
         if getattr(self, '_scalar_bar_added', False):
             return
+        # Prefer attaching to the main renderer; UI layer can leave stale draws on some platforms
         try:
-            self.ren_ui.AddViewProp(self.scalar_bar)
-        except Exception:
             self.ren.AddViewProp(self.scalar_bar)
+        except Exception:
+            try:
+                self.ren_ui.AddViewProp(self.scalar_bar)
+            except Exception:
+                pass
         self._scalar_bar_added = True
         try:
             self.scalar_bar.Modified()
@@ -2450,22 +2686,43 @@ class Viewer(QtWidgets.QMainWindow):
                 elif self.fixed_overlay_range is not None:
                     # Use the fixed range
                     self.overlay_range = list(self.fixed_overlay_range)
-        for actor in (self.actor_ov_l, self.actor_ov_r):
-            if actor:
-                actor.GetMapper().SetLookupTable(self.lut_overlay_l)
-                if self.overlay_range[1] > self.overlay_range[0]: actor.GetMapper().SetScalarRange(self.overlay_range)
+        # Create overlay actors on demand or update
+        if self.scal_l is not None:
+            if self.actor_ov_l is None:
+                mapper_ov_l = vtkPolyDataMapper(); mapper_ov_l.SetInputData(self.poly_l); mapper_ov_l.SetLookupTable(self.lut_overlay_l)
+                if self.overlay_range[1] > self.overlay_range[0]: mapper_ov_l.SetScalarRange(self.overlay_range)
+                self.actor_ov_l = vtkActor(); self.actor_ov_l.SetMapper(mapper_ov_l)
+                self.actor_ov_l.GetProperty().SetAmbient(0.3); self.actor_ov_l.GetProperty().SetDiffuse(0.7)
+            else:
+                self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+                if self.overlay_range[1] > self.overlay_range[0]:
+                    self.actor_ov_l.GetMapper().SetScalarRange(self.overlay_range)
+        if self.scal_r is not None and self.poly_r is not None:
+            if self.actor_ov_r is None:
+                mapper_ov_r = vtkPolyDataMapper(); mapper_ov_r.SetInputData(self.poly_r); mapper_ov_r.SetLookupTable(self.lut_overlay_r)
+                if self.overlay_range[1] > self.overlay_range[0]: mapper_ov_r.SetScalarRange(self.overlay_range)
+                self.actor_ov_r = vtkActor(); self.actor_ov_r.SetMapper(mapper_ov_r)
+                self.actor_ov_r.GetProperty().SetAmbient(0.3); self.actor_ov_r.GetProperty().SetDiffuse(0.7)
+            else:
+                self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
+                if self.overlay_range[1] > self.overlay_range[0]:
+                    self.actor_ov_r.GetMapper().SetScalarRange(self.overlay_range)
         # Apply background range to background actors when set (if already created)
         if self.range_bkg[1] > self.range_bkg[0]:
             for actor in (getattr(self, 'actor_bkg_l', None), getattr(self, 'actor_bkg_r', None)):
                 if actor:
                     actor.GetMapper().SetScalarRange(self.range_bkg)
-        if self.opts.colorbar: self._ensure_colorbar()
+        if self.opts.colorbar:
+            self._ensure_colorbar()
         # Apply clip transparency and refresh LUTs on actors
         self._apply_clip_to_overlay_luts()
-        for actor in (self.actor_ov_l, self.actor_ov_r):
-            if actor:
-                actor.GetMapper().SetLookupTable(self.lut_overlay_l)
+        if self.actor_ov_l is not None:
+            self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+        if self.actor_ov_r is not None:
+            self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
         
+        # Rebuild montage to reflect new overlay actors
+        self._build_or_update_montage()
         # Enable overlay controls since we now have an overlay loaded
         if hasattr(self, 'ctrl'):
             self.ctrl.set_overlay_controls_enabled(True)
@@ -2482,8 +2739,12 @@ class Viewer(QtWidgets.QMainWindow):
             # Enforce fix scaling enable/disable based on overlay count and availability
             self._enforce_fix_scaling_policy()
         
-        # Restore camera and render
-        self._apply_camera_state()
+        # Ensure colorbar visibility follows overlay presence
+        if self.opts.colorbar and self._has_overlay():
+            self._attach_colorbar()
+        else:
+            self._detach_colorbar()
+        # Render current scene; camera restoration is handled by callers
         self.rw.Render()
 
     def _update_slider_bounds(self):
