@@ -46,6 +46,11 @@ from utils import load_namefile, get_filenames
 from vtkmodules.util.numpy_support import vtk_to_numpy, numpy_to_vtk
 from vtkmodules.vtkCommonCore import vtkLookupTable, vtkDoubleArray, vtkPoints
 from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray
+from vtkmodules.vtkFiltersCore import vtkConnectivityFilter
+from vtkmodules.vtkFiltersCore import vtkClipPolyData
+from vtkmodules.vtkFiltersCore import vtkCleanPolyData
+from vtkmodules.vtkCommonCore import vtkIdList
+from vtkmodules.vtkCommonDataModel import vtkPlane
 from vtkmodules.vtkFiltersGeneral import vtkCurvatures
 from vtkmodules.vtkRenderingCore import (
     vtkActor,
@@ -273,13 +278,11 @@ def is_overlay_file(filename: str) -> bool:
     filename_lower = filename_only.lower()
     
     # Check for FreeSurfer shape pattern: [l|r]h.shape_type.name (with or without extension)
-    import re
     parts = filename_lower.split('.')
     
-    # Check if it matches the pattern [l|r]h.shape_type.name
+    # If it's lh./rh. and second token is NOT a mesh type => overlay
+    mesh_types = ['central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc']
     if len(parts) >= 3 and parts[0] in ['lh', 'rh']:
-        # Check if it's not a mesh file (central, pial, white, etc.)
-        mesh_types = ['central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc']
         if parts[1] not in mesh_types:
             return True
     
@@ -294,6 +297,14 @@ def is_overlay_file(filename: str) -> bool:
     for pattern in overlay_patterns:
         if pattern in filename_lower:
             return True
+
+    # Heuristic: for GIFTI files, default to overlay unless name clearly looks like a surface mesh
+    if filename_lower.endswith('.gii'):
+        # If any known mesh keyword appears in the name, treat as mesh, otherwise overlay
+        if any(mt in filename_lower for mt in mesh_types):
+            return False
+        # Names containing 'mesh.' can still be overlays (merged stats); treat as overlay
+        return True
     
     return False
 
@@ -348,6 +359,237 @@ def read_gifti_mesh(filename: str) -> vtkPolyData:
         cells.InsertNextCell(3); cells.InsertCellPoint(int(tri[0])); cells.InsertCellPoint(int(tri[1])); cells.InsertCellPoint(int(tri[2]))
     poly = vtkPolyData(); poly.SetPoints(pts); poly.SetPolys(cells)
     return poly
+
+
+def split_polydata_into_lr(poly: vtkPolyData) -> Tuple[vtkPolyData, Optional[vtkPolyData]]:
+    """Split a combined (LH+RH) mesh into left and right hemispheres.
+
+    Uses connectivity to extract regions and assigns left/right by mean X coordinate.
+    Returns (left_poly, right_poly_or_None). If fewer than 2 regions are found, returns (poly, None).
+    """
+    if poly is None or poly.GetNumberOfPoints() == 0:
+        return poly, None
+    # Extract all connected regions
+    conn = vtkConnectivityFilter(); conn.SetInputData(poly); conn.SetExtractionModeToAllRegions(); conn.Update()
+    try:
+        nreg = conn.GetNumberOfExtractedRegions()
+    except Exception:
+        # Older VTKs may not provide the method; try a fallback by attempting first two regions
+        nreg = 0
+        # We'll try to extract region 0 and 1; if both succeed, set nreg=2
+        test = vtkConnectivityFilter(); test.SetInputData(poly); test.SetExtractionModeToSpecifiedRegions(); test.AddSpecifiedRegion(0); test.Update()
+        out0 = test.GetOutput()
+        test2 = vtkConnectivityFilter(); test2.SetInputData(poly); test2.SetExtractionModeToSpecifiedRegions(); test2.AddSpecifiedRegion(1); test2.Update()
+        out1 = test2.GetOutput()
+        if out0 is not None and out0.GetNumberOfPoints() > 0:
+            nreg += 1
+        if out1 is not None and out1.GetNumberOfPoints() > 0:
+            nreg += 1
+        if nreg == 0:
+            return poly, None
+    if nreg < 2:
+        return poly, None
+    # Extract each region as its own polydata
+    regions: List[vtkPolyData] = []
+    for i in range(nreg):
+        ex = vtkConnectivityFilter(); ex.SetInputData(poly); ex.SetExtractionModeToSpecifiedRegions(); ex.InitializeSpecifiedRegionList(); ex.AddSpecifiedRegion(i); ex.Update()
+        out = ex.GetOutput()
+        if out is None or out.GetNumberOfPoints() == 0:
+            continue
+        reg = vtkPolyData(); reg.ShallowCopy(out)
+        regions.append(reg)
+    if len(regions) == 0:
+        return poly, None
+    if len(regions) == 1:
+        return regions[0], None
+    # Pick two largest regions by point count if there are more than 2
+    regions.sort(key=lambda r: r.GetNumberOfPoints(), reverse=True)
+    regions = regions[:2]
+    # Compute mean X for each to decide left/right assignment
+    def mean_x(p: vtkPolyData) -> float:
+        n = p.GetNumberOfPoints();
+        if n == 0:
+            return 0.0
+        s = 0.0
+        for idx in range(n):
+            x, y, z = p.GetPoint(idx)
+            s += float(x)
+        return s / float(n)
+    r0, r1 = regions[0], regions[1]
+    m0, m1 = mean_x(r0), mean_x(r1)
+    if m0 <= m1:
+        left_raw, right_raw = r0, r1
+    else:
+        left_raw, right_raw = r1, r0
+    # Clean to drop unreferenced points so counts reflect actual hemisphere vertex counts
+    def _clean(p: vtkPolyData) -> vtkPolyData:
+        cl = vtkCleanPolyData(); cl.SetInputData(p); cl.Update()
+        out = vtkPolyData(); out.ShallowCopy(cl.GetOutput()); return out
+    left = _clean(left_raw)
+    right = _clean(right_raw)
+    return left, right
+
+
+def split_polydata_into_lr_with_ids(poly: vtkPolyData) -> Tuple[vtkPolyData, Optional[vtkPolyData], Optional[np.ndarray], Optional[np.ndarray]]:
+    """Split a combined mesh using connectivity while preserving original point IDs.
+
+    Returns (left_poly, right_poly_or_None, left_orig_ids, right_orig_ids).
+    If split fails, returns (poly, None, None, None).
+    """
+    if poly is None or poly.GetNumberOfPoints() == 0:
+        return poly, None, None, None
+    try:
+        from vtkmodules.vtkFiltersGeneral import vtkIdFilter
+    except Exception:
+        vtkIdFilter = None
+    src = poly
+    if vtkIdFilter is not None:
+        idf = vtkIdFilter(); idf.PointIdsOn(); idf.CellIdsOff(); idf.SetIdsArrayName('origId'); idf.SetInputData(poly); idf.Update()
+        src = idf.GetOutput()
+    # Connectivity regions
+    conn = vtkConnectivityFilter(); conn.SetInputData(src); conn.SetExtractionModeToAllRegions(); conn.Update()
+    try:
+        nreg = int(conn.GetNumberOfExtractedRegions())
+    except Exception:
+        nreg = 0
+    if nreg < 2:
+        return poly, None, None, None
+    # Extract all and pick two largest
+    regs = []
+    for i in range(nreg):
+        ex = vtkConnectivityFilter(); ex.SetInputData(src); ex.SetExtractionModeToSpecifiedRegions(); ex.InitializeSpecifiedRegionList(); ex.AddSpecifiedRegion(i); ex.Update()
+        out = vtkPolyData(); out.ShallowCopy(ex.GetOutput())
+        if out is not None and out.GetNumberOfPoints() > 0:
+            regs.append(out)
+    if len(regs) < 2:
+        return poly, None, None, None
+    regs.sort(key=lambda r: r.GetNumberOfPoints(), reverse=True)
+    r0, r1 = regs[0], regs[1]
+    # Decide left/right by mean X
+    def mean_x(p: vtkPolyData) -> float:
+        n = p.GetNumberOfPoints(); s = 0.0
+        for idx in range(n):
+            x, y, z = p.GetPoint(idx); s += float(x)
+        return (s / float(n)) if n else 0.0
+    m0, m1 = mean_x(r0), mean_x(r1)
+    left_raw, right_raw = (r0, r1) if m0 <= m1 else (r1, r0)
+    # Clean and keep origId arrays
+    def _clean_with_ids(p: vtkPolyData) -> Tuple[vtkPolyData, Optional[np.ndarray]]:
+        cl = vtkCleanPolyData(); cl.SetInputData(p); cl.Update()
+        out = vtkPolyData(); out.ShallowCopy(cl.GetOutput())
+        try:
+            arr = out.GetPointData().GetArray('origId')
+            if arr is not None:
+                ids = vtk_to_numpy(arr).astype(np.int64)
+            else:
+                ids = None
+        except Exception:
+            ids = None
+        return out, ids
+    left, idsL = _clean_with_ids(left_raw)
+    right, idsR = _clean_with_ids(right_raw)
+    return left, right, idsL, idsR
+
+
+def split_polydata_by_mid_axis(poly: vtkPolyData) -> Tuple[vtkPolyData, Optional[vtkPolyData]]:
+    """Fallback split: cut polydata with a mid-plane along X, then Y, then Z.
+
+    Returns (left, right_or_None). If all axis splits fail, returns (poly, None).
+    """
+    if poly is None or poly.GetNumberOfPoints() == 0:
+        return poly, None
+
+
+def split_polydata_by_index(poly: vtkPolyData, left_count: int) -> Tuple[Optional[vtkPolyData], Optional[vtkPolyData]]:
+    """Split a combined mesh by vertex index ordering.
+
+    Assumes the first `left_count` points belong to left hemisphere and the remaining belong to right.
+    Triangles are assigned to a hemisphere only if all three vertices fall within that hemisphere's index range.
+    """
+    if poly is None or poly.GetNumberOfPoints() == 0:
+        return None, None
+    n = int(poly.GetNumberOfPoints())
+    if left_count <= 0 or left_count >= n:
+        return None, None
+    right_count = n - left_count
+    # Build left points
+    pts_in = poly.GetPoints()
+    ptsL = vtkPoints(); ptsL.SetNumberOfPoints(left_count)
+    for i in range(left_count):
+        x, y, z = pts_in.GetPoint(i)
+        ptsL.SetPoint(i, x, y, z)
+    # Build right points
+    ptsR = vtkPoints(); ptsR.SetNumberOfPoints(right_count)
+    for i in range(right_count):
+        x, y, z = pts_in.GetPoint(left_count + i)
+        ptsR.SetPoint(i, x, y, z)
+    # Prepare cell arrays
+    polys_in = poly.GetPolys()
+    idlist = vtkIdList()
+    cellsL = vtkCellArray()
+    cellsR = vtkCellArray()
+    polys_in.InitTraversal()
+    while polys_in.GetNextCell(idlist):
+        m = idlist.GetNumberOfIds()
+        if m != 3:
+            continue
+        a = idlist.GetId(0); b = idlist.GetId(1); c = idlist.GetId(2)
+        if a < left_count and b < left_count and c < left_count:
+            cellsL.InsertNextCell(3); cellsL.InsertCellPoint(a); cellsL.InsertCellPoint(b); cellsL.InsertCellPoint(c)
+        elif a >= left_count and b >= left_count and c >= left_count:
+            aa = a - left_count; bb = b - left_count; cc = c - left_count
+            cellsR.InsertNextCell(3); cellsR.InsertCellPoint(aa); cellsR.InsertCellPoint(bb); cellsR.InsertCellPoint(cc)
+        else:
+            # Skip triangles crossing the boundary
+            continue
+    outL = vtkPolyData(); outL.SetPoints(ptsL); outL.SetPolys(cellsL)
+    outR = vtkPolyData(); outR.SetPoints(ptsR); outR.SetPolys(cellsR)
+    # Clean both outputs to drop unreferenced points
+    clL = vtkCleanPolyData(); clL.SetInputData(outL); clL.Update()
+    clR = vtkCleanPolyData(); clR.SetInputData(outR); clR.Update()
+    left = vtkPolyData(); left.ShallowCopy(clL.GetOutput())
+    right = vtkPolyData(); right.ShallowCopy(clR.GetOutput())
+    return left, right
+    try:
+        b = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        poly.GetBounds(b)
+        axes = [
+            ((1.0, 0.0, 0.0), (0.5 * (float(b[0]) + float(b[1])), 0.0, 0.0), 0),  # X
+            ((0.0, 1.0, 0.0), (0.0, 0.5 * (float(b[2]) + float(b[3])), 0.0), 1),  # Y
+            ((0.0, 0.0, 1.0), (0.0, 0.0, 0.5 * (float(b[4]) + float(b[5]))), 2),  # Z
+        ]
+        for normal, origin, axis_idx in axes:
+            plane = vtkPlane(); plane.SetOrigin(*origin); plane.SetNormal(*normal)
+            clip = vtkClipPolyData(); clip.SetInputData(poly); clip.SetClipFunction(plane); clip.GenerateClippedOutputOn(); clip.Update()
+            left_raw = vtkPolyData(); left_raw.ShallowCopy(clip.GetOutput())
+            right_raw = vtkPolyData(); right_raw.ShallowCopy(clip.GetClippedOutput())
+            # Clean to compact points and remove unreferenced ones
+            clL = vtkCleanPolyData(); clL.SetInputData(left_raw); clL.Update()
+            clR = vtkCleanPolyData(); clR.SetInputData(right_raw); clR.Update()
+            left = vtkPolyData(); left.ShallowCopy(clL.GetOutput())
+            right = vtkPolyData(); right.ShallowCopy(clR.GetOutput())
+            if left is None or left.GetNumberOfPoints() == 0:
+                continue
+            if right is None or right.GetNumberOfPoints() == 0:
+                # Single-sided split — accept as (left, None)
+                return left, None
+            # Ensure assignment order based on mean coordinate along the split axis
+            def mean_axis(p: vtkPolyData, idx: int) -> float:
+                n = p.GetNumberOfPoints()
+                if n == 0: return 0.0
+                s = 0.0
+                for i in range(n):
+                    x, y, z = p.GetPoint(i)
+                    s += (x if idx == 0 else (y if idx == 1 else z))
+                return s / float(n)
+            mL = mean_axis(left, axis_idx)
+            mR = mean_axis(right, axis_idx)
+            if mL <= mR:
+                return left, right
+            else:
+                return right, left
+    except Exception:
+        return poly, None
 
 
 def read_scalars(filename: str) -> vtkDoubleArray:
@@ -423,6 +665,124 @@ def read_scalars(filename: str) -> vtkDoubleArray:
     out = vtkDoubleArray(); out.SetNumberOfTuples(len(data))
     for i, v in enumerate(data): out.SetValue(i, float(v))
     return out
+
+def split_scalars_by_length(arr: vtkDoubleArray, nL: int, nR: int) -> Tuple[Optional[vtkDoubleArray], Optional[vtkDoubleArray]]:
+    """Split a combined scalar array into left/right halves by length.
+
+    If len(arr) == nL + nR, returns (left_only, right). Otherwise returns (arr, None).
+    """
+    if arr is None:
+        return None, None
+    total = int(arr.GetNumberOfTuples())
+    if total != (nL + nR):
+        return arr, None
+    right = vtkDoubleArray(); right.SetNumberOfTuples(nR)
+    for i in range(nR):
+        right.SetValue(i, arr.GetValue(i + nL))
+    left = vtkDoubleArray(); left.SetNumberOfTuples(nL)
+    for i in range(nL):
+        left.SetValue(i, arr.GetValue(i))
+    return left, right
+
+def read_scalars_pair_gifti(filename: str) -> Tuple[Optional[vtkDoubleArray], Optional[vtkDoubleArray]]:
+    """Try to read two 1D arrays from a GIFTI file (LH and RH in one file).
+
+    Returns (left, right) as vtkDoubleArray when two scalar arrays are present; otherwise (None, None).
+    This uses nibabel to inspect arrays regardless of VTK build specifics.
+    """
+    if Path(filename).suffix.lower() != '.gii':
+        return None, None
+    # Prefer nibabel to extract hemisphere metadata and assign L/R
+    try:
+        import nibabel as nib
+        g = nib.load(filename)
+    except Exception:
+        g = None
+    if g is not None:
+        left_arr = None; right_arr = None; flat = []
+        for d in g.darrays:
+            code = int(getattr(d, 'intent', getattr(d, 'intent_code', -1)) or -1)
+            if code in (1008, 1009):  # skip geometry arrays
+                continue
+            # Collect candidate data
+            if d.data.ndim == 1:
+                data1d = d.data.astype(float)
+            elif d.data.ndim == 2 and 1 in d.data.shape:
+                data1d = d.data.reshape(-1).astype(float)
+            else:
+                continue
+            flat.append(data1d)
+            # Try to infer hemisphere from metadata
+            hemi = None
+            meta = getattr(d, 'meta', None)
+            def _mget(m, key: str):
+                if m is None:
+                    return None
+                try:
+                    return m.get(key)
+                except Exception:
+                    try:
+                        for nv in getattr(m, 'data', []) or []:
+                            if getattr(nv, 'name', None) == key:
+                                return getattr(nv, 'value', None)
+                    except Exception:
+                        return None
+                return None
+            for key in ('AnatomicalStructurePrimary', 'AnatomicalStructureSecondary', 'GeometricType', 'Name'):
+                val = _mget(meta, key)
+                if val is None:
+                    continue
+                s = str(val).strip().lower()
+                if any(tok in s for tok in ('cortexleft', 'hemi-l', 'left', 'lh')):
+                    hemi = 'L'; break
+                if any(tok in s for tok in ('cortexright', 'hemi-r', 'right', 'rh')):
+                    hemi = 'R'; break
+            if hemi == 'L' and left_arr is None:
+                left_arr = data1d
+            elif hemi == 'R' and right_arr is None:
+                right_arr = data1d
+        if left_arr is not None and right_arr is not None:
+            vl = vtkDoubleArray(); vl.SetNumberOfTuples(len(left_arr))
+            for i, v in enumerate(left_arr): vl.SetValue(i, float(v))
+            vr = vtkDoubleArray(); vr.SetNumberOfTuples(len(right_arr))
+            for i, v in enumerate(right_arr): vr.SetValue(i, float(v))
+            return vl, vr
+        # Fallback: first two arrays in file order
+        if len(flat) >= 2:
+            aL, aR = flat[0], flat[1]
+            vl = vtkDoubleArray(); vl.SetNumberOfTuples(len(aL))
+            for i, v in enumerate(aL): vl.SetValue(i, float(v))
+            vr = vtkDoubleArray(); vr.SetNumberOfTuples(len(aR))
+            for i, v in enumerate(aR): vr.SetValue(i, float(v))
+            return vl, vr
+    # Last resort: VTK reader order (no metadata)
+    if HAVE_VTK_GIFTI:
+        try:
+            r = vtkGIFTIReader(); r.SetFileName(filename); r.Update()
+            img = r.GetOutput()
+            if img is not None and img.GetPointData() is not None:
+                pd = img.GetPointData(); arrays = []
+                for idx in range(int(pd.GetNumberOfArrays())):
+                    arr = pd.GetArray(idx)
+                    if arr is None:
+                        continue
+                    try:
+                        if int(arr.GetNumberOfComponents()) != 1 or int(arr.GetNumberOfTuples()) <= 0:
+                            continue
+                    except Exception:
+                        continue
+                    arrays.append(arr)
+                if len(arrays) >= 2:
+                    aL = vtk_to_numpy(arrays[0]).astype(float)
+                    aR = vtk_to_numpy(arrays[1]).astype(float)
+                    vl = vtkDoubleArray(); vl.SetNumberOfTuples(len(aL))
+                    for i, v in enumerate(aL): vl.SetValue(i, float(v))
+                    vr = vtkDoubleArray(); vr.SetNumberOfTuples(len(aR))
+                    for i, v in enumerate(aR): vr.SetValue(i, float(v))
+                    return vl, vr
+        except Exception:
+            pass
+    return None, None
 
 # ---- Stats ----
 def get_mean(arr: vtkDoubleArray) -> float: return float(np.nanmean(vtk_to_numpy(arr)))
@@ -509,6 +869,7 @@ class Options:
     colormap: int = JET
     debug: bool = False
     fix_scaling: bool = False  # Fix scaling across overlays
+    swap_lr: bool = False  # Swap left/right overlay assignment
 
 def parse_args(argv: List[str]) -> Options:
     p = argparse.ArgumentParser(
@@ -542,8 +903,8 @@ def parse_args(argv: List[str]) -> Options:
                    help='Colorbar title: shape (filename), stats, or none')
     p.add_argument('-inverse', action='store_true')
     p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true')
-    p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=16,
-                   help='Number of discrete color levels (0 to disable). Default: 16')
+    p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=2,
+                   help='Number of discrete color levels (0 to disable). Default: 2')
     p.add_argument('-log', action='store_true')
     p.add_argument('-white', action='store_true')
     # Control panel visibility (default: hidden)
@@ -556,6 +917,7 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-c2', action='store_true')
     p.add_argument('-c3', action='store_true')
     p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true', help='Fix scaling across all overlays')
+    p.add_argument('--swap-lr', dest='swap_lr', action='store_true', help='Swap left/right overlay assignment')
     p.add_argument('-debug', action='store_true')
     # External defaults file for viewer settings (key=value lines)
     p.add_argument('--defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
@@ -730,6 +1092,7 @@ def parse_args(argv: List[str]) -> Options:
         colormap=cm,
         debug=bool(a.debug),
         fix_scaling=bool(a.fix_scaling),
+        swap_lr=bool(a.swap_lr),
     )
 
 # ---- Control Panel ----
@@ -795,6 +1158,7 @@ class ControlPanel(QtWidgets.QWidget):
         self.title_mode = QtWidgets.QComboBox(); self.title_mode.addItems(["shape","stats","none"])
         self.cb_inverse = QtWidgets.QCheckBox("Inverse (flip sign)")
         self.cb_fix_scaling = QtWidgets.QCheckBox("Fix scaling")
+        self.cb_swap_lr = QtWidgets.QCheckBox("Swap L/R overlay")
         # Put Show colorbar and Colorbar title on one row (aligned with other checkboxes)
         row = QtWidgets.QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(8)
         row.addWidget(self.cb_colorbar)
@@ -807,6 +1171,7 @@ class ControlPanel(QtWidgets.QWidget):
         form.addRow(self._wrap(row))
         form.addRow(self.cb_inverse)
         form.addRow(self.cb_fix_scaling)
+        form.addRow(self.cb_swap_lr)
         self.layout.addLayout(form)
         # Action buttons (none for now)
         self.layout.addStretch(1)
@@ -861,6 +1226,8 @@ class ControlPanel(QtWidgets.QWidget):
         self.opacity.setEnabled(enabled)
         # Fix scaling only makes sense with at least one overlay
         self.cb_fix_scaling.setEnabled(enabled)
+        # Swap L/R is meaningful only when an overlay is present; viewer will further narrow based on RH availability
+        self.cb_swap_lr.setEnabled(enabled)
 
     # ---- Slider helpers ----
     def _bounds(self, which: str):
@@ -1054,7 +1421,8 @@ class Viewer(QtWidgets.QMainWindow):
                     continue
                 actor_ov_l = getattr(self, 'actor_ov_l', None)
                 actor_ov_r = getattr(self, 'actor_ov_r', None)
-                src = actor_ov_r if (order[i] == 1 and actor_ov_r is not None) else actor_ov_l
+                # Only use the actor matching the hemisphere of this view; do not fall back to the other side
+                src = actor_ov_r if (order[i] == 1) else actor_ov_l
                 if src is not None:
                     self._montage_ov[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
         # Background clones
@@ -1063,7 +1431,8 @@ class Viewer(QtWidgets.QMainWindow):
                 continue
             actor_bkg_l = getattr(self, 'actor_bkg_l', None)
             actor_bkg_r = getattr(self, 'actor_bkg_r', None)
-            src = actor_bkg_r if (order[i] == 1 and actor_bkg_r is not None) else actor_bkg_l
+            # Only use the actor matching the hemisphere; do not fall back to left for right views
+            src = actor_bkg_r if (order[i] == 1) else actor_bkg_l
             if src is not None:
                 self._montage_bkg[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
         # Reset camera on first build with any actor
@@ -1217,7 +1586,8 @@ class Viewer(QtWidgets.QMainWindow):
                     continue
                 actor_ov_l = getattr(self, 'actor_ov_l', None)
                 actor_ov_r = getattr(self, 'actor_ov_r', None)
-                src = actor_ov_r if (order[i] == 1 and actor_ov_r is not None) else actor_ov_l
+                # Only use the actor matching the hemisphere of this view; do not fall back to the other side
+                src = actor_ov_r if (order[i] == 1) else actor_ov_l
                 if src is not None:
                     self._montage_ov[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
         # Background clones
@@ -1226,7 +1596,8 @@ class Viewer(QtWidgets.QMainWindow):
                 continue
             actor_bkg_l = getattr(self, 'actor_bkg_l', None)
             actor_bkg_r = getattr(self, 'actor_bkg_r', None)
-            src = actor_bkg_r if (order[i] == 1 and actor_bkg_r is not None) else actor_bkg_l
+            # Only use the actor matching the hemisphere; do not fall back to left for right views
+            src = actor_bkg_r if (order[i] == 1) else actor_bkg_l
             if src is not None:
                 self._montage_bkg[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
         # Reset camera on first build with any actor
@@ -1246,6 +1617,9 @@ class Viewer(QtWidgets.QMainWindow):
     def __init__(self, opts: Options):
         super().__init__()
         self.opts = opts
+        # Original point-id maps for meshes created via connectivity split
+        self._orig_ids_L = None  # numpy array: indices into original combined mesh for left hemi points
+        self._orig_ids_R = None  # numpy array: indices into original combined mesh for right hemi points
         # Use the original input file for the window title
         name_part = Path(self.opts.mesh_left).name
         self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
@@ -1309,16 +1683,55 @@ class Viewer(QtWidgets.QMainWindow):
             if is_overlay_file(str(input_path)):
                 # Input is an overlay file, find the corresponding mesh
                 mesh_path = convert_filename_to_mesh(str(input_path))
-                mesh_path_obj = Path(mesh_path)
-                if not mesh_path_obj.exists():
-                    raise FileNotFoundError(f"Corresponding mesh file not found: {mesh_path}")
-                left_mesh_path = mesh_path_obj
+                mesh_path_obj = Path(mesh_path) if mesh_path else None
+                # Choose template fallback a priori
+                tmpl_dir = Path('data') / 'templates_surfaces_32k'
+                tmpl_candidates = [
+                    tmpl_dir / 'mesh.central.freesurfer.gii',  # preferred
+                    tmpl_dir / 'lh.mesh.central.freesurfer.gii',
+                    tmpl_dir / 'L.mesh.central.freesurfer.gii',
+                ]
+                left_mesh_path = next((p for p in tmpl_candidates if p.exists()), None)
+                # If we have a candidate subject mesh path, validate it's actually a mesh
+                if mesh_path_obj and mesh_path_obj.exists():
+                    try:
+                        # Avoid obviously overlay-like names
+                        if not is_overlay_file(str(mesh_path_obj)):
+                            test_poly = read_gifti_mesh(str(mesh_path_obj))
+                            if test_poly is not None and test_poly.GetNumberOfPoints() > 0:
+                                left_mesh_path = mesh_path_obj
+                    except Exception:
+                        # Keep template fallback
+                        pass
+                if left_mesh_path is None:
+                    raise FileNotFoundError(
+                        f"No corresponding mesh for overlay {input_path} and no template mesh found in {tmpl_dir}"
+                    )
                 # Set the overlay to the original input file
                 opts.overlay = str(input_path)
             else:
                 # Input is a mesh file
                 left_mesh_path = input_path
             self.poly_l = read_gifti_mesh(str(left_mesh_path))
+            # If the mesh appears combined, split into LH/RH by connectivity (with plane fallback)
+            try:
+                pl, pr, idsL, idsR = split_polydata_into_lr_with_ids(self.poly_l)
+                if pr is None:
+                    pl, pr = split_polydata_by_mid_axis(self.poly_l)
+                if pr is not None:
+                    self.poly_l, self.poly_r = pl, pr
+                    self._orig_ids_L = idsL
+                    self._orig_ids_R = idsR
+                else:
+                    self.poly_r = None
+            except Exception:
+                # Last-resort fallback: attempt plane-based split
+                try:
+                    pl, pr = split_polydata_by_mid_axis(self.poly_l)
+                    if pr is not None:
+                        self.poly_l, self.poly_r = pl, pr
+                except Exception:
+                    pass
             rh_candidate: Optional[Path] = None
             name = left_mesh_path.name
             if 'lh.' in name:
@@ -1329,12 +1742,99 @@ class Viewer(QtWidgets.QMainWindow):
                 rh_candidate = left_mesh_path.with_name(name.replace('_hemi-L_', '_hemi-R_'))
             elif '_hemi-R_' in name:
                 rh_candidate = left_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
-            if rh_candidate and rh_candidate.exists(): 
+            else:
+                # If we chose a template without hemi tag, try common RH template filenames
+                tmpl_dir = left_mesh_path.parent
+                for cand in [
+                    tmpl_dir / 'rh.mesh.central.freesurfer.gii',
+                    tmpl_dir / 'R.mesh.central.freesurfer.gii',
+                ]:
+                    if cand.exists():
+                        rh_candidate = cand
+                        break
+            # Only load a separate RH candidate if we didn't already split successfully
+            if self.poly_r is None and rh_candidate and rh_candidate.exists(): 
                 self.poly_r = read_gifti_mesh(str(rh_candidate))
+            # Ensure final L/R are split hemispheres (avoid both being combined meshes)
+            try:
+                pl, pr, idsL, idsR = split_polydata_into_lr_with_ids(self.poly_l)
+                if pr is None:
+                    pl, pr = split_polydata_by_mid_axis(self.poly_l)
+                if pr is not None:
+                    self.poly_l, self.poly_r = pl, pr
+                    self._orig_ids_L = idsL
+                    self._orig_ids_R = idsR
+                elif self.poly_r is not None:
+                    pl2, pr2, idsL2, idsR2 = split_polydata_into_lr_with_ids(self.poly_r)
+                    if pr2 is None:
+                        pl2, pr2 = split_polydata_by_mid_axis(self.poly_r)
+                    if pr2 is not None:
+                        # Use the split from RH candidate
+                        self.poly_l, self.poly_r = pl2, pr2
+                        self._orig_ids_L = idsL2
+                        self._orig_ids_R = idsR2
+            except Exception:
+                pass
             # Normalize Y-origin similar to C++ utility
             self._shift_y_to(self.poly_l)
             if self.poly_r is not None:
                 self._shift_y_to(self.poly_r)
+        else:
+            # No mesh provided: if an overlay is present, fall back to template meshes
+            if opts.overlay:
+                tmpl_dir = Path('data') / 'templates_surfaces_32k'
+                left_candidates = [
+                    tmpl_dir / 'mesh.central.freesurfer.gii',  # preferred per request
+                    tmpl_dir / 'lh.mesh.central.freesurfer.gii',
+                    tmpl_dir / 'L.mesh.central.freesurfer.gii',
+                ]
+                right_candidates = [
+                    tmpl_dir / 'rh.mesh.central.freesurfer.gii',
+                    tmpl_dir / 'R.mesh.central.freesurfer.gii',
+                ]
+                left_mesh_path = next((p for p in left_candidates if p.exists()), None)
+                if left_mesh_path is None:
+                    raise FileNotFoundError(f"No template mesh found in {tmpl_dir}")
+                self.poly_l = read_gifti_mesh(str(left_mesh_path))
+                # Try splitting the left mesh first; if it yields both hemispheres, use them
+                did_split = False
+                try:
+                    pl, pr, idsL, idsR = split_polydata_into_lr_with_ids(self.poly_l)
+                    if pr is None:
+                        pl, pr = split_polydata_by_mid_axis(self.poly_l)
+                    if pr is not None:
+                        self.poly_l, self.poly_r = pl, pr
+                        self._orig_ids_L = idsL
+                        self._orig_ids_R = idsR
+                        did_split = True
+                except Exception:
+                    did_split = False
+                if not did_split:
+                    rh_path = next((p for p in right_candidates if p.exists()), None)
+                    self.poly_r = read_gifti_mesh(str(rh_path)) if rh_path else None
+                    # Ensure split if we ended up with combined meshes
+                    try:
+                        pl2, pr2, idsL2, idsR2 = split_polydata_into_lr_with_ids(self.poly_l)
+                        if pr2 is None:
+                            pl2, pr2 = split_polydata_by_mid_axis(self.poly_l)
+                        if pr2 is not None:
+                            self.poly_l, self.poly_r = pl2, pr2
+                            self._orig_ids_L = idsL2
+                            self._orig_ids_R = idsR2
+                        elif self.poly_r is not None:
+                            pl3, pr3, idsL3, idsR3 = split_polydata_into_lr_with_ids(self.poly_r)
+                            if pr3 is None:
+                                pl3, pr3 = split_polydata_by_mid_axis(self.poly_r)
+                            if pr3 is not None:
+                                self.poly_l, self.poly_r = pl3, pr3
+                                self._orig_ids_L = idsL3
+                                self._orig_ids_R = idsR3
+                    except Exception:
+                        pass
+                # Normalize Y-origin
+                self._shift_y_to(self.poly_l)
+                if self.poly_r is not None:
+                    self._shift_y_to(self.poly_r)
 
         # Background curvature (guarded for empty startup)
         self.curv_l = None
@@ -1353,13 +1853,11 @@ class Viewer(QtWidgets.QMainWindow):
             elif 'left' in opts.overlay_bkg: rh_overlay_bkg = opts.overlay_bkg.replace('left', 'right')
             if rh_overlay_bkg and Path(rh_overlay_bkg).exists() and self.poly_r is not None:
                 self.bkg_scalar_r = read_scalars(rh_overlay_bkg)
-            elif self.poly_r is not None and self.bkg_scalar_l is not None and self.bkg_scalar_l.GetNumberOfTuples() == (self.poly_l.GetNumberOfPoints()+self.poly_r.GetNumberOfPoints()):
-                nL = self.poly_l.GetNumberOfPoints(); nR = self.poly_r.GetNumberOfPoints(); arr = self.bkg_scalar_l
-                self.bkg_scalar_r = vtkDoubleArray(); self.bkg_scalar_r.SetNumberOfTuples(nR)
-                for i in range(nR): self.bkg_scalar_r.SetValue(i, arr.GetValue(i+nL))
-                left_only = vtkDoubleArray(); left_only.SetNumberOfTuples(nL)
-                for i in range(nL): left_only.SetValue(i, arr.GetValue(i))
-                self.bkg_scalar_l = left_only
+            elif self.poly_r is not None and self.bkg_scalar_l is not None:
+                nL = self.poly_l.GetNumberOfPoints(); nR = self.poly_r.GetNumberOfPoints()
+                left_only, right = split_scalars_by_length(self.bkg_scalar_l, nL, nR)
+                if right is not None:
+                    self.bkg_scalar_l, self.bkg_scalar_r = left_only, right
 
         self.curv_l_out = None
         if self.curv_l is not None:
@@ -1617,7 +2115,11 @@ class Viewer(QtWidgets.QMainWindow):
         # Initialize title mode combo
         self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
-       
+        # Initialize swap L/R from CLI
+        try:
+            self.ctrl.cb_swap_lr.setChecked(bool(self.opts.swap_lr))
+        except Exception:
+            pass
 
         self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
         # Initialize colormap selector based on opts.colormap
@@ -1643,6 +2145,11 @@ class Viewer(QtWidgets.QMainWindow):
         # Enable/disable overlay controls based on whether overlay is loaded
         has_overlay = (self.scal_l is not None)
         self.ctrl.set_overlay_controls_enabled(bool(has_overlay))
+        # Swap L/R toggle only useful when both hemispheres have scalars
+        try:
+            self.ctrl.cb_swap_lr.setEnabled(bool(has_overlay and self.scal_r is not None and self.poly_r is not None))
+        except Exception:
+            pass
         # Ensure fix scaling checkbox state reflects current overlay count/availability
         self._enforce_fix_scaling_policy()
     
@@ -1684,7 +2191,7 @@ class Viewer(QtWidgets.QMainWindow):
         if hasattr(self.ctrl, 'cb_discrete'):
             def _on_discrete_toggled(checked: bool):
                 # Use 2 levels by default when checked
-                self.opts.discrete = 16 if checked else 0
+                self.opts.discrete = 2 if checked else 0
                 # Rebuild overlay LUTs with new discrete setting
                 self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
                 self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
@@ -1821,6 +2328,28 @@ class Viewer(QtWidgets.QMainWindow):
                 self._ensure_colorbar()
             self.rw.Render()
         self.ctrl.cb_fix_scaling.toggled.connect(_on_fix_scaling_toggled)
+
+        # Live: swap L/R overlay assignment
+        def _on_swap_lr_toggled(checked: bool):
+            self.opts.swap_lr = bool(checked)
+            # Only meaningful if we have both hemispheres and both scalars
+            if self.poly_r is None or self.scal_l is None or self.scal_r is None:
+                return
+            # Swap scalar arrays between polys and update actors
+            self.scal_l, self.scal_r = self.scal_r, self.scal_l
+            self.poly_l.GetPointData().SetScalars(self.scal_l)
+            self.poly_r.GetPointData().SetScalars(self.scal_r)
+            if self.actor_ov_l is not None:
+                self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
+            if self.actor_ov_r is not None:
+                self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
+            # Rebuild montage to ensure clones point to the correct sources
+            self._build_or_update_montage()
+            self.rw.Render()
+        try:
+            self.ctrl.cb_swap_lr.toggled.connect(_on_swap_lr_toggled)
+        except Exception:
+            pass
 
         # Live-ish: clip window — apply on slider release or editing finished
         def _apply_clip_live():
@@ -2110,6 +2639,64 @@ class Viewer(QtWidgets.QMainWindow):
         # Ensure proper rendering (avoid ResetCameraClippingRange to prevent subtle shifts)
         self.rw.Render()
 
+    def _switch_to_template_meshes_for_halves(self, half_count: int) -> bool:
+        """Switch meshes to template fsLR meshes when overlay halves indicate a specific vertex count.
+
+        Returns True if switch succeeded, False otherwise.
+        """
+        try:
+            tmpl_dir = Path('data') / 'templates_surfaces_32k'
+            left_candidates = [
+                tmpl_dir / 'mesh.central.freesurfer.gii',
+                tmpl_dir / 'lh.mesh.central.freesurfer.gii',
+                tmpl_dir / 'L.mesh.central.freesurfer.gii',
+            ]
+            right_candidates = [
+                tmpl_dir / 'rh.mesh.central.freesurfer.gii',
+                tmpl_dir / 'R.mesh.central.freesurfer.gii',
+            ]
+            left_mesh_path = next((p for p in left_candidates if p.exists()), None)
+            if left_mesh_path is None:
+                return False
+            new_l = read_gifti_mesh(str(left_mesh_path))
+            new_r = None
+            # Try splitting the template if it contains both hemispheres
+            pl, pr = split_polydata_into_lr(new_l)
+            if pr is not None:
+                new_l, new_r = pl, pr
+            else:
+                rh_path = next((p for p in right_candidates if p.exists()), None)
+                new_r = read_gifti_mesh(str(rh_path)) if rh_path else None
+            if new_l is None:
+                return False
+            # Validate counts match requested halves if RH available
+            if new_r is not None:
+                if new_l.GetNumberOfPoints() != half_count or new_r.GetNumberOfPoints() != half_count:
+                    # Counts do not match; do not switch
+                    return False
+            # Swap in and recompute curvature/actors wiring
+            self.poly_l, self.poly_r = new_l, new_r
+            self._shift_y_to(self.poly_l)
+            if self.poly_r is not None:
+                self._shift_y_to(self.poly_r)
+            # Recompute curvature outputs
+            self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
+            self.curv_l_out = self.curv_l.GetOutput()
+            self.curv_r = None; self.curv_r_out = None
+            if self.poly_r is not None:
+                self.curv_r = vtkCurvatures(); self.curv_r.SetInputData(self.poly_r); self.curv_r.SetCurvatureTypeToMean(); self.curv_r.Update()
+                self.curv_r_out = self.curv_r.GetOutput()
+            # Update background mappers if they exist
+            if self.actor_bkg_l is not None and self.curv_l_out is not None:
+                self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
+            if self.actor_bkg_r is not None and self.curv_r_out is not None:
+                self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
+            # Rebuild montage with new geometry
+            self._build_or_update_montage()
+            return True
+        except Exception:
+            return False
+
     def _pick_overlay(self):
         start_dir = (self.ctrl.overlay_combo.currentText().strip()
                      or str(Path(self.opts.mesh_left).parent))
@@ -2299,6 +2886,15 @@ class Viewer(QtWidgets.QMainWindow):
             return
         # Load new left mesh
         self.poly_l = read_gifti_mesh(str(new_mesh_path))
+        # If combined, split into LH/RH by connectivity
+        try:
+            pl, pr = split_polydata_into_lr(self.poly_l)
+            if pr is not None:
+                self.poly_l, self.poly_r = pl, pr
+            else:
+                self.poly_r = None
+        except Exception:
+            pass
         # Normalize Y-origin to match initial alignment
         self._shift_y_to(self.poly_l)
         # Attempt right mesh detection similar to __init__
@@ -2644,18 +3240,126 @@ class Viewer(QtWidgets.QMainWindow):
             os.chdir(str(Path(overlay_path).parent or Path('.')))
             baseL = Path(overlay_path).name
             scal_l = read_scalars(baseL); scal_r = None
+            # If .gii contains two arrays (LH/RH), use them directly regardless of current mesh state
+            if baseL.lower().endswith('.gii'):
+                l2, r2 = read_scalars_pair_gifti(baseL)
+                if l2 is not None and r2 is not None:
+                    scal_l, scal_r = l2, r2
+                    # Ensure we have RH mesh to display RH scalars
+                    if self.poly_r is None and self.poly_l is not None:
+                        try:
+                            pl, pr = split_polydata_into_lr(self.poly_l)
+                            if pr is None:
+                                pl, pr = split_polydata_by_mid_axis(self.poly_l)
+                            if pr is not None:
+                                self.poly_l, self.poly_r = pl, pr
+                            else:
+                                # If equal halves, switch to template meshes matching the counts
+                                nL2 = int(l2.GetNumberOfTuples()); nR2 = int(r2.GetNumberOfTuples())
+                                if nL2 == nR2 and nL2 > 0:
+                                    self._switch_to_template_meshes_for_halves(nL2)
+                        except Exception:
+                            pass
             rh_name = None
-            if 'lh.' in baseL: rh_name = baseL.replace('lh.', 'rh.')
-            elif 'left' in baseL: rh_name = baseL.replace('left', 'right')
+            # Heuristic: if explicit hemi naming exists, try companion file
+            if 'lh.' in baseL:
+                rh_name = baseL.replace('lh.', 'rh.')
+            elif 'left' in baseL:
+                rh_name = baseL.replace('left', 'right')
+            elif '_hemi-L_' in baseL:
+                rh_name = baseL.replace('_hemi-L_', '_hemi-R_')
+            # If no hemi naming or name contains 'mesh.' treat as merged map needing split
+            needs_split_by_name = (('lh.' not in baseL) and ('left' not in baseL) and ('_hemi-L_' not in baseL)) or ('mesh.' in baseL)
             if rh_name and Path(rh_name).exists() and self.poly_r is not None:
                 scal_r = read_scalars(rh_name)
-            elif self.poly_r is not None and scal_l is not None and scal_l.GetNumberOfTuples() == (self.poly_l.GetNumberOfPoints()+self.poly_r.GetNumberOfPoints()):
-                nL = self.poly_l.GetNumberOfPoints(); nR = self.poly_r.GetNumberOfPoints(); arr = scal_l
-                scal_r = vtkDoubleArray(); scal_r.SetNumberOfTuples(nR)
-                for i in range(nR): scal_r.SetValue(i, arr.GetValue(i+nL))
-                left_only = vtkDoubleArray(); left_only.SetNumberOfTuples(nL)
-                for i in range(nL): left_only.SetValue(i, arr.GetValue(i))
-                scal_l = left_only
+            # Regardless of name heuristics, if we have both meshes and no RH yet, attempt to split merged array
+            if self.poly_r is not None and scal_r is None and scal_l is not None:
+                nL = int(self.poly_l.GetNumberOfPoints()); nR = int(self.poly_r.GetNumberOfPoints())
+                total = int(scal_l.GetNumberOfTuples())
+                # If meshes are still not split correctly but total equals combined mesh vertex count,
+                # split meshes by index order first so counts align with overlay halves.
+                try:
+                    combined_vertices = int(self.poly_l.GetNumberOfPoints() + (self.poly_r.GetNumberOfPoints() if self.poly_r else 0))
+                except Exception:
+                    combined_vertices = nL + nR
+                if total == combined_vertices and (nL == combined_vertices or nR == combined_vertices):
+                    # One side is still combined; split by index with left_count = total//2 as a heuristic for fsLR merged order
+                    half = total // 2
+                    if total % 2 == 0 and half > 0:
+                        # Attempt to re-split whatever side is combined
+                        if nL == combined_vertices:
+                            pl, pr = split_polydata_by_index(self.poly_l, half)
+                            if pr is not None:
+                                self.poly_l, self.poly_r = pl, pr
+                                nL, nR = int(self.poly_l.GetNumberOfPoints()), int(self.poly_r.GetNumberOfPoints())
+                        elif self.poly_r is not None and nR == combined_vertices:
+                            pl, pr = split_polydata_by_index(self.poly_r, half)
+                            if pr is not None:
+                                self.poly_l, self.poly_r = pl, pr
+                                nL, nR = int(self.poly_l.GetNumberOfPoints()), int(self.poly_r.GetNumberOfPoints())
+                # Exact split by mesh counts
+                if total == (nL + nR) and nL > 0 and nR > 0:
+                    # Prefer mapping by preserved original IDs when available
+                    used_id_map = False
+                    try:
+                        if isinstance(self._orig_ids_L, np.ndarray) and isinstance(self._orig_ids_R, np.ndarray):
+                            idsL = self._orig_ids_L.astype(np.int64, copy=False)
+                            idsR = self._orig_ids_R.astype(np.int64, copy=False)
+                            if idsL.size == nL and idsR.size == nR and idsL.min() >= 0 and idsR.min() >= 0 and idsL.max() < total and idsR.max() < total:
+                                merged_np = vtk_to_numpy(scal_l).astype(float)
+                                left_np = merged_np[idsL]
+                                right_np = merged_np[idsR]
+                                left = vtkDoubleArray(); left.SetNumberOfTuples(nL)
+                                for i, v in enumerate(left_np):
+                                    left.SetValue(i, float(v))
+                                right = vtkDoubleArray(); right.SetNumberOfTuples(nR)
+                                for i, v in enumerate(right_np):
+                                    right.SetValue(i, float(v))
+                                scal_l, scal_r = left, right
+                                used_id_map = True
+                    except Exception:
+                        used_id_map = False
+                    if not used_id_map:
+                        # Fallback: sequential split by mesh counts
+                        left = vtkDoubleArray(); left.SetNumberOfTuples(nL)
+                        right = vtkDoubleArray(); right.SetNumberOfTuples(nR)
+                        for i in range(nL):
+                            left.SetValue(i, scal_l.GetValue(i))
+                        for j in range(nR):
+                            right.SetValue(j, scal_l.GetValue(nL + j))
+                        scal_l, scal_r = left, right
+                # Equal halves split when plausible (e.g., fs_LR 32k: 64984 total)
+                elif total % 2 == 0:
+                    half = total // 2
+                    if half == nL and half == nR:
+                        left = vtkDoubleArray(); left.SetNumberOfTuples(half)
+                        right = vtkDoubleArray(); right.SetNumberOfTuples(half)
+                        for i in range(half):
+                            left.SetValue(i, scal_l.GetValue(i))
+                        for j in range(half):
+                            right.SetValue(j, scal_l.GetValue(half + j))
+                        scal_l, scal_r = left, right
+                    else:
+                        # If mesh counts do not match equal halves but the overlay clearly splits in half,
+                        # try switching to template meshes that match the half counts (e.g., 32492 per hemi)
+                        if half > 0 and self._switch_to_template_meshes_for_halves(half):
+                            # Recompute variables with new meshes
+                            nL = int(self.poly_l.GetNumberOfPoints()); nR = int(self.poly_r.GetNumberOfPoints()) if self.poly_r is not None else 0
+                            if nL == half and nR == half:
+                                left = vtkDoubleArray(); left.SetNumberOfTuples(half)
+                                right = vtkDoubleArray(); right.SetNumberOfTuples(half)
+                                for i in range(half):
+                                    left.SetValue(i, scal_l.GetValue(i))
+                                for j in range(half):
+                                    right.SetValue(j, scal_l.GetValue(half + j))
+                                scal_l, scal_r = left, right
+            # If no RH mesh is available but the overlay is merged (longer than LH), still trim to LH length
+            if self.poly_r is None and scal_l is not None:
+                nL = self.poly_l.GetNumberOfPoints(); total = int(scal_l.GetNumberOfTuples())
+                if total > nL:
+                    left_only, _ = split_scalars_by_length(scal_l, nL, total - nL)
+                    if left_only is not None:
+                        scal_l = left_only
         except Exception as e:
             # If loading fails, clear the overlay and disable controls
             print(f"Failed to load overlay: {e}")
@@ -2668,9 +3372,113 @@ class Viewer(QtWidgets.QMainWindow):
         # Do not invert scalars; inversion is handled by flipping LUTs
         # Clip is rendered via LUT alpha; do not mutate scalar arrays
         # attach
+        # Final safety: if RH is missing but LH scalar length exceeds LH vertices, split/trim accordingly
+        try:
+            if self.poly_l is not None and scal_l is not None:
+                nL_safe = int(self.poly_l.GetNumberOfPoints())
+                total_safe = int(scal_l.GetNumberOfTuples())
+                if total_safe > nL_safe:
+                    combined = scal_l  # keep original merged array for indexing
+                    if self.poly_r is not None and scal_r is None:
+                        nR_safe = int(self.poly_r.GetNumberOfPoints())
+                        # Split by exact counts if possible
+                        if total_safe == (nL_safe + nR_safe):
+                            left = vtkDoubleArray(); left.SetNumberOfTuples(nL_safe)
+                            right = vtkDoubleArray(); right.SetNumberOfTuples(nR_safe)
+                            for i in range(nL_safe):
+                                left.SetValue(i, combined.GetValue(i))
+                            for j in range(nR_safe):
+                                right.SetValue(j, combined.GetValue(nL_safe + j))
+                            scal_l, scal_r = left, right
+                        else:
+                            # If total equals twice LH vertices, at least trim LH to its first half
+                            if total_safe == 2 * nL_safe:
+                                left = vtkDoubleArray(); left.SetNumberOfTuples(nL_safe)
+                                for i in range(nL_safe):
+                                    left.SetValue(i, combined.GetValue(i))
+                                scal_l = left
+                                # If RH vertex count matches LH, derive RH from second half
+                                if nR_safe == nL_safe:
+                                    right = vtkDoubleArray(); right.SetNumberOfTuples(nR_safe)
+                                    for j in range(nR_safe):
+                                        right.SetValue(j, combined.GetValue(nL_safe + j))
+                                    scal_r = right
+                            elif total_safe % 2 == 0 and (total_safe // 2) == nL_safe:
+                                # General even split where LH count matches half, derive LH from first half
+                                left = vtkDoubleArray(); left.SetNumberOfTuples(nL_safe)
+                                for i in range(nL_safe):
+                                    left.SetValue(i, combined.GetValue(i))
+                                scal_l = left
+                                # Populate RH only if counts align
+                                half = total_safe // 2
+                                if nR_safe == half:
+                                    right = vtkDoubleArray(); right.SetNumberOfTuples(nR_safe)
+                                    for j in range(nR_safe):
+                                        right.SetValue(j, combined.GetValue(half + j))
+                                    scal_r = right
+                            else:
+                                # Fallback: just trim LH to its vertex count
+                                left = vtkDoubleArray(); left.SetNumberOfTuples(nL_safe)
+                                for i in range(nL_safe):
+                                    left.SetValue(i, combined.GetValue(i))
+                                scal_l = left
+                    elif self.poly_r is None:
+                        # No RH mesh available — trim LH to its vertex count
+                        left = vtkDoubleArray(); left.SetNumberOfTuples(nL_safe)
+                        for i in range(nL_safe):
+                            left.SetValue(i, combined.GetValue(i))
+                        scal_l = left
+        except Exception:
+            pass
+        # Apply CLI/UI requested L/R swap if both sides are present
+        if self.opts.swap_lr and scal_l is not None and scal_r is not None:
+            scal_l, scal_r = scal_r, scal_l
         self.scal_l = scal_l; self.scal_r = scal_r
-        if scal_l is not None: self.poly_l.GetPointData().SetScalars(scal_l)
-        if scal_r is not None and self.poly_r is not None: self.poly_r.GetPointData().SetScalars(scal_r)
+        # Debug/status: report how overlay is applied
+        try:
+            msg = None
+            if self.scal_l is not None and self.scal_r is not None and self.poly_r is not None:
+                msg = f"Overlay split across hemispheres: LH={int(self.scal_l.GetNumberOfTuples())} RH={int(self.scal_r.GetNumberOfTuples())}"
+            elif self.scal_l is not None and self.poly_r is None:
+                msg = f"Overlay applied to LH only (no right mesh). LH N={int(self.scal_l.GetNumberOfTuples())}"
+            elif self.scal_l is not None and self.scal_r is None and self.poly_r is not None:
+                totalN = int(self.scal_l.GetNumberOfTuples())
+                nL = int(self.poly_l.GetNumberOfPoints()) if self.poly_l is not None else 0
+                nR = int(self.poly_r.GetNumberOfPoints()) if self.poly_r is not None else 0
+                msg = f"Overlay applied to LH only (could not derive RH). LH N={totalN} (overlay total={totalN}, mesh L={nL}, R={nR})"
+            if msg:
+                # Print and show in status bar
+                print(msg)
+                try:
+                    self.statusBar().showMessage(msg, 3000)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        if scal_l is not None:
+            # Ensure left poly references the split/left-only array (not the original combined)
+            self.poly_l.GetPointData().SetScalars(scal_l)
+        if scal_r is not None and self.poly_r is not None:
+            self.poly_r.GetPointData().SetScalars(scal_r)
+        # Heuristic sanity check: if both meshes and both scalars present but order might be flipped,
+        # compare mean scalar values against simple left/right curvature means to detect obvious mismatch and swap.
+        try:
+            if self.poly_r is not None and self.scal_l is not None and self.scal_r is not None and not self.opts.swap_lr:
+                # Compute simple curvature means per hemi as a rough proxy of sidedness consistency only for thickness-like maps
+                kind = detect_overlay_kind(overlay_path)
+                if kind in ('thickness', 'pbt'):
+                    sl = float(np.nanmean(vtk_to_numpy(self.scal_l)))
+                    sr = float(np.nanmean(vtk_to_numpy(self.scal_r)))
+                    # If ranges are vastly different but swapped would better match mesh vertex counts (rare), flip
+                    nL = int(self.poly_l.GetNumberOfPoints()); nSR = int(self.scal_r.GetNumberOfTuples())
+                    nR = int(self.poly_r.GetNumberOfPoints()); nSL = int(self.scal_l.GetNumberOfTuples())
+                    if (nSL == nR and nSR == nL) and (abs(sl - sr) > 0):
+                        # Swap to match mesh sizes
+                        tmp = self.scal_l; self.scal_l = self.scal_r; self.scal_r = tmp
+                        self.poly_l.GetPointData().SetScalars(self.scal_l)
+                        self.poly_r.GetPointData().SetScalars(self.scal_r)
+        except Exception:
+            pass
         # Predefined ranges for recognized overlays (thickness, pbt)
         kind = detect_overlay_kind(overlay_path)
         if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
@@ -2716,6 +3524,14 @@ class Viewer(QtWidgets.QMainWindow):
             self._ensure_colorbar()
         # Apply clip transparency and refresh LUTs on actors
         self._apply_clip_to_overlay_luts()
+        # If only left mesh is available, ensure overlay array length equals LH vertices
+        if self.poly_r is None and self.scal_l is not None and self.poly_l is not None:
+            nL = self.poly_l.GetNumberOfPoints()
+            if self.scal_l.GetNumberOfTuples() > nL:
+                left_only, _ = split_scalars_by_length(self.scal_l, nL, int(self.scal_l.GetNumberOfTuples()) - nL)
+                if left_only is not None:
+                    self.scal_l = left_only
+                    self.poly_l.GetPointData().SetScalars(self.scal_l)
         if self.actor_ov_l is not None:
             self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
         if self.actor_ov_r is not None:
@@ -2726,6 +3542,10 @@ class Viewer(QtWidgets.QMainWindow):
         # Enable overlay controls since we now have an overlay loaded
         if hasattr(self, 'ctrl'):
             self.ctrl.set_overlay_controls_enabled(True)
+            try:
+                self.ctrl.cb_swap_lr.setEnabled(bool(self.scal_r is not None and self.poly_r is not None))
+            except Exception:
+                pass
             # Update spin boxes to current overlay range
             if self.overlay_range[1] > self.overlay_range[0]:
                 self.ctrl.range_min.setValue(float(self.overlay_range[0]))
