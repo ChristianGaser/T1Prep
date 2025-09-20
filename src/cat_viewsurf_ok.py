@@ -437,7 +437,7 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
         self._viewer = None  # Reference to the main viewer
         # Keys handled by the Viewer (suppress default VTK behavior for these)
         self._viewer_keys = {
-            'q','Q','u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
+            'u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
         }
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
@@ -1745,34 +1745,6 @@ class Viewer(QtWidgets.QMainWindow):
             self._prev_overlay(); return
         if s == 'Right':
             self._next_overlay(); return
-        if s in ('q','Q'):
-            # Gracefully close viewer and quit application
-            try:
-                # Stop interactor loop if running
-                if hasattr(self, 'iren') and self.iren is not None:
-                    try:
-                        self.iren.TerminateApp()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            try:
-                self.close()
-            except Exception:
-                pass
-            try:
-                app = QtWidgets.QApplication.instance()
-                if app is not None:
-                    app.quit()
-                else:
-                    raise RuntimeError('No QApplication instance')
-            except Exception:
-                try:
-                    import sys as _sys
-                    _sys.exit(0)
-                except Exception:
-                    pass
-            return
         # Camera/control keys (accept both upper/lower)
         if s in ('u','U'):
             camera.Elevation(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
