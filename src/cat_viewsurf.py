@@ -16,7 +16,6 @@ Requires: vtk (>=9), PySide6; nibabel (for GIFTI fallback + FreeSurfer morphs if
 """
 from __future__ import annotations
 import argparse
-import math
 import os
 import sys
 from dataclasses import dataclass
@@ -38,12 +37,10 @@ DOCK_LEFT = Qt.DockWidgetArea.LeftDockWidgetArea
 import numpy as np
 
 # --- Import naming utilities ---
-import sys
-sys.path.append(str(Path(__file__).parent))
-from utils import load_namefile, get_filenames
+# (No local utils needed in this module)
 
 # --- VTK imports (module-accurate for common wheels) ---
-from vtkmodules.util.numpy_support import vtk_to_numpy, numpy_to_vtk
+from vtkmodules.util.numpy_support import vtk_to_numpy
 from vtkmodules.vtkCommonCore import vtkLookupTable, vtkDoubleArray, vtkPoints
 from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray
 from vtkmodules.vtkFiltersGeneral import vtkCurvatures
@@ -437,7 +434,7 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
         self._viewer = None  # Reference to the main viewer
         # Keys handled by the Viewer (suppress default VTK behavior for these)
         self._viewer_keys = {
-            'q','Q','u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
+            'u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
         }
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
@@ -991,83 +988,6 @@ class ControlPanel(QtWidgets.QWidget):
         self._spin_to_slider('bkg', 'max', float(self.bkg_max.value()))
 
 # ---- Viewer ----
-class Viewer(QtWidgets.QMainWindow):
-    def _install_toggle_shortcuts(self):
-        # Install explicit QShortcuts so we don't depend on QAction shortcut routing
-        self._toggle_shortcuts: List[QShortcut] = []
-        seqs: List[str]
-        if sys.platform == 'darwin':
-            # Support both Cmd+D (primary) and legacy Cmd+K
-            seqs = ["Meta+D", "Meta+K"]
-        else:
-            seqs = ["Ctrl+D"]
-
-        def add(parent):
-            for s in seqs:
-                try:
-                    sc = QShortcut(QKeySequence(s), parent)
-                except Exception:
-                    continue
-                try:
-                    sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
-                except Exception:
-                    sc.setContext(Qt.ApplicationShortcut)
-                sc.activated.connect(lambda d=getattr(self, 'dock_controls', None): d is not None and self._toggle_controls(not d.isVisible()))
-                self._toggle_shortcuts.append(sc)
-
-        # Add on both the main window and the VTK widget to cover focus cases
-        add(self)
-        if hasattr(self, 'vtk_widget'):
-            add(self.vtk_widget)
-    def _setup_view_menu(self):
-        menubar = self.menuBar()
-        menu = menubar.addMenu("View")
-        act = QAction("Show Controls", self)
-        act.setCheckable(True)
-        act.setChecked(self.opts.panel)
-        # Platform-specific shortcut: macOS = Cmd+;  | others = Ctrl+D
-        # Do not attach a shortcut to the QAction — use a QShortcut instead
-        act.triggered.connect(self._toggle_controls)
-        menu.addAction(act)
-        self.act_show_controls = act
-
-        # Add a direct QShortcut to toggle dock visibility (Ctrl+D on all, mapped to Cmd+D on macOS)
-        self._dock_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
-        try:
-            self._dock_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
-        except Exception:
-            self._dock_shortcut.setContext(Qt.ApplicationShortcut)
-        self._dock_shortcut.activated.connect(lambda: (
-            self._toggle_controls(not self.dock_controls.isVisible())
-            if hasattr(self, 'dock_controls') and self.dock_controls is not None else None
-        ))
-
-    def _toggle_controls(self, checked: bool):
-        if not hasattr(self, 'dock_controls'):
-            return
-        dock = self.dock_controls
-        current = dock.isVisible()
-        if checked == current:
-            return  # nothing to do
-    
-        # Simply show/hide the dock without resizing the window
-        # The dock will overlay on the right side of the window
-        if checked:
-            dock.setFloating(True)  # Ensure it stays floating
-            dock.show()
-        else:
-            dock.hide()
-
-
-    def _on_dock_visibility_changed(self, visible: bool):
-        if hasattr(self, 'act_show_controls'):
-            self.act_show_controls.blockSignals(True)
-            self.act_show_controls.setChecked(visible)
-            self.act_show_controls.blockSignals(False)
-    
-        # No window resizing needed - dock overlays on the right side
-
-
 class Viewer(QtWidgets.QMainWindow):
     def __init__(self, opts: Options):
         super().__init__()
@@ -1745,34 +1665,6 @@ class Viewer(QtWidgets.QMainWindow):
             self._prev_overlay(); return
         if s == 'Right':
             self._next_overlay(); return
-        if s in ('q','Q'):
-            # Gracefully close viewer and quit application
-            try:
-                # Stop interactor loop if running
-                if hasattr(self, 'iren') and self.iren is not None:
-                    try:
-                        self.iren.TerminateApp()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            try:
-                self.close()
-            except Exception:
-                pass
-            try:
-                app = QtWidgets.QApplication.instance()
-                if app is not None:
-                    app.quit()
-                else:
-                    raise RuntimeError('No QApplication instance')
-            except Exception:
-                try:
-                    import sys as _sys
-                    _sys.exit(0)
-                except Exception:
-                    pass
-            return
         # Camera/control keys (accept both upper/lower)
         if s in ('u','U'):
             camera.Elevation(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
