@@ -434,7 +434,7 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
         self._viewer = None  # Reference to the main viewer
         # Keys handled by the Viewer (suppress default VTK behavior for these)
         self._viewer_keys = {
-            'u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
+            'q','Q','u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
         }
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
@@ -1665,6 +1665,34 @@ class Viewer(QtWidgets.QMainWindow):
             self._prev_overlay(); return
         if s == 'Right':
             self._next_overlay(); return
+        if s in ('q','Q'):
+            # Gracefully close viewer and quit application
+            try:
+                # Stop interactor loop if running
+                if hasattr(self, 'iren') and self.iren is not None:
+                    try:
+                        self.iren.TerminateApp()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                self.close()
+            except Exception:
+                pass
+            try:
+                app = QtWidgets.QApplication.instance()
+                if app is not None:
+                    app.quit()
+                else:
+                    raise RuntimeError('No QApplication instance')
+            except Exception:
+                try:
+                    import sys as _sys
+                    _sys.exit(0)
+                except Exception:
+                    pass
+            return
         # Camera/control keys (accept both upper/lower)
         if s in ('u','U'):
             camera.Elevation(180 if ctrl else (1.0 if shift else 45.0)); camera.OrthogonalizeViewUp(); do_render(); return
@@ -1695,8 +1723,7 @@ class Viewer(QtWidgets.QMainWindow):
             hint = '⌘D' if sys.platform == 'darwin' else 'Ctrl+D'
             print(f"KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation, toggle controls: {hint}"); return
 
-    def _reset_camera(self):
-        self.ren.ResetCamera(); self.ren.GetActiveCamera().Zoom(2.0); self.rw.Render()
+    
 
     # --- Geometry normalization helper ---
     def _shift_y_to(self, poly: vtkPolyData, to_value: float = -100.0):
@@ -2057,98 +2084,7 @@ class Viewer(QtWidgets.QMainWindow):
         # Keep the stored mesh_left updated for subsequent comparisons
         self.opts.mesh_left = str(new_mesh_path)
 
-    def _apply_controls(self):
-        # Overlay range
-        r0 = float(self.ctrl.range_min.value()); r1 = float(self.ctrl.range_max.value())
-        if r1 > r0: self.overlay_range = [r0, r1]
-        # Clip window
-        c0 = float(self.ctrl.clip_min.value()); c1 = float(self.ctrl.clip_max.value())
-        self.opts.clip = (c0, c1) if c1 > c0 else (0.0, -1.0)
-        # Background range
-        b0 = float(self.ctrl.bkg_min.value()); b1 = float(self.ctrl.bkg_max.value())
-        if b1 > b0:
-            self.range_bkg = [b0, b1]
-            for actor in (self.actor_bkg_l, self.actor_bkg_r):
-                if actor: actor.GetMapper().SetScalarRange(self.range_bkg)
-        # Opacity
-        self.opts.opacity = max(0.0, min(1.0, self.ctrl.opacity.value()/100.0))
-        # Colormap from UI combobox
-        try:
-            idx = int(self.ctrl.colormap.currentIndex())
-            idx_to_cm = {0: JET, 1: HOT, 2: FIRE, 3: BIPOLAR, 4: GRAY, 5: C1, 6: C2, 7: C3}
-            self.opts.colormap = idx_to_cm.get(idx, self.opts.colormap)
-        except Exception:
-            pass
-        self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        if self.opts.inverse:
-            self._invert_lut(self.lut_overlay_l)
-            self._invert_lut(self.lut_overlay_r)
-        self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
-        self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
-        self._apply_clip_to_overlay_luts()
-        if self.actor_ov_l is not None:
-            self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
-            if self.overlay_range[1] > self.overlay_range[0]:
-                self.actor_ov_l.GetMapper().SetScalarRange(self.overlay_range)
-        if self.actor_ov_r is not None:
-            self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
-            if self.overlay_range[1] > self.overlay_range[0]:
-                self.actor_ov_r.GetMapper().SetScalarRange(self.overlay_range)
-        # Overlay path
-        # Overlay path now comes from the editable combo box
-        new_overlay = ""
-        try:
-            new_overlay = self.ctrl.overlay_combo.currentText().strip()
-        except Exception:
-            new_overlay = ""
-        if new_overlay and new_overlay != (self.opts.overlay or ""):
-            self._capture_camera_state()
-            # If the new overlay maps to a different mesh, switch meshes first
-            self._maybe_switch_mesh_for_overlay(new_overlay)
-            self._load_overlay(new_overlay)
-            self._apply_camera_state()
-            # Overlay list may be single; ensure fix scaling disabled when not applicable
-            self._enforce_fix_scaling_policy()
-        elif not new_overlay and self.opts.overlay:
-            # Overlay was cleared, remove overlay and disable controls
-            self.opts.overlay = None
-            self.scal_l = None
-            self.scal_r = None
-            # Remove overlay actors
-            for actor in (self.actor_ov_l, self.actor_ov_r):
-                if actor:
-                    self.ren.RemoveActor(actor)
-            self.actor_ov_l = None
-            self.actor_ov_r = None
-            # Disable overlay controls
-            self.ctrl.set_overlay_controls_enabled(False)
-            # Detach colorbar if it exists
-            self._detach_colorbar()
-            # Enforce fix scaling policy for zero overlays
-            self._enforce_fix_scaling_policy()
-        # Toggles
-        self.opts.colorbar = self.ctrl.cb_colorbar.isChecked()
-        # Discrete levels from checkbox; checked means 4 bands by default
-        if hasattr(self.ctrl, 'cb_discrete'):
-            # Checked uses 2 levels by default to match Options default
-            self.opts.discrete = 2 if self.ctrl.cb_discrete.isChecked() else 0
-        # Persist title mode
-        self.opts.title_mode = self.ctrl.title_mode.currentText()
-        inv = self.ctrl.cb_inverse.isChecked()
-        if inv != self.opts.inverse:
-            self.opts.inverse = inv; self._apply_inverse()
-        # Fix scaling
-        self.opts.fix_scaling = self.ctrl.cb_fix_scaling.isChecked()
-        if self.opts.fix_scaling and self.fixed_overlay_range is None:
-            # Store the current range as fixed
-            self.fixed_overlay_range = list(self.overlay_range)
-        # Colorbar
-        if self.opts.colorbar:
-            self._ensure_colorbar()
-        else:
-            self._detach_colorbar()
-        self.rw.Render()
+    
 
     def _apply_inverse(self):
         """Flip colormap without changing data or scalar ranges."""
