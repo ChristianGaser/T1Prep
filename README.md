@@ -67,6 +67,24 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
 ./scripts/T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
 ```
 
+### Python API
+You can also call the full pipeline from Python without shelling out manually:
+
+```python
+from T1prep import run_t1prep
+
+# Single file, BIDS naming
+run_t1prep("/data/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz", bids=True)
+
+# Multiple files with options and logging
+run_t1prep([
+  "/data/T1/sub-01.nii.gz",
+  "/data/T1/sub-02.nii.gz",
+], out_dir="/results", atlas=["neuromorphometrics", "suit"], multi=-1,
+   wp=True, p=True, csf=True, lesions=True, gz=True, stream_output=True,
+   log_file="/results/T1Prep_run.log")
+```
+
 ## Options
 Simply call T1Prep to see available options
 ```bash
