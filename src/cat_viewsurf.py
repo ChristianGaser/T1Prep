@@ -63,7 +63,12 @@ except Exception:
     HAVE_VTK_GIFTI = False
 
 # Saving screenshots
-from vtkmodules.vtkIOImage import vtkPNGWriter
+from vtkmodules.vtkIOImage import vtkPNGWriter, vtkNIFTIImageReader
+from vtkmodules.vtkRenderingCore import vtkImageActor
+from vtkmodules.vtkImagingCore import vtkImageReslice
+from vtkmodules.vtkImagingColor import vtkImageMapToWindowLevelColors
+from vtkmodules.vtkCommonMath import vtkMatrix4x4
+from vtkmodules.vtkInteractionStyle import vtkInteractorStyleImage
 
 # Qt interactor & backends
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
@@ -487,6 +492,7 @@ class Options:
     overlay: Optional[str] = None
     overlays: List[str] = None  # Multiple overlays
     overlay_bkg: Optional[str] = None
+    volume: Optional[str] = None  # 3D NIfTI image path to show in orthoview
     range: Tuple[float, float] = (0.0, -1.0)
     range_bkg: Tuple[float, float] = (0.0, -1.0)
     clip: Tuple[float, float] = (0.0, -1.0)
@@ -526,6 +532,7 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
     p.add_argument('-overlays', dest='overlays', nargs='+', help='Multiple overlay files for navigation')
     p.add_argument('-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
+    p.add_argument('-volume','-vol','--nifti', dest='volume', help='3D NIfTI volume to display in a separate orthogonal view window')
     p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0])
     p.add_argument('-range-bkg','-rb', dest='range_bkg', nargs=2, type=float, default=[0.0, -1.0])
     p.add_argument('-clip','-cl', dest='clip', nargs=2, type=float, default=[0.0, -1.0])
@@ -708,6 +715,7 @@ def parse_args(argv: List[str]) -> Options:
         overlay=overlay_single_final,
         overlays=overlay_list_final,
         overlay_bkg=a.overlay_bkg,
+        volume=getattr(a, 'volume', None),
         range=tuple(a.range),
         range_bkg=tuple(a.range_bkg),
         clip=tuple(a.clip),
@@ -755,6 +763,10 @@ class ControlPanel(QtWidgets.QWidget):
         self.overlay_btn = QtWidgets.QPushButton("…")
         ov_box = QtWidgets.QHBoxLayout(); ov_box.addWidget(self.overlay_combo, 1); ov_box.addWidget(self.overlay_btn)
         form.addRow("Overlay", self._wrap(ov_box))
+
+        # Volume (orthogonal view) — simple button
+        self.volume_btn = QtWidgets.QPushButton("Open NIfTI…")
+        form.addRow("Volume", self.volume_btn)
 
         # Range (overlay)
         self.range_min = QtWidgets.QDoubleSpinBox(); self.range_min.setDecimals(6); self.range_min.setRange(-1e9, 1e9)
@@ -1402,6 +1414,11 @@ class Viewer(QtWidgets.QMainWindow):
         # Signals
     # Removed reset button; reset available via keyboard 'o' or menu if needed
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
+        # Open NIfTI volume in orthogonal view window
+        try:
+            self.ctrl.volume_btn.clicked.connect(self._open_volume_dialog)
+        except Exception:
+            pass
         # Auto-load overlay when selection changes
         try:
             self.ctrl.overlay_combo.currentIndexChanged.connect(self._on_overlay_combo_changed)
@@ -1626,6 +1643,11 @@ class Viewer(QtWidgets.QMainWindow):
         # Register action with the window so its shortcut is active
         self.addAction(act)
         self.act_show_controls = act
+        # Volume menu: open a 3D NIfTI in a separate orthogonal view window
+        vol_menu = menubar.addMenu("Volume")
+        act_open_vol = QAction("Open NIfTI…", self)
+        act_open_vol.triggered.connect(self._open_volume_dialog)
+        vol_menu.addAction(act_open_vol)
 
         # Add a single QShortcut on the main window (Ctrl+D -> mapped to Cmd+D on macOS)
         try:
@@ -1640,6 +1662,13 @@ class Viewer(QtWidgets.QMainWindow):
             ))
         except Exception:
             pass
+
+        # Auto-open volume if provided via CLI
+        try:
+            if getattr(self.opts, 'volume', None):
+                self._open_volume(self.opts.volume)
+        except Exception as e:
+            print(f"Failed to open volume '{self.opts.volume}': {e}")
 
     def _update_status_message(self, controls_visible: bool):
         """Show a small hint about the controls shortcut in the window status bar."""
@@ -2382,6 +2411,100 @@ class Viewer(QtWidgets.QMainWindow):
         w2i = vtkWindowToImageFilter(); w2i.SetInput(self.rw); w2i.Update()
         writer = vtkPNGWriter(); writer.SetFileName(path); writer.SetInputConnection(w2i.GetOutputPort()); writer.Write()
         print(f"Saved {path}")
+
+    # -- Volume Integration --
+    def _open_volume_dialog(self):
+        start_dir = str(Path(self.opts.mesh_left).parent) if self.opts.mesh_left else str(Path.cwd())
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open 3D NIfTI volume", start_dir, "NIfTI (*.nii *.nii.gz);;All files (*)")
+        if path:
+            self._open_volume(path)
+
+    def _open_volume(self, volume_path: str):
+        try:
+            win = OrthoVolumeWindow(volume_path, parent=self)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to open volume:\n{e}")
+            return
+        # keep a reference to prevent garbage collection
+        if not hasattr(self, '_volume_windows'):
+            self._volume_windows = []
+        self._volume_windows.append(win)
+        win.show()
+
+class OrthoVolumeWindow(QtWidgets.QMainWindow):
+    """Orthogonal slice viewer for a 3D NIfTI volume with three views in one row."""
+    def __init__(self, volume_path: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Volume: {Path(volume_path).name}")
+        self.resize(1200, 420)
+
+        # Central layout with three VTK widgets
+        central = QtWidgets.QWidget(self)
+        hbox = QtWidgets.QHBoxLayout(central)
+        hbox.setContentsMargins(0, 0, 0, 0)
+        hbox.setSpacing(2)
+        self.setCentralWidget(central)
+
+        # Read the NIfTI image
+        reader = vtkNIFTIImageReader()
+        reader.SetFileName(volume_path)
+        reader.Update()
+        img = reader.GetOutput()
+
+        # Auto window/level mapping from image range
+        rng = img.GetScalarRange()
+        wl = vtkImageMapToWindowLevelColors()
+        wl.SetInputData(img)
+        w = float(rng[1] - rng[0]) if rng[1] > rng[0] else 1.0
+        l = float(0.5 * (rng[0] + rng[1]))
+        wl.SetWindow(w)
+        wl.SetLevel(l)
+        wl.Update()
+
+        # Extent and center slice indices
+        x0, x1, y0, y1, z0, z1 = img.GetExtent()
+        cx = int(0.5 * (x0 + x1))
+        cy = int(0.5 * (y0 + y1))
+        cz = int(0.5 * (z0 + z1))
+
+        # Helper to construct a reslice for each orientation
+        def make_reslice(orientation: str, index: int) -> vtkImageReslice:
+            res = vtkImageReslice()
+            res.SetInputConnection(wl.GetOutputPort())
+            res.SetInterpolationModeToLinear()
+            res.SetOutputDimensionality(2)
+            axes = vtkMatrix4x4()
+            axes.Identity()
+            if orientation == 'axial':
+                axes.SetElement(2, 3, index)  # Z slice
+            elif orientation == 'coronal':
+                axes.SetElement(1, 3, index)  # Y slice
+            elif orientation == 'sagittal':
+                axes.SetElement(0, 3, index)  # X slice
+            res.SetResliceAxes(axes)
+            res.Update()
+            return res
+
+        configs = [
+            ('axial', cz),
+            ('coronal', cy),
+            ('sagittal', cx),
+        ]
+
+        for name, idx in configs:
+            w = QVTKRenderWindowInteractor(central)
+            hbox.addWidget(w, 1)
+            ren = vtkRenderer(); ren.SetBackground(0, 0, 0)
+            rw = w.GetRenderWindow(); rw.AddRenderer(ren)
+            iren = rw.GetInteractor()
+            try:
+                iren.SetInteractorStyle(vtkInteractorStyleImage())
+            except Exception:
+                pass
+            reslice = make_reslice(name, idx)
+            actor = vtkImageActor(); actor.SetInputData(reslice.GetOutput())
+            ren.AddActor(actor)
+            ren.ResetCamera(); rw.Render()
 
 # ---- Entrypoint ----
 def main(argv: List[str]):
