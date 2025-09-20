@@ -1,4 +1,5 @@
 from .segment import run_segment
+from .t1prep import run_t1prep
 from .utils import (
     progress_bar,
     remove_file,
