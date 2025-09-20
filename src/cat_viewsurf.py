@@ -1637,11 +1637,27 @@ class Viewer(QtWidgets.QMainWindow):
 
         self.ren = vtkRenderer(); self.ren.SetBackground(1,1,1) if opts.white else self.ren.SetBackground(0,0,0)
         self.rw: vtkRenderWindow = self.vtk_widget.GetRenderWindow();
+        # Enable alpha and depth peeling for proper transparency blending
+        try:
+            self.rw.SetAlphaBitPlanes(1)
+        except Exception:
+            pass
+        try:
+            self.rw.SetMultiSamples(0)  # recommended with depth peeling
+        except Exception:
+            pass
         # Use two layers: main 3D in layer 0, UI (colorbar) in layer 1 to keep camera bounds stable
         self.rw.SetNumberOfLayers(2)
         self.ren.SetLayer(0)
         self.rw.AddRenderer(self.ren)
         self.ren_ui = vtkRenderer(); self.ren_ui.SetLayer(1); self.ren_ui.SetInteractive(0)
+        # Depth peeling on the main renderer
+        try:
+            self.ren.SetUseDepthPeeling(True)
+            self.ren.SetMaximumNumberOfPeels(50)
+            self.ren.SetOcclusionRatio(0.1)
+        except Exception:
+            pass
         # Match UI renderer background to transparent overlay-like look
         try:
             self.ren_ui.SetBackgroundAlpha(0.0)
@@ -1873,10 +1889,6 @@ class Viewer(QtWidgets.QMainWindow):
         self._actors: List[vtkActor] = []
         self.lut_overlay_l = get_lookup_table(opts.colormap, opts.opacity)
         self.lut_overlay_r = get_lookup_table(opts.colormap, opts.opacity)
-        # If inverse is requested, flip the LUTs (do not modify data/ranges)
-        if self.opts.inverse:
-            self._invert_lut(self.lut_overlay_l)
-            self._invert_lut(self.lut_overlay_r)
         # Apply discrete bands to overlay LUTs if requested
         self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
@@ -1942,6 +1954,11 @@ class Viewer(QtWidgets.QMainWindow):
             if self.overlay_range[1] > self.overlay_range[0]: mapper_ov_l.SetScalarRange(self.overlay_range)
             self.actor_ov_l = vtkActor(); self.actor_ov_l.SetMapper(mapper_ov_l)
             self.actor_ov_l.GetProperty().SetAmbient(0.3); self.actor_ov_l.GetProperty().SetDiffuse(0.7)
+            try:
+                self.actor_ov_l.GetProperty().BackfaceCullingOn()
+                self.actor_ov_l.GetProperty().SetInterpolationToGouraud()
+            except Exception:
+                pass
             self._actors.append(self.actor_ov_l)
 
         self.actor_bkg_r = None; self.actor_ov_r = None
@@ -1955,6 +1972,11 @@ class Viewer(QtWidgets.QMainWindow):
                 if self.overlay_range[1] > self.overlay_range[0]: mapper_ov_r.SetScalarRange(self.overlay_range)
                 self.actor_ov_r = vtkActor(); self.actor_ov_r.SetMapper(mapper_ov_r)
                 self.actor_ov_r.GetProperty().SetAmbient(0.3); self.actor_ov_r.GetProperty().SetDiffuse(0.7)
+                try:
+                    self.actor_ov_r.GetProperty().BackfaceCullingOn()
+                    self.actor_ov_r.GetProperty().SetInterpolationToGouraud()
+                except Exception:
+                    pass
                 self._actors.append(self.actor_ov_r)
 
         # Build 6-view montage (deferred to helper for reuse)
@@ -2174,9 +2196,6 @@ class Viewer(QtWidgets.QMainWindow):
             # Rebuild LUTs respecting inverse and discrete
             self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
             self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-            if self.opts.inverse:
-                self._invert_lut(self.lut_overlay_l)
-                self._invert_lut(self.lut_overlay_r)
             self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
             self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
             self._apply_clip_to_overlay_luts()
@@ -2195,9 +2214,6 @@ class Viewer(QtWidgets.QMainWindow):
                 # Rebuild overlay LUTs with new discrete setting
                 self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
                 self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-                if self.opts.inverse:
-                    self._invert_lut(self.lut_overlay_l)
-                    self._invert_lut(self.lut_overlay_r)
                 self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
                 self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
                 # Reapply clip transparency so values inside clip window stay transparent
@@ -2223,6 +2239,12 @@ class Viewer(QtWidgets.QMainWindow):
                 for actor in (self.actor_ov_l, self.actor_ov_r):
                     if actor:
                         actor.GetMapper().SetScalarRange(self.overlay_range)
+                # Reapply clip on overlay LUTs using the updated range
+                self._apply_clip_to_overlay_luts()
+                if self.actor_ov_l is not None:
+                    self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+                if self.actor_ov_r is not None:
+                    self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
                 if self.scalar_bar is not None:
                     lut_cb = self.scalar_bar.GetLookupTable()
                     if lut_cb is not None:
@@ -2252,9 +2274,6 @@ class Viewer(QtWidgets.QMainWindow):
             self.opts.opacity = max(0.0, min(1.0, float(val)/100.0))
             self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
             self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-            if self.opts.inverse:
-                self._invert_lut(self.lut_overlay_l)
-                self._invert_lut(self.lut_overlay_r)
             self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
             self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
             # Reapply clip transparency after opacity change
@@ -2321,6 +2340,12 @@ class Viewer(QtWidgets.QMainWindow):
             for actor in (self.actor_ov_l, self.actor_ov_r):
                 if actor and self.overlay_range[1] > self.overlay_range[0]:
                     actor.GetMapper().SetScalarRange(self.overlay_range)
+            # Reapply clip transparency under the new range policy
+            self._apply_clip_to_overlay_luts()
+            if self.actor_ov_l is not None:
+                self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+            if self.actor_ov_r is not None:
+                self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
             if hasattr(self, 'ctrl') and self.overlay_range[1] > self.overlay_range[0]:
                 self.ctrl.range_min.setValue(float(self.overlay_range[0]))
                 self.ctrl.range_max.setValue(float(self.overlay_range[1]))
@@ -2359,9 +2384,6 @@ class Viewer(QtWidgets.QMainWindow):
             # Re-apply clip by updating LUT alpha (no data mutation)
             self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
             self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-            if self.opts.inverse:
-                self._invert_lut(self.lut_overlay_l)
-                self._invert_lut(self.lut_overlay_r)
             self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
             self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
             self._apply_clip_to_overlay_luts()
@@ -2985,9 +3007,6 @@ class Viewer(QtWidgets.QMainWindow):
             pass
         self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
         self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        if self.opts.inverse:
-            self._invert_lut(self.lut_overlay_l)
-            self._invert_lut(self.lut_overlay_r)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
         self._apply_clip_to_overlay_luts()
@@ -3058,19 +3077,7 @@ class Viewer(QtWidgets.QMainWindow):
         self.rw.Render()
 
     def _apply_inverse(self):
-        """Flip colormap without changing data or scalar ranges."""
-        # Rebuild LUTs to ensure consistent base, then invert
-        self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        if self.opts.inverse:
-            self._invert_lut(self.lut_overlay_l)
-            self._invert_lut(self.lut_overlay_r)
-        self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
-        self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
-        if self.actor_ov_l is not None:
-            self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
-        if self.actor_ov_r is not None:
-            self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
+        """Update colorbar only: inverse flips the colorbar colormap, not overlay."""
         if self.opts.colorbar:
             self._ensure_colorbar()
 
