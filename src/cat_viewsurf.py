@@ -64,7 +64,9 @@ except Exception:
 
 # Saving screenshots
 from vtkmodules.vtkIOImage import vtkPNGWriter, vtkNIFTIImageReader
-from vtkmodules.vtkRenderingCore import vtkImageActor
+from vtkmodules.vtkRenderingCore import vtkImageActor, vtkPropPicker
+from vtkmodules.vtkRenderingCore import vtkCellPicker
+from vtkmodules.vtkFiltersSources import vtkLineSource
 from vtkmodules.vtkImagingCore import vtkImageReslice
 from vtkmodules.vtkImagingColor import vtkImageMapToWindowLevelColors
 from vtkmodules.vtkCommonMath import vtkMatrix4x4
@@ -443,6 +445,11 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
         }
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
+    def _volume_open(self) -> bool:
+        try:
+            return bool(self._viewer and getattr(self._viewer, '_volume_windows', None))
+        except Exception:
+            return False
     def OnKeyPress(self):
         # Suppress default handling for keys that our viewer manages (e.g., 'r' reset)
         try:
@@ -484,6 +491,16 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
         if sym in self._viewer_keys or (isinstance(code, str) and code in 'uUdDlLrRoObBgGhH'):
             return
         return super().OnKeyDown()
+
+    def OnLeftButtonDown(self):
+        # If a volume window is open, consume left-click to avoid starting rotation.
+        # The Viewer installs its own LeftButtonPressEvent handler to perform picking and broadcast to the volume window.
+        try:
+            if self._volume_open():
+                return  # do not call super() -> prevents rotate on drag
+        except Exception:
+            pass
+        return super().OnLeftButtonDown()
 
 # ---- Options & CLI ----
 @dataclass
@@ -1004,6 +1021,8 @@ class Viewer(QtWidgets.QMainWindow):
     def __init__(self, opts: Options):
         super().__init__()
         self.opts = opts
+        self._y_shift_l: float = 0.0
+        self._y_shift_r: float = 0.0
         # Use the original input file for the window title
         name_part = Path(self.opts.mesh_left).name
         self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
@@ -1055,6 +1074,17 @@ class Viewer(QtWidgets.QMainWindow):
             self._handle_key(sym)
         self.iren.AddObserver("KeyPressEvent", _on_keypress)
 
+        # Clicking on the surface forwards the picked world position to any open volume windows
+        def _on_left_click(_obj, _evt):
+            try:
+                x, y = self.iren.GetEventPosition()
+            except Exception:
+                return
+            mm = self._surface_click_to_mm(x, y)
+            if mm is not None:
+                self._broadcast_world_pick(mm)
+        self.iren.AddObserver("LeftButtonPressEvent", _on_left_click)
+
         # Load surfaces (LH + optional RH) if provided; otherwise start empty
         self.poly_l = None
         self.poly_r = None
@@ -1090,9 +1120,9 @@ class Viewer(QtWidgets.QMainWindow):
             if rh_candidate and rh_candidate.exists(): 
                 self.poly_r = read_gifti_mesh(str(rh_candidate))
             # Normalize Y-origin similar to C++ utility
-            self._shift_y_to(self.poly_l)
+            self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
             if self.poly_r is not None:
-                self._shift_y_to(self.poly_r)
+                self._y_shift_r = self._shift_y_to(self.poly_r) or 0.0
 
         # Background curvature
         self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
@@ -1762,20 +1792,21 @@ class Viewer(QtWidgets.QMainWindow):
         to a common Y-origin. This mirrors the normalization used at startup.
         """
         if poly is None:
-            return
+            return 0.0
         b = [0.0]*6
         poly.GetBounds(b)
         y_shift = to_value - b[2]
         if abs(y_shift) < 1e-9:
-            return
+            return 0.0
         pts = poly.GetPoints()
         if pts is None:
-            return
+            return 0.0
         n = pts.GetNumberOfPoints()
         for i in range(n):
             x, y, z = pts.GetPoint(i)
             pts.SetPoint(i, x, y + y_shift, z)
         poly.SetPoints(pts)
+        return float(y_shift)
 
     # --- LUT helpers ---
     def _apply_discrete_to_overlay_lut(self, lut: vtkLookupTable):
@@ -2429,7 +2460,77 @@ class Viewer(QtWidgets.QMainWindow):
         if not hasattr(self, '_volume_windows'):
             self._volume_windows = []
         self._volume_windows.append(win)
+        # Track close to prune list
+        def _on_close(_evt=None, w=win):
+            try:
+                if hasattr(self, '_volume_windows'):
+                    self._volume_windows = [vw for vw in self._volume_windows if (vw is not None and vw is not w and vw.isVisible())]
+            except Exception:
+                pass
+        try:
+            win.destroyed.connect(lambda *_: _on_close())
+        except Exception:
+            pass
         win.show()
+
+    def _broadcast_world_pick(self, world_xyz: Tuple[float, float, float]):
+        """Send a picked world coordinate to all open OrthoVolumeWindow instances."""
+        if not hasattr(self, '_volume_windows'):
+            return
+        # prune closed windows
+        self._volume_windows = [w for w in self._volume_windows if w is not None and w.isVisible()]
+        for w in list(self._volume_windows):
+            try:
+                if w is not None:
+                    w.set_world_position(world_xyz)
+            except Exception:
+                continue
+
+    def _surface_click_to_mm(self, x: int, y: int) -> Optional[Tuple[float, float, float]]:
+        """Pick a point on the surface and convert to original mm coordinates (undo actor transforms and Y-shift)."""
+        try:
+            picker = vtkCellPicker(); picker.SetTolerance(0.0005)
+            ok = picker.Pick(int(x), int(y), 0, self.ren)
+            if not ok:
+                return None
+            actor = picker.GetActor()
+            wx, wy, wz = picker.GetPickPosition()
+            
+            if actor is None:
+                return (wx, wy, wz)
+            # Invert actor transform to object coordinates
+            try:
+                M = actor.GetMatrix()
+                Minv = vtkMatrix4x4(); vtkMatrix4x4.Invert(M, Minv)
+                v = [wx, wy, wz, 1.0]
+                obj = [0.0, 0.0, 0.0, 1.0]
+                for i in range(4):
+                    obj[i] = sum(Minv.GetElement(i, j) * v[j] for j in range(4))
+                ox, oy, oz = obj[0], obj[1], obj[2]
+            except Exception:
+                ox, oy, oz = wx, wy, wz
+            # Determine side from montage order (0=L, 1=R)
+            side = 0
+            try:
+                idx = -1
+                if hasattr(self, '_montage_bkg') and self._montage_bkg:
+                    for i, a in enumerate(self._montage_bkg):
+                        if a is actor:
+                            idx = i; break
+                if idx < 0 and hasattr(self, '_montage_ov') and self._montage_ov:
+                    for i, a in enumerate(self._montage_ov):
+                        if a is actor:
+                            idx = i; break
+                if idx >= 0:
+                    order = [0,1,0,1,0,1]
+                    side = order[idx] if idx < len(order) else 0
+            except Exception:
+                side = 0
+            y_shift = self._y_shift_r if side == 1 else self._y_shift_l
+            # Undo Y normalization to return mesh point in original mm space
+            return (ox, oy - float(y_shift), oz)
+        except Exception:
+            return None
 
 class OrthoVolumeWindow(QtWidgets.QMainWindow):
     """Orthogonal slice viewer for a 3D NIfTI volume with three views in one row."""
@@ -2445,13 +2546,14 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
         hbox.setSpacing(2)
         self.setCentralWidget(central)
 
-        # Read the NIfTI image
+    # Read the NIfTI image
         reader = vtkNIFTIImageReader()
         reader.SetFileName(volume_path)
         reader.Update()
         img = reader.GetOutput()
+        self._img = img
 
-        # Auto window/level mapping from image range
+    # Auto window/level mapping from image range
         rng = img.GetScalarRange()
         wl = vtkImageMapToWindowLevelColors()
         wl.SetInputData(img)
@@ -2460,37 +2562,88 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
         wl.SetWindow(w)
         wl.SetLevel(l)
         wl.Update()
+        self._wl = wl
+
+        # Build ijk->world from NIfTI header if available (sform preferred, then qform), else fallback
+        self._M_ijk_to_world: Optional[vtkMatrix4x4] = None
+        self._M_world_to_ijk: Optional[vtkMatrix4x4] = None
+        try:
+            m_s = reader.GetSFormMatrix()
+        except Exception:
+            m_s = None
+        try:
+            m_q = reader.GetQFormMatrix()
+        except Exception:
+            m_q = None
+        if m_s is not None:
+            self._M_ijk_to_world = m_s
+        elif m_q is not None:
+            self._M_ijk_to_world = m_q
+        else:
+            # Fallback: origin/spacing/direction
+            origin = img.GetOrigin(); spacing = img.GetSpacing()
+            axes = None
+            try:
+                axes = img.GetDirectionMatrix()
+            except Exception:
+                axes = None
+            M = vtkMatrix4x4(); M.Identity()
+            if axes is not None:
+                for i in range(3):
+                    for j in range(3):
+                        M.SetElement(i, j, axes.GetElement(i, j) * spacing[j])
+            else:
+                for i in range(3):
+                    M.SetElement(i, i, spacing[i])
+            for i in range(3):
+                M.SetElement(i, 3, origin[i])
+            self._M_ijk_to_world = M
+        # Invert to get world->ijk
+        try:
+            self._M_world_to_ijk = vtkMatrix4x4()
+            vtkMatrix4x4.Invert(self._M_ijk_to_world, self._M_world_to_ijk)
+        except Exception:
+            self._M_world_to_ijk = None
 
         # Extent and center slice indices
         x0, x1, y0, y1, z0, z1 = img.GetExtent()
+        self._iex = (x0, x1, y0, y1, z0, z1)
         cx = int(0.5 * (x0 + x1))
         cy = int(0.5 * (y0 + y1))
         cz = int(0.5 * (z0 + z1))
+        self._cx, self._cy, self._cz = cx, cy, cz
 
         # Helper to construct a reslice for each orientation
-        def make_reslice(orientation: str, index: int) -> vtkImageReslice:
+        def make_reslice(orientation: str, index: int):
             res = vtkImageReslice()
-            res.SetInputConnection(wl.GetOutputPort())
+            res.SetInputConnection(self._wl.GetOutputPort())
             res.SetInterpolationModeToLinear()
             res.SetOutputDimensionality(2)
             axes = vtkMatrix4x4()
-            axes.Identity()
+            # Start as identity
+            for i in range(4):
+                for j in range(4):
+                    axes.SetElement(i, j, 1.0 if i == j else 0.0)
             if orientation == 'axial':
-                axes.SetElement(2, 3, index)  # Z slice
+                # Output X->input X, Output Y->input Y, normal->input Z
+                axes.SetElement(2, 3, float(index))  # translate along input Z
             elif orientation == 'coronal':
-                axes.SetElement(1, 3, index)  # Y slice
+                # Output X->input X, Output Y->input Z, normal->input Y
+                axes.SetElement(1, 1, 0.0); axes.SetElement(2, 2, 0.0)
+                axes.SetElement(1, 2, 1.0); axes.SetElement(2, 1, 1.0)
+                axes.SetElement(1, 3, float(index))  # translate along input Y
             elif orientation == 'sagittal':
-                axes.SetElement(0, 3, index)  # X slice
+                # Output X->input Y, Output Y->input Z, normal->input X
+                axes.SetElement(0, 0, 0.0); axes.SetElement(1, 1, 0.0)
+                axes.SetElement(0, 1, 1.0); axes.SetElement(1, 2, 1.0)
+                axes.SetElement(2, 0, 1.0)
+                axes.SetElement(0, 3, float(index))  # translate along input X
             res.SetResliceAxes(axes)
             res.Update()
-            return res
+            return res, axes
 
-        configs = [
-            ('axial', cz),
-            ('coronal', cy),
-            ('sagittal', cx),
-        ]
-
+        self._views = {}
+        configs = [('axial', cz), ('coronal', cy), ('sagittal', cx)]
         for name, idx in configs:
             w = QVTKRenderWindowInteractor(central)
             hbox.addWidget(w, 1)
@@ -2501,10 +2654,228 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
                 iren.SetInteractorStyle(vtkInteractorStyleImage())
             except Exception:
                 pass
-            reslice = make_reslice(name, idx)
-            actor = vtkImageActor(); actor.SetInputData(reslice.GetOutput())
+            reslice, axes = make_reslice(name, idx)
+            out_img = reslice.GetOutput()
+            extent_out = out_img.GetExtent()  # 2D image: (0..Nx-1, 0..Ny-1, 0, 0)
+            actor = vtkImageActor(); actor.SetInputData(out_img)
             ren.AddActor(actor)
             ren.ResetCamera(); rw.Render()
+            # Center camera on this slice view after initial image is ready
+            self._center_view(name)
+
+            # Store view components
+            self._views[name] = {
+                'widget': w,
+                'renderer': ren,
+                'iren': iren,
+                'reslice': reslice,
+                'axes': axes,
+                'actor': actor,
+                'extent': extent_out,
+            }
+
+            # Click picking: update slices to picked world position
+            picker = vtkPropPicker()
+            def _make_click_handler(local_picker, local_ren):
+                def _on_left_button(_obj, _evt):
+                    try:
+                        x, y = _obj.GetEventPosition()
+                    except Exception:
+                        return
+                    ok = local_picker.Pick(x, y, 0, local_ren)
+                    if not ok:
+                        return
+                    wx, wy, wz = local_picker.GetPickPosition()
+                    ijk = self._world_to_index((wx, wy, wz))
+                    if ijk is None:
+                        return
+                    ix, iy, iz = ijk
+                    self._set_slices(ix, iy, iz)
+                return _on_left_button
+            iren.AddObserver("LeftButtonPressEvent", _make_click_handler(picker, ren))
+
+            # Crosshair overlays (two lines) per view
+            def build_crosshair():
+                lv = vtkLineSource(); lh = vtkLineSource()
+                mv = vtkPolyDataMapper(); mh = vtkPolyDataMapper()
+                mv.SetInputConnection(lv.GetOutputPort()); mh.SetInputConnection(lh.GetOutputPort())
+                av = vtkActor(); ah = vtkActor(); av.SetMapper(mv); ah.SetMapper(mh)
+                for a in (av, ah):
+                    a.GetProperty().SetColor(1.0, 1.0, 0.0)
+                    a.GetProperty().SetLineWidth(1.5)
+                ren.AddActor(av); ren.AddActor(ah)
+                return lv, lh, av, ah
+            lv, lh, av, ah = build_crosshair()
+            self._views[name]['cross_v'] = (lv, av)
+            self._views[name]['cross_h'] = (lh, ah)
+            # Initialize crosshair positions for current indices
+            self._update_crosshair_for_view(name)
+
+            # Scroll wheel changes slice for this view
+            def _make_wheel(delta_sign: int, vname: str):
+                def _on_wheel(_obj, _evt):
+                    ix, iy, iz = self._cx, self._cy, self._cz
+                    x0, x1, y0, y1, z0, z1 = self._iex
+                    if vname == 'axial':
+                        iz = max(z0, min(z1, iz + delta_sign))
+                    elif vname == 'coronal':
+                        iy = max(y0, min(y1, iy + delta_sign))
+                    elif vname == 'sagittal':
+                        ix = max(x0, min(x1, ix + delta_sign))
+                    self._set_slices(ix, iy, iz)
+                return _on_wheel
+            iren.AddObserver("MouseWheelForwardEvent", _make_wheel(+1, name))
+            iren.AddObserver("MouseWheelBackwardEvent", _make_wheel(-1, name))
+
+    def _center_view(self, name: str):
+        v = self._views.get(name)
+        if not v:
+            return
+        actor = v['actor']; ren: vtkRenderer = v['renderer']
+        b = [0.0]*6
+        actor.GetBounds(b)
+        cx = 0.5*(b[0]+b[1]); cy = 0.5*(b[2]+b[3]); cz = 0.5*(b[4]+b[5])
+        dx = abs(b[1]-b[0]); dy = abs(b[3]-b[2]); dz = abs(b[5]-b[4])
+        cam = ren.GetActiveCamera()
+        try:
+            cam.SetParallelProjection(True)
+        except Exception:
+            pass
+        dist = max(dx, dy, dz) * 2.0 + 1.0
+        if name == 'axial':
+            cam.SetFocalPoint(cx, cy, cz)
+            cam.SetPosition(cx, cy, cz + dist)
+            cam.SetViewUp(0, 1, 0)
+        elif name == 'coronal':
+            cam.SetFocalPoint(cx, cy, cz)
+            cam.SetPosition(cx, cy + dist, cz)
+            cam.SetViewUp(0, 0, 1)
+        else:  # sagittal
+            cam.SetFocalPoint(cx, cy, cz)
+            cam.SetPosition(cx + dist, cy, cz)
+            cam.SetViewUp(0, 0, 1)
+        try:
+            cam.SetParallelScale(0.5*max(dx, dy))
+        except Exception:
+            pass
+        ren.ResetCameraClippingRange()
+
+    def _world_to_index(self, world_xyz: Tuple[float, float, float]) -> Optional[Tuple[int, int, int]]:
+        """Convert a world coordinate (x,y,z) to image IJK indices (ints).
+        Uses NIfTI sform/qform if available; falls back to origin/spacing/direction.
+        """
+        if self._img is None:
+            return None
+        wx, wy, wz = map(float, world_xyz)
+        if self._M_world_to_ijk is not None:
+            # Homogeneous multiply
+            w = [wx, wy, wz, 1.0]
+            ijk_h = [0.0, 0.0, 0.0, 1.0]
+            for i in range(4):
+                ijk_h[i] = sum(self._M_world_to_ijk.GetElement(i, j) * w[j] for j in range(4))
+            ix = int(round(ijk_h[0])); iy = int(round(ijk_h[1])); iz = int(round(ijk_h[2]))
+        else:
+            # Fallback path (origin/spacing/direction)
+            origin = self._img.GetOrigin()
+            spacing = self._img.GetSpacing()
+            R = None
+            try:
+                Rm = self._img.GetDirectionMatrix()
+                if Rm is not None:
+                    R = [[Rm.GetElement(i, j) for j in range(3)] for i in range(3)]
+            except Exception:
+                R = None
+            dx = (wx - origin[0]); dy = (wy - origin[1]); dz = (wz - origin[2])
+            if R is not None:
+                vx = R[0][0]*dx + R[1][0]*dy + R[2][0]*dz
+                vy = R[0][1]*dx + R[1][1]*dy + R[2][1]*dz
+                vz = R[0][2]*dx + R[1][2]*dy + R[2][2]*dz
+            else:
+                vx, vy, vz = dx, dy, dz
+            def safe_div(a, b):
+                return a / b if abs(b) > 1e-12 else 0.0
+            ix = int(round(safe_div(vx, spacing[0])))
+            iy = int(round(safe_div(vy, spacing[1])))
+            iz = int(round(safe_div(vz, spacing[2])))
+        # Clamp to image extent
+        x0, x1, y0, y1, z0, z1 = self._img.GetExtent()
+        ix = max(x0, min(x1, ix))
+        iy = max(y0, min(y1, iy))
+        iz = max(z0, min(z1, iz))
+        return ix, iy, iz
+
+    def _set_slices(self, ix: int, iy: int, iz: int):
+        """Update axial/coronal/sagittal slices to given indices and render."""
+        self._cx, self._cy, self._cz = ix, iy, iz
+        # Update reslice axes translations
+        v = self._views
+        if 'axial' in v:
+            axes = v['axial']['axes']; axes.SetElement(2, 3, float(iz))
+            v['axial']['reslice'].SetResliceAxes(axes); v['axial']['reslice'].Update()
+            v['axial']['actor'].SetInputData(v['axial']['reslice'].GetOutput())
+        if 'coronal' in v:
+            axes = v['coronal']['axes']; axes.SetElement(1, 3, float(iy))
+            v['coronal']['reslice'].SetResliceAxes(axes); v['coronal']['reslice'].Update()
+            v['coronal']['actor'].SetInputData(v['coronal']['reslice'].GetOutput())
+        if 'sagittal' in v:
+            axes = v['sagittal']['axes']; axes.SetElement(0, 3, float(ix))
+            v['sagittal']['reslice'].SetResliceAxes(axes); v['sagittal']['reslice'].Update()
+            v['sagittal']['actor'].SetInputData(v['sagittal']['reslice'].GetOutput())
+        # Update crosshair lines per view
+        self._update_crosshair_for_view('axial')
+        self._update_crosshair_for_view('coronal')
+        self._update_crosshair_for_view('sagittal')
+        # Render all
+        for name in ('axial', 'coronal', 'sagittal'):
+            if name in v:
+                try:
+                    v[name]['renderer'].GetRenderWindow().Render()
+                except Exception:
+                    pass
+
+    def _update_crosshair_for_view(self, name: str):
+        if name not in getattr(self, '_views', {}):
+            return
+        v = self._views[name]
+        lv, av = v.get('cross_v', (None, None))
+        lh, ah = v.get('cross_h', (None, None))
+        if lv is None or lh is None:
+            return
+        # Helper: IJK -> world (using sform/qform if available)
+        def ijk_to_world(i: float, j: float, k: float):
+            M = getattr(self, '_M_ijk_to_world', None)
+            if M is None:
+                return float(i), float(j), float(k)
+            vec = [float(i), float(j), float(k), 1.0]
+            out = [0.0, 0.0, 0.0, 1.0]
+            for r in range(4):
+                out[r] = sum(M.GetElement(r, c) * vec[c] for c in range(4))
+            return out[0], out[1], out[2]
+        x0, x1, y0, y1, z0, z1 = self._iex
+        ix, iy, iz = self._cx, self._cy, self._cz
+        # Build endpoints per orientation in world coords
+        if name == 'axial':
+            p1 = ijk_to_world(ix, y0, iz); p2 = ijk_to_world(ix, y1, iz)  # vertical (Y)
+            q1 = ijk_to_world(x0, iy, iz); q2 = ijk_to_world(x1, iy, iz)  # horizontal (X)
+        elif name == 'coronal':
+            p1 = ijk_to_world(ix, iy, z0); p2 = ijk_to_world(ix, iy, z1)  # vertical (Z)
+            q1 = ijk_to_world(x0, iy, iz); q2 = ijk_to_world(x1, iy, iz)  # horizontal (X)
+        else:  # sagittal
+            p1 = ijk_to_world(ix, y0, iz); p2 = ijk_to_world(ix, y1, iz)  # vertical (Y)
+            q1 = ijk_to_world(ix, iy, z0); q2 = ijk_to_world(ix, iy, z1)  # horizontal (Z)
+        lv.SetPoint1(*p1); lv.SetPoint2(*p2)
+        lh.SetPoint1(*q1); lh.SetPoint2(*q2)
+        try:
+            lv.Update(); lh.Update()
+        except Exception:
+            pass
+
+    # Public API for linking from surface picks
+    def set_world_position(self, world_xyz: Tuple[float, float, float]):
+        ijk = self._world_to_index(world_xyz)
+        if ijk is None:
+            return
+        self._set_slices(*ijk)
 
 # ---- Entrypoint ----
 def main(argv: List[str]):
