@@ -25,7 +25,7 @@ from typing import List, Optional, Tuple
 # --- Qt setup (PySide6 only) ---
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QShortcut, QPainter, QColor, QPen, QBrush
 
 # Qt compatibility shims
 ORIENT_H = Qt.Orientation.Horizontal
@@ -817,6 +817,7 @@ class ControlPanel(QtWidgets.QWidget):
         self.title_mode = QtWidgets.QComboBox(); self.title_mode.addItems(["shape","stats","none"])
         self.cb_inverse = QtWidgets.QCheckBox("Inverse (flip sign)")
         self.cb_fix_scaling = QtWidgets.QCheckBox("Fix scaling")
+        self.cb_histogram = QtWidgets.QCheckBox("Show histogram")
         # Put Show colorbar and Colorbar title on one row (aligned with other checkboxes)
         row = QtWidgets.QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(8)
         row.addWidget(self.cb_colorbar)
@@ -829,6 +830,7 @@ class ControlPanel(QtWidgets.QWidget):
         form.addRow(self._wrap(row))
         form.addRow(self.cb_inverse)
         form.addRow(self.cb_fix_scaling)
+        form.addRow(self.cb_histogram)
         self.layout.addLayout(form)
         # Action buttons (none for now)
         self.layout.addStretch(1)
@@ -883,6 +885,14 @@ class ControlPanel(QtWidgets.QWidget):
         self.opacity.setEnabled(enabled)
         # Fix scaling only makes sense with at least one overlay
         self.cb_fix_scaling.setEnabled(enabled)
+        # Histogram available only when overlay is loaded
+        self.cb_histogram.setEnabled(enabled)
+        if not enabled:
+            try:
+                self.cb_histogram.blockSignals(True)
+                self.cb_histogram.setChecked(False)
+            finally:
+                self.cb_histogram.blockSignals(False)
 
     # ---- Slider helpers ----
     def _bounds(self, which: str):
@@ -1019,6 +1029,7 @@ class Viewer(QtWidgets.QMainWindow):
         self.opts = opts
         self._y_shift_l: float = 0.0
         self._y_shift_r: float = 0.0
+        self._hist_win = None  # histogram window reference
         # Use the original input file for the window title
         name_part = Path(self.opts.mesh_left).name
         self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
@@ -1411,6 +1422,11 @@ class Viewer(QtWidgets.QMainWindow):
        
 
         self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
+        # Histogram toggle initial state (off)
+        try:
+            self.ctrl.cb_histogram.setChecked(False)
+        except Exception:
+            pass
         # Initialize colormap selector based on opts.colormap
         try:
             cm_index_map = {
@@ -1617,6 +1633,11 @@ class Viewer(QtWidgets.QMainWindow):
                 self._ensure_colorbar()
             self.rw.Render()
         self.ctrl.cb_fix_scaling.toggled.connect(_on_fix_scaling_toggled)
+
+        # Live: histogram toggle
+        def _on_histogram_toggled(checked: bool):
+            self._toggle_histogram(checked)
+        self.ctrl.cb_histogram.toggled.connect(_on_histogram_toggled)
 
         # Live-ish: clip window — apply on slider release or editing finished
         def _apply_clip_live():
@@ -1975,6 +1996,13 @@ class Viewer(QtWidgets.QMainWindow):
             self.opts.overlay = None
             self.scal_l = None
             self.scal_r = None
+            # Close histogram if open
+            try:
+                if getattr(self, '_hist_win', None) is not None:
+                    self._hist_win.close()
+                    self._hist_win = None
+            except Exception:
+                pass
             # Remove overlay actors
             for actor in (self.actor_ov_l, self.actor_ov_r):
                 if actor:
@@ -2377,6 +2405,8 @@ class Viewer(QtWidgets.QMainWindow):
         for actor in (self.actor_ov_l, self.actor_ov_r):
             if actor:
                 actor.GetMapper().SetLookupTable(self.lut_overlay_l)
+        # Update histogram window if visible
+        self._update_histogram_window()
         
         # Enable overlay controls since we now have an overlay loaded
         if hasattr(self, 'ctrl'):
@@ -2397,6 +2427,62 @@ class Viewer(QtWidgets.QMainWindow):
         # Restore camera and render
         self._apply_camera_state()
         self.rw.Render()
+
+    def _toggle_histogram(self, checked: bool):
+        """Show/hide histogram window for current overlay scalars."""
+        has_overlay = getattr(self, 'scal_l', None) is not None or getattr(self, 'scal_r', None) is not None
+        if checked and has_overlay:
+            if self._hist_win is None:
+                try:
+                    self._hist_win = HistogramWindow(parent=self)
+                except Exception:
+                    self._hist_win = None
+            if self._hist_win is not None:
+                self._update_histogram_window()
+                try:
+                    self._hist_win.show()
+                except Exception:
+                    pass
+        else:
+            # Hide/close
+            if self._hist_win is not None:
+                try:
+                    self._hist_win.close()
+                except Exception:
+                    pass
+                self._hist_win = None
+
+    def _update_histogram_window(self):
+        """If histogram window is open, refresh with current overlay scalars."""
+        hw = getattr(self, '_hist_win', None)
+        if hw is None:
+            return
+        try:
+            vals = []
+            if getattr(self, 'scal_l', None) is not None:
+                try:
+                    arr = vtk_to_numpy(self.scal_l).astype(float)
+                    vals.append(arr)
+                except Exception:
+                    pass
+            if getattr(self, 'scal_r', None) is not None:
+                try:
+                    arr = vtk_to_numpy(self.scal_r).astype(float)
+                    vals.append(arr)
+                except Exception:
+                    pass
+            if not vals:
+                return
+            data = np.concatenate(vals)
+            # Filter non-finite
+            data = data[np.isfinite(data)] if data.size else data
+            # Determine range: prefer overlay_range if valid
+            rng = None
+            if self.overlay_range[1] > self.overlay_range[0]:
+                rng = (float(self.overlay_range[0]), float(self.overlay_range[1]))
+            hw.set_data(data, rng)
+        except Exception:
+            pass
 
     def _update_slider_bounds(self):
         """Compute data-driven bounds and apply to control panel sliders.
@@ -2873,6 +2959,89 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
             return
         self._set_slices(*ijk)
 
+
+class HistogramCanvas(QtWidgets.QWidget):
+    """Simple widget to draw a histogram of given data using QPainter."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data = np.array([], dtype=float)
+        self._range = None  # optional (min, max)
+        self.setMinimumSize(400, 250)
+
+    def set_data(self, data: np.ndarray, value_range: Optional[Tuple[float, float]] = None):
+        try:
+            self._data = np.asarray(data, dtype=float)
+        except Exception:
+            self._data = np.array([], dtype=float)
+        self._range = value_range if (value_range and value_range[1] > value_range[0]) else None
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(30, 30, 30))
+        rect = self.rect().adjusted(40, 10, -10, -30)
+        # Border
+        p.setPen(QPen(QColor(200, 200, 200), 1))
+        p.drawRect(rect)
+        if self._data.size == 0:
+            p.drawText(rect, Qt.AlignCenter, "No data")
+            p.end(); return
+        # Build histogram
+        data = self._data
+        if self._range is not None:
+            lo, hi = self._range
+            data = data[(data >= lo) & (data <= hi)]
+        if data.size == 0:
+            p.drawText(rect, Qt.AlignCenter, "No data in range")
+            p.end(); return
+        bins = 64
+        lo = np.nanmin(data)
+        hi = np.nanmax(data)
+        if self._range is not None:
+            lo, hi = self._range
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            p.drawText(rect, Qt.AlignCenter, "Invalid range")
+            p.end(); return
+        hist, edges = np.histogram(data, bins=bins, range=(lo, hi))
+        hmax = hist.max() if hist.size else 1
+        if hmax <= 0:
+            p.drawText(rect, Qt.AlignCenter, "Empty histogram")
+            p.end(); return
+        # Draw bars
+        bw = rect.width() / bins
+        for i, h in enumerate(hist):
+            x = rect.left() + i * bw
+            w = max(1.0, bw - 1.0)
+            hpx = int(round((h / hmax) * rect.height()))
+            y = rect.bottom() - hpx
+            p.fillRect(int(x), int(y), int(w), int(hpx), QBrush(QColor(80, 170, 255)))
+        # X-axis ticks (min/mid/max)
+        p.setPen(QPen(QColor(220, 220, 220), 1))
+        labels = [(lo, rect.left()), ((lo + hi) / 2.0, rect.left() + rect.width() / 2.0), (hi, rect.right())]
+        for val, xpos in labels:
+            s = f"{val:.3g}"
+            p.drawText(int(xpos) - 20, rect.bottom() + 18, 40, 16, Qt.AlignCenter, s)
+        # Y-axis label for max count
+        p.drawText(rect.left() - 35, rect.top(), 30, 16, Qt.AlignRight | Qt.AlignVCenter, str(int(hmax)))
+        p.end()
+
+
+class HistogramWindow(QtWidgets.QMainWindow):
+    """A small window displaying a histogram of current overlay scalars."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Overlay histogram")
+        self.resize(520, 340)
+        central = QtWidgets.QWidget(self)
+        vbox = QtWidgets.QVBoxLayout(central)
+        vbox.setContentsMargins(6, 6, 6, 6)
+        self._canvas = HistogramCanvas(central)
+        vbox.addWidget(self._canvas, 1)
+        self.setCentralWidget(central)
+
+    def set_data(self, data: np.ndarray, value_range: Optional[Tuple[float, float]] = None):
+        self._canvas.set_data(data, value_range)
+
 # ---- Entrypoint ----
 def main(argv: List[str]):
     opts = parse_args(argv)
@@ -2882,3 +3051,4 @@ def main(argv: List[str]):
 
 if __name__ == '__main__':
     main(sys.argv[1:])
+
