@@ -408,7 +408,7 @@ install_deepmriprep()
     Darwin*)  
       # Remove quarantine for all files in folder
       if command -v xattr >/dev/null 2>&1; then
-        xattr -dr com.apple.quarantine "$bin_path" 2>/dev/null || true
+        xattr -dr com.apple.quarantine "$root_dir" 2>/dev/null || true
       else
         echo "xattr not found; skipping quarantine removal."
       fi

@@ -214,51 +214,46 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
             mesh_filename = f"{base_name}_{hemi_part}_space-MNI152NLin2009cAsym_desc-midthickness.surf.gii"
             return str(overlay_path.parent / mesh_filename)
     else:
-        # FreeSurfer naming: convert to central surface
-        # Example: lh.thickness.name -> lh.central.name.gii
+        # FreeSurfer naming: convert overlay to central surface
+        # Accept both with and without a subject token:
+        #  - lh.thickness.name   -> lh.central.name.gii
+        #  - lh.thickness        -> lh.central.gii
         name = overlay_path.name
-        
-        # Extract hemisphere and base name
-        if name.startswith('lh.'):
-            hemi = 'lh'
-            # Remove 'lh.' and find the base name after the overlay type
-            remaining = name[3:]  # Remove 'lh.'
-            parts = remaining.split('.')
-            if len(parts) >= 2:
-                # Skip the first part (thickness, pbt, etc.) and use the rest as base name
-                # Remove file extension if present
-                base_parts = parts[1:]
-                if base_parts and base_parts[-1] in ['txt', 'gii']:
-                    base_parts = base_parts[:-1]
-                base_name = '.'.join(base_parts) if base_parts else parts[1]
+
+        def _fs_overlay_to_mesh(nm: str) -> Optional[str]:
+            hemi = None
+            remaining = None
+            if nm.startswith('lh.'):
+                hemi = 'lh'; remaining = nm[3:]
+            elif nm.startswith('rh.'):
+                hemi = 'rh'; remaining = nm[3:]
             else:
-                base_name = remaining
-        elif name.startswith('rh.'):
-            hemi = 'rh'
-            # Remove 'rh.' and find the base name after the overlay type
-            remaining = name[3:]  # Remove 'rh.'
-            parts = remaining.split('.')
-            if len(parts) >= 2:
-                # Skip the first part (thickness, pbt, etc.) and use the rest as base name
-                # Remove file extension if present
-                base_parts = parts[1:]
-                if base_parts and base_parts[-1] in ['txt', 'gii']:
-                    base_parts = base_parts[:-1]
-                base_name = '.'.join(base_parts) if base_parts else parts[1]
-            else:
-                base_name = remaining
-        else:
-            # Try to extract from filename
-            parts = name.split('.')
-            if len(parts) >= 3:
-                hemi = parts[0]
-                base_name = '.'.join(parts[2:])  # Skip the middle part (thickness, pbt, etc.)
-            else:
-                return str(overlay_path)  # Return original if can't parse
-        
-        # Build mesh filename
-        mesh_filename = f"{hemi}.central.{base_name}.gii"
-        return str(overlay_path.parent / mesh_filename)
+                # Fallback: try parsing as hemi.kind.subject...
+                parts_f = nm.split('.')
+                if len(parts_f) >= 2 and parts_f[0] in ('lh', 'rh'):
+                    hemi = parts_f[0]
+                    remaining = '.'.join(parts_f[1:])
+                else:
+                    return None
+            # remaining looks like: kind[.subject[.ext]]
+            tokens = [t for t in remaining.split('.') if t]
+            if not tokens:
+                return None
+            # Drop known scalar extensions from the end for subject parsing
+            exts = {'gii', 'txt', 'mgh', 'mgz'}
+            subj_tokens = tokens[1:]  # after overlay kind
+            if subj_tokens and subj_tokens[-1].lower() in exts:
+                subj_tokens = subj_tokens[:-1]
+            # If there is no subject token, build lh.central.gii
+            if not subj_tokens:
+                return f"{hemi}.central.gii"
+            base = '.'.join(subj_tokens)
+            return f"{hemi}.central.{base}.gii"
+
+        mesh_name = _fs_overlay_to_mesh(name)
+        if mesh_name is None:
+            return str(overlay_path)  # Could not parse; leave unchanged
+        return str(overlay_path.parent / mesh_name)
     
     return str(overlay_path)  # Return original if conversion fails
 
@@ -276,14 +271,15 @@ def is_overlay_file(filename: str) -> bool:
     filename_only = Path(filename).name
     filename_lower = filename_only.lower()
     
-    # Check for FreeSurfer shape pattern: [l|r]h.shape_type.name (with or without extension)
-    import re
+    # Check for FreeSurfer shape pattern: [l|r]h.shape_type[.subject][.ext]
     parts = filename_lower.split('.')
-    
-    # Check if it matches the pattern [l|r]h.shape_type.name
-    if len(parts) >= 3 and parts[0] in ['lh', 'rh']:
-        # Check if it's not a mesh file (central, pial, white, etc.)
-        mesh_types = ['central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc']
+    mesh_types = ['central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc']
+    # Case A: lh.kind.subject (>=3 parts)
+    if len(parts) >= 3 and parts[0] in ('lh', 'rh'):
+        if parts[1] not in mesh_types:
+            return True
+    # Case B: lh.kind (exactly 2 parts, no subject) should also be considered overlay
+    if len(parts) == 2 and parts[0] in ('lh', 'rh'):
         if parts[1] not in mesh_types:
             return True
     
