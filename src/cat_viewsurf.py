@@ -1098,6 +1098,16 @@ class Viewer(QtWidgets.QMainWindow):
         if self.opts.mesh_left:
             # Check if the input is an overlay file or mesh file
             input_path = Path(opts.mesh_left)
+            # If path does not exist in current CWD, try ORIGINAL_CWD from wrapper
+            if not input_path.exists():
+                try:
+                    orig = os.environ.get('ORIGINAL_CWD')
+                    if orig:
+                        cand = Path(orig) / Path(self.opts.mesh_left)
+                        if cand.exists():
+                            input_path = cand
+                except Exception:
+                    pass
             if not input_path.exists(): 
                 raise FileNotFoundError(f"File not found: {input_path}")
             # Determine if input is an overlay file
@@ -1105,6 +1115,16 @@ class Viewer(QtWidgets.QMainWindow):
                 # Input is an overlay file, find the corresponding mesh
                 mesh_path = convert_filename_to_mesh(str(input_path))
                 mesh_path_obj = Path(mesh_path)
+                # If derived path is relative and not found, try ORIGINAL_CWD
+                if not mesh_path_obj.exists():
+                    try:
+                        orig = os.environ.get('ORIGINAL_CWD')
+                        if orig:
+                            cand = Path(orig) / mesh_path
+                            if cand.exists():
+                                mesh_path_obj = cand
+                    except Exception:
+                        pass
                 if not mesh_path_obj.exists():
                     raise FileNotFoundError(f"Corresponding mesh file not found: {mesh_path}")
                 left_mesh_path = mesh_path_obj

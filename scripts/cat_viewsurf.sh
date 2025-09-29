@@ -68,9 +68,10 @@ USAGE
         activate_environment
     fi
     
-    # Change to project directory and run the script
-    cd "$PROJECT_DIR"
-    python src/cat_viewsurf.py "$@"
+    # Run the Python script by absolute path so user-provided relative paths remain relative to caller's CWD
+    export ORIGINAL_CWD="$(pwd)"
+    PY_SCRIPT="$PROJECT_DIR/src/cat_viewsurf.py"
+    python "$PY_SCRIPT" "$@"
 }
 
 # Run main function with all arguments
