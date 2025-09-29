@@ -385,7 +385,6 @@ surface_estimation()
     # - '-w1' sets the internal smoothness weight.
     # - '-w2' sets the gradient alignment weight.
     # - '-w3' sets the balloon force weight.
-    # - '-w4' sets the conncetion force weight.
     # - '-sigma' sets the smoothing size for filtering the displacement field.
     # - '-iter' sets the number of iterations.
     # - '-isovalue' sets the isovalue for mesh generation.
@@ -393,7 +392,7 @@ surface_estimation()
       # Updates progress
       ((count++))
       if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Estimate pial and white surface"; fi
-      cmd=( "CAT_Surf2PialWhite ${verbose} -w1 0.1 -w2 0.4 -w3 0.3 -w4 0 -sigma 0.2 -iter 50 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
+      cmd=( "CAT_Surf2PialWhite ${verbose} -w1 0.05 -w2 0.05 -w3 0.05 -sigma 0.2 -iter 100 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
 
       # Get central surface by averaging pial and white matter surface
       cmd+=( "CAT_SurfAverage -avg ${surf_dir}/${Mid_surface} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
