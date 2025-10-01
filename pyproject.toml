@@ -39,6 +39,13 @@ dependencies = [
 [project.scripts]
 cat-viewsurf = "t1prep.gui.cat_viewsurf:main"
 
+[project.optional-dependencies]
+gui = [
+    "PySide6>=6",
+    "vtk>=9",
+    "nibabel>=3.2",
+]
+
 [project.urls]
 "Repository" = "https://github.com/ChristianGaser/T1Prep"
 
@@ -49,4 +56,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["t1prep*"]
 exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+t1prep = ["data/**"]
 

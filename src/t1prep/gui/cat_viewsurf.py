@@ -682,20 +682,28 @@ def parse_args(argv: List[str]) -> Options:
         cfg = _load_defaults_file(a.defaults)
         _apply_defaults_cfg(cfg, a, defaults_ns)
     else:
-        # If no explicit defaults file given, try to load project default
+        # If no explicit defaults file given, try to load packaged default via importlib.resources
         import re  # for parsing floats
-        script_dir = Path(__file__).resolve().parent
-        candidates = [
-            script_dir.parent.parent / 'cat_viewsurf_defaults.txt',
-            script_dir.parent / 'cat_viewsurf_defaults.txt',
-            script_dir / 'cat_viewsurf_defaults.txt',
-            Path.cwd() / 'cat_viewsurf_defaults.txt',
-        ]
-        for c in candidates:
-            if c.exists():
-                cfg = _load_defaults_file(str(c))
+        try:
+            from importlib.resources import files as _res_files
+            pkg_path = _res_files('t1prep.data').joinpath('cat_viewsurf_defaults.txt')
+            if pkg_path.is_file():
+                cfg = _load_defaults_file(str(pkg_path))
                 _apply_defaults_cfg(cfg, a, defaults_ns)
-                break
+        except Exception:
+            # Fallback to legacy filesystem locations
+            script_dir = Path(__file__).resolve().parent
+            candidates = [
+                script_dir.parent.parent / 'cat_viewsurf_defaults.txt',
+                script_dir.parent / 'cat_viewsurf_defaults.txt',
+                script_dir / 'cat_viewsurf_defaults.txt',
+                Path.cwd() / 'cat_viewsurf_defaults.txt',
+            ]
+            for c in candidates:
+                if c.exists():
+                    cfg = _load_defaults_file(str(c))
+                    _apply_defaults_cfg(cfg, a, defaults_ns)
+                    break
 
     cm = JET
     if a.fire: cm = FIRE
