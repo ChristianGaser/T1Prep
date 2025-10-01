@@ -36,6 +36,9 @@ dependencies = [
     "requests"
 ]
 
+[project.scripts]
+cat-viewsurf = "t1prep.gui.cat_viewsurf:main"
+
 [project.urls]
 "Repository" = "https://github.com/ChristianGaser/T1Prep"
 
