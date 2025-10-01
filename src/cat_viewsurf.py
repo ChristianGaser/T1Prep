@@ -350,6 +350,31 @@ def read_gifti_mesh(filename: str) -> vtkPolyData:
     return poly
 
 
+def is_gifti_mesh_file(filename: str) -> bool:
+    """Return True if the .gii file contains a surface mesh (POINTSET/TRIANGLE)."""
+    try:
+        if not str(filename).lower().endswith('.gii'):
+            return False
+        poly = read_gifti_mesh(str(filename))
+        if poly is None:
+            return False
+        try:
+            npts = int(poly.GetNumberOfPoints())
+        except Exception:
+            npts = 0
+        try:
+            ncells = int(poly.GetNumberOfPolys())
+        except Exception:
+            try:
+                polys = poly.GetPolys()
+                ncells = int(polys.GetNumberOfCells()) if polys is not None else 0
+            except Exception:
+                ncells = 0
+        return (npts > 0) and (ncells > 0)
+    except Exception:
+        return False
+
+
 def read_scalars(filename: str) -> vtkDoubleArray:
     ext = Path(filename).suffix.lower()
 
@@ -504,6 +529,7 @@ class Options:
     mesh_left: Optional[str]
     overlay: Optional[str] = None
     overlays: List[str] = None  # Multiple overlays
+    extra_meshes: List[str] = None  # Additional mesh files to display alongside the primary mesh
     overlay_bkg: Optional[str] = None
     volume: Optional[str] = None  # 3D NIfTI image path to show in orthoview
     range: Tuple[float, float] = (0.0, -1.0)
@@ -684,12 +710,16 @@ def parse_args(argv: List[str]) -> Options:
     # Derive mesh/overlay list from positional inputs (optional)
     pos_inputs: List[str] = list(a.inputs)
     overlays_from_pos: List[str] = []
+    extra_meshes_from_pos: List[str] = []
     mesh_left_resolved: str = ''
     overlay_single_from_pos: Optional[str] = None
     if len(pos_inputs) == 1:
-        # Single input can be either a mesh or an overlay. Detect overlay and derive mesh.
+        # Single input can be either a mesh or an overlay. Prefer real mesh content when .gii.
         single = pos_inputs[0]
-        if is_overlay_file(single):
+        if str(single).lower().endswith('.gii') and is_gifti_mesh_file(single):
+            mesh_left_resolved = single
+            overlay_single_from_pos = None
+        elif is_overlay_file(single):
             try:
                 mesh_left_resolved = convert_filename_to_mesh(single)
             except Exception:
@@ -700,12 +730,41 @@ def parse_args(argv: List[str]) -> Options:
             mesh_left_resolved = single
             overlay_single_from_pos = None
     elif len(pos_inputs) > 1:
-        overlays_from_pos = pos_inputs
-        try:
-            mesh_left_resolved = convert_filename_to_mesh(overlays_from_pos[0])
-        except Exception:
-            # Fall back to first argument as-is if conversion fails
-            mesh_left_resolved = overlays_from_pos[0]
+        # Split inputs: collect any .gii that are real meshes, and treat other inputs as overlays
+        mesh_candidates: List[str] = []
+        non_mesh_inputs: List[str] = []
+        for pth in pos_inputs:
+            if str(pth).lower().endswith('.gii') and is_gifti_mesh_file(pth):
+                mesh_candidates.append(pth)
+            else:
+                non_mesh_inputs.append(pth)
+        if mesh_candidates:
+            # Prefer 'central' as the primary mesh if present, then pial, then white
+            def mesh_priority(path: str) -> int:
+                name = Path(path).name.lower()
+                # lower number => higher priority
+                if '.central.' in name or name.endswith('central.gii'):
+                    return 0
+                if '.pial.' in name or name.endswith('pial.gii'):
+                    return 1
+                if '.white.' in name or name.endswith('white.gii'):
+                    return 2
+                return 3
+            mesh_candidates_sorted = sorted(mesh_candidates, key=mesh_priority)
+            # pick prioritized primary; if primary is central, ignore extras to avoid wireframe overlays
+            mesh_left_resolved = mesh_candidates_sorted[0]
+            name0 = Path(mesh_left_resolved).name.lower()
+            if ('.central.' in name0) or name0.endswith('central.gii'):
+                extra_meshes_from_pos = []
+            else:
+                extra_meshes_from_pos = mesh_candidates_sorted[1:]
+            overlays_from_pos = [x for x in non_mesh_inputs if is_overlay_file(x)]
+        else:
+            overlays_from_pos = pos_inputs
+            try:
+                mesh_left_resolved = convert_filename_to_mesh(overlays_from_pos[0])
+            except Exception:
+                mesh_left_resolved = overlays_from_pos[0]
     else:
         # no positional inputs; mesh will be chosen later via GUI
         mesh_left_resolved = ''
@@ -727,7 +786,8 @@ def parse_args(argv: List[str]) -> Options:
         mesh_left=mesh_left_resolved,
         overlay=overlay_single_final,
         overlays=overlay_list_final,
-        overlay_bkg=a.overlay_bkg,
+    overlay_bkg=a.overlay_bkg,
+    extra_meshes=list(extra_meshes_from_pos) if extra_meshes_from_pos else None,
         volume=getattr(a, 'volume', None),
         range=tuple(a.range),
         range_bkg=tuple(a.range_bkg),
@@ -1092,10 +1152,25 @@ class Viewer(QtWidgets.QMainWindow):
                 self._broadcast_world_pick(mm)
         self.iren.AddObserver("LeftButtonPressEvent", _on_left_click)
 
+        # Maintain a list of candidate meshes to allow navigation with ←/→ when no overlays are loaded
+        self.mesh_list: List[str] = []
+        self.current_mesh_index: int = 0
+
         # Load surfaces (LH + optional RH) if provided; otherwise start empty
         self.poly_l = None
         self.poly_r = None
         if self.opts.mesh_left:
+            # Build mesh candidates list from CLI if multiple mesh-like inputs were provided
+            try:
+                if getattr(self.opts, 'extra_meshes', None):
+                    # Primary first, then extras
+                    self.mesh_list = [self.opts.mesh_left] + list(self.opts.extra_meshes)
+                else:
+                    self.mesh_list = [self.opts.mesh_left]
+                self.current_mesh_index = 0
+            except Exception:
+                self.mesh_list = [self.opts.mesh_left]
+                self.current_mesh_index = 0
             # Check if the input is an overlay file or mesh file
             input_path = Path(opts.mesh_left)
             # If path does not exist in current CWD, try ORIGINAL_CWD from wrapper
@@ -1110,8 +1185,9 @@ class Viewer(QtWidgets.QMainWindow):
                     pass
             if not input_path.exists(): 
                 raise FileNotFoundError(f"File not found: {input_path}")
-            # Determine if input is an overlay file
-            if is_overlay_file(str(input_path)):
+            # Determine if input is an overlay file; but let .gii meshes pass through
+            if (not (str(input_path).lower().endswith('.gii') and is_gifti_mesh_file(str(input_path)))
+                and is_overlay_file(str(input_path))):
                 # Input is an overlay file, find the corresponding mesh
                 mesh_path = convert_filename_to_mesh(str(input_path))
                 mesh_path_obj = Path(mesh_path)
@@ -1146,6 +1222,12 @@ class Viewer(QtWidgets.QMainWindow):
                 rh_candidate = left_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
             if rh_candidate and rh_candidate.exists(): 
                 self.poly_r = read_gifti_mesh(str(rh_candidate))
+            # Track if primary is a central surface
+            try:
+                nm = name.lower()
+                self._is_primary_central = ('.central.' in nm or nm.endswith('central.gii'))
+            except Exception:
+                self._is_primary_central = False
             # Normalize Y-origin similar to C++ utility
             self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
             if self.poly_r is not None:
@@ -1205,9 +1287,12 @@ class Viewer(QtWidgets.QMainWindow):
         lut_bkg.SetTableRange(self.range_bkg)
         # Overlay range (init before calling _load_overlay)
         self.overlay_range = list(opts.range)
-        # Predefine overlay actors (referenced in _load_overlay)
+    # Predefine overlay actors (referenced in _load_overlay)
         self.actor_ov_l = None
         self.actor_ov_r = None
+
+        # Prepare containers for additional meshes (if any)
+        self._extras = []  # list of dicts with keys: actor_bkg_l, actor_bkg_r
 
         # Overlay management
         self.overlay_list = []
@@ -1262,6 +1347,108 @@ class Viewer(QtWidgets.QMainWindow):
                 self.actor_ov_r.GetProperty().SetAmbient(0.3); self.actor_ov_r.GetProperty().SetDiffuse(0.7)
                 self._actors.append(self.actor_ov_r)
 
+    # Build additional mesh actors (wireframe) if provided via CLI
+        if getattr(self.opts, 'extra_meshes', None):
+            for mpath in (self.opts.extra_meshes or []):
+                # Skip if same as the primary mesh to avoid double-rendering it as wireframe
+                try:
+                    if Path(mpath).resolve() == Path(self.opts.mesh_left).resolve():
+                        continue
+                except Exception:
+                    if os.path.basename(mpath) == os.path.basename(self.opts.mesh_left):
+                        continue
+                p = Path(mpath)
+                # Skip central as an extra to prevent wireframe central overlay
+                try:
+                    nm = p.name.lower()
+                    if '.central.' in nm or nm.endswith('central.gii'):
+                        continue
+                except Exception:
+                    pass
+                if not p.exists():
+                    # Try ORIGINAL_CWD
+                    try:
+                        orig = os.environ.get('ORIGINAL_CWD')
+                        if orig:
+                            cand = Path(orig) / p
+                            if cand.exists():
+                                p = cand
+                    except Exception:
+                        pass
+                if not p.exists():
+                    print(f"[warn] extra mesh not found: {mpath}")
+                    continue
+                try:
+                    polyL = read_gifti_mesh(str(p))
+                except Exception as e:
+                    print(f"[warn] failed to read extra mesh '{p}': {e}")
+                    continue
+                # Try to locate RH counterpart using same heuristics as for primary
+                polyR = None
+                name = p.name
+                rh_candidate: Optional[Path] = None
+                if 'lh.' in name:
+                    rh_candidate = p.with_name(name.replace('lh.', 'rh.'))
+                elif 'left' in name:
+                    rh_candidate = p.with_name(name.replace('left', 'right'))
+                elif '_hemi-L_' in name:
+                    rh_candidate = p.with_name(name.replace('_hemi-L_', '_hemi-R_'))
+                elif '_hemi-R_' in name:
+                    rh_candidate = p.with_name(name.replace('_hemi-R_', '_hemi-L_'))
+                if rh_candidate and rh_candidate.exists():
+                    try:
+                        polyR = read_gifti_mesh(str(rh_candidate))
+                    except Exception:
+                        polyR = None
+                # Align extra meshes using the same Y-shift as the primary so they overlay correctly
+                try:
+                    dyL = getattr(self, '_y_shift_l', 0.0) or 0.0
+                    if abs(dyL) > 0:
+                        self._apply_y_shift(polyL, dyL)
+                    else:
+                        self._shift_y_to(polyL)
+                except Exception:
+                    pass
+                if polyR is not None:
+                    try:
+                        dyR = getattr(self, '_y_shift_r', 0.0) or 0.0
+                        if abs(dyR) > 0:
+                            self._apply_y_shift(polyR, dyR)
+                        else:
+                            self._shift_y_to(polyR)
+                    except Exception:
+                        pass
+                # Curvatures for shading
+                curvL = vtkCurvatures(); curvL.SetInputData(polyL); curvL.SetCurvatureTypeToMean(); curvL.Update()
+                curvL_out = curvL.GetOutput()
+                curvR_out = None
+                if polyR is not None:
+                    curvR = vtkCurvatures(); curvR.SetInputData(polyR); curvR.SetCurvatureTypeToMean(); curvR.Update()
+                    curvR_out = curvR.GetOutput()
+                # Mappers & actors (wireframe)
+                actorL = None; actorR = None
+                if curvL_out is not None:
+                    mL = vtkPolyDataMapper(); mL.SetInputData(curvL_out); mL.SetLookupTable(lut_bkg); mL.SetScalarRange(self.range_bkg)
+                    actorL = vtkActor(); actorL.SetMapper(mL)
+                    try:
+                        actorL.GetProperty().SetRepresentationToWireframe()
+                    except Exception:
+                        actorL.GetProperty().SetRepresentation(1)  # 1=wireframe
+                    actorL.GetProperty().SetLineWidth(1.5)
+                    actorL.GetProperty().SetAmbient(0.9)
+                    self._actors.append(actorL)
+                if curvR_out is not None:
+                    mR = vtkPolyDataMapper(); mR.SetInputData(curvR_out); mR.SetLookupTable(lut_bkg); mR.SetScalarRange(self.range_bkg)
+                    actorR = vtkActor(); actorR.SetMapper(mR)
+                    try:
+                        actorR.GetProperty().SetRepresentationToWireframe()
+                    except Exception:
+                        actorR.GetProperty().SetRepresentation(1)
+                    actorR.GetProperty().SetLineWidth(1.5)
+                    actorR.GetProperty().SetAmbient(0.9)
+                    self._actors.append(actorR)
+                self._extras.append({'actor_bkg_l': actorL, 'actor_bkg_r': actorR})
+
         # Build 6-view montage
         views = 6; shifts = (180.0, 180.0)
         posx = [0, 2*shifts[0], 0.15*shifts[0], 1.85*shifts[0], shifts[0], shifts[0]]
@@ -1279,6 +1466,20 @@ class Viewer(QtWidgets.QMainWindow):
             if src is not None:
                 a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
                 self._montage_bkg[i] = a
+        # Clone additional mesh actors across montage (skip when central is primary)
+        self._montage_bkg_extras: List[List[Optional[vtkActor]]] = []
+        if getattr(self, '_extras', None) and not getattr(self, '_is_primary_central', False):
+            for extra in self._extras:
+                clones: List[Optional[vtkActor]] = [None] * views
+                for i in range(views):
+                    # Respect same RH-skipping logic as primary
+                    if self.poly_r is None and (i % 2 == 1):
+                        continue
+                    src = extra['actor_bkg_r'] if (order[i] == 1 and extra.get('actor_bkg_r') is not None) else extra.get('actor_bkg_l')
+                    if src is not None:
+                        a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+                        clones[i] = a
+                self._montage_bkg_extras.append(clones)
         if self.actor_ov_l is not None or self.actor_ov_r is not None:
             for i in range(views):
                 if self.poly_r is None and (i % 2 == 1): continue
@@ -1291,7 +1492,10 @@ class Viewer(QtWidgets.QMainWindow):
         self.scalar_bar = None
         self._scalar_bar_added = False
         self._ensure_colorbar()
-        if bool(opts.colorbar):
+        has_overlay_initial = (self.scal_l is not None)
+        self._colorbar_intent = bool(self.opts.colorbar)
+        self.opts.colorbar = bool(self._colorbar_intent and has_overlay_initial)
+        if self.opts.colorbar:
             self._attach_colorbar()
         else:
             self._detach_colorbar()
@@ -1468,13 +1672,13 @@ class Viewer(QtWidgets.QMainWindow):
             self.ctrl.cb_discrete.setChecked(disc > 0)
         
         # Enable/disable overlay controls based on whether overlay is loaded
-        has_overlay = (self.overlay_list or self.opts.overlay) and self.scal_l is not None
+        has_overlay = bool(self.overlay_list or self.opts.overlay) and (self.scal_l is not None)
         self.ctrl.set_overlay_controls_enabled(has_overlay)
         # Ensure fix scaling checkbox state reflects current overlay count/availability
         self._enforce_fix_scaling_policy()
-    
+        
         # Signals
-    # Removed reset button; reset available via keyboard 'o' or menu if needed
+        # Removed reset button; reset available via keyboard 'o' or menu if needed
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
         # Open NIfTI volume in orthogonal view window
         try:
@@ -1758,9 +1962,18 @@ class Viewer(QtWidgets.QMainWindow):
         s = str(sym)
         # Overlay navigation
         if s == 'Left':
-            self._prev_overlay(); return
+            if self.overlay_list:
+                self._prev_overlay(); return
+            # If no overlays but multiple meshes provided, navigate meshes
+            if getattr(self, 'mesh_list', None) and len(self.mesh_list) > 1:
+                self._prev_mesh(); return
+            return
         if s == 'Right':
-            self._next_overlay(); return
+            if self.overlay_list:
+                self._next_overlay(); return
+            if getattr(self, 'mesh_list', None) and len(self.mesh_list) > 1:
+                self._next_mesh(); return
+            return
         if s in ('q','Q'):
             # Gracefully close viewer and quit application
             try:
@@ -1810,6 +2023,15 @@ class Viewer(QtWidgets.QMainWindow):
                     a_b.RotateX(180)
                 if a_o is not None:
                     a_o.RotateX(180)
+                # Also flip any extra mesh clones
+                if hasattr(self, '_montage_bkg_extras') and self._montage_bkg_extras:
+                    try:
+                        for clones in self._montage_bkg_extras:
+                            a_x = clones[idx] if clones and idx < len(clones) else None
+                            if a_x is not None:
+                                a_x.RotateX(180)
+                    except Exception:
+                        pass
             camera.OrthogonalizeViewUp(); self.rw.Render(); return
         if s in ('g','G'):
             w2i = vtkWindowToImageFilter(); w2i.SetInput(self.rw); w2i.Update()
@@ -1844,6 +2066,24 @@ class Viewer(QtWidgets.QMainWindow):
             pts.SetPoint(i, x, y + y_shift, z)
         poly.SetPoints(pts)
         return float(y_shift)
+
+    def _apply_y_shift(self, poly: vtkPolyData, delta: float):
+        """Apply a fixed Y shift to a mesh without recomputing bounds.
+
+        Use this for extra meshes so they get the same shift as the primary mesh
+        and stay registered instead of being normalized independently.
+        """
+        if poly is None or abs(delta) < 1e-12:
+            return 0.0
+        pts = poly.GetPoints()
+        if pts is None:
+            return 0.0
+        n = pts.GetNumberOfPoints()
+        for i in range(n):
+            x, y, z = pts.GetPoint(i)
+            pts.SetPoint(i, x, y + delta, z)
+        poly.SetPoints(pts)
+        return float(delta)
 
     # --- LUT helpers ---
     def _apply_discrete_to_overlay_lut(self, lut: vtkLookupTable):
@@ -2074,6 +2314,220 @@ class Viewer(QtWidgets.QMainWindow):
             # Restore camera state
             self._apply_camera_state()
 
+    def _next_mesh(self):
+        """Switch to next mesh in mesh_list when no overlays are used."""
+        if not (getattr(self, 'mesh_list', None) and len(self.mesh_list) > 1):
+            return
+        self._capture_camera_state()
+        self.current_mesh_index = (self.current_mesh_index + 1) % len(self.mesh_list)
+        self._switch_mesh_to(self.mesh_list[self.current_mesh_index])
+        self._apply_camera_state()
+
+    def _prev_mesh(self):
+        """Switch to previous mesh in mesh_list when no overlays are used."""
+        if not (getattr(self, 'mesh_list', None) and len(self.mesh_list) > 1):
+            return
+        self._capture_camera_state()
+        self.current_mesh_index = (self.current_mesh_index - 1) % len(self.mesh_list)
+        self._switch_mesh_to(self.mesh_list[self.current_mesh_index])
+        self._apply_camera_state()
+
+    def _switch_mesh_to(self, new_mesh_path: str):
+        """Switch the primary mesh to new_mesh_path; rebuild background actors and montage clones.
+
+        Keeps overlay state cleared and colorbar detached (mesh-only mode). RH mesh auto-detected.
+        """
+        try:
+            p = Path(new_mesh_path)
+            if not p.exists():
+                # Try ORIGINAL_CWD fallback
+                try:
+                    orig = os.environ.get('ORIGINAL_CWD')
+                    if orig:
+                        cand = Path(orig) / p
+                        if cand.exists():
+                            p = cand
+                except Exception:
+                    pass
+            if not p.exists():
+                print(f"[warn] mesh not found: {new_mesh_path}")
+                return
+            # Read LH, attempt RH
+            polyL = read_gifti_mesh(str(p))
+            polyR = None
+            name = p.name
+            rh_candidate: Optional[Path] = None
+            if 'lh.' in name:
+                rh_candidate = p.with_name(name.replace('lh.', 'rh.'))
+            elif 'left' in name:
+                rh_candidate = p.with_name(name.replace('left', 'right'))
+            elif '_hemi-L_' in name:
+                rh_candidate = p.with_name(name.replace('_hemi-L_', '_hemi-R_'))
+            elif '_hemi-R_' in name:
+                rh_candidate = p.with_name(name.replace('_hemi-R_', '_hemi-L_'))
+            if rh_candidate and rh_candidate.exists():
+                try:
+                    polyR = read_gifti_mesh(str(rh_candidate))
+                except Exception:
+                    polyR = None
+            # Normalize Y-origin and record applied shifts for consistency
+            try:
+                self._y_shift_l = self._shift_y_to(polyL) or 0.0
+            except Exception:
+                pass
+            if polyR is not None:
+                try:
+                    self._y_shift_r = self._shift_y_to(polyR) or 0.0
+                except Exception:
+                    pass
+            # Update stored mesh path
+            self.opts.mesh_left = str(p)
+            # Reorder mesh_list to keep primary first (central > pial > white > others)
+            try:
+                def mesh_priority(path: str) -> int:
+                    name = Path(path).name.lower()
+                    if '.central.' in name or name.endswith('central.gii'):
+                        return 0
+                    if '.pial.' in name or name.endswith('pial.gii'):
+                        return 1
+                    if '.white.' in name or name.endswith('white.gii'):
+                        return 2
+                    return 3
+                uniq = []
+                for x in self.mesh_list:
+                    if x not in uniq:
+                        uniq.append(x)
+                # Filter out duplicates and central-in-extras, keep ordering by priority
+                filtered = []
+                for x in uniq:
+                    name = Path(x).name.lower()
+                    if x == str(p):
+                        filtered.append(x)
+                        continue
+                    if '.central.' in name or name.endswith('central.gii'):
+                        continue
+                    filtered.append(x)
+                self.mesh_list = sorted(filtered, key=mesh_priority)
+                self.current_mesh_index = max(0, self.mesh_list.index(self.opts.mesh_left) if self.opts.mesh_left in self.mesh_list else 0)
+            except Exception:
+                pass
+            # Clear overlays and actors
+            self.overlay_list = []
+            self.opts.overlay = None
+            self.scal_l = None; self.scal_r = None
+            for actor in (self.actor_ov_l, self.actor_ov_r):
+                if actor:
+                    self.ren.RemoveActor(actor)
+            self.actor_ov_l = None; self.actor_ov_r = None
+            # Detach colorbar in mesh-only mode
+            self._detach_colorbar()
+            if hasattr(self, 'ctrl'):
+                self.ctrl.set_overlay_controls_enabled(False)
+            # Rebuild background curvature and mappers
+            self.poly_l = polyL
+            self.poly_r = polyR
+            self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
+            self.curv_r = None
+            if self.poly_r is not None:
+                self.curv_r = vtkCurvatures(); self.curv_r.SetInputData(self.poly_r); self.curv_r.SetCurvatureTypeToMean(); self.curv_r.Update()
+            self.curv_l_out = self.curv_l.GetOutput()
+            self.curv_r_out = self.curv_r.GetOutput() if self.curv_r is not None else None
+            if self.bkg_scalar_l is not None:
+                self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
+            if self.curv_r_out is not None and self.bkg_scalar_r is not None:
+                self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
+            # Update or create background actors
+            lut_bkg = vtkLookupTable(); lut_bkg.SetHueRange(0,0); lut_bkg.SetSaturationRange(0,0); lut_bkg.SetValueRange(0,1); lut_bkg.Build()
+            lut_bkg.SetTableRange(self.range_bkg)
+            if self.actor_bkg_l is None:
+                mapper_bkg_l = vtkPolyDataMapper(); mapper_bkg_l.SetInputData(self.curv_l_out); mapper_bkg_l.SetLookupTable(lut_bkg); mapper_bkg_l.SetScalarRange(self.range_bkg)
+                self.actor_bkg_l = vtkActor(); self.actor_bkg_l.SetMapper(mapper_bkg_l)
+                self.actor_bkg_l.GetProperty().SetAmbient(0.8); self.actor_bkg_l.GetProperty().SetDiffuse(0.7)
+                self._actors.append(self.actor_bkg_l)
+            else:
+                self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
+                self.actor_bkg_l.GetMapper().SetLookupTable(lut_bkg)
+                self.actor_bkg_l.GetMapper().SetScalarRange(self.range_bkg)
+            if self.poly_r is not None:
+                if self.actor_bkg_r is None:
+                    mapper_bkg_r = vtkPolyDataMapper(); mapper_bkg_r.SetInputData(self.curv_r_out); mapper_bkg_r.SetLookupTable(lut_bkg); mapper_bkg_r.SetScalarRange(self.range_bkg)
+                    self.actor_bkg_r = vtkActor(); self.actor_bkg_r.SetMapper(mapper_bkg_r)
+                    self.actor_bkg_r.GetProperty().SetAmbient(0.8); self.actor_bkg_r.GetProperty().SetDiffuse(0.7)
+                    self._actors.append(self.actor_bkg_r)
+                else:
+                    self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
+                    self.actor_bkg_r.GetMapper().SetLookupTable(lut_bkg)
+                    self.actor_bkg_r.GetMapper().SetScalarRange(self.range_bkg)
+            # Track central status for primary
+            try:
+                nm = Path(self.opts.mesh_left).name.lower()
+                self._is_primary_central = ('.central.' in nm or nm.endswith('central.gii'))
+            except Exception:
+                self._is_primary_central = False
+
+            # Rebuild montage clones for background actors
+            # Remove old clones if present
+            try:
+                if hasattr(self, '_montage_bkg'):
+                    for a in self._montage_bkg:
+                        if a: self.ren.RemoveActor(a)
+            except Exception:
+                pass
+            views = 6; shifts = (180.0, 180.0)
+            posx = [0, 2*shifts[0], 0.15*shifts[0], 1.85*shifts[0], shifts[0], shifts[0]]
+            posy = [0, 0, 0.8*shifts[1], 0.8*shifts[1], 0.6*shifts[1], 0.6*shifts[1]]
+            rotx = [270, 270, 270, 270, 0, 0]; rotz = [90, -90, -90, 90, 0, 0]
+            order = [0,1,0,1,0,1]
+            def add_clone(actor: vtkActor, px, py, rx, rz) -> vtkActor:
+                a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a); return a
+            self._montage_bkg = [None]*views
+            for i in range(views):
+                if self.poly_r is None and (i % 2 == 1): continue
+                src = self.actor_bkg_r if (order[i] == 1 and self.actor_bkg_r is not None) else self.actor_bkg_l
+                if src is not None:
+                    a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+                    self._montage_bkg[i] = a
+            # Remove overlay clones if any
+            try:
+                if hasattr(self, '_montage_ov'):
+                    for a in self._montage_ov:
+                        if a: self.ren.RemoveActor(a)
+                self._montage_ov = [None]*views
+            except Exception:
+                pass
+
+            # Rebuild extras clones conditionally (skip if central is primary)
+            try:
+                # Clear existing extra clones
+                if hasattr(self, '_montage_bkg_extras') and self._montage_bkg_extras:
+                    for clones in self._montage_bkg_extras:
+                        for a in clones:
+                            if a: self.ren.RemoveActor(a)
+                self._montage_bkg_extras = []
+                if getattr(self, '_extras', None) and not getattr(self, '_is_primary_central', False):
+                    for extra in self._extras:
+                        clones: List[Optional[vtkActor]] = [None] * views
+                        for i in range(views):
+                            if self.poly_r is None and (i % 2 == 1):
+                                continue
+                            src = extra['actor_bkg_r'] if (order[i] == 1 and extra.get('actor_bkg_r') is not None) else extra.get('actor_bkg_l')
+                            if src is not None:
+                                a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+                                clones[i] = a
+                        self._montage_bkg_extras.append(clones)
+            except Exception:
+                pass
+            # Refresh window title to mesh name
+            try:
+                name_part = Path(self.opts.mesh_left).name
+                self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
+            except Exception:
+                pass
+            # Render
+            self.rw.Render()
+        except Exception as e:
+            print(f"[warn] failed to switch mesh to '{new_mesh_path}': {e}")
+
     def _update_overlay_info(self):
         """Update the overlay path display and window title."""
         if self.overlay_list:
@@ -2112,10 +2566,10 @@ class Viewer(QtWidgets.QMainWindow):
         - If multiple overlays: enable the checkbox (only when overlay controls are enabled).
         """
         multiple = len(self.overlay_list) > 1
-        has_overlay = (self.overlay_list or self.opts.overlay) and (getattr(self, 'scal_l', None) is not None)
+        has_overlay = bool(self.overlay_list or self.opts.overlay) and (getattr(self, 'scal_l', None) is not None)
         if hasattr(self, 'ctrl'):
             # Enable only when multiple overlays and overlay controls are enabled
-            self.ctrl.cb_fix_scaling.setEnabled(multiple and has_overlay)
+            self.ctrl.cb_fix_scaling.setEnabled(bool(multiple and has_overlay))
             if not multiple:
                 # Uncheck visually without emitting signals
                 try:
@@ -2443,6 +2897,16 @@ class Viewer(QtWidgets.QMainWindow):
             self._update_slider_bounds()
             # Enforce fix scaling enable/disable based on overlay count and availability
             self._enforce_fix_scaling_policy()
+            # Auto-show colorbar if user requested it initially
+            try:
+                if getattr(self, '_colorbar_intent', False) and not getattr(self, '_scalar_bar_added', False):
+                    self._ensure_colorbar(); self._attach_colorbar(); self.opts.colorbar = True
+                    self.ctrl.cb_colorbar.blockSignals(True)
+                    self.ctrl.cb_colorbar.setChecked(True)
+                    self.ctrl.cb_colorbar.blockSignals(False)
+                    self.ctrl.title_mode.setEnabled(True)
+            except Exception:
+                pass
         
         # Restore camera and render
         self._apply_camera_state()

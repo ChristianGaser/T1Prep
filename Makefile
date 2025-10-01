@@ -1,7 +1,7 @@
 .PHONY: help release clean zip cp_binaries
 .DEFAULT: help
 
-VERSION="0.2.1"
+VERSION="0.2.3"
 
 FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py T1Prep_defaults.txt
 DATA_FILES=data
@@ -30,6 +30,7 @@ zip: release
 # prepare a release
 release: clean
 	-@sed -i "" "s/version=.*/version=${VERSION}/" scripts/T1Prep
+	-@sed -i "" "s/T1PREP_VERSION=.*/T1PREP_VERSION=v${VERSION}/" Dockerfile
 
 # copy binaries after cross-compiling
 cp_binaries: 
