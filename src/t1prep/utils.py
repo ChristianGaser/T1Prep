@@ -14,13 +14,82 @@ from scipy.ndimage import (
     label,
 )
 from pathlib import Path
+from typing import Optional
+try:
+    from importlib.resources import files as _res_files
+except Exception:
+    _res_files = None
 
 
-# We are inside src/t1prep; repo root is two levels up
+# We are inside src/t1prep; repo root is two levels up (dev fallback)
 ROOT_PATH = Path(__file__).resolve().parents[2]
+
+def _package_data_root() -> Optional[Path]:
+    if _res_files is not None:
+        try:
+            # files('t1prep.data') returns a Traversable to the data package dir
+            return Path(str(_res_files('t1prep.data')))
+        except Exception:
+            return None
+    return None
+
+DATA_PATH_T1PREP_PKG = _package_data_root()
 DATA_PATH_T1PREP = ROOT_PATH / "data"
-TEMPLATE_PATH_T1PREP = DATA_PATH_T1PREP / "templates_MNI152NLin2009cAsym"
-name_file = ROOT_PATH / "Names.tsv"
+TEMPLATE_PATH_T1PREP = (
+    (DATA_PATH_T1PREP_PKG / "templates_MNI152NLin2009cAsym")
+    if (DATA_PATH_T1PREP_PKG and (DATA_PATH_T1PREP_PKG / "templates_MNI152NLin2009cAsym").exists())
+    else (DATA_PATH_T1PREP / "templates_MNI152NLin2009cAsym")
+)
+
+# Prefer packaged Names.tsv; fall back to repo root for editable/dev mode
+def _resolve_names_tsv() -> Path:
+    if _res_files is not None:
+        try:
+            p = _res_files('t1prep.data').joinpath('Names.tsv')
+            if p.is_file():
+                return Path(str(p))
+        except Exception:
+            pass
+    # Fallback
+    return ROOT_PATH / "Names.tsv"
+
+name_file = _resolve_names_tsv()
+
+
+def get_packaged_data_path(rel: str) -> Path:
+    """Return a Path to a packaged data file under t1prep.data, with repo fallback.
+
+    Args:
+        rel: relative path inside t1prep.data (e.g., 'cat_viewsurf_defaults.txt').
+
+    Returns:
+        Path pointing to the resource on disk (may be within site-packages or the repo).
+    """
+    if _res_files is not None:
+        try:
+            p = _res_files('t1prep.data').joinpath(rel)
+            if p.is_file():
+                return Path(str(p))
+        except Exception:
+            pass
+    return (ROOT_PATH / 'src' / 't1prep' / 'data' / rel) if (ROOT_PATH / 'src').exists() else (ROOT_PATH / 'data' / rel)
+
+
+def get_packaged_bin_path(rel: str) -> Path:
+    """Return a Path to a packaged binary under t1prep.bin, with repo fallback.
+
+    Args:
+        rel: relative path inside t1prep.bin, optionally with platform subdir.
+    """
+    if _res_files is not None:
+        try:
+            p = _res_files('t1prep.bin').joinpath(rel)
+            if p.is_file():
+                return Path(str(p))
+        except Exception:
+            pass
+    # Fallback to repo bin/ dir
+    return ROOT_PATH / 'bin' / rel
 
 codes = [
     "Hemi_volume",

@@ -58,5 +58,5 @@ include = ["t1prep*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-t1prep = ["data/**"]
+t1prep = ["data/**", "bin/**"]
 
