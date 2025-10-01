@@ -835,18 +835,25 @@ class Viewer(QtWidgets.QMainWindow):
         # Status bar
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Ready")
-        # VTK Renderer
+        # VTK: embed interactor widget properly in Qt
+        # Create the Qt VTK widget with the Qt parent, then retrieve its render window/interactor
+        self.vtk_widget = QVTKRenderWindowInteractor(self.central_widget)
+        self.main_layout.addWidget(self.vtk_widget)
+        self.render_window = self.vtk_widget.GetRenderWindow()
         self.renderer = vtkRenderer()
-        self.render_window = vtkRenderWindow()
         self.render_window.AddRenderer(self.renderer)
-        self.render_window_interactor = vtkRenderWindowInteractor()
-        self.render_window_interactor.SetRenderWindow(self.render_window)
         # Custom interactor style
         self.interactor_style = CustomInteractorStyle()
         self.interactor_style.SetViewer(self)
-        self.render_window_interactor.SetInteractorStyle(self.interactor_style)
-        # Add VTK render window to the main layout
-        self.main_layout.addWidget(QVTKRenderWindowInteractor(self.render_window_interactor))
+        # Ensure the interactor exists and set custom style
+        # Initialize the widget so the underlying interactor is created
+        try:
+            self.vtk_widget.Initialize()
+        except Exception:
+            pass
+        iren = self.render_window.GetInteractor()
+        if iren is not None:
+            iren.SetInteractorStyle(self.interactor_style)
         # Control panel (dockable widget)
         self.control_panel = ControlPanel(options, self)
         self.addDockWidget(Qt.RightDockWidgetArea, self.control_panel)
@@ -864,7 +871,23 @@ class Viewer(QtWidgets.QMainWindow):
 
     def closeEvent(self, event):
         """Handle close event."""
-        self.render_window_interactor.GetInteractor().GetRenderWindow().Finalize()
+        try:
+            # Safely finalize the VTK render window to prevent crashes on exit
+            if hasattr(self, 'vtk_widget') and self.vtk_widget is not None:
+                iren = self.vtk_widget.GetInteractor()
+                if iren is not None:
+                    try:
+                        iren.Disable()
+                    except Exception:
+                        pass
+                rw = self.vtk_widget.GetRenderWindow()
+                if rw is not None:
+                    try:
+                        rw.Finalize()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         event.accept()
 
     def set_options(self, options: Options):
@@ -875,8 +898,20 @@ class Viewer(QtWidgets.QMainWindow):
             self.setWindowTitle(f"CAT ViewSurf - {options.title}")
         else:
             self.setWindowTitle("CAT ViewSurf")
-        # Clear existing actors
-        self.renderer.RemoveAllActors()
+        # Clear existing props (actors/2D props/etc.)
+        try:
+            self.renderer.RemoveAllViewProps()
+        except Exception:
+            # Fallback for older VTK builds
+            try:
+                actors = self.renderer.GetActors()
+                actors.InitTraversal()
+                for _ in range(actors.GetNumberOfItems()):
+                    a = actors.GetNextActor()
+                    if a is not None:
+                        self.renderer.RemoveActor(a)
+            except Exception:
+                pass
         # Load mesh
         if options.mesh_left:
             self._load_mesh(options.mesh_left)
@@ -938,7 +973,14 @@ class Viewer(QtWidgets.QMainWindow):
         color_bar.SetPosition(0.85, 0.1)
         color_bar.SetWidth(0.03)
         color_bar.SetHeight(0.8)
-        self.renderer.AddActor(color_bar)
+        try:
+            self.renderer.AddActor2D(color_bar)
+        except Exception:
+            # Fallback to generic prop addition
+            try:
+                self.renderer.AddViewProp(color_bar)
+            except Exception:
+                self.renderer.AddActor(color_bar)
 
     def render(self):
         """Render the scene."""
@@ -979,9 +1021,14 @@ class Viewer(QtWidgets.QMainWindow):
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Screenshot", "", "PNG Files (*.png);;All Files (*)")
         if filename:
             try:
+                # Capture the current render window image via vtkWindowToImageFilter
+                w2i = vtkWindowToImageFilter()
+                w2i.SetInput(self.render_window)
+                w2i.ReadFrontBufferOff()
+                w2i.Update()
                 writer = vtkPNGWriter()
                 writer.SetFileName(filename)
-                writer.SetInputConnection(self.render_window.GetImageFilter().GetOutputPort())
+                writer.SetInputConnection(w2i.GetOutputPort())
                 writer.Write()
                 self.status_bar.showMessage(f"Screenshot saved: {filename}")
             except Exception as e:
@@ -1102,6 +1149,17 @@ class ControlPanel(QtWidgets.QDockWidget):
         self.layout.addWidget(self.apply_button)
         # Set initial values
         self.set_options(options)
+
+    def apply_changes(self):
+        """Apply current settings. Most widgets update live; this forces a redraw."""
+        try:
+            self.viewer.set_options(self.options)
+        except Exception:
+            # As a fallback, just request a render
+            try:
+                self.viewer.render()
+            except Exception:
+                pass
 
     def set_options(self, options: Options):
         """Set options and update the control panel widgets."""

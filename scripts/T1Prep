@@ -467,7 +467,7 @@ surface_estimation()
     if [ "${estimate_seg}" -eq 0 ]; then
       echo "${RED}ERROR: Could not find ${mri_dir}/${Hemi_volume}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
     else
-      echo "${RED}ERROR: ${python} ${src_dir}/segment.py failed.${NC}" >&2
+      echo "${RED}ERROR: ${python} ${src_dir}/t1prep/segment.py failed.${NC}" >&2
     fi
     return 1
   fi
@@ -709,7 +709,7 @@ process()
 
       # Initialize command string with the Python script call
 
-      cmd="${python} ${src_dir}/segment.py"
+      cmd="${python} ${src_dir}/t1prep/segment.py"
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap --amapdir ${bin_dir}"
@@ -1128,7 +1128,6 @@ ${BOLD}Used Functions:${NC}
   CAT_SurfReduce
   CAT_SurfResample
   segment.py
-  utils.py
   progress_bar_multi.sh
   parallelize
 
