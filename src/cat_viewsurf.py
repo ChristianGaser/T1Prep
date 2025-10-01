@@ -527,6 +527,7 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
 @dataclass
 class Options:
     mesh_left: Optional[str]
+    meshes: List[str] = None  # Multiple mesh files (for navigation when no overlay)
     overlay: Optional[str] = None
     overlays: List[str] = None  # Multiple overlays
     overlay_bkg: Optional[str] = None
@@ -709,6 +710,7 @@ def parse_args(argv: List[str]) -> Options:
     # Derive mesh/overlay list from positional inputs (optional)
     pos_inputs: List[str] = list(a.inputs)
     overlays_from_pos: List[str] = []
+    meshes_from_pos: List[str] = []
     mesh_left_resolved: str = ''
     overlay_single_from_pos: Optional[str] = None
     if len(pos_inputs) == 1:
@@ -739,6 +741,7 @@ def parse_args(argv: List[str]) -> Options:
         if mesh_candidates:
             # pick first mesh candidate as mesh; do not force the others as overlays
             mesh_left_resolved = mesh_candidates[0]
+            meshes_from_pos = list(mesh_candidates)
             overlays_from_pos = [x for x in non_mesh_inputs if is_overlay_file(x)]
         else:
             overlays_from_pos = pos_inputs
@@ -765,6 +768,7 @@ def parse_args(argv: List[str]) -> Options:
         title_mode_arg = 'stats'
     return Options(
         mesh_left=mesh_left_resolved,
+        meshes=meshes_from_pos,
         overlay=overlay_single_final,
         overlays=overlay_list_final,
         overlay_bkg=a.overlay_bkg,
@@ -897,6 +901,8 @@ class ControlPanel(QtWidgets.QWidget):
     
     def set_overlay_controls_enabled(self, enabled: bool):
         """Enable or disable overlay-related controls based on whether an overlay is loaded."""
+        # Ensure a strict boolean is used (avoid None/[] leaking from callers)
+        enabled = bool(enabled)
         # Range controls
         self.range_min.setEnabled(enabled)
         self.range_max.setEnabled(enabled)
@@ -1070,6 +1076,9 @@ class Viewer(QtWidgets.QMainWindow):
         self._y_shift_l: float = 0.0
         self._y_shift_r: float = 0.0
         self._hist_win = None  # histogram window reference
+        # Mesh navigation state (when multiple input meshes and no overlay)
+        self.mesh_list: List[str] = list(self.opts.meshes or [])
+        self.current_mesh_index: int = 0
         # Use the original input file for the window title
         name_part = Path(self.opts.mesh_left).name
         self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
@@ -1137,7 +1146,7 @@ class Viewer(QtWidgets.QMainWindow):
         self.poly_r = None
         if self.opts.mesh_left:
             # Check if the input is an overlay file or mesh file
-            input_path = Path(opts.mesh_left)
+            input_path = Path(self.opts.mesh_left)
             # If path does not exist in current CWD, try ORIGINAL_CWD from wrapper
             if not input_path.exists():
                 try:
@@ -1191,6 +1200,18 @@ class Viewer(QtWidgets.QMainWindow):
             self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
             if self.poly_r is not None:
                 self._y_shift_r = self._shift_y_to(self.poly_r) or 0.0
+            # Initialize mesh navigation list/index so Left/Right can switch meshes when no overlay
+            try:
+                if not self.mesh_list:
+                    self.mesh_list = [str(left_mesh_path)]
+                else:
+                    left_str = str(left_mesh_path)
+                    if left_str not in self.mesh_list:
+                        self.mesh_list.insert(0, left_str)
+                self.current_mesh_index = max(0, self.mesh_list.index(str(left_mesh_path)))
+            except Exception:
+                self.mesh_list = [str(left_mesh_path)]
+                self.current_mesh_index = 0
 
         # Background curvature
         self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
@@ -1479,12 +1500,10 @@ class Viewer(QtWidgets.QMainWindow):
                 self.ctrl.overlay_combo.setEditText(single)
         except Exception:
             pass
+        # Initialize control states
         self.ctrl.cb_colorbar.setChecked(self.opts.colorbar)
-        # Initialize title mode combo
         self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
-       
-
         self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
         # Histogram toggle initial state (off)
         try:
@@ -1510,15 +1529,13 @@ class Viewer(QtWidgets.QMainWindow):
         if hasattr(self.ctrl, 'cb_discrete'):
             disc = int(getattr(self.opts, 'discrete', 0) or 0)
             self.ctrl.cb_discrete.setChecked(disc > 0)
-        
         # Enable/disable overlay controls based on whether overlay is loaded
-        has_overlay = (self.overlay_list or self.opts.overlay) and self.scal_l is not None
+        has_overlay = bool((self.overlay_list or self.opts.overlay) and (self.scal_l is not None))
         self.ctrl.set_overlay_controls_enabled(has_overlay)
         # Ensure fix scaling checkbox state reflects current overlay count/availability
         self._enforce_fix_scaling_policy()
-    
         # Signals
-    # Removed reset button; reset available via keyboard 'o' or menu if needed
+        # Removed reset button; reset available via keyboard 'o' or menu if needed
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
         # Open NIfTI volume in orthogonal view window
         try:
@@ -1802,9 +1819,17 @@ class Viewer(QtWidgets.QMainWindow):
         s = str(sym)
         # Overlay navigation
         if s == 'Left':
-            self._prev_overlay(); return
+            if len(self.overlay_list) > 1:
+                self._prev_overlay(); return
+            if (not self.opts.overlay) and len(self.mesh_list) > 1:
+                self._prev_mesh(); return
+            return
         if s == 'Right':
-            self._next_overlay(); return
+            if len(self.overlay_list) > 1:
+                self._next_overlay(); return
+            if (not self.opts.overlay) and len(self.mesh_list) > 1:
+                self._next_mesh(); return
+            return
         if s in ('q','Q'):
             # Gracefully close viewer and quit application
             try:
@@ -2148,6 +2173,96 @@ class Viewer(QtWidgets.QMainWindow):
                 except Exception:
                     pass
                 self.setWindowTitle(Path(path).name)
+
+    # --- Mesh navigation (when no overlay) ---
+    def _switch_mesh(self, new_mesh_path: str):
+        """Switch the underlying mesh to a new file path and update actors.
+
+        Preserves camera state and Y-origin normalization. Overlay actors are
+        preserved as-is (this entrypoint is used when there is no overlay).
+        """
+        if not new_mesh_path:
+            return
+        p = Path(new_mesh_path)
+        if not p.exists():
+            return
+        # Update index to the matching entry if present
+        try:
+            if hasattr(self, 'mesh_list') and self.mesh_list:
+                self.current_mesh_index = self.mesh_list.index(str(p))
+        except Exception:
+            pass
+        # Capture camera before changing geometry
+        self._capture_camera_state()
+        # Load left mesh and normalize Y
+        self.poly_l = read_gifti_mesh(str(p))
+        self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
+        # Find corresponding right mesh (best-effort) and normalize Y
+        self.poly_r = None
+        rh_candidate: Optional[Path] = None
+        name = p.name
+        if 'lh.' in name:
+            rh_candidate = p.with_name(name.replace('lh.', 'rh.'))
+        elif 'left' in name:
+            rh_candidate = p.with_name(name.replace('left', 'right'))
+        elif '_hemi-L_' in name:
+            rh_candidate = p.with_name(name.replace('_hemi-L_', '_hemi-R_'))
+        elif '_hemi-R_' in name:
+            rh_candidate = p.with_name(name.replace('_hemi-R_', '_hemi-L_'))
+        if rh_candidate and rh_candidate.exists():
+            self.poly_r = read_gifti_mesh(str(rh_candidate))
+            self._y_shift_r = self._shift_y_to(self.poly_r) or 0.0
+        else:
+            self._y_shift_r = 0.0
+        # Rebuild curvature
+        self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
+        self.curv_l_out = self.curv_l.GetOutput()
+        if self.bkg_scalar_l is not None:
+            self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
+        self.curv_r = None; self.curv_r_out = None
+        if self.poly_r is not None:
+            self.curv_r = vtkCurvatures(); self.curv_r.SetInputData(self.poly_r); self.curv_r.SetCurvatureTypeToMean(); self.curv_r.Update()
+            self.curv_r_out = self.curv_r.GetOutput()
+            if self.bkg_scalar_r is not None:
+                self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
+        # Update inputs on existing actors/mappers
+        if getattr(self, 'actor_bkg_l', None) is not None and self.curv_l_out is not None:
+            self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
+        if getattr(self, 'actor_bkg_r', None) is not None and self.curv_r_out is not None:
+            self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
+        if getattr(self, 'actor_ov_l', None) is not None and self.poly_l is not None:
+            self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
+        if getattr(self, 'actor_ov_r', None) is not None and self.poly_r is not None:
+            self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
+        # Keep slider bounds in sync with new data
+        self._update_slider_bounds()
+        # Update window title to mesh name if no overlay is active
+        if not self.opts.overlay:
+            try:
+                name_part = Path(new_mesh_path).name
+                self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
+            except Exception:
+                pass
+        # Update stored mesh_left
+        try:
+            self.opts.mesh_left = str(p)
+        except Exception:
+            pass
+        # Restore camera and render
+        self._apply_camera_state()
+        self.rw.Render()
+
+    def _next_mesh(self):
+        if not getattr(self, 'mesh_list', None) or len(self.mesh_list) <= 1:
+            return
+        self.current_mesh_index = (self.current_mesh_index + 1) % len(self.mesh_list)
+        self._switch_mesh(self.mesh_list[self.current_mesh_index])
+
+    def _prev_mesh(self):
+        if not getattr(self, 'mesh_list', None) or len(self.mesh_list) <= 1:
+            return
+        self.current_mesh_index = (self.current_mesh_index - 1) % len(self.mesh_list)
+        self._switch_mesh(self.mesh_list[self.current_mesh_index])
 
     def _enforce_fix_scaling_policy(self):
         """Disable fix scaling when only one overlay is available.

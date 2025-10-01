@@ -261,6 +261,16 @@
 			],
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "Compile single file cat_viewsurf.py",
+			"type": "shell",
+			"command": "/Users/gaser/Library/CloudStorage/Dropbox/GitHub/T1prep/env/bin/python",
+			"args": [
+				"-m",
+				"py_compile",
+				"src/cat_viewsurf.py"
+			]
 		}
 	]
 }
