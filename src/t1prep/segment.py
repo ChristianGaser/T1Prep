@@ -43,6 +43,7 @@ from .utils import (
     get_volume_native_space,
     DATA_PATH_T1PREP,
     TEMPLATE_PATH_T1PREP,
+    get_packaged_data_path,
 )
 from .segmentation_utils import (
     correct_bias_field,
@@ -60,7 +61,7 @@ from .segmentation_utils import (
 # We are inside src/t1prep; repo root is two levels up
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
-MODEL_DIR_T1PREP = Path(DATA_PATH_T1PREP) / "models/"
+MODEL_DIR_T1PREP = get_packaged_data_path('models')
 MODEL_DIR = Path(DATA_PATH) / "models/"
 MODEL_FILES = (
     [

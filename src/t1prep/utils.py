@@ -68,7 +68,18 @@ def get_packaged_data_path(rel: str) -> Path:
     if _res_files is not None:
         try:
             p = _res_files('t1prep.data').joinpath(rel)
-            if p.is_file():
+            # Accept files or directories from packaged resources
+            is_ok = False
+            try:
+                is_ok = p.is_file() or p.is_dir()  # type: ignore[attr-defined]
+            except Exception:
+                # Fallback: try opening; if it works, assume ok
+                try:
+                    _ = p.open('rb')  # type: ignore[attr-defined]
+                    is_ok = True
+                except Exception:
+                    is_ok = False
+            if is_ok:
                 return Path(str(p))
         except Exception:
             pass
