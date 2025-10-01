@@ -58,7 +58,7 @@ Examples:
 
 Notes:
     - You can pass one or more overlays; the mesh is auto-derived from the first overlay (e.g., lh.thickness -> lh.central.gii)
-    - For full options, run: python src/cat_viewsurf.py -h
+    - For full options, run: python src/t1prep/gui/cat_viewsurf.py -h
 USAGE
                 exit 1
         fi
@@ -70,7 +70,7 @@ USAGE
     
     # Run the Python script by absolute path so user-provided relative paths remain relative to caller's CWD
     export ORIGINAL_CWD="$(pwd)"
-    PY_SCRIPT="$PROJECT_DIR/src/cat_viewsurf.py"
+    PY_SCRIPT="$PROJECT_DIR/src/t1prep/gui/cat_viewsurf.py"
     python "$PY_SCRIPT" "$@"
 }
 
