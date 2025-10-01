@@ -25,11 +25,12 @@
 os_type=$(uname -s) # Determine OS type
 script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
-name_file=${root_dir}/Names.tsv
-surf_templates_dir=${root_dir}/data/templates_surfaces_32k
-atlas_templates_dir=${root_dir}/data/atlases_surfaces_32k
+src_dir=${root_dir}/src/t1prep
+data_dir=${src_dir}/data
+name_file=${data_dir}/Names.tsv
+surf_templates_dir=${data_dir}/templates_surfaces_32k
+atlas_templates_dir=${data_dir}/atlases_surfaces_32k
 T1prep_env=${root_dir}/env
-src_dir=${root_dir}/src
 
 # Text formatting and colors with fallback
 if [ -t 1 ] && [ -n "$TERM" ] && command -v tput >/dev/null 2>&1; then

@@ -22,7 +22,7 @@ from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregula
 from torchreg.utils import smooth_kernel
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
-from .utils import DATA_PATH_T1PREP, TEMPLATE_PATH_T1PREP, find_largest_cluster
+from utils import DATA_PATH_T1PREP, TEMPLATE_PATH_T1PREP, find_largest_cluster
 from typing import Union, Tuple
 
 

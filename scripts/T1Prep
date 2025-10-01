@@ -467,7 +467,7 @@ surface_estimation()
     if [ "${estimate_seg}" -eq 0 ]; then
       echo "${RED}ERROR: Could not find ${mri_dir}/${Hemi_volume}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
     else
-      echo "${RED}ERROR: ${python} ${src_dir}/t1prep/segment.py failed.${NC}" >&2
+  echo "${RED}ERROR: Segmentation module (segment) failed.${NC}" >&2
     fi
     return 1
   fi
@@ -707,9 +707,10 @@ process()
     # Check for outputs from previous step
     if [ -f "${input}" ]; then
 
-      # Initialize command string with the Python script call
-
-      cmd="${python} ${src_dir}/t1prep/segment.py"
+  # Ensure Python can import the package from src and run the module entry
+  export PYTHONPATH="${src_dir}:${PYTHONPATH}"
+  # Initialize command string with the Python module call so relative imports work
+  cmd="${python} ${src_dir}/segment.py"
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap --amapdir ${bin_dir}"
@@ -744,7 +745,8 @@ process()
 
       if [ "$seg_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
-          ${script_dir}/progress_bar_multi.sh 1 "" $end_count $end_count "Segmentation failed" 40 1
+          # Use 1/1 so the single job bar renders without relying on end_count
+          ${script_dir}/progress_bar_multi.sh 1 "" 1 1 "Segmentation failed" 40 1
         fi
         ((i++))
         ((errors++))
@@ -783,7 +785,8 @@ process()
 
       if [ "$surf_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
-          ${script_dir}/progress_bar_multi.sh 1 "" $end_count $end_count "Surface estimation failed" 40 1
+          # Use 1/1 so the single job bar renders without relying on end_count
+          ${script_dir}/progress_bar_multi.sh 1 "" 1 1 "Surface estimation failed" 40 1
         fi
         ((errors++))
         echo "Error in ${bname}"
