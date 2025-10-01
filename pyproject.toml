@@ -38,3 +38,12 @@ dependencies = [
 
 [project.urls]
 "Repository" = "https://github.com/ChristianGaser/T1Prep"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["t1prep*"]
+exclude = ["tests*"]
+

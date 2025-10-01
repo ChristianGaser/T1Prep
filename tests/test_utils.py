@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from src.utils import find_largest_cluster, smart_round
+from t1prep.utils import find_largest_cluster, smart_round
 
 class TestUtils(unittest.TestCase):
 

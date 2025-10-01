@@ -1500,7 +1500,7 @@ class Viewer(QtWidgets.QMainWindow):
                 self.ctrl.overlay_combo.setEditText(single)
         except Exception:
             pass
-        # Initialize control states
+        # Initialize control states (ensure clean ASCII spaces for indentation)
         self.ctrl.cb_colorbar.setChecked(self.opts.colorbar)
         self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
@@ -1511,17 +1511,8 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             pass
         # Initialize colormap selector based on opts.colormap
+        cm_index_map = {JET: 0, HOT: 1, FIRE: 2, BIPOLAR: 3, GRAY: 4, C1: 5, C2: 6, C3: 7}
         try:
-            cm_index_map = {
-                JET: 0,
-                HOT: 1,
-                FIRE: 2,
-                BIPOLAR: 3,
-                GRAY: 4,
-                C1: 5,
-                C2: 6,
-                C3: 7,
-            }
             self.ctrl.colormap.setCurrentIndex(cm_index_map.get(self.opts.colormap, 0))
         except Exception:
             pass
