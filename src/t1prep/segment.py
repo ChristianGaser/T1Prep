@@ -904,12 +904,11 @@ def run_segment():
     # Correct bias using label from deepmriprep
     brain_large = correct_bias_field(brain_large, p0_large)
 
-    if verbose:
-        count = progress_bar(count, end_count, "Amap segmentation        ")
-
     p0_large_orig = p0_large
 
     if use_amap:
+        if verbose:
+            count = progress_bar(count, end_count, "Amap segmentation        ")
         amapdir = args.amapdir
         brain_large, p0_large = run_amap_segmentation(
             amapdir,

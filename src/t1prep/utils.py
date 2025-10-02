@@ -33,13 +33,8 @@ def _package_data_root() -> Optional[Path]:
             return None
     return None
 
-DATA_PATH_T1PREP_PKG = _package_data_root()
-DATA_PATH_T1PREP = ROOT_PATH / "data"
-TEMPLATE_PATH_T1PREP = (
-    (DATA_PATH_T1PREP_PKG / "templates_MNI152NLin2009cAsym")
-    if (DATA_PATH_T1PREP_PKG and (DATA_PATH_T1PREP_PKG / "templates_MNI152NLin2009cAsym").exists())
-    else (DATA_PATH_T1PREP / "templates_MNI152NLin2009cAsym")
-)
+DATA_PATH_T1PREP = ROOT_PATH / "src" / "t1prep" / "data"
+TEMPLATE_PATH_T1PREP = DATA_PATH_T1PREP / "templates_MNI152NLin2009cAsym"
 
 # Prefer packaged Names.tsv; fall back to repo root for editable/dev mode
 def _resolve_names_tsv() -> Path:
@@ -51,7 +46,7 @@ def _resolve_names_tsv() -> Path:
         except Exception:
             pass
     # Fallback
-    return ROOT_PATH / "Names.tsv"
+    return DATA_PATH_T1PREP / "Names.tsv"
 
 name_file = _resolve_names_tsv()
 

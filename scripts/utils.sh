@@ -118,18 +118,18 @@ get_OS() {
   case "$os_type" in
     Linux*)
       case "$cpu_arch" in
-        x86_64) bin_dir="${root_dir}/bin/Linux" ;;
-        aarch64|arm64) bin_dir="${root_dir}/bin/LinuxARM64" ;;
+        x86_64) bin_dir="${src_dir}/bin/Linux" ;;
+        aarch64|arm64) bin_dir="${src_dir}/bin/LinuxARM64" ;;
         *) echo "Unsupported Linux arch: ${cpu_arch}" >&2; exit 1 ;;
       esac
       ;;
     Darwin*)
       case "$cpu_arch" in
-        arm64) bin_dir="${root_dir}/bin/MacOS" ;;
+        arm64) bin_dir="${src_dir}/bin/MacOS" ;;
         *) echo "macOS Intel not supported anymore" >&2; exit 1 ;;
       esac
       ;;
-    CYGWIN*|MINGW*|MSYS*) bin_dir="${root_dir}/bin/Windows" ;;
+    CYGWIN*|MINGW*|MSYS*) bin_dir="${src_dir}/bin/Windows" ;;
     *) echo "Unknown OS: ${os_type}" >&2; exit 1 ;;
   esac
 
