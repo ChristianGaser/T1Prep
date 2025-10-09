@@ -251,7 +251,8 @@ parse_args()
             echo "${RED}File $1 was not found and will be skipped.${NC}" >&2
           fi
         else
-          ARRAY[$count]=$1
+          FILE="$1"
+          ARRAY[$count]="$FILE"
           ((count++))
         fi
         ;;
@@ -533,9 +534,9 @@ process()
     # If multi is defined and lower than available processes w.r.t. memory limit,
     # then use this lower value
     if [[ "$multi" -gt 0 && "$NUM_JOBS" -gt "$multi" ]]; then
-      arg_parallelize="-p ${multi}"
+      arg_parallelize=( -p "${multi}" )
     else
-      arg_parallelize="-p ${NUM_JOBS}"
+      arg_parallelize=( -p "${NUM_JOBS}" )
     fi
     
     # Call parallelize with filtered arguments and use memory limit per process
@@ -544,15 +545,15 @@ process()
       "${script_dir}/parallelize"
       -l "/tmp"
       -d 5
-      "${arg_parallelize}"
-      -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-surf --hemisphere --multi -2)"
+      ${arg_parallelize[@]}
+      -c "$(printf '%q ' "$0" "${filtered_args[@]}" --no-surf --hemisphere --multi -2)"
       "${ARRAY[@]}"
     )
-    
+
     # Execute the command
     if [ "${estimate_seg}" -eq 1 ]; then
       echo "${BOLD}Volume Segmentation${NC}"
-      eval "${cmd[@]}"
+      "${cmd[@]}"
       status=$?
     fi
 
@@ -560,22 +561,22 @@ process()
     # Define number of processes, otherwise estimate it automatically 
     if ! [[ "${multi}" =~ ^-?[0-9]+$ ]]; then multi=-1; fi
     if [ "$multi" -gt 0 ]; then
-      arg_parallelize="-p ${multi}"
+      arg_parallelize=( -p "${multi}" )
     else
-      arg_parallelize="-p 0.5"
+      arg_parallelize=( -p 0.5 )
     fi
     cmd=(
       "${script_dir}/parallelize"
       -l "/tmp"
-      "${arg_parallelize}"
-      -c "$(printf '"%q "' "$0" ${filtered_args[@]} --no-seg --multi -2)"
+      ${arg_parallelize[@]}
+      -c "$(printf '%q ' "$0" "${filtered_args[@]}" --no-seg --multi -2)"
       "${ARRAY[@]}"
     )
     
     # Execute the command
     if [ "${estimate_surf}" -eq 1 ]; then
       echo "${BOLD}Surface Estimation${NC}"
-      eval "${cmd[@]}"
+      "${cmd[@]}"
       status=$?
     fi
     
