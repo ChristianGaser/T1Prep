@@ -145,6 +145,13 @@ get_no_processes () {
 
   ARCH=`uname`
   MEM_LIMIT=$1
+  # Guard: ensure MEM_LIMIT is a positive integer to avoid division by zero
+  if ! [[ "$MEM_LIMIT" =~ ^[0-9]+$ ]]; then
+    MEM_LIMIT=12
+  fi
+  if [ "$MEM_LIMIT" -le 0 ]; then
+    MEM_LIMIT=12
+  fi
   
   if [ "$ARCH" == "Linux" ]; then
     # Get total installed memory in MB
@@ -172,7 +179,12 @@ get_no_processes () {
   fi
     
   # Calculate number of processes (at least 1) w.r.t. to defined memory limit for each process
-  NUM_JOBS=$(echo "$mem_gb / $MEM_LIMIT" | bc)
+  # Use bc for robust division and guard against any unexpected zero values
+  if [ "$MEM_LIMIT" -le 0 ]; then
+    NUM_JOBS=1
+  else
+    NUM_JOBS=$(echo "$mem_gb / $MEM_LIMIT" | bc)
+  fi
   if [ "$NUM_JOBS" -lt 1 ]; then
     NUM_JOBS=1
   fi
@@ -429,35 +441,48 @@ get_output_folder()
   bname="${bname%.nii}"
 
   local dname=$(dirname "$FILE")
-  dname=$(cd "$dname" && pwd) # get absolute path
-  
-  # check for BIDS folder structure, where the upper folder is "anat"
-  local upper_dname=$(basename "$dname") # get upper directory
-  if [ "${upper_dname}" == "anat" ]; then
-    use_subfolder=0
-    sess_folder0=$(dirname "$dname")
+  dname=$(cd "$dname" && pwd) # absolute directory of input file
 
-    if [ ! $(echo $(basename "$sess_folder0") | grep "ses-") == "" ]; then
-      sess_folder=$(basename "$sess_folder0")
-      updir="../"
-      subj_folder=$(dirname "$sess_folder0")
+  # Detect BIDS structure if parent is 'anat'
+  local upper_dname=$(basename "$dname")
+  if [ "${upper_dname}" = "anat" ]; then
+    use_subfolder=0
+    local sess_folder=""
+    local subj_dir=""
+    local dataset_root=""
+
+    local sess_folder0=$(dirname "$dname")
+    local sess_base=$(basename "$sess_folder0")
+    if [[ "$sess_base" == ses-* ]]; then
+      sess_folder="$sess_base"
+      subj_dir=$(dirname "$sess_folder0")
     else
+      subj_dir=$(dirname "$dname")
       sess_folder=""
-      updir=""
-      subj_folder=$(dirname "$dname")
+    fi
+    local subj_base=$(basename "$subj_dir")
+    dataset_root=$(dirname "$subj_dir")
+
+    # If user specified --out-dir, build derivatives inside that; else inside dataset root
+    local base_dir
+    if [ -z "${outdir}" ]; then
+      base_dir="${dataset_root}"
+    else
+      base_dir="${outdir}"
     fi
 
-    subj_folder=$(basename "$subj_folder")
-    bids_folder="${updir}../../../derivatives/T1Prep-v${version}/${subj_folder}/${sess_folder}/anat/"
+    if [ -n "$sess_folder" ]; then
+      outdir0="${base_dir}/derivatives/T1Prep-v${version}/${subj_base}/${sess_folder}/anat"
+    else
+      outdir0="${base_dir}/derivatives/T1Prep-v${version}/${subj_base}/anat"
+    fi
   else
     use_subfolder=1
-    bids_folder=""
-  fi
-  
-  if [ -z "${outdir}" ]; then
-    outdir0=${dname}${bids_folder}
-  else
-    outdir0=${outdir}${bids_folder}
+    if [ -z "${outdir}" ]; then
+      outdir0="${dname}"
+    else
+      outdir0="${outdir}"
+    fi
   fi
 } 
 
