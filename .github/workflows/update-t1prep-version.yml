@@ -1,0 +1,103 @@
+name: Update T1Prep version on release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to use as version (e.g., v0.2.4 or 0.2.4)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Determine version from tag
+        id: get_version
+        run: |
+          # Prefer explicit input for manual runs, else use release tag_name
+          RAW_TAG="${{ github.event.release.tag_name }}"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            RAW_TAG="${{ github.event.inputs.tag }}"
+          fi
+
+          if [ -z "$RAW_TAG" ]; then
+            echo "::error::No tag found. Provide 'tag' input for workflow_dispatch or trigger from a Release." >&2
+            exit 1
+          fi
+
+          # Strip leading 'v' if present, keep only numeric semantic version (e.g., 1.2.3)
+          VERSION="${RAW_TAG#v}"
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::warning::Tag '$RAW_TAG' does not look like a semantic version. Using '$VERSION' as-is."
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+      - name: Update version in scripts/T1Prep
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.get_version.outputs.version }}'
+          FILE='scripts/T1Prep'
+
+          if [ ! -f "$FILE" ]; then
+            echo "::error::File $FILE not found" >&2
+            exit 1
+          fi
+
+          echo "Updating $FILE to version $VERSION"
+          # Replace a line like: version=0.2.3
+          sed -i -E "s/^version=[0-9]+\.[0-9]+\.[0-9]+/version=${VERSION}/" "$FILE"
+
+          # Verify substitution occurred
+          if ! grep -qE "^version=${VERSION}" "$FILE"; then
+            echo "::error::Failed to set version to ${VERSION} in $FILE" >&2
+            exit 1
+          fi
+
+      - name: Update version in Makefile and Dockerfile
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.get_version.outputs.version }}'
+          # Makefile: VERSION="X.Y.Z"
+          if [ -f Makefile ]; then
+            sed -i -E "s/^VERSION=\"[^"]*\"/VERSION=\"${VERSION}\"/" Makefile
+            grep -qE "^VERSION=\"${VERSION}\"" Makefile || { echo "::error::Failed to update Makefile VERSION"; exit 1; }
+          else
+            echo "::warning::Makefile not found; skipping"
+          fi
+
+          # Dockerfile: ARG T1PREP_VERSION=vX.Y.Z
+          if [ -f Dockerfile ]; then
+            sed -i -E "s/^ARG T1PREP_VERSION=.*/ARG T1PREP_VERSION=v${VERSION}/" Dockerfile
+            grep -qE "^ARG T1PREP_VERSION=v${VERSION}" Dockerfile || { echo "::error::Failed to update Dockerfile ARG"; exit 1; }
+          else
+            echo "::warning::Dockerfile not found; skipping"
+          fi
+
+      - name: Commit and push changes
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No changes to commit. Version may already be ${VERSION}."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/T1Prep Makefile Dockerfile
+          git commit -m "chore: bump T1Prep version to ${VERSION}"
+          git push origin HEAD:main
