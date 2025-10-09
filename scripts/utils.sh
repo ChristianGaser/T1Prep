@@ -12,6 +12,7 @@
 # - substitute_pattern: Substitute variables in the pattern
 # - check_files: Checks if the input files exist.
 # - run_cmd_log: Run command and print output and execution time to report file
+# - filter_arguments: Filter arguments so that filenames are removed
 #
 # ______________________________________________________________________
 #
@@ -254,8 +255,6 @@ filter_arguments() {
         break
       fi
     done
-
-    # If it's not a file pattern, add it to the filtered list
     if [[ $is_filepattern -eq 0 ]]; then
       filtered+=("$arg")
     fi
