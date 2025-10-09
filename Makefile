@@ -1,7 +1,7 @@
 .PHONY: help release clean zip cp_binaries
 .DEFAULT: help
 
-VERSION="0.2.3"
+VERSION="0.2.4"
 
 FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py T1Prep_defaults.txt
 DATA_FILES=data
