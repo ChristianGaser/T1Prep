@@ -72,7 +72,7 @@ jobs:
           VERSION='${{ steps.get_version.outputs.version }}'
           # Makefile: VERSION="X.Y.Z"
           if [ -f Makefile ]; then
-            sed -i -E "s/^VERSION=\"[^"]*\"/VERSION=\"${VERSION}\"/" Makefile
+            sed -i -E "s/^VERSION=\"[^\"]*\"/VERSION=\"${VERSION}\"/" Makefile
             grep -qE "^VERSION=\"${VERSION}\"" Makefile || { echo "::error::Failed to update Makefile VERSION"; exit 1; }
           else
             echo "::warning::Makefile not found; skipping"
