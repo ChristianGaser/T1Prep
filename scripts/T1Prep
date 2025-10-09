@@ -549,7 +549,7 @@ process()
       "${ARRAY[@]}"
     )
     
-    # Execute the command using eval
+    # Execute the command
     if [ "${estimate_seg}" -eq 1 ]; then
       echo "${BOLD}Volume Segmentation${NC}"
       eval "${cmd[@]}"
@@ -572,7 +572,7 @@ process()
       "${ARRAY[@]}"
     )
     
-    # Execute the command using eval
+    # Execute the command
     if [ "${estimate_surf}" -eq 1 ]; then
       echo "${BOLD}Surface Estimation${NC}"
       eval "${cmd[@]}"
