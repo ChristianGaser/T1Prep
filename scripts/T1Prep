@@ -52,6 +52,18 @@ main()
   check_python_cmd
   get_OS
 
+  # Normalize and default numeric options to prevent integer comparison errors
+  # multi: -2 (quiet), 0 (single), >0 (explicit parallel), -1 (auto)
+  if ! [[ "${multi}" =~ ^-?[0-9]+$ ]]; then multi=-1; fi
+  if ! [[ "${estimate_seg}" =~ ^[0-9]+$ ]]; then estimate_seg=1; fi
+  if ! [[ "${estimate_surf}" =~ ^[0-9]+$ ]]; then estimate_surf=1; fi
+  if ! [[ "${estimate_spherereg}" =~ ^[0-9]+$ ]]; then estimate_spherereg=1; fi
+  if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=0; fi
+  if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
+  if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
+  if ! [[ "${use_bids_naming}" =~ ^[0-9]+$ ]]; then use_bids_naming=0; fi
+  if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=12; fi
+
   if [[ "$multi" -ne -2 ]]; then
     logo
     check_python_module venv
@@ -267,6 +279,26 @@ surface_estimation()
   local estimate_spherereg=$5
   local multi=$6
   local nii_ext=$7
+  
+  # In order to prevent issues with white spaces in directory names it's easier
+  # to change into the that directory and run all commands from here
+  if [ "${mri_dir}" == "${surf_dir}" ]; then
+    base_dir="${mri_dir}"
+    mri_dir=""
+    surf_dir=""
+  else
+    base_dir=$(dirname "${mri_dir}")
+    mri_dir="mri"
+    surf_dir="surf"
+  fi
+  cd "${base_dir}"
+
+  # Guard local numeric variables for arithmetic checks
+  if ! [[ "${estimate_spherereg}" =~ ^[0-9]+$ ]]; then estimate_spherereg=1; fi
+  if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
+  if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=0; fi
+  if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
+  if ! [[ "${multi}" =~ ^-?[0-9]+$ ]]; then multi=-1; fi
 
   # Freesurfer templates
   fshemi="${side/left/lh}"
@@ -293,7 +325,7 @@ surface_estimation()
     # Use eval to assign the result to a variable named after the code
     eval "${code}=\"\$value\""
   done
-    
+
   # Change number of commands if spherical registration is disabled
   if [ "${estimate_spherereg}" -eq 1 ]; then
     ((end_count=6))
@@ -367,7 +399,7 @@ surface_estimation()
     
     # For thickness_method==3 we use the pure PBT-measure
     if [ "${thickness_method}" -eq 3 ]; then
-      cp ${surf_dir}/${PBT_shape} ${surf_dir}/${GMT_shape}
+      cp "${surf_dir}/${PBT_shape}" "${surf_dir}/${GMT_shape}"
     else
       cmd="CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${surf_dir}/${PBT_shape} ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape}"
       run_cmd_log "${report_log}" "$cmd"
@@ -456,8 +488,8 @@ surface_estimation()
 
     # remove temporary files if not debugging
     if [ "${debug}" -eq 0 ]; then
-      for file in ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}; do
-        [ -f "${file}" ] && rm ${file}
+      for file in "${mri_dir}/${GMT_volume}" "${mri_dir}/${PPM_volume}"; do
+        [ -f "${file}" ] && rm "${file}"
       done
     fi
 
@@ -465,9 +497,9 @@ surface_estimation()
 
   else
     if [ "${estimate_seg}" -eq 0 ]; then
-      echo "${RED}ERROR: Could not find ${mri_dir}/${Hemi_volume}. Please run T1Prep with the '--hemisphere' flag first.${NC}" >&2
+      echo "${RED}ERROR: Could not find ${mri_dir}/${Hemi_volume}.${NC}" >&2
     else
-  echo "${RED}ERROR: Segmentation module (segment) failed.${NC}" >&2
+      echo "${RED}ERROR: Segmentation module (segment) failed.${NC}" >&2
     fi
     return 1
   fi
@@ -481,6 +513,7 @@ process()
 {
   errors=0
   SIZE_OF_ARRAY="${#ARRAY[@]}"
+  if ! [[ "${multi}" =~ ^-?[0-9]+$ ]]; then multi=-1; fi
   if [[ "$SIZE_OF_ARRAY" -lt 2 && "$multi" -ne -2 ]]; then
     multi=0
   fi
@@ -493,6 +526,8 @@ process()
     filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
 
     # Get number of processes (NUM_JOBS) for defined memory limit
+    # Ensure min_memory sane before calculating
+    if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=12; fi
     get_no_processes ${min_memory}
     
     # If multi is defined and lower than available processes w.r.t. memory limit,
@@ -523,6 +558,7 @@ process()
 
     # Call parallelize with filtered arguments
     # Define number of processes, otherwise estimate it automatically 
+    if ! [[ "${multi}" =~ ^-?[0-9]+$ ]]; then multi=-1; fi
     if [ "$multi" -gt 0 ]; then
       arg_parallelize="-p ${multi}"
     else
@@ -581,13 +617,12 @@ process()
       FILE="${ARRAY[$i]}"
     fi
 
-    # Replace white spaces
-    FILE="${FILE// /\\ }"
+  # Do not mangle spaces; always quote variables instead
 
     # Check whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
       
-      get_output_folder $FILE
+      get_output_folder "$FILE"
       
       if [ "${use_bids_naming}" -eq 1 ]; then  
         processed=$(ls "${outdir0}/${bname}"*"/${no_overwrite}"* 2>/dev/null)
@@ -600,7 +635,7 @@ process()
       ARRAY2[$j]="$FILE"
       ((j++))
     else
-      echo Skip processing of ${FILE}
+      echo Skip processing of "${FILE}"
     fi
     ((i++))
   done
@@ -627,7 +662,7 @@ process()
 
     FILE="${ARRAY2[$i]}"
 
-    get_output_folder $FILE
+    get_output_folder "$FILE"
 
     # Check again whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
@@ -639,7 +674,7 @@ process()
 
       # Check if $processed is empty
       if [ -n "$processed" ]; then
-        echo Skip processing of ${FILE}
+        echo Skip processing of "${FILE}"
         break  # Skip to the next iteration of the loop
       fi
     fi
@@ -658,11 +693,12 @@ process()
     fi
               
     # Create output folders    
-    dir_list="$mri_dir"
-    [ "${estimate_surf}" -eq 1 ] && dir_list+=" $surf_dir"
-    dir_list+=" $report_dir"
-    dir_list+=" $label_dir"
-    mkdir -p $dir_list
+    # Create output folders (quote each to support spaces in paths)
+    if [ "${estimate_surf}" -eq 1 ]; then
+      mkdir -p "${mri_dir}" "${surf_dir}" "${report_dir}" "${label_dir}"
+    else
+      mkdir -p "${mri_dir}" "${report_dir}" "${label_dir}"
+    fi
     
     # Get filename for log file
     code="Log_file"
@@ -679,14 +715,14 @@ process()
 
     # Save all output in log-file
     report_log=${report_dir}/${Log_file}
-    echo "T1Prep version ${version}" > ${report_log}
-    date >> ${report_log}
-    echo "${os_type}" >> ${report_log}
+    echo "T1Prep version ${version}" > "${report_log}"
+    date >> "${report_log}"
+    echo "${os_type}" >> "${report_log}"
     cuda=$(${python} -c "import torch; print(torch.cuda.is_available())" 2>/dev/null)
     if [ "${cuda}" == "True" ]; then
-        echo "Use Cuda in Python" >> ${report_log}
+      echo "Use Cuda in Python" >> "${report_log}"
     else
-        echo "Use CPU in Python" >> ${report_log}
+      echo "Use CPU in Python" >> "${report_log}"
     fi
     
     # Print progress and filename
@@ -774,7 +810,7 @@ process()
       # Check for outputs from previous step
       pids=()
       for side in left right; do
-        surface_estimation $bname $side $mri_dir $surf_dir $estimate_spherereg $multi $nii_ext &
+        surface_estimation $bname $side "${mri_dir}" "${surf_dir}" $estimate_spherereg $multi "${nii_ext}" &
         pids+=("$!")
       done
 
@@ -794,8 +830,8 @@ process()
 
       end_surf=$(date +%s)
       runtime=$((end_surf - start_surf))
-      echo "" >> ${report_log}
-      echo "Execution time surface pipeline: ${runtime}s" >> ${report_log}
+      echo "" >> "${report_log}"
+      echo "Execution time surface pipeline: ${runtime}s" >> "${report_log}"
       
     fi # estimate_surf
 
@@ -811,7 +847,7 @@ process()
     overall+="${s}s"
 
     if [ "${estimate_surf}" -eq 1 ]; then
-      echo "${overall}" >> ${report_log}
+      echo "${overall}" >> "${report_log}"
     fi
     
     if [[ "$multi" -ne -2 ]]; then
