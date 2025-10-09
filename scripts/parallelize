@@ -280,7 +280,10 @@ do_parallelize ()
   fi
 
   if [ -z "${TEST}" ]; then
-    cmd_name=$(basename "$(printf '%s\n' "$COMMAND" | head -n1)") | cut -f1 -d'-'
+    # Extract base command name (first token, basename, strip suffix after '-')
+    first_token=$(printf '%s\n' "$COMMAND" | awk '{print $1}')
+    base_name=$(basename "$first_token")
+    cmd_name="${base_name%%-*}"
 
     # Start multi progress monitor
     if [ "$NUM_JOBS" -gt 1 ]; then      
@@ -339,18 +342,23 @@ do_parallelize ()
 
   BLOCK=$((10000* $SIZE_OF_ARRAY / $NUM_JOBS ))
   i=0
-  
-  # Initialize logging
-  log=${LOGDIR}/parallelize_${HOSTNAME}_${time}.log
 
-  # Process files in parallel
+  # Initialize logging
+  log="${LOGDIR}/parallelize_${HOSTNAME}_${time}.log"
+
+  # Distribute files into N buckets and write per-job lists to PROGRESS_DIR.
+  # Using files avoids word-splitting issues for paths with spaces.
+  mkdir -p "$PROGRESS_DIR"
+  for ((j=0; j<NUM_JOBS; j++)); do
+    : > "$PROGRESS_DIR/job${j}.list"
+  done
+
+  # Process files in parallel: assign each ARRAY item to a bucket
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
-    local count=$((10000* $i / $BLOCK ))
-    if [ -z "${ARG_LIST[$count]}" ]; then
-      ARG_LIST[$count]="${ARRAY[$i]}"
-    else
-      ARG_LIST[$count]="${ARG_LIST[$count]} ${ARRAY[$i]}"
-    fi
+    bucket=$((10000* i / BLOCK ))
+    # Fallback clamp just in case of rounding
+    if [ "$bucket" -ge "$NUM_JOBS" ]; then bucket=$((NUM_JOBS-1)); fi
+    printf '%s\n' "${ARRAY[$i]}" >> "$PROGRESS_DIR/job${bucket}.list"
     ((i++))
   done
 
@@ -361,36 +369,38 @@ do_parallelize ()
   fi
   
   for ((i=0; i<NUM_JOBS; i++)); do
-    if [ ! "${ARG_LIST[$i]}" == "" ]; then
-      j=$(($i+1))
-  
-      if [ -z "${TEST}" ]; then
-        echo "Job ${j}/${NUM_JOBS}: $COMMAND ${ARG_LIST[$i]}" >> "$log"
-        nohup bash -c "
-          total_k=\$(echo ${ARG_LIST[$i]} | wc -w)
-          k_count=0
-          status=0   # 0 means success; 1 means at least one failure
-          echo \"\$k_count/\$total_k\" > \"$PROGRESS_DIR/job${i}.progress\"
+    list_file="$PROGRESS_DIR/job${i}.list"
+    # Skip empty buckets
+    if [ ! -s "$list_file" ]; then
+      continue
+    fi
 
-          for k in ${ARG_LIST[$i]}; do
-            ((k_count++))
-              
-            # Log message
-            echo \"Processing \$k (\$k_count/\$total_k)\" >> \"$log\"
-  
-            $COMMAND \$k >> \"$log\" 2>&1
-            exit_code=\$?
-            if [ \$exit_code -ne 0 ]; then
-              status=1
-            fi
+    j=$((i+1))
+    total_k=$(wc -l < "$list_file" | tr -d ' ')
+    if [ -z "${TEST}" ]; then
+      echo "Job ${j}/${NUM_JOBS}: $COMMAND (items: $total_k)" >> "$log"
+      # Pass required variables to the subshell via environment to avoid empty expansions
+      nohup env PROGRESS_DIR="$PROGRESS_DIR" COMMAND="$COMMAND" LOG_FILE="$log" JOB_INDEX="$i" TOTAL_K="$total_k" LIST_FILE="$list_file" bash -c '
+        k_count=0
+        status=0   # 0 means success; 1 means at least one failure
+        # Initialize progress
+        echo "${k_count}/${TOTAL_K}" > "${PROGRESS_DIR}/job${JOB_INDEX}.progress"
 
-            # Update progress file (instead of printing progress)
-            echo \"\$k_count/\$total_k\" > \"$PROGRESS_DIR/job${i}.progress\"
-            echo \$status > \"$PROGRESS_DIR/job${i}.status\"
-          done
-        " >> "$log" 2>&1 & pids+=($!)
-        sleep $delay
-      fi
+        # Read list file line-by-line to preserve spaces
+        while IFS= read -r k || [ -n "$k" ]; do
+          k_count=$((k_count+1))
+          # Execute the command with the current item; use eval to expand the command string
+          eval "$COMMAND" "\"$k\"" >> "${LOG_FILE}" 2>&1
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            status=1
+          fi
+          # Update progress and status
+          echo "${k_count}/${TOTAL_K}" > "${PROGRESS_DIR}/job${JOB_INDEX}.progress"
+          echo "$status" > "${PROGRESS_DIR}/job${JOB_INDEX}.status"
+        done < "$LIST_FILE"
+      ' >> "$log" 2>&1 & pids+=($!)
+      sleep $delay
     fi
   done
         
