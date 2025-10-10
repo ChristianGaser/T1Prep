@@ -91,7 +91,7 @@ Simply call T1Prep to see available options
 ./scripts/T1Prep
 ```
 
-## Output folders strcuture
+## Output folders structure
 Output folder structure depends on the input dataset type:
 * BIDS datasets (if the upper-level folder of the input files is 'anat'):
     Results are placed in a BIDS-compatible derivatives folder:
