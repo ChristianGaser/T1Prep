@@ -1,19 +1,42 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Compile Python sources",
-      "type": "shell",
-      "command": "/Users/gaser/Library/CloudStorage/Dropbox/GitHub/T1prep/env/bin/python",
-      "args": ["-m", "compileall", "-q", "src"],
-      "group": "build"
-    },
-    {
-      "label": "Compile Python sources (force)",
-      "type": "shell",
-      "command": "/Users/gaser/Library/CloudStorage/Dropbox/GitHub/T1prep/env/bin/python",
-      "args": ["-m", "compileall", "-f", "-q", "src"],
-      "group": "build"
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Compile Python sources",
+			"type": "shell",
+			"command": "/Users/gaser/Library/CloudStorage/Dropbox/GitHub/T1prep/env/bin/python",
+			"args": [
+				"-m",
+				"compileall",
+				"-q",
+				"src"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Compile Python sources (force)",
+			"type": "shell",
+			"command": "/Users/gaser/Library/CloudStorage/Dropbox/GitHub/T1prep/env/bin/python",
+			"args": [
+				"-m",
+				"compileall",
+				"-f",
+				"-q",
+				"src"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Compile Python sources (force)",
+			"type": "shell",
+			"command": "/Users/gaser/Library/CloudStorage/Dropbox/GitHub/T1prep/env/bin/python",
+			"args": [
+				"-m",
+				"compileall",
+				"-f",
+				"-q",
+				"src"
+			]
+		}
+	]
 }
