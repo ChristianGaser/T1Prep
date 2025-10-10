@@ -695,7 +695,7 @@ process()
               
     # Create output folders    
     # Create output folders (quote each to support spaces in paths)
-    chmod u+w ${outdir0}
+    chmod u+w "${outdir0}"
     if [ "${estimate_surf}" -eq 1 ]; then
       mkdir -p "${mri_dir}" "${surf_dir}" "${report_dir}" "${label_dir}"
     else
