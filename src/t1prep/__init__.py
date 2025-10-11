@@ -8,6 +8,7 @@ from .utils import (
     get_filenames,
     get_volume_native_space,
 )
+from .rigid_ic import inverse_consistent_rigid_N, save_outputs, RigidICOutputs
 
 __all__ = [
     "run_t1prep",
@@ -18,4 +19,7 @@ __all__ = [
     "align_brain",
     "get_filenames",
     "get_volume_native_space",
+    "inverse_consistent_rigid_N",
+    "save_outputs",
+    "RigidICOutputs",
 ]
