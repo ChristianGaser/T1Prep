@@ -126,8 +126,7 @@ def _load_surface(surface_path: str) -> vtkPolyData:
         img = nib.load(surface_path)
         coords = None
         faces = None
-        coords_xform = None
-        # Heuristically locate pointset and triangle arrays, capture an optional coordsys xform
+        # Heuristically locate pointset and triangle arrays
         for da in getattr(img, 'darrays', []):
             arr = getattr(da, 'data', None)
             if arr is None:
@@ -135,28 +134,10 @@ def _load_surface(surface_path: str) -> vtkPolyData:
             if getattr(arr, 'ndim', 0) == 2 and arr.shape[1] == 3:
                 if np.issubdtype(arr.dtype, np.floating) and coords is None:
                     coords = np.asarray(arr, dtype=np.float32)
-                    # Apply GIFTI coordsys xform if present (4x4 affine)
-                    try:
-                        cs = getattr(da, 'coordsys', None)
-                        xf = getattr(cs, 'xform', None) if cs is not None else None
-                        if xf is not None:
-                            xf = np.asarray(xf, dtype=float)
-                            if xf.shape == (4, 4):
-                                coords_xform = xf
-                    except Exception:
-                        pass
                 elif np.issubdtype(arr.dtype, np.integer) and faces is None:
                     faces = np.asarray(arr, dtype=np.int64)
         if coords is None or faces is None:
             raise RuntimeError("Failed to parse coordinates/faces from GIFTI file: " + surface_path)
-        # If an affine coordsys was provided, transform coordinates into that world space
-        if coords_xform is not None:
-            try:
-                hom = np.c_[coords, np.ones((coords.shape[0], 1), dtype=coords.dtype)]
-                coords = (hom @ coords_xform.T)[:, :3]
-            except Exception:
-                # ignore transform errors; use raw coords
-                pass
 
         points = vtkPoints()
         # SetData expects a VTK array; set points one-by-one for compatibility
@@ -219,9 +200,15 @@ class CatImageViewer:
 
     def __init__(self, window_size: int = 400, mirror_surfaces: bool = True, verbose: bool = False, surface_convention: str = "auto"):
         self.window_size = int(window_size)
-        self.mirror_surfaces = bool(mirror_surfaces)
         self.verbose = bool(verbose)
         self.surface_convention = surface_convention.lower()
+        # Avoid double flipping: if a convention is explicitly provided, do not mirror by default
+        if self.surface_convention in ("ras", "lps") and mirror_surfaces:
+            self.mirror_surfaces = False
+            if self.verbose:
+                print("[cat_viewimage] Disabling mirroring due to explicit --surface-convention")
+        else:
+            self.mirror_surfaces = bool(mirror_surfaces)
         self._image = None
         self._vox2world = None  # 4x4 matrix (list of lists)
 
@@ -575,35 +562,66 @@ class CatImageViewer:
         dims = self._image.GetDimensions()
         if self.verbose:
             print(f"[cat_viewimage] Image dimensions: {dims}")
+            try:
+                print("[cat_viewimage] VTK image origin:", self._image.GetOrigin())
+                print("[cat_viewimage] VTK image spacing:", self._image.GetSpacing())
+                dm = self._image.GetDirectionMatrix()
+                if dm is not None:
+                    D = [[dm.GetElement(r, c) for c in range(3)] for r in range(3)]
+                    print("[cat_viewimage] VTK image direction:")
+                    for r in D:
+                        print("    ", r)
+            except Exception:
+                pass
         if dims == (0, 0, 0):
             raise RuntimeError(
                 f"Image appears empty or unreadable (dims={dims}): {image_path}"
             )
-        # Build voxel-to-world from qform/sform if possible
-        self._vox2world = None
+        # Build voxel->world from VTK image properties (origin/spacing/direction)
         try:
-            if nib is not None:
-                img = nib.load(image_path)
-                aff = None
-                # Prefer sform then qform when available
-                if hasattr(img, 'header'):
-                    s = img.header.get_sform(coded=True)
-                    q = img.header.get_qform(coded=True)
-                    if s is not None and s[1] > 0:
-                        aff = s[0]
-                    elif q is not None and q[1] > 0:
-                        aff = q[0]
-                if aff is None and hasattr(img, 'affine'):
-                    aff = img.affine
-                if aff is not None:
-                    self._vox2world = [[float(aff[r, c]) for c in range(4)] for r in range(4)]
-                    if self.verbose:
-                        print("[cat_viewimage] Using voxel->world from qform/sform:")
-                        for r in self._vox2world:
-                            print("   ", r)
-        except Exception as e:
+            ox, oy, oz = self._image.GetOrigin()
+            sx, sy, sz = self._image.GetSpacing()
+            try:
+                dm = self._image.GetDirectionMatrix()
+                D = [[dm.GetElement(r, c) for c in range(3)] for r in range(3)]
+            except Exception:
+                D = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            M = [
+                [D[0][0]*sx, D[0][1]*sy, D[0][2]*sz, ox],
+                [D[1][0]*sx, D[1][1]*sy, D[1][2]*sz, oy],
+                [D[2][0]*sx, D[2][1]*sy, D[2][2]*sz, oz],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+            self._vox2world = M
             if self.verbose:
-                print(f"[cat_viewimage] qform/sform read failed: {e}")
+                print("[cat_viewimage] Using voxel->world from VTK image properties:")
+                for r in self._vox2world:
+                    print("    ", r)
+        except Exception:
+            # Fallback to qform/sform via nibabel
+            self._vox2world = None
+            try:
+                if nib is not None:
+                    img = nib.load(image_path)
+                    aff = None
+                    if hasattr(img, 'header'):
+                        s = img.header.get_sform(coded=True)
+                        q = img.header.get_qform(coded=True)
+                        if s is not None and s[1] > 0:
+                            aff = s[0]
+                        elif q is not None and q[1] > 0:
+                            aff = q[0]
+                    if aff is None and hasattr(img, 'affine'):
+                        aff = img.affine
+                    if aff is not None:
+                        self._vox2world = [[float(aff[r, c]) for c in range(4)] for r in range(4)]
+                        if self.verbose:
+                            print("[cat_viewimage] Using voxel->world from qform/sform (fallback):")
+                            for r in self._vox2world:
+                                print("    ", r)
+            except Exception as e:
+                if self.verbose:
+                    print(f"[cat_viewimage] qform/sform read failed: {e}")
         # Basic window/level from scalar range
         rng = self._image.GetScalarRange()
         self._wl = (float(rng[1] - rng[0]), float(0.5 * (rng[1] + rng[0])))
@@ -620,6 +638,40 @@ class CatImageViewer:
             poly = _mirror_polydata_x(poly)
             if self.verbose:
                 print("[cat_viewimage] Applied surface mirroring (scale -1,1,1)")
+        # Heuristic: if the surface center is far from the image center in world coords,
+        # translate it so centers coincide (common when surfaces are in 0..FOV vs centered at 0).
+        try:
+            if self._image is not None and self._vox2world is not None:
+                extent = self._image.GetExtent()
+                cx = 0.5 * (extent[0] + extent[1])
+                cy = 0.5 * (extent[2] + extent[3])
+                cz = 0.5 * (extent[4] + extent[5])
+                img_center = self._world_from_index_center((cx, cy, cz))
+                # Surface center from bounds
+                b = [0.0]*6
+                poly.GetBounds(b)
+                surf_center = ((b[0] + b[1]) * 0.5, (b[2] + b[3]) * 0.5, (b[4] + b[5]) * 0.5)
+                # Compute image world bounding box diagonal length as scale reference
+                w000 = self._world_from_index((extent[0], extent[2], extent[4]))
+                w111 = self._world_from_index((extent[1], extent[3], extent[5]))
+                diag = ((w111[0]-w000[0])**2 + (w111[1]-w000[1])**2 + (w111[2]-w000[2])**2) ** 0.5
+                # If centers differ by more than 20% of diag (or 10mm minimum), recenter
+                dx = img_center[0] - surf_center[0]
+                dy = img_center[1] - surf_center[1]
+                dz = img_center[2] - surf_center[2]
+                dist = (dx*dx + dy*dy + dz*dz) ** 0.5
+                if dist > max(10.0, 0.2 * diag):
+                    t = vtkTransform()
+                    t.Translate(dx, dy, dz)
+                    f = vtkTransformPolyDataFilter()
+                    f.SetInputData(poly)
+                    f.SetTransform(t)
+                    f.Update()
+                    poly = f.GetOutput()
+                    if self.verbose:
+                        print(f"[cat_viewimage] Recentered surface by translation (dx,dy,dz)=({dx:.3f},{dy:.3f},{dz:.3f})")
+        except Exception:
+            pass
         self.surfaces.append((poly, color))
         return self
 
