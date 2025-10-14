@@ -106,7 +106,6 @@ def inverse_consistent_rigid_N(
     images: Sequence[np.ndarray],
     n_iter: int = 2,
     device: str = "cpu",
-    _iters_per_level: Tuple[int, ...] = (200,),
     verbose: bool = False,
 ) -> RigidICOutputs:
     """Inverse-consistent (unbiased mid-space) rigid registration for N timepoints
@@ -120,9 +119,6 @@ def inverse_consistent_rigid_N(
         Template refinement iterations (2–3 typical).
     device : str
         'cpu' or 'cuda'.
-    iters_per_level : tuple of int
-        Optimization iterations per level (coarse->fine). Will be truncated/extended
-        to match the number of levels.
     verbose : bool
         Whether to print progress from torchreg (tqdm bars).
     """
@@ -163,8 +159,8 @@ def inverse_consistent_rigid_N(
 
             # Rigid-only registration akin to preprocess.run_affine_register
             reg = AffineRegistration(
-                scales=(16, 8),
-                iterations=(300, 100),
+                scales=(24, 12),
+                iterations=(500, 100),
                 is_3d=True,
                 learning_rate=1e-3,
                 verbose=verbose,
@@ -234,6 +230,7 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--iterations", type=int, default=2, help="Template refinement iterations (default: 2)")
     p.add_argument("--device", default="cpu", help="'cpu' or 'cuda'")
     p.add_argument("--save-resampled", action="store_true", help="Also save last-iteration resampled images")
+    p.add_argument("--verbose", action="store_true", help="Be verbose")
     return p.parse_args(argv)
 
 
@@ -245,7 +242,8 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
         im = nib.load(p)
         imgs.append(np.asarray(im.get_fdata(), dtype=np.float32))
         affines.append(im.affine)
-    out = inverse_consistent_rigid_N(imgs, n_iter=args.iterations, device=args.device)
+    out = inverse_consistent_rigid_N(
+          imgs, n_iter=args.iterations, device=args.device, verbose=args.verbose)
 
     # Use first affine for template (unbiased in voxel grid, but affine frame comes from first input)
     outputs_img = nib.Nifti1Image(out.template_img.get_fdata().astype(np.float32), affine=affines[0])
