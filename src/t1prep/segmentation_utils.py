@@ -5,7 +5,6 @@ import nibabel as nib
 import torch.nn.functional as F
 import pandas as pd
 import numpy as np
-import nibabel as nib
 
 from scipy.ndimage import (
     binary_opening,

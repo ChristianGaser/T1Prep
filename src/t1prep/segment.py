@@ -108,42 +108,6 @@ class CustomPreprocess(Preprocess):
     sinc-interpolation
     """
 
-    # Currently not used, since sinc interpolation shows better results
-    def run_segment_brain_modified(self, brain_large, mask, affine, mask_large):
-        brain_large = nifti_to_tensor(brain_large)
-        mask_large = nifti_to_tensor(mask_large)
-        p0_large = self.brain_segment(
-            brain_large[None, None].to(self.device),
-            mask_large[None, None].to(self.device),
-        )[0, 0]
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
-        p0_large[mask_large == 0.0] = 0.0
-        inv_affine = torch.linalg.inv(
-            torch.from_numpy(affine.values).float().to(self.device)
-        )
-        shape = nib.as_closest_canonical(mask).shape
-        grid = F.affine_grid(
-            inv_affine[None, :3],
-            [1, 3, *shape],
-            align_corners=INTERP_KWARGS["align_corners"],
-        )
-        p0 = F.conv3d(
-            p0_large[None, None].to(self.device),
-            unsmooth_kernel(device=self.device)[None, None],
-            padding=1,
-        )
-        p0 = F.grid_sample(p0, grid, align_corners=INTERP_KWARGS["align_corners"])[0, 0]
-        p0 = p0.clip(min=0, max=3).cpu()
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
-        return {
-            "p0_large": reoriented_nifti(
-                p0_large.cpu().numpy(), **self.affine_template_metadata
-            ),
-            "p0": reoriented_nifti(p0.cpu().numpy(), mask.affine, mask.header),
-        }
-
     def run_atlas_register(
         self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
     ):
@@ -245,6 +209,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--report_dir", help="Output report folder", type=str)
     parser.add_argument("--label_dir", help="Output label folder", type=str)
     parser.add_argument("--atlas", help="Atlases for ROI estimation", type=str)
+    parser.add_argument("--amapdir", help="Amap binary folder", type=str)
     parser.add_argument(
         "--surf",
         action="store_true",
@@ -281,8 +246,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--amap", action="store_true", help="(optional) Use AMAP segmentation."
     )
-    parser.add_argument("--amapdir", help="Amap binary folder", type=str)
-    parser.add_argument("--verbose", action="store_true", help="(optional) Be verbose.")
+    parser.add_argument(
+        "--verbose", action="store_true", help="(optional) Be verbose."
+    )
     parser.add_argument(
         "--debug", action="store_true", help="(optional) Do not delete temporary files."
     )
