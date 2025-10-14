@@ -9,5 +9,3 @@ nxbc>=0.2.0
 PySide6>=6.5
 vtk>=9.0.0
 requests
-SimpleITK>=2.1
-
