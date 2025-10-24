@@ -1568,7 +1568,7 @@ class Viewer(QtWidgets.QMainWindow):
         if hasattr(self.ctrl, 'cb_discrete'):
             def _on_discrete_toggled(checked: bool):
                 # Use 2 levels by default when checked
-                self.opts.discrete = 2 if checked else 0
+                self.opts.discrete = 16 if checked else 0
                 # Rebuild overlay LUTs with new discrete setting
                 self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
                 self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
@@ -1912,6 +1912,8 @@ class Viewer(QtWidgets.QMainWindow):
         Interprets opts.discrete as the number of bands (1..4). For N levels,
         the 256-entry table is divided into N segments and each segment is
         filled with a representative color sampled at its start index.
+        
+        NOTE: This is for overlay LUTs applied to surfaces (no gaps).
         """
         levels = int(getattr(self.opts, 'discrete', 0) or 0)
         if levels <= 0:
@@ -1923,6 +1925,52 @@ class Viewer(QtWidgets.QMainWindow):
             end = int((k + 1) * n / levels) if k < levels - 1 else n
             r, g, b, a = lut.GetTableValue(start)
             for i in range(start, end):
+                lut.SetTableValue(i, r, g, b, a)
+
+    def _apply_discrete_to_colorbar_lut(self, lut: vtkLookupTable):
+        """Apply discrete bands with gaps to colorbar LUT only.
+        
+        Matches VTK C++ implementation: at each step boundary (i % steps == 0),
+        insert a gap (background color with full opacity), otherwise preserve the
+        existing color (which may be from clip graying or original colormap).
+        This creates visual separation in the colorbar display.
+        
+        Note: The gap is placed at position i-2 (not i-1 or i-3) because VTK's
+        scalar bar rendering likely samples/interpolates the LUT in a way that
+        makes this specific offset visible. Empirically, i-2 works while other
+        offsets don't produce visible gaps in the colorbar display.
+        """
+        steps = int(getattr(self.opts, 'discrete', 0) or 0)
+        if steps <= 0:
+            return
+        steps = max(1, min(256, steps))
+        
+        # Determine background color for gaps (white if background is white, else black)
+        bkg_white = getattr(self.opts, 'bkg_color', 0) == 1
+        gap_color = (1.0, 1.0, 1.0, 1.0) if bkg_white else (0.0, 0.0, 0.0, 1.0)
+        
+        # Build a temp copy of the LUT colors before modification
+        colors = []
+        for i in range(256):
+            colors.append(lut.GetTableValue(i))
+        
+        # Apply discrete with gaps at block boundaries
+        # At each boundary (i % steps == 0), set gap at position i-2
+        block_color = (0.5, 0.5, 0.5, 1.0)  # Initialize with gray
+        for i in range(256):
+            if i % steps == 0:
+                # At boundary: get color for the new block from original
+                block_color = colors[i]
+                # Set gap at position i-2 (empirically determined to be visible)
+                if i > 0:
+                    lut.SetTableValue(i-1, *gap_color)
+                if i > 1:
+                    lut.SetTableValue(i-2, *gap_color)
+                if i > 2:
+                    lut.SetTableValue(i-3, *gap_color)
+            else:
+                # Use the block's color
+                r, g, b, a = block_color
                 lut.SetTableValue(i, r, g, b, a)
 
     def _invert_lut(self, lut: vtkLookupTable):
@@ -2370,13 +2418,6 @@ class Viewer(QtWidgets.QMainWindow):
             lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
             if self.opts.inverse:
                 self._invert_lut(lut_cb)
-            # Apply discrete bands to colorbar LUT if requested
-            try:
-                steps = int(getattr(self.opts, 'discrete', 0) or 0)
-            except Exception:
-                steps = 0
-            if steps > 0:
-                self._apply_discrete_to_overlay_lut(lut_cb)
             if self.overlay_range[1] > self.overlay_range[0]:
                 lut_cb.SetTableRange(self.overlay_range)
             # Gray out clip span on the colorbar (keep alpha opaque so the bar shows gray)
@@ -2391,6 +2432,13 @@ class Viewer(QtWidgets.QMainWindow):
                         r, g, b, a = lut_cb.GetTableValue(i)
                         gray = 0.5
                         lut_cb.SetTableValue(i, gray, gray, gray, a)
+            # Apply discrete bands WITH GAPS to colorbar LUT AFTER range and clip
+            try:
+                steps = int(getattr(self.opts, 'discrete', 0) or 0)
+            except Exception:
+                steps = 0
+            if steps > 0:
+                self._apply_discrete_to_colorbar_lut(lut_cb)
             self.scalar_bar.SetLookupTable(lut_cb)
 
             # Update title according to title_mode (only if colorbar is enabled)
@@ -2425,12 +2473,6 @@ class Viewer(QtWidgets.QMainWindow):
         lut_cb = get_lookup_table(self.opts.colormap, self.opts.opacity)
         if self.opts.inverse:
             self._invert_lut(lut_cb)
-        try:
-            steps = int(getattr(self.opts, 'discrete', 0) or 0)
-        except Exception:
-            steps = 0
-        if steps > 0:
-            self._apply_discrete_to_overlay_lut(lut_cb)
         if self.overlay_range[1] > self.overlay_range[0]:
             lut_cb.SetTableRange(self.overlay_range)
         c0, c1 = self.opts.clip
@@ -2444,6 +2486,13 @@ class Viewer(QtWidgets.QMainWindow):
                     r, g, b, a = lut_cb.GetTableValue(i)
                     gray = 0.5
                     lut_cb.SetTableValue(i, gray, gray, gray, a)
+        # Apply discrete bands WITH GAPS to colorbar LUT AFTER range and clip
+        try:
+            steps = int(getattr(self.opts, 'discrete', 0) or 0)
+        except Exception:
+            steps = 0
+        if steps > 0:
+            self._apply_discrete_to_colorbar_lut(lut_cb)
 
         sb = vtkScalarBarActor()
         sb.SetOrientationToHorizontal()
@@ -2548,8 +2597,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Predefined ranges for recognized overlays (thickness, pbt)
         kind = detect_overlay_kind(overlay_path)
         if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
-            # Apply requested defaults: overlay 1..5; clip 0..0; bkg -1..1
-            self.overlay_range = [1.0, 5.0]
+            # Apply requested defaults: overlay 0.5..5; clip 0..0; bkg -1..1
+            self.overlay_range = [0.5, 5.0]
             self.opts.clip = (0.0, 0.0)
             self.range_bkg = [-1.0, 1.0]
         else:
