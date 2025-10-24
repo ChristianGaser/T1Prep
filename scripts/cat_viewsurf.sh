@@ -41,6 +41,35 @@ activate_environment() {
     source "$ENV_DIR/bin/activate"    
 }
 
+# Validate that at least one positional arg is an existing file (skip options)
+validate_input_files() {
+    local arg
+    local found=0
+    for arg in "$@"; do
+        # Skip options starting with '-'
+        [[ "$arg" == -* ]] && continue
+        if [[ -e "$arg" ]]; then
+            found=1
+            break
+        fi
+    done
+
+    if [[ $found -eq 0 ]]; then
+        echo "❌ Error: No existing input files found among provided arguments." >&2
+        echo "   Provide at least one existing mesh or overlay file path." >&2
+        echo "" >&2
+        echo "Usage:" >&2
+        echo "  scripts/cat_viewsurf.sh <mesh_or_overlay> [more_overlays...] [options]" >&2
+        echo "" >&2
+        echo "Examples:" >&2
+        echo "  scripts/cat_viewsurf.sh /path/to/lh.central.gii" >&2
+        echo "  scripts/cat_viewsurf.sh /path/to/lh.thickness" >&2
+        echo "" >&2
+        echo "Note: If you passed a wildcard pattern, ensure your shell expands it (avoid quoting *)." >&2
+        exit 1
+    fi
+}
+
 # Main execution
 main() {
         # Show help if called without any arguments
@@ -62,6 +91,9 @@ Notes:
 USAGE
                 exit 1
         fi
+    
+    # Refuse to run if no positional args resolve to existing files
+    validate_input_files "$@"
     
     # Check if environment is already activated
     if ! check_environment; then
