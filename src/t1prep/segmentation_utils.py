@@ -297,7 +297,7 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
 
     datalog = dataSub.astype(np.float32)
     datalog[wm_mask] = np.log(datalog[wm_mask])
-    datalog[np.logical_not(wm_mask)] = 0
+    datalog[np.logical_not(wm_mask) | ~np.isfinite(datalog)] = 0
     datalogmasked = datalog[wm_mask]
     fit_data = np.zeros_like(datalog)
     datalogmaskedcur = np.copy(datalogmasked)
@@ -417,7 +417,7 @@ def fit_intensity_field(
             "Non-positive values found in the masked data. Adjust mask or preprocess the image."
         )
     datalog[maskSub] = np.log(datalog[maskSub])
-    datalog[np.logical_not(maskSub)] = 0
+    datalog[np.logical_not(maskSub) | ~np.isfinite(datalog)] = 0
     datalogmasked = datalog[maskSub]
     fit_data = np.zeros_like(datalog)
     datalogmaskedcur = np.copy(datalogmasked)
