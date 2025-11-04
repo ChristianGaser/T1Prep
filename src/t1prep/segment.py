@@ -473,7 +473,7 @@ def save_results(
     code_vars_right = get_filenames(use_bids, out_name, "right", "", "", ext)
 
     # Get affine segmentations
-    if save_hemilabel or save_mwp or save_wp or save_rp:
+    if save_hemilabel or save_mwp or save_wp or save_rp or (atlas_list is not None):
         p1_affine = F.interpolate(
             nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
         )[0, 0]

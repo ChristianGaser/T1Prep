@@ -206,6 +206,9 @@ parse_args()
       --no-mwp* | --no-warped-seg*)
         save_mwp=0
         ;;
+      --no-atlas*)
+        atlas_vol=""
+        ;;
       --wp* | --warped-seg-nomod)
         save_wp=1
         ;;
@@ -694,8 +697,6 @@ process()
     fi
               
     # Create output folders    
-    # Create output folders (quote each to support spaces in paths)
-    chmod u+w "${outdir0}"
     if [ "${estimate_surf}" -eq 1 ]; then
       mkdir -p "${mri_dir}" "${surf_dir}" "${report_dir}" "${label_dir}"
     else
@@ -1035,6 +1036,9 @@ ${BOLD}${GREEN}Save Options:${NC}
 
   --no-mwp                    
       Skip estimation of modulated and warped segmentations.
+
+  --no-atlas                
+      Skip estimation of volumetric atlases.
 
   --pial-white                
       Additionally estimate pial and white matter surfaces during surface processing.
