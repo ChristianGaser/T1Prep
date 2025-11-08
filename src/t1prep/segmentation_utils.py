@@ -260,7 +260,7 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
     if seg is not None:
         seg0 = seg.get_fdata().copy()
         max_seg = np.max(seg0)
-        mask = seg0 >= 2.75 / 3.0 * max_seg
+        mask = seg0 >= (2.75 / 3.0 * max_seg)
     else:
         # Obtain gradient and its magnitude
         gx, gy, gz = np.gradient(brain0)
