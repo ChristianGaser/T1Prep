@@ -168,7 +168,7 @@ Process all files matching the pattern 'sTRIO*.nii'. Additionally save
 segmentations in native space, including CSF segmentation. The processing 
 pipeline involves two stages of parallelization:
 
-1. Segmentation (Python-based): Runs best with about 24GB of memory per 
+1. Segmentation (Python-based): Runs best with about 16-24GB of memory per 
    process. The number of processes is automatically estimated based on 
    available memory to optimize resource usage.
 
@@ -245,7 +245,7 @@ Append `--gpus all` to `docker run` to enable GPU acceleration when available.
 
 ### Memory & performance
 
-Make sure that the container has at least 12 GB of RAM available. If you are using Docker Desktop/WSL2, increase the VM memory in the settings. If you receive an error message stating that there is no space left on the device: /tmp/, you can try the following:
+Make sure that the container has at least 16-24 GB of RAM available. If you are using Docker Desktop/WSL2, increase the VM memory in the settings. If you receive an error message stating that there is no space left on the device: /tmp/, you can try the following:
 If you obtain an error that no space is left on device: /tmp/ you can try that:
 ```bash
 docker run --rm -it \

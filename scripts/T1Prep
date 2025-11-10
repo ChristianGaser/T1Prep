@@ -62,7 +62,7 @@ main()
   if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
   if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
   if ! [[ "${use_bids_naming}" =~ ^[0-9]+$ ]]; then use_bids_naming=0; fi
-  if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=12; fi
+  if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=24; fi
 
   if [[ "$multi" -ne -2 ]]; then
     logo
@@ -1132,7 +1132,7 @@ ${BLUE}${root_dir}/T1Prep --multi 8 --p --csf --atlas "'neuromorphometrics', 'su
   The processing pipeline involves two stages 
   of parallelization:
   
-  1. Segmentation (Python-based): Runs best with at least 12GB of memory per process. 
+  1. Segmentation (Python-based): Runs best with at least 16-24GB of memory per process. 
      The number of processes is automatically estimated based on available memory to 
      optimize resource usage. If you notice system overload due to peak memory usage
      you can set a higher minimum memory limit using the "--min-memory" flag.

@@ -5,7 +5,7 @@ re_install=0          # Remove the existing installation and reinstall the
                       # required Python libraries
 multi=-1              # Set the number of processes for parallelization. Use '-1' 
                       # to automatically detect the number of available processors
-min_memory=12         # Set the minimum memory size in GB for each process to be parallelized
+min_memory=24         # Set the minimum memory size in GB for each process to be parallelized
 debug=0               # Enable verbose output, retain temporary files, and save 
                       # additional debugging information
 
