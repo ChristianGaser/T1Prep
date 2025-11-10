@@ -282,7 +282,7 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
         mask = median_filter(mask, size=2)
         mask = mask > 0
 
-        mask = find_largest_cluster(mask) # excluding 4.27951/4.90316
+        mask = find_largest_cluster(mask)
 
     if subsamp:
         offset = 0
@@ -296,7 +296,12 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
     dataVoxSize = dataSubVoxSize / subsamp
 
     datalog = dataSub.astype(np.float32)
+    
     datalog[wm_mask] = np.log(datalog[wm_mask])
+    if seg is None and np.sum(np.size(datalog[wm_mask])) < 100:
+        print("Warning: Stopped initial bias field correction since estimated WM mask is too small.")
+        return brain
+        
     datalog[np.logical_not(wm_mask) | ~np.isfinite(datalog)] = 0
     datalogmasked = datalog[wm_mask]
     fit_data = np.zeros_like(datalog)
