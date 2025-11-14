@@ -9,6 +9,7 @@ from .utils import (
     get_volume_native_space,
 )
 from .rigid_ic import inverse_consistent_rigid_N, save_outputs, RigidICOutputs
+from .metrics import compute_cohen_kappa_nifti
 
 __all__ = [
     "run_t1prep",
@@ -22,4 +23,5 @@ __all__ = [
     "inverse_consistent_rigid_N",
     "save_outputs",
     "RigidICOutputs",
+    "compute_cohen_kappa_nifti",
 ]
