@@ -8,7 +8,7 @@ Inputs may be file paths to NIfTI images or nibabel Nifti1Image objects.
 """
 from __future__ import annotations
 
-from typing import Iterable, Optional, Sequence, Tuple, Union
+from typing import Iterable, Optional, Sequence, Tuple, Union, Dict
 
 import numpy as np
 import nibabel as nib
@@ -37,7 +37,7 @@ def compute_cohen_kappa_nifti(
     pred: NiftiLike,
     labels: Optional[Sequence[int]] = None,
     mask_mode: str = "intersection",
-) -> Tuple[float, np.ndarray, Sequence[int]]:
+) -> Tuple[float, np.ndarray, Sequence[int], np.ndarray]:
     """Compute Cohen's kappa for 2- or 3-class integer labels from NIfTI images.
 
     Parameters
@@ -57,12 +57,23 @@ def compute_cohen_kappa_nifti(
 
     Returns
     -------
-    kappa : float
-        Cohen's kappa coefficient (unweighted). NaN if undefined.
+    kappa_all : float
+        Overall Cohen's kappa coefficient (unweighted) across all labels.
     confusion : np.ndarray
         KxK confusion matrix with rows gt and columns pred, for K=len(labels).
     labels_order : Sequence[int]
-        The label values corresponding to the rows/cols of confusion.
+        The label values corresponding to the rows/cols of ``confusion``.
+    kappa_per_label : np.ndarray
+        Per-label kappa values of length K, following the convention of
+        ``cg_confusion_matrix`` in CAT's ``cat_tst_calc_kappa``. Each entry
+        corresponds to the row/column in ``confusion`` for that label.
+
+        When used via the CLI with ``--verbose`` disabled (the default), the
+        compact textual output is a single line of the form::
+
+            kappa: <kappa_all> [<kappa_label_1>,<kappa_label_2>,...]
+
+        where the order of the per-label entries matches ``labels_order``.
 
     Notes
     -----
@@ -82,7 +93,12 @@ def compute_cohen_kappa_nifti(
         present = np.intersect1d(np.unique(y_true), np.unique(y_pred))
         labels_arr = present[present != 0]
         if labels_arr.size == 0:
-            return float("nan"), np.zeros((0, 0), dtype=np.int64), []
+            return (
+                float("nan"),
+                np.zeros((0, 0), dtype=np.int64),
+                [],
+                np.zeros((0,), dtype=float),
+            )
     else:
         labels_arr = np.asarray(labels, dtype=np.int64)
 
@@ -103,7 +119,12 @@ def compute_cohen_kappa_nifti(
     yt = yt[valid]
     yp = yp[valid]
     if yt.size == 0:
-        return float("nan"), np.zeros((K, K), dtype=np.int64), labels_arr.tolist()
+        return (
+            float("nan"),
+            np.zeros((K, K), dtype=np.int64),
+            labels_arr.tolist(),
+            np.zeros((K,), dtype=float),
+        )
 
     # Map to indices
     yt_idx = np.fromiter((label_to_idx[int(v)] for v in yt), count=yt.size, dtype=np.int64)
@@ -115,11 +136,27 @@ def compute_cohen_kappa_nifti(
 
     N = conf.sum()
     if N == 0:
-        return float("nan"), conf, labels_arr.tolist()
+        return float("nan"), conf, labels_arr.tolist(), np.zeros((K,), dtype=float)
+
+    # Overall (global) Cohen's kappa
     po = np.trace(conf) / N
     row = conf.sum(axis=1)
     col = conf.sum(axis=0)
     pe = float(np.dot(row, col)) / (N * N)
     denom = 1.0 - pe
-    kappa = (po - pe) / denom if denom != 0.0 else float("nan")
-    return float(kappa), conf, labels_arr.tolist()
+    kappa_all = (po - pe) / denom if denom != 0.0 else float("nan")
+
+    # Per-label kappas (binary problems per class, like cg_confusion_matrix)
+    kappa_per = np.zeros((K,), dtype=float)
+    for i in range(K):
+        a = float(conf[i, i])
+        b = float(conf[:, i].sum() - a)
+        c = float(conf[i, :].sum() - a)
+        d = float(N - (a + b + c))
+        denom_i = N * (a + c) - (a + c) * (a + b)
+        if denom_i == 0:
+            kappa_per[i] = float("nan")
+        else:
+            kappa_per[i] = (N * a - (a + b) * (a + c)) / (denom_i + np.finfo(float).eps)
+
+    return float(kappa_all), conf, labels_arr.tolist(), kappa_per

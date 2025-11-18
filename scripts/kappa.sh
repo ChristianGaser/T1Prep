@@ -42,12 +42,17 @@ main() {
 Kappa (Cohen's kappa) — wrapper
 
 Usage:
-    scripts/kappa.sh --gt GT.nii.gz --pred PRED.nii.gz [--mask-mode intersection|gt] [--labels 1,2,3] [--save-conf conf.csv]
+    scripts/kappa.sh --gt GT.nii.gz --pred PRED.nii.gz \
+        [--mask-mode intersection|gt] [--labels 1,2,3] [--save-conf conf.csv] [--verbose]
 
 Notes:
     - Wraps Python module: t1prep.kappa
     - Mask is derived from labels: intersection (default) or gt
-  - Activates ./env before running
+    - Without --verbose, prints a single line:
+          <kappa_all> [<kappa_label_1>,<kappa_label_2>,...]
+      where the vector order matches the label list
+    - With --verbose, prints labels, kappa_all, and one line per label
+    - Activates ./env before running
 USAGE
         exit 1
     fi
