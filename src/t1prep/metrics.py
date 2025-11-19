@@ -35,7 +35,6 @@ def _to_bool_mask_from_labels(arr: np.ndarray, labels_arr: np.ndarray) -> np.nda
 def compute_dice_nifti(
     gt: NiftiLike,
     pred: NiftiLike,
-    labels: Optional[Sequence[int]] = None,
 ) -> Tuple[np.ndarray, Sequence[int], np.ndarray, float, float]:
     """Compute Dice-based metrics for 2- or 3-class integer labels from NIfTI images.
 
@@ -45,10 +44,12 @@ def compute_dice_nifti(
         Ground-truth label image (NIfTI). Integer labels (2 or 3 classes).
     pred : str | nib.Nifti1Image
         Test/predicted label image (NIfTI). Integer labels (2 or 3 classes).
-    labels : Sequence[int] | None
-        Which label values to include, e.g., [1, 2] or [1, 2, 3]. If None,
-        labels are inferred as the sorted unique intersection of labels present
-        in gt and pred (excluding 0).
+        Notes
+        -----
+        - All **non-zero** integer labels present in the ground truth ``gt`` are
+            evaluated. The prediction ``pred`` does **not** control which labels are
+            included, so missing classes in ``pred`` are treated as Dice = 0 rather
+            than being silently ignored.
 
     Returns
     -------
@@ -73,11 +74,13 @@ def compute_dice_nifti(
     Notes
     -----
     - Dice-based metrics ignore true negatives (TN) by construction.
-    - Mask is obtained by voxels where both gt and pred are in the selected labels
+    - A brain mask is obtained from ``gt != 0``; all voxels inside this mask
+        contribute to the confusion matrix, so disagreements between ``gt`` and
+        ``pred`` are fully accounted for.
     - Handles degenerate cases by returning NaN when denominators are zero or
-      when there are no valid voxels after masking/label filtering.
-    - Input labels are rounded before casting to integer to tolerate minor float
-      imprecision in saved NIfTI files.
+        when there are no valid voxels after masking.
+    - Input labels are rounded before casting to integer to tolerate minor
+        float imprecision in saved NIfTI files.
     """
     # Load integer labels
     y_true = _load_labels(gt)
@@ -85,36 +88,31 @@ def compute_dice_nifti(
     if y_true.shape != y_pred.shape:
         raise ValueError(f"Shape mismatch: gt {y_true.shape} vs pred {y_pred.shape}")
 
-    # Determine labels to consider
-    if labels is None:
-        # Use intersection of labels present (excluding background 0)
-        present = np.intersect1d(np.unique(y_true), np.unique(y_pred))
-        labels_arr = present[present != 0]
-        if labels_arr.size == 0:
-            return (
-                np.zeros((0, 0), dtype=np.int64),
-                [],
-                np.zeros((0,), dtype=float),
-                float("nan"),
-                float("nan"),
-            )
-    else:
-        labels_arr = np.asarray(labels, dtype=np.int64)
-    print(labels_arr)
+    # Determine labels to consider from ground truth only (exclude background 0)
+    labels_arr = np.unique(y_true)
+    labels_arr = labels_arr[labels_arr != 0]
+    if labels_arr.size == 0:
+        return (
+            np.zeros((0, 0), dtype=np.int64),
+            [],
+            np.zeros((0,), dtype=float),
+            float("nan"),
+            float("nan"),
+        )
 
     # Build mapping from label value to contiguous index 0..K-1
     label_to_idx = {int(v): i for i, v in enumerate(labels_arr.tolist())}
     K = len(labels_arr)
 
-    # Build label-based masks and select valid voxels
-    m_gt = _to_bool_mask_from_labels(y_true, labels_arr)
-    m_pred = _to_bool_mask_from_labels(y_pred, labels_arr)
-    mask_valid = (m_gt & m_pred)
+    # Build a brain mask from ground truth and select valid voxels
+    # All non-zero gt voxels contribute; disagreements in pred are preserved.
+    brain_mask = y_true != 0
 
-    yt = y_true[mask_valid]
-    yp = y_pred[mask_valid]
+    yt = y_true[brain_mask]
+    yp = y_pred[brain_mask]
 
-    # Ensure both yt and yp are within labels (intersection mode already guarantees both)
+    # Ensure both yt and yp are within the label set (in case pred has
+    # unexpected labels); voxels with out-of-set labels are ignored.
     valid = np.isin(yt, labels_arr) & np.isin(yp, labels_arr)
     yt = yt[valid]
     yp = yp[valid]
