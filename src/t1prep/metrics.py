@@ -1,6 +1,6 @@
-"""Metrics utilities: Cohen's kappa for 2- or 3-class NIfTI label maps.
+"""Metrics utilities: Dice-based metrics for 2- or 3-class NIfTI label maps.
 
-This module provides a function to compute Cohen's kappa between an integer
+This module provides a function to compute Dice-based metrics between an integer
 label ground truth and a test label map restricted to a mask and a selected set
 of label values (e.g., [1, 2] or [1, 2, 3]).
 
@@ -15,7 +15,7 @@ import nibabel as nib
 
 NiftiLike = Union[str, nib.Nifti1Image]
 
-__all__ = ["compute_cohen_kappa_nifti"]
+__all__ = ["compute_dice_nifti"]
 
 
 def _load_labels(img: NiftiLike) -> np.ndarray:
@@ -32,13 +32,12 @@ def _to_bool_mask_from_labels(arr: np.ndarray, labels_arr: np.ndarray) -> np.nda
     return np.isin(arr, labels_arr)
 
 
-def compute_cohen_kappa_nifti(
+def compute_dice_nifti(
     gt: NiftiLike,
     pred: NiftiLike,
     labels: Optional[Sequence[int]] = None,
-    mask_mode: str = "intersection",
-) -> Tuple[float, np.ndarray, Sequence[int], np.ndarray]:
-    """Compute Cohen's kappa for 2- or 3-class integer labels from NIfTI images.
+) -> Tuple[np.ndarray, Sequence[int], np.ndarray, float, float]:
+    """Compute Dice-based metrics for 2- or 3-class integer labels from NIfTI images.
 
     Parameters
     ----------
@@ -50,43 +49,42 @@ def compute_cohen_kappa_nifti(
         Which label values to include, e.g., [1, 2] or [1, 2, 3]. If None,
         labels are inferred as the sorted unique intersection of labels present
         in gt and pred (excluding 0).
-    mask_mode : {"intersection", "gt"}
-        How to define the evaluation mask based on labels:
-        - "intersection" (default): voxels where both gt and pred are in the selected labels
-        - "gt": voxels where gt is in the selected labels
 
     Returns
     -------
-    kappa_all : float
-        Overall Cohen's kappa coefficient (unweighted) across all labels.
     confusion : np.ndarray
         KxK confusion matrix with rows gt and columns pred, for K=len(labels).
     labels_order : Sequence[int]
         The label values corresponding to the rows/cols of ``confusion``.
-    kappa_per_label : np.ndarray
-        Per-label kappa values of length K, following the convention of
-        ``cg_confusion_matrix`` in CAT's ``cat_tst_calc_kappa``. Each entry
-        corresponds to the row/column in ``confusion`` for that label.
+    dice_per_label : np.ndarray
+        Per-label Dice coefficients of length K, computed as
+        2*TP / (2*TP + FP + FN) for each class.
+    dice_weighted : float
+        Volume-weighted Dice coefficient: sum_c w_c * Dice_c,
+        where w_c is proportional to the number of gt voxels of class c.
+    generalized_dice : float
+        Generalized Dice coefficient using inverse-squared class volumes as
+        weights:
 
-        When used via the CLI with ``--verbose`` disabled (the default), the
-        compact textual output is a single line of the form::
+            GDC = 2 * sum_c w_c * TP_c / sum_c w_c * (2*TP_c + FP_c + FN_c),
 
-            kappa: <kappa_all> [<kappa_label_1>,<kappa_label_2>,...]
-
-        where the order of the per-label entries matches ``labels_order``.
+        with w_c = 1 / (V_c^2 + eps) and V_c = #gt voxels of class c.
 
     Notes
     -----
-    - This is nominal (unweighted) Cohen's kappa.
-    - Handles degenerate cases by returning NaN when denominator is zero or when
-      there are no valid voxels after masking/label filtering.
+    - Dice-based metrics ignore true negatives (TN) by construction.
+    - Mask is obtained by voxels where both gt and pred are in the selected labels
+    - Handles degenerate cases by returning NaN when denominators are zero or
+      when there are no valid voxels after masking/label filtering.
     - Input labels are rounded before casting to integer to tolerate minor float
       imprecision in saved NIfTI files.
     """
+    # Load integer labels
     y_true = _load_labels(gt)
     y_pred = _load_labels(pred)
     if y_true.shape != y_pred.shape:
         raise ValueError(f"Shape mismatch: gt {y_true.shape} vs pred {y_pred.shape}")
+
     # Determine labels to consider
     if labels is None:
         # Use intersection of labels present (excluding background 0)
@@ -94,36 +92,39 @@ def compute_cohen_kappa_nifti(
         labels_arr = present[present != 0]
         if labels_arr.size == 0:
             return (
-                float("nan"),
                 np.zeros((0, 0), dtype=np.int64),
                 [],
                 np.zeros((0,), dtype=float),
+                float("nan"),
+                float("nan"),
             )
     else:
         labels_arr = np.asarray(labels, dtype=np.int64)
+    print(labels_arr)
 
     # Build mapping from label value to contiguous index 0..K-1
     label_to_idx = {int(v): i for i, v in enumerate(labels_arr.tolist())}
     K = len(labels_arr)
 
-    # Build label-based masks and select valid voxels per mask_mode
+    # Build label-based masks and select valid voxels
     m_gt = _to_bool_mask_from_labels(y_true, labels_arr)
     m_pred = _to_bool_mask_from_labels(y_pred, labels_arr)
-    if mask_mode not in ("intersection", "gt"):
-        raise ValueError("mask_mode must be 'intersection' or 'gt'")
-    mask_valid = (m_gt & m_pred) if mask_mode == "intersection" else m_gt
+    mask_valid = (m_gt & m_pred)
+
     yt = y_true[mask_valid]
     yp = y_pred[mask_valid]
+
     # Ensure both yt and yp are within labels (intersection mode already guarantees both)
     valid = np.isin(yt, labels_arr) & np.isin(yp, labels_arr)
     yt = yt[valid]
     yp = yp[valid]
     if yt.size == 0:
         return (
-            float("nan"),
             np.zeros((K, K), dtype=np.int64),
             labels_arr.tolist(),
-            np.zeros((K,), dtype=float),
+            np.full((K,), np.nan, dtype=float),
+            float("nan"),
+            float("nan"),
         )
 
     # Map to indices
@@ -136,27 +137,65 @@ def compute_cohen_kappa_nifti(
 
     N = conf.sum()
     if N == 0:
-        return float("nan"), conf, labels_arr.tolist(), np.zeros((K,), dtype=float)
+        return (
+            conf,
+            labels_arr.tolist(),
+            np.full((K,), np.nan, dtype=float),
+            float("nan"),
+            float("nan"),
+        )
 
-    # Overall (global) Cohen's kappa
-    po = np.trace(conf) / N
-    row = conf.sum(axis=1)
-    col = conf.sum(axis=0)
-    pe = float(np.dot(row, col)) / (N * N)
-    denom = 1.0 - pe
-    kappa_all = (po - pe) / denom if denom != 0.0 else float("nan")
+    # Row/col sums (gt / pred volumes per class)
+    row = conf.sum(axis=1).astype(float)  # gt counts per class
+    col = conf.sum(axis=0).astype(float)  # pred counts per class
 
-    # Per-label kappas (binary problems per class, like cg_confusion_matrix)
-    kappa_per = np.zeros((K,), dtype=float)
-    for i in range(K):
-        a = float(conf[i, i])
-        b = float(conf[:, i].sum() - a)
-        c = float(conf[i, :].sum() - a)
-        d = float(N - (a + b + c))
-        denom_i = N * (a + c) - (a + c) * (a + b)
-        if denom_i == 0:
-            kappa_per[i] = float("nan")
+    # ------------------------------------------------------------------
+    # Dice per label
+    # ------------------------------------------------------------------
+    dice_per = np.full((K,), np.nan, dtype=float)
+
+    tp = np.diag(conf).astype(float)
+    fn = row - tp
+    fp = col - tp
+    denom_dice = 2.0 * tp + fp + fn
+
+    valid_dice = denom_dice > 0
+    dice_per[valid_dice] = 2.0 * tp[valid_dice] / denom_dice[valid_dice]
+
+    # ------------------------------------------------------------------
+    # Volume-weighted Dice (weights based on gt volumes)
+    # ------------------------------------------------------------------
+    valid_vol = row > 0
+    if np.any(valid_vol) and np.any(valid_dice):
+        valid_combined = valid_vol & valid_dice
+        if np.any(valid_combined):
+            weights = row[valid_combined]
+            weights = weights / weights.sum()
+            dice_weighted = float(np.sum(weights * dice_per[valid_combined]))
         else:
-            kappa_per[i] = (N * a - (a + b) * (a + c)) / (denom_i + np.finfo(float).eps)
+            dice_weighted = float("nan")
+    else:
+        dice_weighted = float("nan")
 
-    return float(kappa_all), conf, labels_arr.tolist(), kappa_per
+    # ------------------------------------------------------------------
+    # Generalized Dice (inverse-squared volume weights)
+    # ------------------------------------------------------------------
+    eps = np.finfo(float).eps
+    valid_gd = row > 0
+    if np.any(valid_gd):
+        w = np.zeros_like(row)
+        w[valid_gd] = 1.0 / (row[valid_gd] ** 2 + eps)
+
+        num = 2.0 * np.sum(w * tp)
+        den = np.sum(w * (2.0 * tp + fp + fn))
+        generalized_dice = float(num / den) if den > 0.0 else float("nan")
+    else:
+        generalized_dice = float("nan")
+
+    return (
+        conf,
+        labels_arr.tolist(),
+        dice_per,
+        float(dice_weighted),
+        float(generalized_dice),
+    )
