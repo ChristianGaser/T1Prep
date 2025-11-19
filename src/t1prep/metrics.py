@@ -8,7 +8,7 @@ Inputs may be file paths to NIfTI images or nibabel Nifti1Image objects.
 """
 from __future__ import annotations
 
-from typing import Iterable, Optional, Sequence, Tuple, Union, Dict
+from typing import Sequence, Tuple, Union
 
 import numpy as np
 import nibabel as nib
