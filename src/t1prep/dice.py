@@ -34,20 +34,21 @@ def main(argv=None) -> int:
     )
     if args.verbose:
         print(f"generalized_dice: {generalized_dice:.6f}")
+        print(f"dice_weighted:    {dice_weighted:.6f}")
         if dice_per.size:
             for lab, kv in zip(order, dice_per):
                 kv_str = "nan" if not np.isfinite(kv) else f"{kv:.6f}"
                 print(f"dice_per[{lab}]: {kv_str}")
     else:
         # Compact single-line output: overall followed by per-label Dice as a vector
-        # Example: "0.800000 [0.750000,0.820000,0.830000]"
+        # Example: "0.800000 0.790000 [0.750000,0.820000,0.830000]"
         if dice_per.size:
             vec_str = ",".join(
                 "nan" if not np.isfinite(kv) else f"{kv:.6f}" for kv in dice_per
             )
-            print(f"{generalized_dice:.6f} [{vec_str}]")
+            print(f"{generalized_dice:.6f} {dice_weighted:.6f} [{vec_str}]")
         else:
-            print(f"{generalized_dice:.6f} []")
+            print(f"{generalized_dice:.6f} {dice_weighted:.6f} []")
     if args.save_conf:
         try:
             np.savetxt(args.save_conf, conf.astype(int), fmt="%d", delimiter=",")
