@@ -21,7 +21,7 @@ def _parse_args(argv=None):
     p.add_argument(
         "--verbose",
         action="store_true",
-        help="Print detailed output (labels, overall and per-label Dice metrics). If not set, prints a single line with generalized_dice and per-label Dice as a vector.",
+        help="Print detailed output (labels, overall and per-label Dice metrics). If not set, prints a single line with per-label Dice as a vector, generalized_dice and dice_weighted.",
     )
     p.add_argument("--save-conf", help="Optional path to save confusion matrix as CSV")
     return p.parse_args(argv)
@@ -39,22 +39,21 @@ def main(argv=None) -> int:
         args.gt, args.pred
     )
     if args.verbose:
-        print(f"generalized_dice: {generalized_dice:.6f}")
-        print(f"dice_weighted:    {dice_weighted:.6f}")
         if dice_per.size:
             for lab, kv in zip(order, dice_per):
                 kv_str = "nan" if not np.isfinite(kv) else f"{kv:.6f}"
                 print(f"dice_per[{lab}]: {kv_str}")
+        print(f"generalized_dice: {generalized_dice:.6f}")
+        print(f"dice_weighted:    {dice_weighted:.6f}")
     else:
         # Compact single-line output: overall followed by per-label Dice as a vector
-        # Example: "0.800000 0.790000 [0.750000,0.820000,0.830000]"
         if dice_per.size:
             vec_str = ",".join(
                 "nan" if not np.isfinite(kv) else f"{kv:.6f}" for kv in dice_per
             )
-            print(f"{generalized_dice:.6f} {dice_weighted:.6f} [{vec_str}]")
+            print(f"{vec_str},{generalized_dice:.6f},{dice_weighted:.6f}")
         else:
-            print(f"{generalized_dice:.6f} {dice_weighted:.6f} []")
+            print(f"{generalized_dice:.6f},{dice_weighted:.6f}")
     if args.save_conf:
         try:
             np.savetxt(args.save_conf, conf.astype(int), fmt="%d", delimiter=",")

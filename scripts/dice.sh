@@ -51,9 +51,9 @@ Notes:
         contribute to the confusion matrix, so disagreements between ``gt`` and
         ``pred`` are fully accounted for.
     - Without --verbose, prints a single line:
-          <generalized_dice> [<dice_label_1>,<dice_label_2>,...]
+          [<dice_label_1>,<dice_label_2>,...] <generalized_dice>,<dice_weighted>
       where the vector order matches the label list
-    - With --verbose, prints generalized_dice, and one line per label
+    - With --verbose, prints one line per label, generalized_dice, and dice_weighted
     - Activates ./env before running
 USAGE
         exit 1

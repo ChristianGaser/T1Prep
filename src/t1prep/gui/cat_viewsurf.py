@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -32,9 +33,6 @@ ORIENT_H = Qt.Orientation.Horizontal
 DOCK_RIGHT = Qt.DockWidgetArea.RightDockWidgetArea
 DOCK_LEFT = Qt.DockWidgetArea.LeftDockWidgetArea
 
-
-# --- Numpy ---
-import numpy as np
 
 # --- Import naming utilities ---
 # (No local utils needed in this module)
