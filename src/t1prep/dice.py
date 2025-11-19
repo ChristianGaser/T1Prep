@@ -3,7 +3,7 @@
 
 Example:
     python -m t1prep.dice --gt path/to/gt.nii.gz --pred path/to/pred.nii.gz \
-            --mask-mode intersection --save-conf conf.csv
+            --save-conf conf.csv
 """
 from __future__ import annotations
 
@@ -29,6 +29,12 @@ def _parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
+    # compute_dice_nifti returns:
+    # conf: confusion matrix (ndarray)
+    # order: label order (list or ndarray)
+    # dice_per: per-label Dice scores (ndarray)
+    # dice_weighted: weighted average Dice score (float)
+    # generalized_dice: generalized Dice score (float)
     conf, order, dice_per, dice_weighted, generalized_dice = compute_dice_nifti(
         args.gt, args.pred
     )
