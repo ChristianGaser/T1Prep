@@ -3,7 +3,7 @@
 
 Example:
     python -m t1prep.dice --gt path/to/gt.nii.gz --pred path/to/pred.nii.gz \
-            --labels 1,2,3 --mask-mode intersection --save-conf conf.csv
+            --mask-mode intersection --save-conf conf.csv
 """
 from __future__ import annotations
 
@@ -19,11 +19,6 @@ def _parse_args(argv=None):
     p.add_argument("--gt", required=True, help="Ground truth NIfTI path")
     p.add_argument("--pred", required=True, help="Test/prediction NIfTI path")
     p.add_argument(
-        "--labels",
-        required=False,
-        help="Comma-separated label values to include (e.g., 1,2 or 1,2,3). If omitted, uses intersection of labels present (excluding 0)",
-    )
-    p.add_argument(
         "--verbose",
         action="store_true",
         help="Print detailed output (labels, overall and per-label Dice metrics). If not set, prints a single line with generalized_dice and per-label Dice as a vector.",
@@ -34,18 +29,10 @@ def _parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
-    labels = None
-    if args.labels:
-        try:
-            labels = [int(s) for s in args.labels.split(",") if s.strip() != ""]
-        except Exception as e:
-            print(f"Failed to parse --labels: {e}", file=sys.stderr)
-            return 2
     conf, order, dice_per, dice_weighted, generalized_dice = compute_dice_nifti(
-        args.gt, args.pred, labels
+        args.gt, args.pred
     )
     if args.verbose:
-        print(f"labels: {order}")
         print(f"generalized_dice: {generalized_dice:.6f}")
         if dice_per.size:
             for lab, kv in zip(order, dice_per):

@@ -43,15 +43,17 @@ Dice-based metric — wrapper
 
 Usage:
     scripts/dice.sh --gt GT.nii.gz --pred PRED.nii.gz \
-        [--labels 1,2,3] [--save-conf conf.csv] [--verbose]
+        [--save-conf conf.csv] [--verbose]
 
 Notes:
     - Wraps Python module: t1prep.dice
-    - Mask is derived from labels: intersection (default) or gt
+    - A brain mask is obtained from ``gt != 0``; all voxels inside this mask
+        contribute to the confusion matrix, so disagreements between ``gt`` and
+        ``pred`` are fully accounted for.
     - Without --verbose, prints a single line:
           <generalized_dice> [<dice_label_1>,<dice_label_2>,...]
       where the vector order matches the label list
-    - With --verbose, prints labels, generalized_dice, and one line per label
+    - With --verbose, prints generalized_dice, and one line per label
     - Activates ./env before running
 USAGE
         exit 1
