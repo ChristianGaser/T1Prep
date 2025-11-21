@@ -845,6 +845,8 @@ def run_segment():
         p0_value[p0_value < 0] = 0
         p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
+    mask_large_value = p0_large.get_fdata() > 1E-3
+        
     # Prepare for resampling
     header_resamp, affine_resamp = get_resampled_header(
         brain.header, brain.affine, target_res, ras_affine
@@ -964,8 +966,17 @@ def run_segment():
             p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM
         )
     else:
-        tmp = p3_large.get_fdata() + 2 * p1_large.get_fdata() + 3 * p2_large.get_fdata()
-        p0_large = nib.Nifti1Image(tmp, affine_resamp, header_resamp)
+        gm = p1_large.get_fdata()
+        wm = p2_large.get_fdata()
+        csf = p3_large.get_fdata()
+        gm, wm, csf = normalize_to_sum1(gm, wm, csf)
+        tmp = csf + 2 * gm + 3 * wm
+        p0_large = nib.Nifti1Image(tmp, p0_large.affine, p0_large.header)
+
+    # We have to apply the initial mask again to the label
+    p0_value = p0_large.get_fdata().copy()
+    p0_value[mask_large_value == 0] = 0
+    p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
     if use_amap or save_lesions:
         p0_value = p0_large.get_fdata().copy()
