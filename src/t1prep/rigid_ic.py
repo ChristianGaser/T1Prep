@@ -183,15 +183,24 @@ def inverse_consistent_rigid_N(
         template = sum(warped_this_iter) / float(len(warped_this_iter))
         last_warped_np = [w.cpu().numpy()[0, 0] for w in warped_this_iter]
 
-    # Convert normalized 3x4 affine to voxel-space 4x4
-    S = np.diag([(W - 1) / 2.0, (H - 1) / 2.0, (D - 1) / 2.0, 1.0]).astype(np.float32)
-    S_inv = np.linalg.inv(S)
+    # Convert normalized 3x4 affine to voxel-space 4x4 (align_corners=True)
+    # Normalized <-> voxel mapping:
+    # v = S*n + o, with S = diag((W-1)/2, (H-1)/2, (D-1)/2), o = [(W-1)/2,(H-1)/2,(D-1)/2]
+    # Homogeneous forms:
+    #   N2V = [[S, o],[0,1]],  V2N = [[S^{-1}, -S^{-1} o],[0,1]] = [[S^{-1}, -1],[0,1]]
+    sx, sy, sz = (W - 1) / 2.0, (H - 1) / 2.0, (D - 1) / 2.0
+    N2V = np.eye(4, dtype=np.float32)
+    N2V[:3, :3] = np.diag([sx, sy, sz]).astype(np.float32)
+    N2V[:3, 3] = np.array([sx, sy, sz], dtype=np.float32)
+    V2N = np.eye(4, dtype=np.float32)
+    V2N[:3, :3] = np.diag([1.0 / sx, 1.0 / sy, 1.0 / sz]).astype(np.float32)
+    V2N[:3, 3] = np.array([-1.0, -1.0, -1.0], dtype=np.float32)
     transforms: List[Dict[str, np.ndarray]] = []
     for A in affines_norm:
         M_norm = np.eye(4, dtype=np.float32)
         M_norm[:3, :3] = A[:, :3]
         M_norm[:3, 3] = A[:, 3]
-        M_vox = S @ M_norm @ S_inv
+        M_vox = N2V @ M_norm @ V2N
         transforms.append({
             "R": A[:, :3].astype(np.float32),
             "t_norm": A[:, 3].astype(np.float32),
@@ -208,9 +217,11 @@ def save_outputs(
     input_paths: Optional[Sequence[str]] = None,
     template_name: str = "rigid_template_T1.nii.gz",
     transform_prefix: str = "tp",
+    save_template: bool = False,
 ) -> List[str]:
     os.makedirs(out_dir, exist_ok=True)
-    nib.save(outputs.template_img, os.path.join(out_dir, template_name))
+    if save_template:
+        nib.save(outputs.template_img, os.path.join(out_dir, template_name))
     tpaths: List[str] = []
     for i, T in enumerate(outputs.transforms_to_template):
         base = f"{transform_prefix}{i}"
@@ -229,13 +240,35 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--out-dir", required=True, help="Output directory for template and transforms")
     p.add_argument("--iterations", type=int, default=2, help="Template refinement iterations (default: 2)")
     p.add_argument("--device", default="cpu", help="'cpu' or 'cuda'")
-    p.add_argument("--save-resampled", action="store_true", help="Also save last-iteration resampled images")
+    # Output control
+    p.add_argument("--save-template", action="store_true", help="Save the resampled template (average) volume")
+    p.add_argument("--save-resampled-inputs", action="store_true", help="Save last-iteration resampled inputs in template space")
+    p.add_argument("--save-resampled", action="store_true", help="Alias for --save-resampled-inputs (deprecated)")
+    p.add_argument(
+        "--update-headers",
+        action="store_true",
+        help="Instead of resampling inputs, write copies with only header (affine) updated to template space",
+    )
+    p.add_argument(
+        "--set-zooms-from-sform",
+        action="store_true",
+        help="When used with --update-headers, also set header pixdim (zooms) from the new sform; default keeps original pixdim",
+    )
+    p.add_argument(
+        "--force-template-zooms",
+        action="store_true",
+        help="When used with --update-headers, set header pixdim to match the first input's pixdim (template reference)",
+    )
     p.add_argument("--verbose", action="store_true", help="Be verbose")
     return p.parse_args(argv)
 
 
 def _main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
+    # Map deprecated alias
+    save_resampled_inputs = args.save_resampled_inputs or args.save_resampled
+    if save_resampled_inputs and args.update_headers:
+        raise SystemExit("--save-resampled-inputs and --update-headers are mutually exclusive")
     imgs = []
     affines = []
     for p in args.inputs:
@@ -249,13 +282,63 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
     outputs_img = nib.Nifti1Image(out.template_img.get_fdata().astype(np.float32), affine=affines[0])
     out = RigidICOutputs(template_img=outputs_img, transforms_to_template=out.transforms_to_template, resampled_in_template=out.resampled_in_template)
 
-    tpaths = save_outputs(out, args.out_dir, input_paths=args.inputs)
+    # Save transforms and (optionally) the template
+    tpaths = save_outputs(out, args.out_dir, input_paths=args.inputs, save_template=args.save_template)
 
-    if args.save_resampled and out.resampled_in_template:
+    # Optionally save resampled inputs in template space
+    if save_resampled_inputs and out.resampled_in_template:
         for i, vol in enumerate(out.resampled_in_template):
-            nib.save(nib.Nifti1Image(vol.astype(np.float32), affines[0]), os.path.join(args.out_dir, f"tp{i}_inTemplate.nii.gz"))
+            base = os.path.splitext(os.path.splitext(os.path.basename(args.inputs[i]))[0])[0]
+            out_path = os.path.join(args.out_dir, f"{base}_inTemplate.nii.gz")
+            nib.save(nib.Nifti1Image(vol.astype(np.float32), affines[0]), out_path)
 
-    print(f"Saved template and {len(tpaths)} transforms to {args.out_dir}")
+    # Or update headers only (no resampling): write copies with adjusted affine
+    if args.update_headers:
+        A_template = affines[0]
+        template_zooms = None
+        if args.force_template_zooms:
+            try:
+                template_zooms = nib.load(args.inputs[0]).header.get_zooms()[:3]
+            except Exception:
+                template_zooms = None
+        for i, in_path in enumerate(args.inputs):
+            im = nib.load(in_path)
+            # M_vox maps template vox -> moving vox (align_corners=True conversion accounted for)
+            # For header update we need moving->template => inverse
+            M_vox = out.transforms_to_template[i]["M_vox"].astype(np.float32)
+            try:
+                M_vox_inv = np.linalg.inv(M_vox)
+            except np.linalg.LinAlgError:
+                print(f"Warning: transform for {in_path} not invertible; skipping header update")
+                continue
+            A_new = A_template @ M_vox_inv
+            # Modify sform/qform on the image object directly to preserve other header fields
+            im.set_sform(A_new, code=1)
+            im.set_qform(A_new, code=1)
+            if args.set_zooms_from_sform:
+                try:
+                    from nibabel.affines import voxel_sizes as _voxel_sizes
+                    vs_new = _voxel_sizes(A_new)
+                    im.header.set_zooms(tuple(float(v) for v in vs_new))
+                except Exception:
+                    pass
+            if args.force_template_zooms and template_zooms is not None:
+                try:
+                    im.header.set_zooms(tuple(float(v) for v in template_zooms))
+                except Exception:
+                    pass
+            base = os.path.splitext(os.path.splitext(os.path.basename(in_path))[0])[0]
+            out_path = os.path.join(args.out_dir, f"{base}_headerAligned.nii.gz")
+            nib.save(im, out_path)
+
+    msg_parts = [f"{len(tpaths)} transforms"]
+    if args.save_template:
+        msg_parts.append("template")
+    if save_resampled_inputs:
+        msg_parts.append("resampled inputs")
+    if args.update_headers:
+        msg_parts.append("header-updated copies")
+    print(f"Saved {', '.join(msg_parts)} to {args.out_dir}")
     return 0
 
 
