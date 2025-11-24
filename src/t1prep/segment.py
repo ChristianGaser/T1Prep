@@ -209,7 +209,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--report_dir", help="Output report folder", type=str)
     parser.add_argument("--label_dir", help="Output label folder", type=str)
     parser.add_argument("--atlas", help="Atlases for ROI estimation", type=str)
-    parser.add_argument("--amapdir", help="Amap binary folder", type=str)
+    parser.add_argument("--bin_dir", help="Amap binary folder", type=str)
     parser.add_argument(
         "--surf",
         action="store_true",
@@ -349,7 +349,7 @@ def affine_register(
 
 
 def run_amap_segmentation(
-    amapdir: str,
+    bin_dir: str,
     p0_large: nib.Nifti1Image,
     brain_large: nib.Nifti1Image,
     mri_dir: str,
@@ -371,7 +371,7 @@ def run_amap_segmentation(
 
     # Call SANLM filter and rename output to original name
     cmd = (
-        os.path.join(amapdir, "CAT_VolSanlm")
+        os.path.join(bin_dir, "CAT_VolSanlm")
         + " "
         + f"{mri_dir}/{out_name}_brain_large_tmp.{ext}"
         + " "
@@ -381,7 +381,7 @@ def run_amap_segmentation(
 
     # Call AMAP and write tissue and label maps
     cmd = (
-        os.path.join(amapdir, "CAT_VolAmap")
+        os.path.join(bin_dir, "CAT_VolAmap")
         + f" -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 "
         + "-h-ornlm 0.05 -write-seg 1 1 1 -sub 64 -label "
         + f"{mri_dir}/{out_name}_seg_large.{ext}"
@@ -747,7 +747,7 @@ def run_segment():
     mri_dir = args.mri_dir
     report_dir = args.report_dir
     label_dir = args.label_dir
-    amap_dir = args.amapdir
+    bin_dir = args.bin_dir
     atlas = args.atlas
 
     # Processing options
@@ -831,6 +831,22 @@ def run_segment():
     brain_value[~mask_value] = 0
     brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
 
+    # Call SANLM filter and rename output to original name
+    """
+    nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
+    print("SANLM")
+    cmd = (
+        os.path.join(bin_dir, "CAT_VolSanlm")
+        + " "
+        + f"{mri_dir}/{out_name}_brain_large_tmp.{ext}"
+        + " "
+        + f"{mri_dir}/{out_name}_brain_large.{ext}"
+    )
+    os.system(cmd)
+    brain_large = nib.load(f"{mri_dir}/{out_name}_brain_large.{ext}")
+    remove_file(f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
+    """
+
     # Step 4: Segmentation
     if verbose:
         count = progress_bar(
@@ -877,9 +893,8 @@ def run_segment():
     if use_amap:
         if verbose:
             count = progress_bar(count, end_count, "Amap segmentation        ")
-        amapdir = args.amapdir
         brain_large, p0_large = run_amap_segmentation(
-            amapdir,
+            bin_dir,
             p0_large,
             brain_large,
             mri_dir,

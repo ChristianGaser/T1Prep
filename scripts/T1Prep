@@ -752,7 +752,7 @@ process()
       cmd="${python} ${src_dir}/segment.py"
       
       # Append options conditionally
-      [ "${use_amap}" -eq 1 ] && cmd+=" --amap --amapdir ${bin_dir}"
+      [ "${use_amap}" -eq 1 ] && cmd+=" --amap"
       [ "${save_mwp}" -eq 1 ] && cmd+=" --mwp"
       [ "${save_wp}" -eq 1 ] && cmd+=" --wp"
       [ "${save_rp}" -eq 1 ] && cmd+=" --rp"
@@ -766,7 +766,7 @@ process()
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"
 
       cmd+=" --seed ${seed} --vessel \"${vessel}\" --label_dir \"${label_dir}\""
-      cmd+=" --input \"${input}\" --mri_dir \"${mri_dir}\""
+      cmd+=" --input \"${input}\" --bin_dir \"${bin_dir}\" --mri_dir \"${mri_dir}\""
       cmd+=" --report_dir \"${report_dir}\" --atlas \"${atlas_vol}\""
       
       # Execute the command and capture exit code
