@@ -186,7 +186,6 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
 
     # 4) Identify vessels by assuming that they are surrounded by CSF or GM (checked by
     # filling) and are estimated as WM. Move vessels in WM into CSF.
-    
     lbl = np.argmax(np.stack([csf, gm, wm], axis=0), axis=0)
     csf_label = lbl == 0
     gm_label = lbl == 1
@@ -267,7 +266,7 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
         grad_mag = np.sqrt(gx**2 + gy**2 + gz**2)
 
         # Mask out regions with high gradient (i.e. GM, sulci, vessels)
-        mask = brain0 * ((grad_mag / brain0) < 0.075)
+        mask = brain0 * ((grad_mag / brain0) < 0.1)
 
         # Remove low intensity areas that are rather GM
         thresh = np.quantile(mask[mask != 0], 0.3)
@@ -292,6 +291,7 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
     else:
         dataSub = brain0
         wm_mask = mask
+        
     dataSubVoxSize = 1 / (np.array(dataSub.shape) - 1)
     dataVoxSize = dataSubVoxSize / subsamp
 
@@ -654,9 +654,10 @@ def handle_lesions(
         affine,
         p0_large.header,
         p0_large.affine,
-        "cat_wmh_miccai2017",
+        "cat_wmh",
         None,
         device,
+        is_label_atlas=False,
     )
     wmh_tpm = atlas.get_fdata().copy()
     wmh_tpm /= np.max(wmh_tpm)
@@ -706,9 +707,53 @@ def handle_lesions(
 
 
 def get_atlas(
-    t1, affine, target_header, target_affine, atlas_name, warp_yx=None, device="cpu"
+    t1,
+    affine,
+    target_header,
+    target_affine,
+    atlas_name,
+    warp_yx=None,
+    device="cpu",
+    is_label_atlas: bool = True,
 ):
-    """Generate an atlas-aligned image for segmentation."""
+    """Generate an atlas-aligned image in the target space.
+
+    Parameters
+    ----------
+    t1 : nib.Nifti1Image
+        Reference image in target space. Only the shape is used here
+        when applying the deformation field.
+    affine : np.ndarray
+        Affine of the target image used for atlas registration.
+    target_header : nib.Nifti1Header
+        Header of the target image; copied to the returned atlas image.
+    target_affine : np.ndarray
+        Affine of the target image; used as transform for the returned atlas.
+    atlas_name : str
+        Base file name of the atlas (``<atlas_name>.nii.gz`` located in
+        ``TEMPLATE_PATH_T1PREP``).
+    warp_yx : nib.Nifti1Image, optional
+        Optional deformation field from atlas space to target space. If
+        provided, the atlas is first warped using this field before
+        resampling to the requested output grid.
+    device : str or torch.device, optional
+        Device on which interpolation is performed (default: ``"cpu"``).
+    is_label_atlas : bool, optional
+        If ``True`` (default), the atlas is assumed to contain discrete
+        labels. Nearest-neighbour interpolation is used and the result is
+        stored as an integer type (``uint8`` if the maximum label is
+        smaller than 256, otherwise ``int16``).
+
+        If ``False``, the atlas is assumed to contain continuous values
+        (e.g., tissue probability maps). Linear interpolation is used and
+        the output is stored as floating point (``float32``).
+
+    Returns
+    -------
+    nib.Nifti1Image
+        Atlas image resampled into the target space.
+
+    """
     header = target_header
     dim_hdr = target_header["dim"][1:4]
     dim = tuple(int(x) for x in dim_hdr)
@@ -730,10 +775,20 @@ def get_atlas(
         atlas = atlas_register(affine, warps[shape], atlas, t1.shape)
 
     atlas_tensor = nifti_to_tensor(atlas)[None, None].to(device)
-    atlas_tensor = F.interpolate(atlas_tensor, dim, mode="nearest")[0, 0]
-    atlas_tensor = atlas_tensor.type(
-        torch.uint8 if atlas_tensor.max() < 256 else torch.int16
-    )
+
+    # Choose interpolation mode and output dtype depending on whether
+    # the atlas contains discrete labels or continuous values.
+    if is_label_atlas:
+        atlas_tensor = F.interpolate(atlas_tensor, dim, mode="nearest")[0, 0]
+        atlas_tensor = atlas_tensor.type(
+            torch.uint8 if atlas_tensor.max() < 256 else torch.int16
+        )
+    else:
+        atlas_tensor = F.interpolate(
+            atlas_tensor, dim, mode="trilinear", align_corners=False
+        )[0, 0]
+        atlas_tensor = atlas_tensor.to(torch.float32)
+
     atlas_np = atlas_tensor.cpu().numpy()
     return nib.Nifti1Image(atlas_np, transform, header)
 
