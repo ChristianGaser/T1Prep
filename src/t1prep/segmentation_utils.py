@@ -793,20 +793,45 @@ def get_atlas(
     return nib.Nifti1Image(atlas_np, transform, header)
 
 
-def get_cerebellum(atlas):
-    """Return a binary cerebellum mask from the IBSR atlas."""
-    rois = pd.read_csv(f"{TEMPLATE_PATH_T1PREP}/ibsr.csv", sep=";")[
+def get_regions_mask(
+    atlas: nib.Nifti1Image,
+    atlas_name: str,
+    region_abbrs: list[str],
+) -> np.ndarray:
+    """Return a binary mask for a set of regions in a label atlas.
+
+    This helper reads the ROI definition CSV associated with ``atlas_name``
+    (``<atlas_name>.csv`` in ``TEMPLATE_PATH_T1PREP``), maps region
+    abbreviations to their numeric IDs, and returns a boolean mask where
+    voxels belonging to any of the requested regions are ``True``.
+
+    Parameters
+    ----------
+    atlas : nib.Nifti1Image
+        Label atlas image in the same space as the desired mask.
+    atlas_name : str
+        Base name of the atlas (e.g. ``"ibsr"``). The corresponding CSV
+        file is expected at ``TEMPLATE_PATH_T1PREP/<atlas_name>.csv`` and
+        must contain at least the columns ``ROIid`` and ``ROIabbr``.
+    region_abbrs : list of str
+        List of ROI abbreviations to include in the mask (e.g.
+        ``["lCbeWM", "lCbeGM", "rCbeWM", "rCbeGM"]``).
+
+    Returns
+    -------
+    np.ndarray
+        Boolean array with the same shape as ``atlas.get_fdata()``, where
+        ``True`` indicates voxels belonging to any of the requested
+        regions.
+
+    """
+    rois = pd.read_csv(f"{TEMPLATE_PATH_T1PREP}/{atlas_name}.csv", sep=";")[
         ["ROIid", "ROIabbr"]
     ]
     regions = dict(zip(rois.ROIabbr, rois.ROIid))
-    atlas = atlas.get_fdata().copy()
-    cerebellum = (
-        (atlas == regions["lCbeWM"])
-        | (atlas == regions["lCbeGM"])
-        | (atlas == regions["rCbeWM"])
-        | (atlas == regions["rCbeGM"])
-    )
-    return cerebellum
+    atlas_data = np.round(atlas.get_fdata())
+    region_ids = [regions[r] for r in region_abbrs if r in regions]
+    return np.isin(atlas_data, region_ids)
 
 
 def get_partition(p0_large, atlas):
