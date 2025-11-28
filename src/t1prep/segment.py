@@ -50,7 +50,8 @@ from segmentation_utils import (
     get_atlas,
     get_partition,
     cleanup_vessels,
-    get_cerebellum,
+    laplacian_3d,
+    get_regions_mask,
     correct_label_map,
     apply_LAS,
     handle_lesions,
@@ -701,7 +702,14 @@ def save_results(
             if verbose:
                 count = progress_bar(count, end_count, "Atlas creation     ")
             atlas = get_atlas(
-                t1, affine, p0_large.header, p0_large.affine, "ibsr", warp_yx, device
+                t1,
+                affine,
+                p0_large.header,
+                p0_large.affine,
+                "ibsr",
+                warp_yx,
+                device,
+                is_label_atlas=True,
             )
             lh, rh = get_partition(p0_large, atlas)
 
@@ -970,11 +978,56 @@ def run_segment():
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) to refine segmentation
     if vessel > 0:
         atlas = get_atlas(
-            t1, affine, p0_large.header, p0_large.affine, "ibsr", None, device
+            t1,
+            affine,
+            p0_large.header,
+            p0_large.affine,
+            "neuromorphometrics",
+            None,
+            device,
+            is_label_atlas=True,
         )
-        cerebellum = get_cerebellum(atlas)
+        cerebellar_regions = ["Cerebellar Vermal Lobules I-V",
+            "Cerebellar Vermal Lobules VI-VII",
+            "Right Cerebellum White Matter",
+            "Left Cerebellum White Matter",
+            "Right Cerebellum Exterior",
+            "Left Cerebellum Exterior"]
+        cerebellum = get_regions_mask(atlas, "neuromorphometrics", cerebellar_regions)
+
+        """
+        insular_regions = ["Right AIns anterior insula",
+            "Left AIns anterior insula",
+            "Right FO frontal operculum",
+            "Left FO frontal operculum",
+            "Right PIns posterior insula",
+            "Left PIns posterior insula"]
+        insula = get_regions_mask(atlas, "neuromorphometrics", insular_regions)
+        nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
+        cb_large = nib.Nifti1Image(cerebellum, p0_large.affine, p0_large.header)
+        nib.save(cb_large, f"{mri_dir}/{out_name}_cb_large.{ext}")
+        ins_large = nib.Nifti1Image(insula, p0_large.affine, p0_large.header)
+        nib.save(ins_large, f"{mri_dir}/{out_name}_insula_large.{ext}")
+        
+        insula_nvox = np.sum(insula)
+        bloodvessels = -laplacian_3d(p2_large.get_fdata())
+        bloodvessels[(~insula) | (bloodvessels < 0)] = 0
+        bv_large = nib.Nifti1Image(bloodvessels, p0_large.affine, p0_large.header)
+        nib.save(bv_large, f"{mri_dir}/{out_name}_bv_large.{ext}")
+        
+        bloodvessels_wm_ratio = 100*np.sum(bloodvessels)/insula_nvox
+        print(bloodvessels_wm_ratio)
+        """
+
         atlas = get_atlas(
-            t1, affine, p0_large.header, p0_large.affine, "csf_TPM", None, device
+            t1,
+            affine,
+            p0_large.header,
+            p0_large.affine,
+            "csf_TPM",
+            None,
+            device,
+            is_label_atlas=False,
         )
         csf_TPM = atlas.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
