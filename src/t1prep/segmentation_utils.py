@@ -220,6 +220,13 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
     return label, gm, wm, csf
 
 
+def laplacian_3d(f, spacing=(1.0, 1.0, 1.0)):
+    dz, dy, dx = spacing
+    grad = np.gradient(f, dz, dy, dx)
+    lap = sum(np.gradient(grad[i], (dz, dy, dx)[i], axis=i) for i in range(3))
+    return lap
+    
+
 def piecewise_linear_scaling(input_img, label_img):
     """Piecewise linear scaling of an intensity image."""
     target_values = np.arange(0, 5)
@@ -796,13 +803,13 @@ def get_atlas(
 def get_regions_mask(
     atlas: nib.Nifti1Image,
     atlas_name: str,
-    region_abbrs: list[str],
+    region_name: list[str],
 ) -> np.ndarray:
     """Return a binary mask for a set of regions in a label atlas.
 
     This helper reads the ROI definition CSV associated with ``atlas_name``
     (``<atlas_name>.csv`` in ``TEMPLATE_PATH_T1PREP``), maps region
-    abbreviations to their numeric IDs, and returns a boolean mask where
+    name to their numeric IDs, and returns a boolean mask where
     voxels belonging to any of the requested regions are ``True``.
 
     Parameters
@@ -813,9 +820,9 @@ def get_regions_mask(
         Base name of the atlas (e.g. ``"ibsr"``). The corresponding CSV
         file is expected at ``TEMPLATE_PATH_T1PREP/<atlas_name>.csv`` and
         must contain at least the columns ``ROIid`` and ``ROIabbr``.
-    region_abbrs : list of str
-        List of ROI abbreviations to include in the mask (e.g.
-        ``["lCbeWM", "lCbeGM", "rCbeWM", "rCbeGM"]``).
+    region_name : list of str
+        List of ROI name (``"ROIname"``) to include in the mask (e.g.
+        ``["Left Cerebellum White Matter", "Right Cerebellum White Matter"]``).
 
     Returns
     -------
@@ -826,11 +833,11 @@ def get_regions_mask(
 
     """
     rois = pd.read_csv(f"{TEMPLATE_PATH_T1PREP}/{atlas_name}.csv", sep=";")[
-        ["ROIid", "ROIabbr"]
+        ["ROIid", "ROIname"]
     ]
-    regions = dict(zip(rois.ROIabbr, rois.ROIid))
+    regions = dict(zip(rois.ROIname, rois.ROIid))
     atlas_data = np.round(atlas.get_fdata())
-    region_ids = [regions[r] for r in region_abbrs if r in regions]
+    region_ids = [regions[r] for r in region_name if r in regions]
     return np.isin(atlas_data, region_ids)
 
 
