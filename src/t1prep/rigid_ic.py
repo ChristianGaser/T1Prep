@@ -26,6 +26,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import nibabel as nib
+from nibabel.affines import voxel_sizes as _voxel_sizes
+from scipy.linalg import expm, logm
+from scipy.spatial.transform import Rotation
 from torchreg.affine import AffineRegistration
 
 
@@ -100,6 +103,69 @@ def _ncc_loss(x: torch.Tensor, y: torch.Tensor, eps: float = 1e-5) -> torch.Tens
     num = (xv * yv).mean()
     den = torch.sqrt((xv * xv).mean() * (yv * yv).mean() + eps)
     return 1.0 - (num / (den + eps))  # minimize 1 - NCC
+
+
+def _project_to_rotation(matrix: np.ndarray) -> np.ndarray:
+    """Return the closest pure rotation (SO(3)) using SVD."""
+
+    U, _, Vt = np.linalg.svd(matrix)
+    R = U @ Vt
+    if np.linalg.det(R) < 0:
+        U[:, -1] *= -1.0
+        R = U @ Vt
+    return R
+
+
+def _apply_reference_zooms(affine: np.ndarray, reference_zooms: Optional[Sequence[float]]) -> np.ndarray:
+    """Replace the linear part with reference voxel sizes while keeping orientation."""
+
+    if reference_zooms is None:
+        return affine.astype(np.float64)
+    linear = affine[:3, :3]
+    R = _project_to_rotation(linear)
+    result = affine.astype(np.float64)
+    result[:3, :3] = R @ np.diag(np.asarray(reference_zooms, dtype=np.float64))
+    return result
+
+
+def _rigid_affine_mean(mats: Sequence[np.ndarray], reference_zooms: Optional[Sequence[float]]) -> np.ndarray:
+    """Rigid-only average: mean translation + quaternion average of rotations."""
+
+    if not mats:
+        raise ValueError("Need at least one affine to average")
+    translations = np.stack([m[:3, 3] for m in mats], axis=0)
+    rotations = np.stack([_project_to_rotation(m[:3, :3]) for m in mats], axis=0)
+    try:
+        rot = Rotation.from_matrix(rotations)
+        R_mean = rot.mean().as_matrix()
+    except Exception:
+        R_mean = _project_to_rotation(rotations.mean(axis=0))
+    affine = np.eye(4, dtype=np.float64)
+    affine[:3, :3] = R_mean
+    affine[:3, 3] = translations.mean(axis=0)
+    return _apply_reference_zooms(affine, reference_zooms)
+
+
+def _log_euclidean_affine_mean(
+    mats: Sequence[np.ndarray], reference_zooms: Optional[Sequence[float]]
+) -> np.ndarray:
+    """Log-Euclidean mean for affine matrices with rigid fallback."""
+
+    if not mats:
+        raise ValueError("Need at least one affine to average")
+    try:
+        logs = [logm(m) for m in mats]
+        mean_log = sum(logs) / float(len(logs))
+        mean_affine = expm(mean_log)
+        if np.iscomplexobj(mean_affine):
+            max_imag = float(np.abs(mean_affine.imag).max())
+            if max_imag > 1e-6:
+                return _rigid_affine_mean(mats, reference_zooms)
+            mean_affine = mean_affine.real
+    except Exception:
+        return _rigid_affine_mean(mats, reference_zooms)
+    mean_affine[3, :] = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+    return _apply_reference_zooms(mean_affine, reference_zooms)
 
 
 def inverse_consistent_rigid_N(
@@ -234,6 +300,22 @@ def save_outputs(
     return tpaths
 
 
+def _compute_template_affine(
+    input_affines: Sequence[np.ndarray],
+    transforms_to_template: Sequence[Dict[str, np.ndarray]],
+) -> np.ndarray:
+    """Average template→world mapping following CAT12's midpoint strategy."""
+
+    reference_zooms = tuple(float(v) for v in _voxel_sizes(input_affines[0]))
+    template_to_world: List[np.ndarray] = []
+    for affine, transform in zip(input_affines, transforms_to_template):
+        M_vox = transform["M_vox"].astype(np.float64)
+        template_to_world.append(affine.astype(np.float64) @ M_vox)
+    if len(template_to_world) == 1:
+        return _apply_reference_zooms(template_to_world[0], reference_zooms)
+    return _log_euclidean_affine_mean(template_to_world, reference_zooms)
+
+
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Inverse-consistent rigid registration (mid-space) for N timepoints (PyTorch)")
     p.add_argument("--inputs", nargs="+", required=True, help="Input T1 images (NIfTI, same shape)")
@@ -276,10 +358,10 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
         imgs.append(np.asarray(im.get_fdata(), dtype=np.float32))
         affines.append(im.affine)
     out = inverse_consistent_rigid_N(
-          imgs, n_iter=args.iterations, device=args.device, verbose=args.verbose)
+        imgs, n_iter=args.iterations, device=args.device, verbose=args.verbose)
 
-    # Use first affine for template (unbiased in voxel grid, but affine frame comes from first input)
-    outputs_img = nib.Nifti1Image(out.template_img.get_fdata().astype(np.float32), affine=affines[0])
+    template_affine = _compute_template_affine(affines, out.transforms_to_template)
+    outputs_img = nib.Nifti1Image(out.template_img.get_fdata().astype(np.float32), affine=template_affine)
     out = RigidICOutputs(template_img=outputs_img, transforms_to_template=out.transforms_to_template, resampled_in_template=out.resampled_in_template)
 
     # Save transforms and (optionally) the template
@@ -290,17 +372,14 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
         for i, vol in enumerate(out.resampled_in_template):
             base = os.path.splitext(os.path.splitext(os.path.basename(args.inputs[i]))[0])[0]
             out_path = os.path.join(args.out_dir, f"{base}_inTemplate.nii.gz")
-            nib.save(nib.Nifti1Image(vol.astype(np.float32), affines[0]), out_path)
+            nib.save(nib.Nifti1Image(vol.astype(np.float32), template_affine), out_path)
 
     # Or update headers only (no resampling): write copies with adjusted affine
     if args.update_headers:
-        A_template = affines[0]
+        A_template = template_affine
         template_zooms = None
         if args.force_template_zooms:
-            try:
-                template_zooms = nib.load(args.inputs[0]).header.get_zooms()[:3]
-            except Exception:
-                template_zooms = None
+            template_zooms = tuple(float(v) for v in _voxel_sizes(A_template))
         for i, in_path in enumerate(args.inputs):
             im = nib.load(in_path)
             # M_vox maps template vox -> moving vox (align_corners=True conversion accounted for)
