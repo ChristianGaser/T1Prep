@@ -129,6 +129,30 @@ def _is_identity(matrix: np.ndarray, atol: float = 1e-5) -> bool:
     return np.allclose(matrix, np.eye(matrix.shape[0]), atol=atol)
 
 
+def _split_nifti_name(path: str) -> Tuple[str, str]:
+    basename = os.path.basename(path)
+    lower = basename.lower()
+    if lower.endswith(".nii.gz"):
+        return basename[:-7], ".nii.gz"
+    if lower.endswith(".nii"):
+        return basename[:-4], ".nii"
+    base, ext = os.path.splitext(basename)
+    if ext.lower() == ".gz" and base.lower().endswith(".nii"):
+        return base[:-4], ".nii.gz"
+    if ext:
+        return base, ext
+    return base, ".nii"
+
+
+def _build_output_path(inp_path: str, out_dir: str, naming: str, suffix: str = "") -> str:
+    stem, ext = _split_nifti_name(inp_path)
+    if naming == "bids":
+        name = f"{stem}{suffix}{ext}"
+    else:
+        name = f"r{stem}{ext}"
+    return os.path.join(out_dir, name)
+
+
 def _resample_images_to_reference(
     images: Sequence[nib.Nifti1Image],
     transforms: Sequence[np.ndarray],
@@ -356,30 +380,24 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "to the first scan (mirrors spm_realign without register-to-mean)."
         ),
     )
+    p.add_argument(
+        "--output-naming",
+        choices=("bids", "legacy"),
+        default="bids",
+        help=(
+            "Output naming scheme: 'bids' keeps suffix-based names (default); 'legacy' prefixes outputs "
+            "with 'r' to mimic classic SPM naming."
+        ),
+    )
     p.add_argument("--verbose", action="store_true", help="Print optimizer diagnostics")
     return p.parse_args(argv)
-
-
-def _save_transforms(
-    transforms: Sequence[np.ndarray],
-    inputs: Sequence[str],
-    out_dir: str,
-) -> List[str]:
-    os.makedirs(out_dir, exist_ok=True)
-    paths: List[str] = []
-    for idx, (path, T) in enumerate(zip(inputs, transforms)):
-        base = os.path.splitext(os.path.splitext(os.path.basename(path))[0])[0]
-        out_path = os.path.join(out_dir, f"{base}_toRef_rigid.npz")
-        np.savez_compressed(out_path, T=T.astype(np.float32))
-        paths.append(out_path)
-    return paths
 
 
 def run_cli(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
     save_resampled_inputs = args.save_resampled
     if save_resampled_inputs and args.update_headers:
-        raise SystemExit("--save-resampled-inputs and --update-headers are mutually exclusive")
+        raise SystemExit("--save-resampled and --update-headers are mutually exclusive")
 
     imgs = [nib.load(p) for p in args.inputs]
     outputs = rigid_realign_to_first(
@@ -399,13 +417,10 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
         print(f"  [{path}]")
         print(T)
 
-    tpaths = _save_transforms(outputs.transforms, args.inputs, args.out_dir)
-
     if save_resampled_inputs:
         out_vols = _resample_images_to_reference(imgs, outputs.transforms, ref_img)
         for inp, vol in zip(args.inputs, out_vols):
-            base = os.path.splitext(os.path.splitext(os.path.basename(inp))[0])[0]
-            out_path = os.path.join(args.out_dir, f"{base}_inRef.nii.gz")
+            out_path = _build_output_path(inp, args.out_dir, args.output_naming, suffix="_desc-realigned")
             nib.save(nib.Nifti1Image(vol, ref_img.affine, ref_img.header), out_path)
 
     if args.update_headers:
@@ -429,21 +444,13 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
                     header.set_zooms(template_zooms)
                 except Exception:
                     pass
-            base = os.path.splitext(os.path.splitext(os.path.basename(path))[0])[0]
-            out_path = os.path.join(args.out_dir, f"{base}_headerAligned.nii.gz")
+            out_path = _build_output_path(path, args.out_dir, args.output_naming, suffix="_desc-headerAligned")
             nib.save(nib.Nifti1Image(data, new_affine, header=header), out_path)
 
     if args.save_template:
-        nib.save(ref_img, os.path.join(args.out_dir, "reference.nii.gz"))
+        _, ext = _split_nifti_name(args.inputs[0])
+        nib.save(ref_img, os.path.join(args.out_dir, f"reference{ext}"))
 
-    msg_parts = [f"{len(tpaths)} transforms"]
-    if save_resampled_inputs:
-        msg_parts.append("resampled inputs")
-    if args.update_headers:
-        msg_parts.append("header-updated copies")
-    if args.save_template:
-        msg_parts.append("reference copy")
-    print(f"Saved {', '.join(msg_parts)} to {args.out_dir}")
     return 0
 
 
