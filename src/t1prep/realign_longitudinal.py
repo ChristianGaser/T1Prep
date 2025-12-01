@@ -257,7 +257,7 @@ def rigid_realign_to_first(
     n_samples: int = 40000,
     verbose: bool = False,
     inverse_consistent: bool = False,
-    register_to_mean: bool = False,
+    register_to_mean: bool = True,
 ) -> RigidRealignOutputs:
     """Rigidly align all images either to the first volume or to a derived mean.
 
@@ -280,10 +280,11 @@ def rigid_realign_to_first(
         reference by computing the SE(3) barycentre of the estimated transforms
         (akin to ``spm_meanm``) and re-centring them around this average.
     register_to_mean:
-        When ``True`` perform a second alignment pass using the rigidly-aligned
-        mean image from the first pass as template. This mimics
+        When ``True`` (default) perform a second alignment pass using the
+        rigidly-aligned mean image from the first pass as template. This mimics
         ``spm_realign``'s "register-to-mean" option and is more robust when the
-        first volume is noisy or corrupted.
+        first volume is noisy or corrupted. Disable it to align strictly to the
+        first scan.
     """
 
     assert len(images) >= 1, "Need at least one image"
@@ -338,8 +339,7 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--iterations", type=int, default=3, help="Multi-scale passes (default: 3)")
     p.add_argument("--device", default="cpu", help="Ignored placeholder for interface compatibility")
     p.add_argument("--save-template", action="store_true", help="Save the reference volume (for parity)")
-    p.add_argument("--save-resampled-inputs", action="store_true", help="Write resampled copies in reference space")
-    p.add_argument("--save-resampled", action="store_true", help="Alias for --save-resampled-inputs")
+    p.add_argument("--save-resampled", action="store_true", help="Write resampled copies in reference space")
     p.add_argument("--update-headers", action="store_true", help="Only update headers with new affines")
     p.add_argument("--set-zooms-from-sform", action="store_true", help="Copy pixdim from updated sform")
     p.add_argument("--force-template-zooms", action="store_true", help="Use reference zooms even when updating headers")
@@ -349,11 +349,11 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Re-center rigid transforms using a barycentric SE(3) mean (SPM-style)",
     )
     p.add_argument(
-        "--register-to-mean",
+        "--register-to-first",
         action="store_true",
         help=(
-            "Perform a second pass that registers every scan to the rigidly-aligned "
-            "mean image (mirrors spm_realign's register-to-mean option)."
+            "Skip the mean-template refinement pass and keep the initial alignment "
+            "to the first scan (mirrors spm_realign without register-to-mean)."
         ),
     )
     p.add_argument("--verbose", action="store_true", help="Print optimizer diagnostics")
@@ -377,7 +377,7 @@ def _save_transforms(
 
 def run_cli(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
-    save_resampled_inputs = args.save_resampled_inputs or args.save_resampled
+    save_resampled_inputs = args.save_resampled
     if save_resampled_inputs and args.update_headers:
         raise SystemExit("--save-resampled-inputs and --update-headers are mutually exclusive")
 
@@ -387,11 +387,11 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
         n_iter=args.iterations,
         verbose=args.verbose,
         inverse_consistent=args.inverse_consistent,
-        register_to_mean=args.register_to_mean,
+        register_to_mean=not args.register_to_first,
     )
     ref_img = outputs.reference_img
 
-    print("Reference affine (first input):")
+    print("Reference affine (final template):")
     print(ref_img.affine)
 
     print("Rigid transforms (world space):")
