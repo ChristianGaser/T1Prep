@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
 # Longitudinal rigid realignment wrapper
-# Ensures the project virtualenv is active before executing t1prep.realign_longitudinal
+# Ensures the virtual environment is activated before running t1prep.realign_longitudinal
 
-set -euo pipefail
+set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_DIR="$PROJECT_DIR/env"
 
+check_environment() {
+    if [[ "$VIRTUAL_ENV" == "$ENV_DIR" ]]; then
+        return 0
+    else
+        if [[ ! -d "$ENV_DIR" ]]; then
+            echo "❌ Error: Virtual environment not found: $ENV_DIR" >&2
+            exit 1
+        fi
+        # shellcheck disable=SC1090
+        source "$ENV_DIR/bin/activate"
+    fi
+}
+
 activate_environment() {
     if [[ ! -d "$ENV_DIR" ]]; then
         echo "❌ Error: Virtual environment directory not found: $ENV_DIR" >&2
-        echo "   Please create it, e.g. python3 -m venv env" >&2
+        echo "   Please run: python3 -m venv env" >&2
         exit 1
     fi
     if [[ ! -f "$ENV_DIR/bin/activate" ]]; then
@@ -22,26 +35,18 @@ activate_environment() {
     source "$ENV_DIR/bin/activate"
 }
 
-ensure_environment() {
-    if [[ "${VIRTUAL_ENV:-}" != "$ENV_DIR" ]]; then
-        activate_environment
-    fi
-}
-
 print_usage() {
     cat <<'USAGE'
 Longitudinal rigid realignment wrapper
 
 Usage:
     scripts/realign_longitudinal.sh --inputs scan1.nii.gz scan2.nii.gz ... \
-        --out-dir /path/to/output [additional t1prep.realign_longitudinal args]
+        --out-dir /path/to/output [other options]
 
 Notes:
-    - This is a light wrapper around: python -m t1prep.realign_longitudinal
-    - The script activates ./env (created via python -m venv env) so that the
-      correct dependencies are available.
-    - All arguments are forwarded unchanged to the Python CLI. Run with --help
-      to see the available options (register-to-mean, inverse-consistent, etc.).
+    - Wraps Python module: t1prep.realign_longitudinal
+    - Activates ./env before running so dependencies are available
+    - All positional/optional arguments are forwarded to the Python CLI
 USAGE
 }
 
@@ -51,7 +56,9 @@ main() {
         exit 1
     fi
 
-    ensure_environment
+    if ! check_environment; then
+        activate_environment
+    fi
 
     export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
 
