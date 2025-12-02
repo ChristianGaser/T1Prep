@@ -182,6 +182,11 @@ parse_args()
         min_memory=$optarg
         shift
         ;;
+      --initial-surf*)
+        exit_if_empty "$optname" "$optarg"
+        initial_surface=$optarg
+        shift
+        ;;
       --gz)
         nii_ext='nii.gz'
         ;;
@@ -351,6 +356,12 @@ surface_estimation()
     show_bar=0
   fi
   
+  # Check that defined initial surface really exists
+  if [[ -n "$initial_surface" && ! -f "$initial_surface" ]]; then
+    initial_surface=""
+    echo "Surface ${initial_surface} not found. Skip use of initial surface" >> "${report_log}"    
+  fi
+  
   # This section of the script checks if a specific hemisphere file exists within a given directory.
   count=-1
   if [ -f "${mri_dir}/${Hemi_volume}" ]; then
@@ -373,23 +384,40 @@ surface_estimation()
       return 1
     fi
 
+    # Use initial surface and skip Marching Cubes for longitudinal processing
+    if [ -n "$initial_surface" ]; then
+      cp "{$initial_surface}" "${surf_dir}/${Mid_surface}"
+      echo "Use ${initial_surface} as initial surface" >> "${report_log}"    
+      # Updates progress
+      ((count++))
+      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Use initial surface            "; fi
+    else # Use Marching Cubes and reduce surface mesh
+      # Updates progress
+      ((count++))
+      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Extract surface                "; fi
+    
+      # Executes the 'CAT_VolMarchingCubes' tool to generate a surface mesh from volumetric data:
+      # - '-median-filter' applies a median filter a specified number of times to reduce artifacts.
+      # - '-pre-fwhm' and '-post-fwhm' control pre and post smoothing.
+      # - '-thresh' sets the isovalue for mesh generation.
+      # - '-no-distopen' disables distance-based opening, a form of morphological operation.
+      # - '-local-smoothing' applies additional local smoothing to the mesh.
+      cmd="CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}"
+      run_cmd_log "${report_log}" "$cmd"
+  
+      # Reduce surface mesh to smaller size:
+      # - '-ratio' defines target triangle ratio in (0,1], e.g., 0.5 keeps ~50% of faces (default 0.25)
+      # - '-aggr' defines aggressiveness of simplification (default 7)
+      cmd="CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
+      run_cmd_log "${report_log}" "$cmd"
+    fi
+
     # Updates progress
     ((count++))
-    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Extract surface                "; fi
-  
-    # Executes the 'CAT_VolMarchingCubes' tool to generate a surface mesh from volumetric data:
-    # - '-median-filter' applies a median filter a specified number of times to reduce artifacts.
-    # - '-pre-fwhm' and '-post-fwhm' control pre and post smoothing.
-    # - '-thresh' sets the isovalue for mesh generation.
-    # - '-no-distopen' disables distance-based opening, a form of morphological operation.
-    # - '-local-smoothing' applies additional local smoothing to the mesh.
-    cmd="CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}"
-    run_cmd_log "${report_log}" "$cmd"
+    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Refine central surface         "; fi
 
-    # Reduce surface mesh to smaller size:
-    # - '-ratio' defines target triangle ratio in (0,1], e.g., 0.5 keeps ~50% of faces (default 0.25)
-    # - '-aggr' defines aggressiveness of simplification (default 7)
-    cmd="CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
+    # Obtain more accurate central surface by surface deformation to PPM image
+    cmd="CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
     run_cmd_log "${report_log}" "$cmd"
 
     # Updates progress
@@ -408,14 +436,6 @@ surface_estimation()
       cmd="CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${surf_dir}/${PBT_shape} ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape}"
       run_cmd_log "${report_log}" "$cmd"
     fi
-
-    # Updates progress
-    ((count++))
-    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Refine central surface         "; fi
-
-    # Obtain more accurate central surface by surface deformation to PPM image
-    cmd="CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
-    run_cmd_log "${report_log}" "$cmd"
 
     # Executes 'CAT_Surf2PialWhite' to estimate both pial and white matter surfaces.
     # - '-w1' sets the internal smoothness weight.
@@ -1073,6 +1093,10 @@ ${BOLD}${GREEN}Save Options:${NC}
       (default: $atlas_surf).
 
 ${BOLD}${GREEN}Expert Options:${NC}
+  --initial-surface <FILE>           
+      Specify an initial surface to skip Marching Cubes approach for longitudinal 
+      processing.
+
   --amap                      
       Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.
 

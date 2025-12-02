@@ -31,6 +31,7 @@ def run_t1prep(
     re_install: bool = False,
     python: Optional[Union[str, os.PathLike]] = None,
     out_dir: Optional[Union[str, os.PathLike]] = None,
+    initial_surf: Optional[Union[str, os.PathLike]] = None,
     pre_fwhm: Optional[Union[int, float]] = None,
     downsample: Optional[Union[int, float]] = None,
     median_filter: Optional[int] = None,
@@ -75,6 +76,7 @@ def run_t1prep(
     - install / re_install: trigger dependency installation (equivalent to --install / --re-install)
     - python: interpreter for the script to use internally (equivalent to --python)
     - out_dir: output directory (equivalent to --out-dir)
+    - initial_surf: initial surface for longitudinal processing (equivalent to --initial-surf)
     - pre_fwhm, downsample, median_filter, vessel, thickness_method: numeric options
     - bin_dir: path to CAT/Cortex tool binaries (equivalent to --bin-dir)
     - no_overwrite: filename pattern to skip existing results (equivalent to --no-overwrite)
@@ -124,6 +126,7 @@ def run_t1prep(
         args.append("--re-install")
     add_opt("--python", python)
     add_opt("--out-dir", out_dir)
+    add_opt("--initial-surf", initial_surf)
     add_opt("--pre-fwhm", pre_fwhm)
     add_opt("--downsample", downsample)
     add_opt("--median-filter", median_filter)
