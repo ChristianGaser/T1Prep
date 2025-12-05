@@ -444,7 +444,8 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
                     header.set_zooms(template_zooms)
                 except Exception:
                     pass
-            out_path = _build_output_path(path, args.out_dir, args.output_naming, suffix="_desc-headerAligned")
+            # Save original files with modified header in output folder
+            out_path = _build_output_path(path, args.out_dir, ""legacy, suffix="")
             nib.save(nib.Nifti1Image(data, new_affine, header=header), out_path)
 
     if args.save_template:

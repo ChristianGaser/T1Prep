@@ -1123,7 +1123,7 @@ ${BOLD}${GREEN}Expert Options:${NC}
 
   --median-filter <NUMBER>    
       Apply the specified number of median filter passes to reduce topology artifacts
-      (default: $median_filter).
+      for surface estimation (default: $median_filter).
 
   --fast                      
       Skip spherical registration, atlas estimation, and warped segmentation steps.
