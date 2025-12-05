@@ -438,6 +438,11 @@ get_output_folder()
   bname=$(basename "$FILE")
   bname="${bname%.nii.gz}"
   bname="${bname%.nii}"
+  
+  # If Amap is defined add "Amap" to name
+  if [ -n "$use_amap" ]; then
+    add_str="Amap"
+  fi
 
   local dname=$(dirname "$FILE")
   dname=$(cd "$dname" && pwd) # absolute directory of input file
@@ -471,9 +476,9 @@ get_output_folder()
     fi
 
     if [ -n "$sess_folder" ]; then
-      outdir0="${base_dir}/derivatives/T1Prep-v${version}/${subj_base}/${sess_folder}/anat"
+      outdir0="${base_dir}/derivatives/T1Prep${add_str}-v${version}/${subj_base}/${sess_folder}/anat"
     else
-      outdir0="${base_dir}/derivatives/T1Prep-v${version}/${subj_base}/anat"
+      outdir0="${base_dir}/derivatives/T1Prep${add_str}-v${version}/${subj_base}/anat"
     fi
   else
     use_subfolder=1
