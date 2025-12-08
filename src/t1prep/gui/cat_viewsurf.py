@@ -12,12 +12,13 @@ Features:
   • Right-side docked control panel: range, clip, colorbar toggle, overlay picker, opacity, bkg range, stats, inverse.
   • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, g screenshot, plus standard VTK keys.
 
-Requires: vtk (>=9), PySide6; nibabel (for GIFTI fallback + FreeSurfer morphs if VTK lacks vtkGIFTIReader).
+Requires: vtk (>=9), PySide6; nibabel (for GIFTI fallback + FreeSurfer textures if VTK lacks vtkGIFTIReader).
 """
 from __future__ import annotations
 import argparse
 import os
 import sys
+import re
 import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
@@ -411,7 +412,7 @@ def read_scalars(filename: str) -> vtkDoubleArray:
         for i, v in enumerate(data_arr): out.SetValue(i, float(v))
         return out
 
-    # --- Case 2: FreeSurfer morph data (thickness/curv/sulc, with or without extension) ---
+    # --- Case 2: FreeSurfer texture data (thickness/curv/sulc, with or without extension) ---
     try:
         from nibabel.freesurfer.io import read_morph_data
         fs = read_morph_data(filename)
@@ -740,7 +741,9 @@ def parse_args(argv: List[str]) -> Options:
             # pick first mesh candidate as mesh; do not force the others as overlays
             mesh_left_resolved = mesh_candidates[0]
             meshes_from_pos = list(mesh_candidates)
-            overlays_from_pos = [x for x in non_mesh_inputs if is_overlay_file(x)]
+            # Be permissive: treat any remaining positional args as overlays, even if
+            # naming heuristics fail, so that multiple overlays are never dropped.
+            overlays_from_pos = list(non_mesh_inputs)
         else:
             overlays_from_pos = pos_inputs
             try:
@@ -759,6 +762,19 @@ def parse_args(argv: List[str]) -> Options:
         overlay_single_final = (locals().get('overlay_single_from_pos')
                                 if 'overlay_single_from_pos' in locals() and locals()['overlay_single_from_pos']
                                 else a.overlay)
+
+    # If mesh could not be resolved from positional inputs, attempt to derive it
+    # from the first overlay supplied via -overlays or -overlay.
+    if (not mesh_left_resolved) and overlay_list_final:
+        try:
+            mesh_left_resolved = convert_filename_to_mesh(overlay_list_final[0])
+        except Exception:
+            mesh_left_resolved = overlay_list_final[0]
+    elif (not mesh_left_resolved) and overlay_single_final:
+        try:
+            mesh_left_resolved = convert_filename_to_mesh(overlay_single_final)
+        except Exception:
+            mesh_left_resolved = overlay_single_final
 
     # Map legacy -stats flag into title_mode if specified
     title_mode_arg = getattr(a, 'title_mode', 'shape')
@@ -2323,25 +2339,101 @@ class Viewer(QtWidgets.QMainWindow):
             self.opts.fix_scaling = False
             self.fixed_overlay_range = None
 
+    def _find_mesh_for_overlay(self, overlay_path: str) -> Optional[Path]:
+        """Locate the central/midthickness mesh that corresponds to an overlay.
+
+        Strategy:
+          1) Use convert_filename_to_mesh heuristic.
+          2) Search overlay directory for likely meshes (central/midthickness) with matching hemi tokens.
+        """
+        ov_path = Path(overlay_path)
+        ov_dir = ov_path.parent
+        ov_name = ov_path.name.lower()
+        hemi = None
+        if 'lh.' in ov_name or '_hemi-l_' in ov_name or 'left' in ov_name:
+            hemi = 'lh'
+        elif 'rh.' in ov_name or '_hemi-r_' in ov_name or 'right' in ov_name:
+            hemi = 'rh'
+
+        def _is_mesh(path: Path) -> bool:
+            try:
+                return path.exists() and path.suffix.lower() == '.gii' and is_gifti_mesh_file(str(path))
+            except Exception:
+                return False
+
+        # Step 1: convert_filename_to_mesh
+        try:
+            cand = Path(convert_filename_to_mesh(str(ov_path)))
+        except Exception:
+            cand = None
+        if cand:
+            if not cand.is_absolute():
+                cand = ov_dir / cand
+            if _is_mesh(cand):
+                return cand
+
+        # Step 2: glob for meshes near the overlay
+        patterns = []
+        if hemi:
+            patterns.append(f"{hemi}.central*.gii")
+            patterns.append(f"*{hemi}*midthickness*.surf.gii")
+            patterns.append(f"*{hemi}*midthickness*.gii")
+            patterns.append(f"*{hemi}*central*.gii")
+        else:
+            patterns.extend([
+                "*.central*.gii",
+                "*midthickness*.surf.gii",
+                "*midthickness*.gii",
+            ])
+        candidates: List[Path] = []
+        if ov_dir.exists():
+            for pat in patterns:
+                candidates.extend(ov_dir.glob(pat))
+        # Deduplicate while preserving order
+        seen = set(); uniq: List[Path] = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c); uniq.append(c)
+        candidates = uniq
+        if not candidates:
+            return None
+
+        # Token-based scoring: prefer central/midthickness and higher token overlap
+        stem_tokens = [t for t in re.split(r"[._-]+", ov_path.stem.lower()) if t]
+        def score(path: Path) -> Tuple[int, int, int]:
+            name_tokens = [t for t in re.split(r"[._-]+", path.stem.lower()) if t]
+            common = len(set(stem_tokens) & set(name_tokens))
+            is_central = int('central' in path.stem.lower())
+            is_mid = int('midthickness' in path.stem.lower())
+            return (common, is_central + is_mid, -len(name_tokens))
+
+        best = max(candidates, key=score)
+        return best if _is_mesh(best) else None
+
     def _maybe_switch_mesh_for_overlay(self, overlay_path: str):
         """If the overlay implies a different mesh, switch meshes and rebuild mappers/actors.
 
         This allows cycling across overlays from different subjects/runs where the mesh files differ.
         """
+        ov_path = Path(overlay_path)
+        ov_dir = ov_path.parent
+        new_mesh_path = self._find_mesh_for_overlay(str(ov_path))
+        if new_mesh_path is None:
+            return
+
+        # If the target mesh is the same file, do nothing
+        if getattr(self.opts, 'mesh_left', None):
+            try:
+                if new_mesh_path.resolve() == Path(self.opts.mesh_left).resolve():
+                    return
+            except Exception:
+                pass
+        # Load new left mesh
         try:
-            new_mesh = convert_filename_to_mesh(overlay_path)
+            self.poly_l = read_gifti_mesh(str(new_mesh_path))
+            self.opts.mesh_left = str(new_mesh_path)
         except Exception:
             return
-        if not new_mesh:
-            return
-        new_mesh_path = Path(new_mesh)
-        # If the target mesh is the same file, do nothing
-        if new_mesh_path.exists() and str(new_mesh_path) == str(Path(self.opts.mesh_left)):
-            return
-        if not new_mesh_path.exists():
-            return
-        # Load new left mesh
-        self.poly_l = read_gifti_mesh(str(new_mesh_path))
         # Normalize Y-origin to match initial alignment
         self._shift_y_to(self.poly_l)
         # Attempt right mesh detection similar to __init__
@@ -2371,6 +2463,39 @@ class Viewer(QtWidgets.QMainWindow):
             self.curv_r_out = self.curv_r.GetOutput()
             if self.bkg_scalar_r is not None:
                 self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
+
+        # Rewire existing mappers/actors to the newly loaded meshes
+        try:
+            if self.actor_bkg_l is not None and self.curv_l_out is not None:
+                self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
+            if self.actor_ov_l is not None:
+                self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
+            if self.actor_bkg_r is not None and self.curv_r_out is not None:
+                self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
+            if self.actor_ov_r is not None and self.poly_r is not None:
+                self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
+            # Update montage clones to reference the refreshed actor mappers
+            order = [0,1,0,1,0,1]
+            for i, clone in enumerate(getattr(self, '_montage_bkg', []) or []):
+                if clone is None:
+                    continue
+                src = self.actor_bkg_r if (order[i] == 1 and self.actor_bkg_r is not None) else self.actor_bkg_l
+                if src is not None:
+                    clone.SetMapper(src.GetMapper())
+            for i, clone in enumerate(getattr(self, '_montage_ov', []) or []):
+                if clone is None:
+                    continue
+                src = self.actor_ov_r if (order[i] == 1 and self.actor_ov_r is not None) else self.actor_ov_l
+                if src is not None:
+                    clone.SetMapper(src.GetMapper())
+                else:
+                    # Hide overlay clones when no overlay actor on that side
+                    try:
+                        clone.SetVisibility(False)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         # Update mappers for background actors
         if self.actor_bkg_l is not None:
             self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
