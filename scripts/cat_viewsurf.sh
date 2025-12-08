@@ -5,7 +5,7 @@
 set -e  # Exit on any error
 
 # Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_DIR="$PROJECT_DIR/env"
 
@@ -72,9 +72,9 @@ validate_input_files() {
 
 # Main execution
 main() {
-        # Show help if called without any arguments
-        if [[ $# -eq 0 ]]; then
-                cat <<'USAGE'
+    # Show help if called without any arguments
+    if [[ $# -eq 0 ]]; then
+        cat <<'USAGE'
 CAT_ViewSurf — wrapper
 
 Usage:
@@ -89,8 +89,8 @@ Notes:
     - You can pass one or more overlays; the mesh is auto-derived from the first overlay (e.g., lh.thickness -> lh.central.gii)
     - For full options, run: python src/t1prep/gui/cat_viewsurf.py -h
 USAGE
-                exit 1
-        fi
+        exit 1
+    fi
     
     # Refuse to run if no positional args resolve to existing files
     validate_input_files "$@"
