@@ -440,7 +440,7 @@ get_output_folder()
   bname="${bname%.nii}"
   
   # If Amap is defined add "Amap" to name
-  if [ -n "$use_amap" ]; then
+  if [ "$use_amap" -eq 1 ]; then
     add_str="Amap"
   fi
 

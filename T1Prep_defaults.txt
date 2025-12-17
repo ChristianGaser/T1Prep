@@ -45,3 +45,4 @@ median_filter=2       # Set the number of median filter applications to reduce
 downsample=0.0        # Downsample image to defined resolution
 fast=0                # Skip spherical registration and estimating atlases and warped
                       # segmentations
+long=0                # Use pipeline for longitudinal data

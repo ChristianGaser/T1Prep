@@ -233,6 +233,9 @@ parse_args()
         use_bids_naming=1
         nii_ext='nii.gz'
         ;;
+      --long)
+        long=1
+        ;;
       --no-correct-folding)
         correct_folding=0
         ;;
@@ -646,7 +649,13 @@ process()
     # Check whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
       
-      get_output_folder "$FILE"
+      # Save output of longitudinal pipeline in data folder (where the longitudinally
+      # registered data is saved)
+      if [ "${long}" -eq 1 ]; then
+        outdir0=$(dirname "$FILE")
+      else
+        get_output_folder "$FILE" # otherwise get output folder from utils.sh
+      fi
       
       if [ "${use_bids_naming}" -eq 1 ]; then  
         processed=$(ls "${outdir0}/${bname}"*"/${no_overwrite}"* 2>/dev/null)
@@ -686,7 +695,13 @@ process()
 
     FILE="${ARRAY2[$i]}"
 
-    get_output_folder "$FILE"
+    # Save output of longitudinal pipeline in data folder (where the longitudinally
+    # registered data is saved)
+    if [ "${long}" -eq 1 ]; then
+      outdir0=$(dirname "$FILE")
+    else
+      get_output_folder "$FILE" # otherwise get output folder from utils.sh
+    fi
 
     # Check again whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
