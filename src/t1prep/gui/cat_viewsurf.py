@@ -166,17 +166,11 @@ def detect_naming_scheme(filename: str) -> bool:
     ]
     
     filename_lower = filename.lower()
-    
-    # Check for BIDS patterns
-    for pattern in bids_patterns:
-        if pattern in filename_lower:
-            return True
-    
-    # Check for FreeSurfer patterns
-    for pattern in freesurfer_patterns:
-        if pattern in filename_lower:
-            return False
-    
+    # Prefer FreeSurfer when both styles appear (e.g., lh.* files carrying _desc- tags)
+    if any(p in filename_lower for p in freesurfer_patterns):
+        return False
+    if any(p in filename_lower for p in bids_patterns):
+        return True
     # Default to FreeSurfer if no clear pattern found
     return False
 
@@ -191,118 +185,81 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
         str: The corresponding mesh filename
     """
     overlay_path = Path(overlay_filename)
-    is_bids = detect_naming_scheme(overlay_filename)
-    
-    if is_bids:
-        # BIDS naming: convert to midthickness surface
-        # Example: sub-01_hemi-L_desc-thickness.shape.gii -> sub-01_hemi-L_space-MNI152NLin2009cAsym_desc-midthickness.surf.gii
+
+    # Try BIDS-style conversion first; only succeed when a hemisphere token exists
+    mesh_candidate: Optional[Path] = None
+    if detect_naming_scheme(overlay_filename):
         name_parts = overlay_path.stem.split('_')
-        
-        # Find hemisphere
-        hemi_part = None
-        for part in name_parts:
-            if part.startswith('hemi-'):
-                hemi_part = part
-                break
-        
+        hemi_part = next((p for p in name_parts if p.startswith('hemi-')), None)
         if hemi_part:
-            hemi = hemi_part.split('-')[1]  # L or R
-            # Build mesh filename
             base_parts = [p for p in name_parts if not p.startswith('hemi-') and not p.startswith('desc-')]
             base_name = '_'.join(base_parts)
             mesh_filename = f"{base_name}_{hemi_part}_space-MNI152NLin2009cAsym_desc-midthickness.surf.gii"
-            return str(overlay_path.parent / mesh_filename)
-    else:
-        # FreeSurfer naming: convert overlay to central surface
-        # Accept both with and without a subject token:
-        #  - lh.thickness.name   -> lh.central.name.gii
-        #  - lh.thickness        -> lh.central.gii
-        name = overlay_path.name
+            mesh_candidate = overlay_path.parent / mesh_filename
 
-        def _fs_overlay_to_mesh(nm: str) -> Optional[str]:
-            hemi = None
-            remaining = None
-            if nm.startswith('lh.'):
-                hemi = 'lh'; remaining = nm[3:]
-            elif nm.startswith('rh.'):
-                hemi = 'rh'; remaining = nm[3:]
+    # FreeSurfer naming: convert overlay to central surface
+    # Accept both with and without a subject token:
+    #  - lh.thickness.name   -> lh.central.name.gii
+    #  - lh.thickness        -> lh.central.gii
+    def _fs_overlay_to_mesh(nm: str) -> Optional[str]:
+        hemi = None
+        remaining = None
+        if nm.startswith('lh.'):
+            hemi = 'lh'; remaining = nm[3:]
+        elif nm.startswith('rh.'):
+            hemi = 'rh'; remaining = nm[3:]
+        else:
+            parts_f = nm.split('.')
+            if len(parts_f) >= 2 and parts_f[0] in ('lh', 'rh'):
+                hemi = parts_f[0]
+                remaining = '.'.join(parts_f[1:])
             else:
-                # Fallback: try parsing as hemi.kind.subject...
-                parts_f = nm.split('.')
-                if len(parts_f) >= 2 and parts_f[0] in ('lh', 'rh'):
-                    hemi = parts_f[0]
-                    remaining = '.'.join(parts_f[1:])
-                else:
-                    return None
-            # remaining looks like: kind[.subject[.ext]]
-            tokens = [t for t in remaining.split('.') if t]
-            if not tokens:
                 return None
-            # Drop known scalar extensions from the end for subject parsing
-            exts = {'gii', 'txt', 'mgh', 'mgz'}
-            subj_tokens = tokens[1:]  # after overlay kind
-            if subj_tokens and subj_tokens[-1].lower() in exts:
-                subj_tokens = subj_tokens[:-1]
-            # If there is no subject token, build lh.central.gii
-            if not subj_tokens:
-                return f"{hemi}.central.gii"
-            base = '.'.join(subj_tokens)
+        tokens = [t for t in remaining.split('.') if t]
+        if not tokens:
+            return None
+        mesh_types = {'central','pial','white','inflated','sphere','patch','mc','sqrtsulc'}
+        if tokens[0] in mesh_types:
+            return None
+        base = '.'.join(tokens[1:]) if len(tokens) > 1 else ''
+        if base:
             return f"{hemi}.central.{base}.gii"
+        return f"{hemi}.central.gii"
 
-        mesh_name = _fs_overlay_to_mesh(name)
-        if mesh_name is None:
-            return str(overlay_path)  # Could not parse; leave unchanged
-        return str(overlay_path.parent / mesh_name)
-    
-    return str(overlay_path)  # Return original if conversion fails
+    if mesh_candidate is None:
+        mesh_name = _fs_overlay_to_mesh(overlay_path.name)
+        if mesh_name is not None:
+            mesh_candidate = overlay_path.parent / mesh_name
+
+    return str(mesh_candidate or overlay_path)
 
 def is_overlay_file(filename: str) -> bool:
-    """
-    Check if a filename appears to be an overlay file rather than a mesh file.
-    
-    Args:
-        filename: The filename to check
-        
-    Returns:
-        bool: True if it appears to be an overlay file
-    """
-    # Extract just the filename from the path
+    """Heuristic check whether a path is an overlay (texture/label) rather than a mesh."""
     filename_only = Path(filename).name
     filename_lower = filename_only.lower()
-    
-    # Check for FreeSurfer shape pattern: [l|r]h.shape_type[.subject][.ext]
+
     parts = filename_lower.split('.')
-    mesh_types = ['central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc']
+    mesh_types = ['central','pial','white','inflated','sphere','patch','mc','sqrtsulc']
     # Case A: lh.kind.subject (>=3 parts)
     if len(parts) >= 3 and parts[0] in ('lh', 'rh'):
         if parts[1] not in mesh_types:
             return True
-    # Case B: lh.kind (exactly 2 parts, no subject) should also be considered overlay
+    # Case B: lh.kind (exactly 2 parts, no subject)
     if len(parts) == 2 and parts[0] in ('lh', 'rh'):
         if parts[1] not in mesh_types:
             return True
-    
-    # Overlay file patterns
+
     overlay_patterns = [
         '_desc-thickness.', '_desc-pbt.',  # BIDS shape files
-        '.annot',  # Annotation files
+        '.annot',  # FreeSurfer annotation
         '_label-',  # BIDS label files
-        '.txt'  # Text overlay files
+        '.txt'  # Text overlays
     ]
-    
-    for pattern in overlay_patterns:
-        if pattern in filename_lower:
-            return True
-    
-    return False
+    return any(p in filename_lower for p in overlay_patterns)
 
 def detect_overlay_kind(filename: str) -> Optional[str]:
-    """Detect overlay kind such as 'thickness' or 'pbt' from filename.
-
-    Returns: 'thickness' | 'pbt' | None
-    """
+    """Detect overlay kind such as 'thickness' or 'pbt' from filename."""
     name = Path(filename).name.lower()
-    # BIDS style
     if '_desc-thickness' in name or '.thickness.' in name or name.endswith('thickness'):
         return 'thickness'
     if '_desc-pbt' in name or '.pbt.' in name or name.endswith('pbt'):
