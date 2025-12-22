@@ -114,6 +114,7 @@ codes = [
     "Atlas_ROI",
     "Report_file",
     "Log_file",
+    "skullstripped_volume",
 ]
 
 

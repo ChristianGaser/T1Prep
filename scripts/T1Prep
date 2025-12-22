@@ -97,6 +97,10 @@ parse_args()
   done
   source "${cfg}"
 
+  # Defaults for new skull-strip flags (may be absent in defaults file)
+  skullstrip_only=${skullstrip_only:-0}
+  skip_skullstrip=${skip_skullstrip:-0}
+
   if [ $# -lt 1 ]; then
     logo
     help
@@ -196,6 +200,12 @@ parse_args()
       --no-surf)
         estimate_surf=0
         ;;
+      --skullstrip-only)
+        skullstrip_only=1
+        ;;
+      --skip-skullstrip)
+        skip_skullstrip=1
+        ;;
       --no-seg*)
         estimate_seg=0
         ;;
@@ -274,6 +284,18 @@ parse_args()
   if [[ "$estimate_seg" -eq 0 && "$estimate_surf" -eq 0 ]]; then
     echo "${RED}ERROR: Options "--no-surf" and "--no-seg" cannot be used together.${NC}" >&2
     exit 1
+  fi
+
+  if [[ "${skullstrip_only}" -eq 1 && "${skip_skullstrip}" -eq 1 ]]; then
+    echo "${RED}ERROR: Options --skullstrip-only and --skip-skullstrip cannot be used together.${NC}" >&2
+    exit 1
+  fi
+
+  if [[ "${skullstrip_only}" -eq 1 ]]; then
+    # Skull stripping only: run volume pipeline step to produce skullstrip outputs and stop.
+    estimate_seg=1
+    estimate_surf=0
+    estimate_spherereg=0
   fi
 
 }
@@ -799,6 +821,8 @@ process()
       [ "${debug}" -eq 1 ] && cmd+=" --debug"
       [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"
+      [ "${skullstrip_only}" -eq 1 ] && cmd+=" --skullstrip-only"
+      [ "${skip_skullstrip}" -eq 1 ] && cmd+=" --skip-skullstrip"
 
       cmd+=" --seed ${seed} --vessel \"${vessel}\" --label_dir \"${label_dir}\""
       cmd+=" --input \"${input}\" --bin_dir \"${bin_dir}\" --mri_dir \"${mri_dir}\""
@@ -836,7 +860,7 @@ process()
     fi
     
     # Optionally extract surface
-    if [ "${estimate_surf}" -eq 1 ]; then
+    if [ "${estimate_surf}" -eq 1 ] && [ "${skullstrip_only}" -eq 0 ]; then
 
       # Set starting time
       start_surf=$(date +%s)
@@ -1059,6 +1083,16 @@ ${BOLD}${GREEN}Save Options:${NC}
 
   --gz                        
       Save images in compressed NIfTI format (*.nii.gz).
+
+    --skullstrip-only
+      Run skull-stripping only and stop afterwards.
+      Writes a skull-stripped image and a brain mask into the output mri folder.
+      This option disables surface estimation and spherical registration.
+
+    --skip-skullstrip
+      Skip skull-stripping (assumes input is already skull-stripped).
+      A brain mask is derived from the input image.
+      Note: This works best if the background is close to zero.
 
   --no-surf                   
       Skip surface and cortical thickness estimation.

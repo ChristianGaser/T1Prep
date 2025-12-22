@@ -91,6 +91,10 @@ Simply call T1Prep to see available options
 ./scripts/T1Prep
 ```
 
+Skull-stripping modes:
+- `--skullstrip-only`: run skull-stripping only and exit after writing a skull-stripped image and brain mask.
+- `--skip-skullstrip`: skip skull-stripping (assumes input is already skull-stripped).
+
 ## Output folders structure
 Output folder structure depends on the input dataset type:
 * BIDS datasets (if the upper-level folder of the input files is 'anat'):
@@ -164,6 +168,16 @@ instead of AMAP segmentation.
 ```bash
   ./scripts/T1Prep --multi 8 --p --csf sTRIO*.nii
 ```
+
+```bash
+  ./scripts/T1Prep --skullstrip-only --out-dir test_folder sTRIO*.nii
+```
+Only run skull-stripping and write the skull-stripped image and brain mask.
+
+```bash
+  ./scripts/T1Prep --skip-skullstrip --out-dir test_folder sTRIO*_brain.nii
+```
+Skip skull-stripping for already skull-stripped inputs.
 Process all files matching the pattern 'sTRIO*.nii'. Additionally save 
 segmentations in native space, including CSF segmentation. The processing 
 pipeline involves two stages of parallelization:

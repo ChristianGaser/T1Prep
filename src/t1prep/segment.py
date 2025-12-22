@@ -259,6 +259,21 @@ def parse_arguments() -> argparse.Namespace:
         default=0.4,
         help="Initial threshold to isolate WM for vessel removal",
     )
+
+    skullstrip_group = parser.add_mutually_exclusive_group()
+    skullstrip_group.add_argument(
+        "--skullstrip-only",
+        action="store_true",
+        help=(
+            "Only run skull stripping and save outputs to --mri_dir, then exit. "
+            "Writes '<input>_desc-skullstripped_T1w' and '<input>_desc-brain_mask'."
+        ),
+    )
+    skullstrip_group.add_argument(
+        "--skip-skullstrip",
+        action="store_true",
+        help="Skip skull stripping (assume input is already skull-stripped).",
+    )
     parser.add_argument(
         "--seed",
         type=int,
@@ -325,6 +340,37 @@ def skull_strip(
         count = progress_bar(count, end_count, "Skull-stripping               ")
     output = prep.run_bet(t1)
     return output["brain"], output["mask"], count
+
+
+def mask_from_skullstripped(brain: nib.Nifti1Image) -> nib.Nifti1Image:
+    """Create a brain mask from a (already) skull-stripped volume."""
+
+    data = np.asarray(brain.get_fdata(), dtype=np.float32)
+    mask = np.isfinite(data) & (data > 0)
+    if not bool(mask.any()):
+        mask = np.isfinite(data) & (data != 0)
+    mask = binary_closing(mask, generate_binary_structure(3, 3), 2)
+    try:
+        mask = fill_voids.fill(mask)
+    except Exception:
+        pass
+    return nib.Nifti1Image(mask.astype(np.uint8), brain.affine, brain.header)
+
+
+def save_skullstrip_only_outputs(
+    brain: nib.Nifti1Image,
+    use_bids: bool,
+    mri_dir: str,
+    out_name: str,
+    ext: str,
+) -> None:
+    """Save skull-stripped image into the output folder."""
+
+    code_vars = get_filenames(use_bids, out_name, "", "", "", ext)
+    skullstripped_name = code_vars.get("skullstripped_volume", "")
+    os.makedirs(mri_dir, exist_ok=True)
+    brain_path = f"{mri_dir}/{skullstripped_name}"
+    nib.save(brain, brain_path)
 
 
 def affine_register(
@@ -764,6 +810,8 @@ def run_segment():
     vessel = args.vessel
     verbose = args.verbose
     debug = args.debug
+    skullstrip_only = args.skullstrip_only
+    skip_skullstrip = args.skip_skullstrip
 
     # Save options
     save_mwp = args.mwp
@@ -816,8 +864,18 @@ def run_segment():
     # Preprocess volume and create preprocess object
     t1, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap)
 
-    # Step 1: Skull-stripping
-    brain, mask, count = skull_strip(prep, t1, verbose, count, end_count)
+    # Step 1: Skull-stripping (or skip)
+    if skip_skullstrip:
+        if verbose:
+            count = progress_bar(count, end_count, "Skull-stripping (skipped)      ")
+        brain = t1
+        mask = mask_from_skullstripped(brain)
+    else:
+        brain, mask, count = skull_strip(prep, t1, verbose, count, end_count)
+
+    if skullstrip_only:
+        save_skullstrip_only_outputs(brain, use_bids, mri_dir, out_name, ext)
+        return
 
     # Step 2: Initial bias-correction that is benefitial for strong signal
     # inhomogeneities (i.e. 7T data)
