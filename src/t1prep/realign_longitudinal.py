@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import nibabel as nib
@@ -389,8 +390,52 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "'legacy' prefixes outputs with 'r' to mimic classic SPM naming."
         ),
     )
+    p.add_argument(
+        "--use-skullstrip",
+        action="store_true",
+        help=(
+            "Estimate rigid transforms using skull-stripped copies of the inputs (via segment.py skull_strip), "
+            "but apply transforms to the original images for output."
+        ),
+    )
     p.add_argument("--verbose", action="store_true", help="Print optimizer diagnostics")
     return p.parse_args(argv)
+
+
+def _skullstrip_for_realign(
+    images: Sequence[nib.Nifti1Image],
+    verbose: bool,
+) -> List[nib.Nifti1Image]:
+    """Return skull-stripped copies for use during transform estimation.
+
+    This keeps the original image list untouched so that transforms can still be
+    applied to the original images for output.
+
+    Notes
+    -----
+    We import from segment.py lazily to avoid pulling in heavy deep-learning
+    dependencies unless requested.
+    """
+
+    # Ensure local imports used by segment.py (e.g., `from utils import ...`) resolve
+    # regardless of how this module is executed (script vs package).
+    this_dir = str(Path(__file__).resolve().parent)
+    if this_dir not in os.sys.path:
+        os.sys.path.insert(0, this_dir)
+
+    from segment import CustomPreprocess, prepare_model_files, setup_device, skull_strip  # type: ignore
+
+    prepare_model_files()
+    _, no_gpu = setup_device()
+    prep = CustomPreprocess(no_gpu)
+
+    stripped: List[nib.Nifti1Image] = []
+    for i, img in enumerate(images, start=1):
+        if verbose:
+            print(f"Skull-stripping for realignment: {i}/{len(images)}")
+        brain, _mask, _ = skull_strip(prep, img, verbose=False, count=0, end_count=1)
+        stripped.append(brain)
+    return stripped
 
 
 def run_cli(argv: Optional[Sequence[str]] = None) -> int:
@@ -400,8 +445,13 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit("--save-resampled and --update-headers are mutually exclusive")
 
     imgs = [nib.load(p) for p in args.inputs]
+
+    align_imgs = imgs
+    if args.use_skullstrip:
+        align_imgs = _skullstrip_for_realign(imgs, verbose=args.verbose)
+
     outputs = rigid_realign_to_first(
-        imgs,
+        align_imgs,
         n_iter=args.iterations,
         verbose=args.verbose,
         inverse_consistent=args.inverse_consistent,
@@ -436,8 +486,14 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
                     header.set_zooms(template_zooms)
                 except Exception:
                     pass
-            # Save original files with modified header in output folder
-            out_path = os.path.join(args.out_dir, os.path.basename(path))
+            # Save original data with modified header, using the same naming scheme
+            # as --save-resampled so both modes produce identical output filenames.
+            out_path = _build_output_path(
+                path,
+                args.out_dir,
+                args.output_naming,
+                suffix="_desc-realigned",
+            )
             nib.save(nib.Nifti1Image(data, new_affine, header=header), out_path)
 
     if args.save_template:
