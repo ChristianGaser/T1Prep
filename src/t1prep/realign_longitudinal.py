@@ -385,8 +385,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         choices=("bids", "legacy"),
         default="bids",
         help=(
-            "Output naming scheme: 'bids' keeps suffix-based names (default); 'legacy' prefixes outputs "
-            "with 'r' to mimic classic SPM naming."
+            "Output naming scheme for --save-resampled outputs: 'bids' keeps suffix-based names (default); "
+            "'legacy' prefixes outputs with 'r' to mimic classic SPM naming."
         ),
     )
     p.add_argument("--verbose", action="store_true", help="Print optimizer diagnostics")
@@ -408,14 +408,6 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
         register_to_mean=not args.register_to_first,
     )
     ref_img = outputs.reference_img
-
-    print("Reference affine (final template):")
-    print(ref_img.affine)
-
-    print("Rigid transforms (world space):")
-    for path, T in zip(args.inputs, outputs.transforms):
-        print(f"  [{path}]")
-        print(T)
 
     if save_resampled_inputs:
         out_vols = _resample_images_to_reference(imgs, outputs.transforms, ref_img)
@@ -445,7 +437,7 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
                 except Exception:
                     pass
             # Save original files with modified header in output folder
-            out_path = _build_output_path(path, args.out_dir, ""legacy, suffix="")
+            out_path = os.path.join(args.out_dir, os.path.basename(path))
             nib.save(nib.Nifti1Image(data, new_affine, header=header), out_path)
 
     if args.save_template:
