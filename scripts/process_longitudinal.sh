@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 REALIGN_SCRIPT="$SCRIPT_DIR/realign_longitudinal.sh"
+T1PREP_SCRIPT="$SCRIPT_DIR/T1Prep"
 
 OUT_DIR=""
 TEMP_TOOL_CMD=""
@@ -165,7 +166,7 @@ process_subjects() {
         done
 
         echo "Processing $subject_id"
-        run_step "$REALIGN_SCRIPT" --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "$realign_dir" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
+        run_step "$REALIGN_SCRIPT" --use-skullstrip --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "$realign_dir" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
 
         if [[ -n "$TEMP_TOOL_CMD" ]]; then
             mkdir -p "$tool_dir"
