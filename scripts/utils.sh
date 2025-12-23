@@ -432,31 +432,50 @@ install_deepmriprep()
 # Get output folder depending on BIDS structure
 # ----------------------------------------------------------------------
 
-get_output_folder()
+t1prep_output_folder_from_input()
 {
-  local FILE=$1
+  # Compute output folder (outdir0), use_subfolder, and bname from an input file.
+  # This is the shared logic used by both scripts/T1Prep and scripts/process_longitudinal.sh.
+  #
+  # Arguments:
+  #   $1: input NIfTI file path
+  #   $2: override out-dir ("" means: use dataset-root for BIDS, or input folder for non-BIDS)
+  #   $3: T1Prep version string (e.g. "0.2.4")
+  #   $4: use_amap flag (0/1)
+  #
+  # Outputs (globals, for backward compatibility with existing scripts):
+  #   outdir0, use_subfolder, bname
+  local FILE="$1"
+  local outdir_override="${2:-}"
+  local version_arg="${3:-}"
+  local use_amap_arg="${4:-0}"
+
   bname=$(basename "$FILE")
   bname="${bname%.nii.gz}"
   bname="${bname%.nii}"
-  
-  # If Amap is defined add "Amap" to name
-  if [ "$use_amap" -eq 1 ]; then
+
+  local add_str=""
+  if [ "${use_amap_arg}" -eq 1 ]; then
     add_str="Amap"
   fi
 
-  local dname=$(dirname "$FILE")
+  local dname
+  dname=$(dirname "$FILE")
   dname=$(cd "$dname" && pwd) # absolute directory of input file
 
   # Detect BIDS structure if parent is 'anat'
-  local upper_dname=$(basename "$dname")
+  local upper_dname
+  upper_dname=$(basename "$dname")
   if [ "${upper_dname}" = "anat" ]; then
     use_subfolder=0
     local sess_folder=""
     local subj_dir=""
     local dataset_root=""
 
-    local sess_folder0=$(dirname "$dname")
-    local sess_base=$(basename "$sess_folder0")
+    local sess_folder0
+    sess_folder0=$(dirname "$dname")
+    local sess_base
+    sess_base=$(basename "$sess_folder0")
     if [[ "$sess_base" == ses-* ]]; then
       sess_folder="$sess_base"
       subj_dir=$(dirname "$sess_folder0")
@@ -464,30 +483,36 @@ get_output_folder()
       subj_dir=$(dirname "$dname")
       sess_folder=""
     fi
-    local subj_base=$(basename "$subj_dir")
+    local subj_base
+    subj_base=$(basename "$subj_dir")
     dataset_root=$(dirname "$subj_dir")
 
-    # If user specified --out-dir, build derivatives inside that; else inside dataset root
     local base_dir
-    if [ -z "${outdir}" ]; then
+    if [ -z "${outdir_override}" ]; then
       base_dir="${dataset_root}"
     else
-      base_dir="${outdir}"
+      base_dir="${outdir_override}"
     fi
 
     if [ -n "$sess_folder" ]; then
-      outdir0="${base_dir}/derivatives/T1Prep${add_str}-v${version}/${subj_base}/${sess_folder}/anat"
+      outdir0="${base_dir}/derivatives/T1Prep${add_str}-v${version_arg}/${subj_base}/${sess_folder}/anat"
     else
-      outdir0="${base_dir}/derivatives/T1Prep${add_str}-v${version}/${subj_base}/anat"
+      outdir0="${base_dir}/derivatives/T1Prep${add_str}-v${version_arg}/${subj_base}/anat"
     fi
   else
     use_subfolder=1
-    if [ -z "${outdir}" ]; then
+    if [ -z "${outdir_override}" ]; then
       outdir0="${dname}"
     else
-      outdir0="${outdir}"
+      outdir0="${outdir_override}"
     fi
   fi
+}
+
+get_output_folder()
+{
+  local FILE=$1
+  t1prep_output_folder_from_input "$FILE" "${outdir:-}" "${version}" "${use_amap}"
 } 
 
 
