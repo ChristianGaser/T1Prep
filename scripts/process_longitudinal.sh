@@ -155,9 +155,9 @@ process_subjects() {
     for ((idx = 0; idx < SUBJECT_COUNT; idx++)); do
         local subject_id="${SUBJECT_IDS[$idx]}"
         local subject_root="$OUT_DIR/$subject_id"
-        local realign_dir="$subject_root/realign"
+        local mri_dir="$subject_root/mri"
         local tool_dir="$subject_root/temp_tool"
-        mkdir -p "$realign_dir"
+        mkdir -p "$mri_dir"
 
         local -a subject_tp_paths=()
         for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
@@ -166,13 +166,35 @@ process_subjects() {
         done
 
         echo "Processing $subject_id"
-        run_step "$REALIGN_SCRIPT" --use-skullstrip --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "$realign_dir" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
+
+        # Safety for --update-headers: never write back into the input folder.
+        for tp_path in "${subject_tp_paths[@]}"; do
+            if [[ "$(cd "$(dirname "$tp_path")" && pwd)" == "$(cd "$mri_dir" && pwd)" ]]; then
+                die "Refusing to run --update-headers with out-dir equal to input folder: $mri_dir"
+            fi
+        done
+
+        run_step "$REALIGN_SCRIPT" --use-skullstrip --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "$mri_dir" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
 
         if [[ -n "$TEMP_TOOL_CMD" ]]; then
             mkdir -p "$tool_dir"
             for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
                 local tp_label="${TIMEPOINT_ORDER[$tp_idx]}"
                 local tp_path="${subject_tp_paths[$tp_idx]}"
+
+                # Special-case: T1Prep does not take an output directory as a positional argument.
+                # For longitudinal processing, we want:
+                # - output folders under subject_root (so realigned images in subject_root/mri are found)
+                # - original file path used for deriving the output structure
+                if [[ "$(basename "$TEMP_TOOL_CMD")" == "T1Prep" ]]; then
+                    run_step "$TEMP_TOOL_CMD" \
+                        "${TEMP_TOOL_ARGS[@]+"${TEMP_TOOL_ARGS[@]}"}" \
+                        --out-dir "$subject_root" \
+                        --long --long-data mri \
+                        "$tp_path"
+                    continue
+                fi
+
                 local tp_out="$tool_dir/$tp_label"
                 mkdir -p "$tp_out"
                 run_step "$TEMP_TOOL_CMD" "${TEMP_TOOL_ARGS[@]+"${TEMP_TOOL_ARGS[@]}"}" "$tp_path" "$tp_out"
