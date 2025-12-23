@@ -81,6 +81,64 @@ main()
 }
 
 
+resolve_long_input() {
+  # In longitudinal mode, output folders are derived from the *original* input.
+  # Optionally, the *data* used as input can be taken from a separate location
+  # (e.g. a folder containing realigned images with updated headers).
+  #
+  # If --long-data is a relative path, it is interpreted relative to outdir0.
+  local orig_file="$1"
+
+  if [[ "${long}" -ne 1 || -z "${long_data}" ]]; then
+    printf '%s' "$orig_file"
+    return 0
+  fi
+
+  local base stem ext long_dir cand1 cand2 cand3
+  base=$(basename "$orig_file")
+  if [[ "$base" == *.nii.gz ]]; then
+    stem="${base%.nii.gz}"
+    ext=".nii.gz"
+  elif [[ "$base" == *.nii ]]; then
+    stem="${base%.nii}"
+    ext=".nii"
+  else
+    stem="${base%.*}"
+    ext=".${base##*.}"
+  fi
+
+  if [[ "${long_data}" == /* ]]; then
+    long_dir="${long_data}"
+  else
+    long_dir="${outdir0}/${long_data}"
+  fi
+
+  cand1="${long_dir}/${stem}_desc-realigned${ext}"
+  cand2="${long_dir}/r${stem}${ext}"
+  cand3="${long_dir}/${base}"
+
+  if [[ -f "$cand1" ]]; then
+    printf '%s' "$cand1"
+    return 0
+  fi
+  if [[ -f "$cand2" ]]; then
+    printf '%s' "$cand2"
+    return 0
+  fi
+  if [[ -f "$cand3" ]]; then
+    printf '%s' "$cand3"
+    return 0
+  fi
+
+  echo "${RED}ERROR: --long-data could not resolve a matching realigned file for: ${orig_file}${NC}" >&2
+  echo "${RED}Tried:${NC}" >&2
+  echo "  ${cand1}" >&2
+  echo "  ${cand2}" >&2
+  echo "  ${cand3}" >&2
+  exit 1
+}
+
+
 # ----------------------------------------------------------------------
 # Check arguments and files
 # ----------------------------------------------------------------------
@@ -100,6 +158,8 @@ parse_args()
   # Defaults for new skull-strip flags (may be absent in defaults file)
   skullstrip_only=${skullstrip_only:-0}
   skip_skullstrip=${skip_skullstrip:-0}
+  long=${long:-0}
+  long_data=${long_data:-""}
 
   if [ $# -lt 1 ]; then
     logo
@@ -245,6 +305,12 @@ parse_args()
         ;;
       --long)
         long=1
+        ;;
+      --long-data)
+        exit_if_empty "$optname" "$optarg"
+        long=1
+        long_data=$optarg
+        shift
         ;;
       --no-correct-folding)
         correct_folding=0
@@ -566,7 +632,7 @@ process()
   if [[ "$SIZE_OF_ARRAY" -lt 2 && "$multi" -ne -2 ]]; then
     multi=0
   fi
-  
+
   # Call T1Prep script recursively with different "--multi" arguments in case that
   # "--multi" is defined
   if [[ "$multi" -ne 0 && "$multi" -gt -2 ]]; then
@@ -586,7 +652,7 @@ process()
     else
       arg_parallelize=( -p "${NUM_JOBS}" )
     fi
-    
+
     # Call parallelize with filtered arguments and use memory limit per process
     # and a small delay of 5s between the jobs to avoid simultaneous peak memory usage
     cmd=(
@@ -670,14 +736,9 @@ process()
 
     # Check whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
-      
-      # Save output of longitudinal pipeline in data folder (where the longitudinally
-      # registered data is saved)
-      if [ "${long}" -eq 1 ]; then
-        outdir0=$(dirname "$FILE")
-      else
-        get_output_folder "$FILE" # otherwise get output folder from utils.sh
-      fi
+
+      # Output folders are always derived from the original input file.
+      get_output_folder "$FILE"
       
       if [ "${use_bids_naming}" -eq 1 ]; then  
         processed=$(ls "${outdir0}/${bname}"*"/${no_overwrite}"* 2>/dev/null)
@@ -717,13 +778,8 @@ process()
 
     FILE="${ARRAY2[$i]}"
 
-    # Save output of longitudinal pipeline in data folder (where the longitudinally
-    # registered data is saved)
-    if [ "${long}" -eq 1 ]; then
-      outdir0=$(dirname "$FILE")
-    else
-      get_output_folder "$FILE" # otherwise get output folder from utils.sh
-    fi
+    # Output folders are always derived from the original input file.
+    get_output_folder "$FILE" # sets outdir0/use_subfolder/bname
 
     # Check again whether processed files exist if no-overwrite flag is used
     if [ -n "${no_overwrite}" ]; then
@@ -796,7 +852,7 @@ process()
       fi
     fi
 
-    input="${FILE}"
+    input="$(resolve_long_input "${FILE}")"
     
     # 1. Call deepmriprep segmentation 
     # ----------------------------------------------------------------------
@@ -1032,6 +1088,19 @@ ${BOLD}${GREEN}General Options:${NC}
   --debug
       Enable verbose output, retain all temporary files, and save additional
       debugging information for inspection.
+
+  --long
+      Longitudinal mode.
+      Output folders (mri/surf/report/label) are derived from the original input path.
+
+  --long-data <PATH>
+      Use longitudinally realigned images as the actual input data while still
+      deriving output folders from the original input path.
+      If <PATH> is relative, it is interpreted relative to the derived output folder.
+      Expected filenames inside <PATH> are tried in this order:
+        1) '<stem>_desc-realigned.nii[.gz]'
+        2) 'r<stem>.nii[.gz]'
+        3) '<original-basename>'
 
 ${BOLD}${GREEN}Save Options:${NC}
   --out-dir <DIR>             
