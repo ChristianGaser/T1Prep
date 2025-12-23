@@ -466,6 +466,17 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
             nib.save(nib.Nifti1Image(vol, ref_img.affine, ref_img.header), out_path)
 
     if args.update_headers:
+        # Safety: never update headers in-place. Require an output directory that
+        # differs from every input's directory.
+        out_dir_abs = os.path.abspath(args.out_dir)
+        for path in args.inputs:
+            in_dir_abs = os.path.abspath(os.path.dirname(path))
+            if out_dir_abs == in_dir_abs:
+                raise SystemExit(
+                    "--update-headers requires --out-dir to be different from the input folder "
+                    f"(got out-dir={out_dir_abs})"
+                )
+
         template_zooms = None
         if args.force_template_zooms:
             template_zooms = tuple(float(v) for v in _voxel_sizes(ref_img.affine))
@@ -486,14 +497,9 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
                     header.set_zooms(template_zooms)
                 except Exception:
                     pass
-            # Save original data with modified header, using the same naming scheme
-            # as --save-resampled so both modes produce identical output filenames.
-            out_path = _build_output_path(
-                path,
-                args.out_dir,
-                args.output_naming,
-                suffix="_desc-realigned",
-            )
+            # Save original data with modified header into out-dir, preserving the
+            # original input filename (no 'r' prefix and no suffix).
+            out_path = os.path.join(args.out_dir, os.path.basename(path))
             nib.save(nib.Nifti1Image(data, new_affine, header=header), out_path)
 
     if args.save_template:
