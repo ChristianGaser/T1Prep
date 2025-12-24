@@ -361,6 +361,14 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Rigid realignment to the first input (SPM-like)")
     p.add_argument("--inputs", nargs="+", required=True, help="Input NIfTI images")
     p.add_argument("--out-dir", required=True, help="Directory for outputs")
+    p.add_argument(
+        "--out-subfolders",
+        nargs="+",
+        help=(
+            "Optional list of subfolder names, one per input. When provided, outputs for each input are written"
+            " into <out-dir>/<subfolder_i> to avoid filename collisions when inputs share basenames."
+        ),
+    )
     p.add_argument("--iterations", type=int, default=3, help="Multi-scale passes (default: 3)")
     p.add_argument("--device", default="cpu", help="Ignored placeholder for interface compatibility")
     p.add_argument("--save-template", action="store_true", help="Save the reference volume (for parity)")
@@ -446,6 +454,12 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
 
     imgs = [nib.load(p) for p in args.inputs]
 
+    if args.out_subfolders is not None:
+        if len(args.out_subfolders) != len(args.inputs):
+            raise SystemExit(
+                f"--out-subfolders expects {len(args.inputs)} entries (one per input); got {len(args.out_subfolders)}"
+            )
+
     align_imgs = imgs
     if args.use_skullstrip:
         align_imgs = _skullstrip_for_realign(imgs, verbose=args.verbose)
@@ -461,26 +475,28 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
 
     if save_resampled_inputs:
         out_vols = _resample_images_to_reference(imgs, outputs.transforms, ref_img)
-        for inp, vol in zip(args.inputs, out_vols):
-            out_path = _build_output_path(inp, args.out_dir, args.output_naming, suffix="_desc-realigned")
+        for idx, (inp, vol) in enumerate(zip(args.inputs, out_vols)):
+            dest_dir = args.out_dir
+            if args.out_subfolders is not None:
+                dest_dir = os.path.join(dest_dir, args.out_subfolders[idx])
+                os.makedirs(dest_dir, exist_ok=True)
+            out_path = _build_output_path(inp, dest_dir, args.output_naming, suffix="_desc-realigned")
             nib.save(nib.Nifti1Image(vol, ref_img.affine, ref_img.header), out_path)
 
     if args.update_headers:
-        # Safety: never update headers in-place. Require an output directory that
-        # differs from every input's directory.
-        out_dir_abs = os.path.abspath(args.out_dir)
-        for path in args.inputs:
+        # Safety: never update headers in-place. Require the destination directory for each
+        # input to differ from that input's folder.
+        base_out_abs = os.path.abspath(args.out_dir)
+        for idx, path in enumerate(args.inputs):
             in_dir_abs = os.path.abspath(os.path.dirname(path))
-            if out_dir_abs == in_dir_abs:
-                raise SystemExit(
-                    "--update-headers requires --out-dir to be different from the input folder "
-                    f"(got out-dir={out_dir_abs})"
-                )
+            dest_dir_abs = base_out_abs
+            if args.out_subfolders is not None:
+                dest_dir_abs = os.path.abspath(os.path.join(base_out_abs, args.out_subfolders[idx]))
 
         template_zooms = None
         if args.force_template_zooms:
             template_zooms = tuple(float(v) for v in _voxel_sizes(ref_img.affine))
-        for path, T in zip(args.inputs, outputs.transforms):
+        for idx, (path, T) in enumerate(zip(args.inputs, outputs.transforms)):
             img = nib.load(path)
             data = np.asarray(img.get_fdata(), dtype=np.float32)
             header = img.header.copy()
@@ -499,7 +515,11 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
                     pass
             # Save original data with modified header into out-dir, preserving the
             # original input filename (no 'r' prefix and no suffix).
-            out_path = os.path.join(args.out_dir, os.path.basename(path))
+            dest_dir = args.out_dir
+            if args.out_subfolders is not None:
+                dest_dir = os.path.join(dest_dir, args.out_subfolders[idx])
+                os.makedirs(dest_dir, exist_ok=True)
+            out_path = os.path.join(dest_dir, os.path.basename(path))
             nib.save(nib.Nifti1Image(data, new_affine, header=header), out_path)
 
     if args.save_template:
