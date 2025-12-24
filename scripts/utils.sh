@@ -58,11 +58,6 @@ pids=()
 # indent, x spaces
 function indent02() { sed 's/^/  /'; }
 function indent04() { sed 's/^/    /'; }
-function indent10() { sed 's/^/          /'; }
-function indent15() { sed 's/^/               /'; }
-function indent18() { sed 's/^/                  /'; }
-function indent20() { sed 's/^/                    /'; }
-function indent25() { sed 's/^/                         /'; }
 
 # ----------------------------------------------------------------------
 # check arguments

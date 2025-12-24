@@ -89,7 +89,39 @@ resolve_long_input() {
   # If --long-data is a relative path, it is interpreted relative to outdir0.
   local orig_file="$1"
 
-  if [[ "${long}" -ne 1 || -z "${long_data}" ]]; then
+  # Auto-discover realigned inputs when --long-data is not provided:
+  # search under outdir0 (and subfolders) for common realignment outputs.
+  if [ -z "${long_data}" ]; then
+    local base stem ext cand path
+    base=$(basename "$orig_file")
+    if [[ "$base" == *.nii.gz ]]; then
+      stem="${base%.nii.gz}"
+      ext=".nii.gz"
+    elif [[ "$base" == *.nii ]]; then
+      stem="${base%.nii}"
+      ext=".nii"
+    else
+      stem="${base%.*}"
+      ext=".${base##*.}"
+    fi
+
+    # Try exact candidates in outdir0 and recurse if needed
+    for cand in "${stem}_desc-realigned${ext}" "r${stem}${ext}" "${base}"; do
+      # Direct check in outdir0
+      path="${outdir0}/${cand}"
+      if [[ -f "$path" ]]; then
+        printf '%s' "$path"
+        return 0
+      fi
+      # Recursive search under outdir0 (handles per-timepoint subfolders like mri/tpNN)
+      path=$(find "${outdir0}" -type f -name "$cand" -print -quit 2>/dev/null || true)
+      if [[ -n "$path" && -f "$path" ]]; then
+        printf '%s' "$path"
+        return 0
+      fi
+    done
+
+    # Fallback: use original file if nothing found
     printf '%s' "$orig_file"
     return 0
   fi
@@ -158,7 +190,6 @@ parse_args()
   # Defaults for new skull-strip flags (may be absent in defaults file)
   skullstrip_only=${skullstrip_only:-0}
   skip_skullstrip=${skip_skullstrip:-0}
-  long=${long:-0}
   long_data=${long_data:-""}
 
   if [ $# -lt 1 ]; then
@@ -251,6 +282,11 @@ parse_args()
         initial_surface=$optarg
         shift
         ;;
+      --long-data)
+        exit_if_empty "$optname" "$optarg"
+        long_data=$optarg
+        shift
+        ;;
       --gz)
         nii_ext='nii.gz'
         ;;
@@ -302,15 +338,6 @@ parse_args()
       --bids)
         use_bids_naming=1
         nii_ext='nii.gz'
-        ;;
-      --long)
-        long=1
-        ;;
-      --long-data)
-        exit_if_empty "$optname" "$optarg"
-        long=1
-        long_data=$optarg
-        shift
         ;;
       --no-correct-folding)
         correct_folding=0
@@ -447,10 +474,36 @@ surface_estimation()
     show_bar=0
   fi
   
-  # Check that defined initial surface really exists
-  if [[ -n "$initial_surface" && ! -f "$initial_surface" ]]; then
-    initial_surface=""
-    echo "Surface ${initial_surface} not found. Skip use of initial surface" >> "${report_log}"    
+  # Check that defined initial surface really exists and adapt to current hemisphere
+  if [[ -n "$initial_surface" ]]; then
+    # Detect hemisphere marker in initial surface filename and create pattern for substitution
+    local surface_pattern="$initial_surface"
+    local adapted_surface=""
+    
+    # Try to replace FreeSurfer (lh/rh) or BIDS (L/R) hemisphere markers with {side} pattern
+    if [ "$surface_pattern" == *"lh"* ]; then
+      # FreeSurfer style: create pattern from detected marker
+      surface_pattern="${surface_pattern//lh/{side}}"
+      # Use substitute_pattern with FreeSurfer hemisphere notation
+      adapted_surface=$(substitute_pattern "$surface_pattern" "$fshemi" "" "")
+    elif [[ "$surface_pattern" == *"_L"* || "$surface_pattern" == *"-L"* ]]; then
+      # BIDS style: create pattern from detected marker
+      surface_pattern="${surface_pattern//_L_/{side}/}"
+      surface_pattern="${surface_pattern//-L/-{side}}"
+      # Use substitute_pattern with BIDS hemisphere notation
+      adapted_surface=$(substitute_pattern "$surface_pattern" "$hemi" "" "")
+    else
+      # No hemisphere marker found, assume it's for left hemisphere
+      adapted_surface="$initial_surface"
+    fi
+    
+    # Check if the adapted surface exists
+    if [[ ! -f "$adapted_surface" ]]; then
+      echo "Surface ${initial_surface} adapted for ${side} hemisphere not found (tried: ${adapted_surface}). Skip use of initial surface" >> "${report_log}"    
+      adapted_surface=""
+    fi
+    
+    initial_surface="$adapted_surface"
   fi
   
   # This section of the script checks if a specific hemisphere file exists within a given directory.
@@ -477,7 +530,7 @@ surface_estimation()
 
     # Use initial surface and skip Marching Cubes for longitudinal processing
     if [ -n "$initial_surface" ]; then
-      cp "{$initial_surface}" "${surf_dir}/${Mid_surface}"
+      cp "${initial_surface}" "${surf_dir}/${Mid_surface}"
       echo "Use ${initial_surface} as initial surface" >> "${report_log}"    
       # Updates progress
       ((count++))
@@ -1089,10 +1142,6 @@ ${BOLD}${GREEN}General Options:${NC}
       Enable verbose output, retain all temporary files, and save additional
       debugging information for inspection.
 
-  --long
-      Longitudinal mode.
-      Output folders (mri/surf/report/label) are derived from the original input path.
-
   --long-data <PATH>
       Use longitudinally realigned images as the actual input data while still
       deriving output folders from the original input path.
@@ -1153,15 +1202,15 @@ ${BOLD}${GREEN}Save Options:${NC}
   --gz                        
       Save images in compressed NIfTI format (*.nii.gz).
 
-    --skullstrip-only
-      Run skull-stripping only and stop afterwards.
-      Writes a skull-stripped image and a brain mask into the output mri folder.
-      This option disables surface estimation and spherical registration.
+  --skullstrip-only
+    Run skull-stripping only and stop afterwards.
+    Writes a skull-stripped image and a brain mask into the output mri folder.
+    This option disables surface estimation and spherical registration.
 
-    --skip-skullstrip
-      Skip skull-stripping (assumes input is already skull-stripped).
-      A brain mask is derived from the input image.
-      Note: This works best if the background is close to zero.
+  --skip-skullstrip
+    Skip skull-stripping (assumes input is already skull-stripped).
+    A brain mask is derived from the input image.
+    Note: This works best if the background is close to zero.
 
   --no-surf                   
       Skip surface and cortical thickness estimation.
