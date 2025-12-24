@@ -200,13 +200,13 @@ process_subjects() {
 
         local subject_root="$outdir0"
         local mri_dir
-        local long_data_arg
+        local surf_dir
         if [[ "${use_subfolder}" -eq 0 ]]; then
             mri_dir="$outdir0"
-            long_data_arg="."
+            surf_dir="$outdir0"
         else
             mri_dir="$outdir0/mri"
-            long_data_arg="mri"
+            surf_dir="$outdir0/surf"
         fi
 
         mkdir -p "$mri_dir"
@@ -220,21 +220,61 @@ process_subjects() {
             fi
         done
 
-        run_step "$REALIGN_SCRIPT" --use-skullstrip --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "$mri_dir" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
+        local -a realign_cmd=(
+            "$REALIGN_SCRIPT"
+            --use-skullstrip
+            --inverse-consistent
+            --update-headers
+            --inputs
+        )
+        # Add per-timepoint subfolders to avoid collisions for non-BIDS inputs
+        # We use the auto-generated timepoint labels (tp01, tp02, ...) as subfolder names
+        #local -a realign_subfolders=("${TIMEPOINT_ORDER[@]}")
+        realign_cmd+=("${subject_tp_paths[@]}")
 
-        if [[ -n "$T1PREP_ARGS" ]]; then
-            for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
-                local tp_path="${subject_tp_paths[$tp_idx]}"
+        for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
+            realign_subfolders[$tp_idx]=$(dirname "${subject_tp_paths[$tp_idx]}")
+        done
+        run_step "${REALIGN_SCRIPT}" --use-skullstrip --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "./" --out-subfolders "${realign_subfolders[@]}" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
 
-                local -a t1prep_cmd=("$T1PREP_CMD")
-                if [[ -n "${OUT_DIR}" ]]; then
-                    t1prep_cmd+=(--out-dir "$OUT_DIR")
-                fi
-                t1prep_cmd+=("${  T1PREP_ARGS[@]+"${  T1PREP_ARGS[@]}"}" --long --long-data "$long_data_arg" "$tp_path")
-                run_step "${t1prep_cmd[@]}"
-
-            done
+        # Compute Mid_surface filename for the first timepoint to use as initial surface
+        local first_tp_path="${subject_tp_paths[0]}"
+        local first_bname=$(basename "$first_tp_path")
+        first_bname="${first_bname%.nii.gz}"
+        first_bname="${first_bname%.nii}"
+        
+        # Determine BIDS naming and hemisphere notation like T1Prep does
+        local first_hemi_lh="lh"
+        local first_hemi_rh="rh"
+        if [[ "${outdir0}" == *"/derivatives/"* ]]; then
+            first_hemi_lh="L-"
+            first_hemi_rh="R-"
         fi
+        
+        i=0
+        for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
+            local tp_path="${subject_tp_paths[$tp_idx]}"
+
+            # Build T1Prep command cleanly
+            local -a t1prep_cmd=("$T1PREP_CMD")
+            if [[ -n "${OUT_DIR}" ]]; then
+                t1prep_cmd+=(--out-dir "$OUT_DIR")
+            fi
+            if (( ${#T1PREP_ARGS[@]} )); then
+                t1prep_cmd+=("${T1PREP_ARGS[@]}")
+            fi
+
+            t1prep_cmd+=(--long-data "$tp_path")
+
+            # For subsequent timepoints, seed with initial surface from tp01 and skip segmentation
+            if [[ "${i}" -gt 0 ]]; then
+                local initial_surf_lh="${surf_dir}/lh.central.${first_bname}.gii"
+                t1prep_cmd+=(--initial-surf "$initial_surf_lh")
+            fi
+
+            run_step "${t1prep_cmd[@]}"
+            ((i++))
+        done
     done
 }
 
