@@ -185,7 +185,6 @@ run_step() {
 
 process_subjects() {
     for ((idx = 0; idx < SUBJECT_COUNT; idx++)); do
-        local subject_id="${SUBJECT_IDS[$idx]}"
         local -a subject_tp_paths=()
         for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
             read_timepoint_to_array "${TIMEPOINT_DATA[$tp_idx]}"
@@ -211,7 +210,7 @@ process_subjects() {
 
         mkdir -p "$mri_dir"
 
-        echo "Processing $subject_id -> $subject_root"
+        echo "Processing -> $subject_root"
 
         # Safety for --update-headers: never write back into the input folder.
         for tp_path in "${subject_tp_paths[@]}"; do
@@ -233,7 +232,11 @@ process_subjects() {
         realign_cmd+=("${subject_tp_paths[@]}")
 
         for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
-            realign_subfolders[$tp_idx]=$(dirname "${subject_tp_paths[$tp_idx]}")
+            if [[ "${use_subfolder}" -eq 1 ]]; then
+                realign_subfolders[$tp_idx]=$(dirname "${subject_tp_paths[$tp_idx]}")"/mri"
+            else
+                realign_subfolders[$tp_idx]=$(dirname "${subject_tp_paths[$tp_idx]}")
+            fi
         done
         run_step "${REALIGN_SCRIPT}" --use-skullstrip --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "./" --out-subfolders "${realign_subfolders[@]}" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
 
@@ -264,7 +267,14 @@ process_subjects() {
                 t1prep_cmd+=("${T1PREP_ARGS[@]}")
             fi
 
-            t1prep_cmd+=(--long-data "$tp_path")
+            # Derive per-timepoint long-data location
+            local tp_long_data
+            if [[ "${use_subfolder}" -eq 0 ]]; then
+                tp_long_data="."
+            else
+                tp_long_data=$(dirname "$tp_path")"/mri/"$(basename "$tp_path")
+            fi
+            t1prep_cmd+=(--long-data "$tp_long_data" "$tp_path")
 
             # For subsequent timepoints, seed with initial surface from tp01 and skip segmentation
             if [[ "${i}" -gt 0 ]]; then
