@@ -139,26 +139,8 @@ resolve_long_input() {
     ext=".${base##*.}"
   fi
 
-  if [[ "${long_data}" == /* ]]; then
-    long_dir="${long_data}"
-  else
-    long_dir="${outdir0}/${long_data}"
-  fi
-
-  cand1="${long_dir}/${stem}_desc-realigned${ext}"
-  cand2="${long_dir}/r${stem}${ext}"
-  cand3="${long_dir}/${base}"
-
-  if [[ -f "$cand1" ]]; then
-    printf '%s' "$cand1"
-    return 0
-  fi
-  if [[ -f "$cand2" ]]; then
-    printf '%s' "$cand2"
-    return 0
-  fi
-  if [[ -f "$cand3" ]]; then
-    printf '%s' "$cand3"
+  if [[ -f "$long_data" ]]; then
+    printf '%s' "$long_data"
     return 0
   fi
 
