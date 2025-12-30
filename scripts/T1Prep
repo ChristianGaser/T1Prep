@@ -81,78 +81,6 @@ main()
 }
 
 
-resolve_long_input() {
-  # In longitudinal mode, output folders are derived from the *original* input.
-  # Optionally, the *data* used as input can be taken from a separate location
-  # (e.g. a folder containing realigned images with updated headers).
-  #
-  # If --long-data is a relative path, it is interpreted relative to outdir0.
-  local orig_file="$1"
-
-  # Auto-discover realigned inputs when --long-data is not provided:
-  # search under outdir0 (and subfolders) for common realignment outputs.
-  if [ -z "${long_data}" ]; then
-    local base stem ext cand path
-    base=$(basename "$orig_file")
-    if [[ "$base" == *.nii.gz ]]; then
-      stem="${base%.nii.gz}"
-      ext=".nii.gz"
-    elif [[ "$base" == *.nii ]]; then
-      stem="${base%.nii}"
-      ext=".nii"
-    else
-      stem="${base%.*}"
-      ext=".${base##*.}"
-    fi
-
-    # Try exact candidates in outdir0 and recurse if needed
-    for cand in "${stem}_desc-realigned${ext}" "r${stem}${ext}" "${base}"; do
-      # Direct check in outdir0
-      path="${outdir0}/${cand}"
-      if [[ -f "$path" ]]; then
-        printf '%s' "$path"
-        return 0
-      fi
-      # Recursive search under outdir0 (handles per-timepoint subfolders like mri/tpNN)
-      path=$(find "${outdir0}" -type f -name "$cand" -print -quit 2>/dev/null || true)
-      if [[ -n "$path" && -f "$path" ]]; then
-        printf '%s' "$path"
-        return 0
-      fi
-    done
-
-    # Fallback: use original file if nothing found
-    printf '%s' "$orig_file"
-    return 0
-  fi
-
-  local base stem ext long_dir cand1 cand2 cand3
-  base=$(basename "$orig_file")
-  if [[ "$base" == *.nii.gz ]]; then
-    stem="${base%.nii.gz}"
-    ext=".nii.gz"
-  elif [[ "$base" == *.nii ]]; then
-    stem="${base%.nii}"
-    ext=".nii"
-  else
-    stem="${base%.*}"
-    ext=".${base##*.}"
-  fi
-
-  if [[ -f "$long_data" ]]; then
-    printf '%s' "$long_data"
-    return 0
-  fi
-
-  echo "${RED}ERROR: --long-data could not resolve a matching realigned file for: ${orig_file}${NC}" >&2
-  echo "${RED}Tried:${NC}" >&2
-  echo "  ${cand1}" >&2
-  echo "  ${cand2}" >&2
-  echo "  ${cand3}" >&2
-  exit 1
-}
-
-
 # ----------------------------------------------------------------------
 # Check arguments and files
 # ----------------------------------------------------------------------
@@ -172,7 +100,6 @@ parse_args()
   # Defaults for new skull-strip flags (may be absent in defaults file)
   skullstrip_only=${skullstrip_only:-0}
   skip_skullstrip=${skip_skullstrip:-0}
-  long_data=${long_data:-""}
 
   if [ $# -lt 1 ]; then
     logo
@@ -887,7 +814,11 @@ process()
       fi
     fi
 
-    input="$(resolve_long_input "${FILE}")"
+    if [ -n "${long_data}" ]; then
+      input="$long_data"
+    else
+      input="$FILE"
+    fi
     
     # 1. Call deepmriprep segmentation 
     # ----------------------------------------------------------------------
