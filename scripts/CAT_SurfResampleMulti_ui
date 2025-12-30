@@ -32,8 +32,8 @@ os_type=$(uname -s) # Determine OS type
 
 script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
-name_file=${root_dir}/Names.tsv
-surf_templates_dir=${root_dir}/data/templates_surfaces_32k
+name_file=${root_dir}/src/t1prep/data/Names.tsv
+surf_templates_dir=${root_dir}/src/t1prep/data/templates_surfaces_32k
 
 source "${script_dir}/utils.sh"
 
@@ -43,8 +43,8 @@ PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
 # Parameters
 fwhm=12
 ext="dat"
-lh_fsavg_sphere=${root_dir}/data/templates_surfaces_32k/lh.sphere.freesurfer.gii
-lh_fsavg_mask=${root_dir}/data/templates_surfaces_32k/lh.mask
+lh_fsavg_sphere=${surf_templates_dir}/lh.sphere.freesurfer.gii
+lh_fsavg_mask=${surf_templates_dir}/lh.mask
 
 declare -a FILES=()
 declare -a LH_ARRAY=()
