@@ -382,7 +382,7 @@ surface_estimation()
   else
     show_bar=0
   fi
-  
+    
   # Check that defined initial surface really exists and adapt to current hemisphere
   if [[ -n "$initial_surface" ]]; then
     # Detect hemisphere marker in initial surface filename and create pattern for substitution
@@ -390,15 +390,15 @@ surface_estimation()
     local adapted_surface=""
     
     # Try to replace FreeSurfer (lh/rh) or BIDS (L/R) hemisphere markers with {side} pattern
-    if [ "$surface_pattern" == *"lh"* ]; then
+    if [[ "$surface_pattern" == *"lh"* ]]; then
       # FreeSurfer style: create pattern from detected marker
-      surface_pattern="${surface_pattern//lh/{side}}"
+      surface_pattern="${surface_pattern//lh/$side}"
       # Use substitute_pattern with FreeSurfer hemisphere notation
       adapted_surface=$(substitute_pattern "$surface_pattern" "$fshemi" "" "")
     elif [[ "$surface_pattern" == *"_L"* || "$surface_pattern" == *"-L"* ]]; then
       # BIDS style: create pattern from detected marker
-      surface_pattern="${surface_pattern//_L_/{side}/}"
-      surface_pattern="${surface_pattern//-L/-{side}}"
+      surface_pattern="${surface_pattern//_L_/$side/}"
+      surface_pattern="${surface_pattern//-L/-$side}"
       # Use substitute_pattern with BIDS hemisphere notation
       adapted_surface=$(substitute_pattern "$surface_pattern" "$hemi" "" "")
     else
@@ -882,7 +882,7 @@ process()
     fi
     
     # Optionally extract surface
-    if [ "${estimate_surf}" -eq 1 ] && [ "${skullstrip_only}" -eq 0 ]; then
+    if [ "${estimate_surf}" -eq 1 ]; then
 
       # Set starting time
       start_surf=$(date +%s)
