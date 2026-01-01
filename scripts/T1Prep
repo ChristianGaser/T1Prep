@@ -389,15 +389,14 @@ surface_estimation()
     local surface_pattern="$initial_surface"
     local adapted_surface=""
     
-    # Try to replace FreeSurfer (lh/rh) or BIDS (L/R) hemisphere markers with {side} pattern
+    # Try to replace FreeSurfer (lh/rh) or BIDS (L/R) hemisphere markers with $side pattern
     if [[ "$surface_pattern" == *"lh"* ]]; then
       # FreeSurfer style: create pattern from detected marker
       surface_pattern="${surface_pattern//lh/$side}"
       # Use substitute_pattern with FreeSurfer hemisphere notation
       adapted_surface=$(substitute_pattern "$surface_pattern" "$fshemi" "" "")
-    elif [[ "$surface_pattern" == *"_L"* || "$surface_pattern" == *"-L"* ]]; then
+    elif [["$surface_pattern" == *"-L"* ]]; then
       # BIDS style: create pattern from detected marker
-      surface_pattern="${surface_pattern//_L_/$side/}"
       surface_pattern="${surface_pattern//-L/-$side}"
       # Use substitute_pattern with BIDS hemisphere notation
       adapted_surface=$(substitute_pattern "$surface_pattern" "$hemi" "" "")
