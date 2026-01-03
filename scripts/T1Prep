@@ -545,7 +545,7 @@ surface_estimation()
       ((count++))
       if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Spherical registration         "; fi
       # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
-      cmd="CAT_SurfWarp ${verbose} -distortion-correction -steps 2 -avg -i ${surf_dir}/${Mid_surface} -is ${surf_dir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${surf_dir}/${Spherereg_surface}"
+      cmd="CAT_SurfWarp ${verbose} -steps 2 -avg -i ${surf_dir}/${Mid_surface} -is ${surf_dir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${surf_dir}/${Spherereg_surface}"
       run_cmd_log "${report_log}" "$cmd"
       
       # Resamples atlases to individual surface space

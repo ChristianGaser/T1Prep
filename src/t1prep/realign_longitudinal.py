@@ -370,7 +370,7 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
     )
     p.add_argument("--iterations", type=int, default=3, help="Multi-scale passes (default: 3)")
-    p.add_argument("--device", default="cpu", help="Ignored placeholder for interface compatibility")
+    p.add_argument("--device", default="cpu", help="Use cpu or gpu")
     p.add_argument("--save-template", action="store_true", help="Save the reference volume (for parity)")
     p.add_argument("--save-resampled", action="store_true", help="Write resampled copies in reference space")
     p.add_argument("--update-headers", action="store_true", help="Only update headers with new affines")

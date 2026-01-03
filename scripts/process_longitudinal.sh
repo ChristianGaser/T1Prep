@@ -250,8 +250,8 @@ process_subjects() {
         local first_hemi_lh="lh"
         local first_hemi_rh="rh"
         if [[ "${outdir0}" == *"/derivatives/"* ]]; then
-            first_hemi_lh="L-"
-            first_hemi_rh="R-"
+            first_hemi_lh="-L"
+            first_hemi_rh="-R"
         fi
         
         i=0
