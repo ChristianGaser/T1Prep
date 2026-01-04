@@ -49,14 +49,68 @@ def _rigid_matrix(params: np.ndarray) -> np.ndarray:
     return M
 
 
-def _choose_samples(volume: np.ndarray, n_samples: int, rng: np.random.Generator) -> np.ndarray:
+def _choose_samples(
+    volume: np.ndarray,
+    n_samples: int,
+    rng: np.random.Generator,
+    *,
+    strategy: str = "grid",
+    pre_smooth_sigma: Optional[Tuple[float, float, float]] = None,
+    grad_quantile: float = 0.80,
+) -> np.ndarray:
+    """Choose voxel coordinates for registration cost evaluation.
+
+    Parameters
+    ----------
+    volume:
+        Reference image data.
+    n_samples:
+        Number of samples to return.
+    rng:
+        Random number generator for deterministic sub-sampling.
+    strategy:
+        "grid" (default) uses a strided grid with optional mask; "gradient"
+        biases sampling towards high-gradient (edge) voxels, which tends to be
+        more informative for rigid alignment.
+    pre_smooth_sigma:
+        Optional Gaussian sigma (in voxels) used when computing gradients.
+    grad_quantile:
+        Quantile threshold for selecting high-gradient candidates.
+    """
+
     mask = np.isfinite(volume) & (volume > 0)
     shape = volume.shape
     total_vox = int(np.prod(shape))
+
     if n_samples <= 0 or n_samples >= total_vox:
         coords = np.argwhere(mask if mask.any() else np.ones_like(volume, dtype=bool))
         return coords.astype(np.float64)
 
+    if strategy not in {"grid", "gradient"}:
+        raise ValueError(f"Unknown sampling strategy: {strategy}")
+
+    if strategy == "gradient":
+        vol = volume
+        if pre_smooth_sigma is not None and any(float(s) > 0 for s in pre_smooth_sigma):
+            vol = gaussian_filter(volume.astype(np.float32, copy=False), pre_smooth_sigma, mode="nearest")
+        gx, gy, gz = np.gradient(vol.astype(np.float32, copy=False))
+        grad = np.sqrt(gx * gx + gy * gy + gz * gz)
+        if mask.any():
+            cand = grad[mask]
+            if cand.size > 0 and np.isfinite(cand).any():
+                thr = float(np.quantile(cand[np.isfinite(cand)], float(grad_quantile)))
+                sel = mask & np.isfinite(grad) & (grad >= thr)
+            else:
+                sel = mask
+        else:
+            sel = np.isfinite(grad)
+        coords = np.argwhere(sel)
+        if coords.shape[0] >= n_samples:
+            idx = rng.choice(coords.shape[0], size=n_samples, replace=False)
+            return coords[idx].astype(np.float64)
+        # Fall through to grid sampling if too few candidates.
+
+    # Default: grid sampling (SPM-like deterministic coverage).
     step = max(1, int(np.ceil((total_vox / float(n_samples)) ** (1.0 / volume.ndim))))
     grid_axes = [np.arange(0, dim, step, dtype=np.float64) for dim in shape]
     mesh = np.stack(np.meshgrid(*grid_axes, indexing="ij"), axis=-1).reshape(-1, volume.ndim)
@@ -180,15 +234,38 @@ def _align_against_reference(
     n_samples: int,
     verbose: bool,
     skip_identity_for_first: bool,
+    *,
+    max_fwhm_mm: float = 6.0,
+    intensity_scale: bool = True,
+    overlap_penalty_weight: float = 0.0,
+    sample_strategy: str = "grid",
+    grad_quantile: float = 0.80,
 ) -> RigidRealignOutputs:
     ref_data = np.asarray(reference_img.get_fdata(), dtype=np.float32)
     ref_affine = reference_img.affine.astype(np.float64)
     ref_header = reference_img.header
     ref_com = _center_of_mass_world(ref_data, ref_affine)
     rng = np.random.default_rng(2024)
-    sample_vox = _choose_samples(ref_data, n_samples, rng)
+
+    # Use SPM-like smoothing expressed in mm and converted to voxel units.
+    # This makes behavior consistent across different voxel sizes.
+    n_levels = max(1, int(n_iter))
+    fwhm_levels_mm = np.linspace(float(max_fwhm_mm), 0.0, n_levels, dtype=np.float64)
+    ref_zooms = np.asarray(_voxel_sizes(ref_affine), dtype=np.float64)
+    ref_zooms[~np.isfinite(ref_zooms)] = 1.0
+    ref_zooms[ref_zooms <= 0] = 1.0
+
+    # Build sampling coordinates once per template.
+    pre_sigma = (float(max_fwhm_mm) / np.sqrt(8.0 * np.log(2.0))) / ref_zooms
+    sample_vox = _choose_samples(
+        ref_data,
+        n_samples,
+        rng,
+        strategy=sample_strategy,
+        pre_smooth_sigma=(float(pre_sigma[0]), float(pre_sigma[1]), float(pre_sigma[2])),
+        grad_quantile=grad_quantile,
+    )
     sample_mm = nib.affines.apply_affine(ref_affine, sample_vox)
-    sigmas = np.linspace(1.5, 0.0, max(1, int(n_iter)), dtype=np.float64)
     ref_samples_cache: Dict[float, np.ndarray] = {}
     transforms: List[np.ndarray] = []
 
@@ -203,15 +280,31 @@ def _align_against_reference(
         mov_com = _center_of_mass_world(mov_data, moving_affine)
         params[3:] = ref_com - mov_com
 
-        for sigma in sigmas:
-            if sigma not in ref_samples_cache:
-                ref_vol = gaussian_filter(ref_data, sigma, mode="nearest") if sigma > 0 else ref_data
+        for fwhm_mm in fwhm_levels_mm:
+            if float(fwhm_mm) not in ref_samples_cache:
+                if fwhm_mm > 0:
+                    sigma_vox = (float(fwhm_mm) / np.sqrt(8.0 * np.log(2.0))) / ref_zooms
+                    ref_vol = gaussian_filter(ref_data, sigma_vox, mode="nearest")
+                else:
+                    ref_vol = ref_data
                 ref_vals = _map_samples(ref_vol, sample_vox)
-                ref_samples_cache[float(sigma)] = ref_vals.astype(np.float32)
-            ref_vals = ref_samples_cache[float(sigma)]
-            mov_vol = gaussian_filter(mov_data, sigma, mode="nearest") if sigma > 0 else mov_data
+                ref_samples_cache[float(fwhm_mm)] = ref_vals.astype(np.float32)
+            ref_vals = ref_samples_cache[float(fwhm_mm)]
+
+            if fwhm_mm > 0:
+                sigma_vox = (float(fwhm_mm) / np.sqrt(8.0 * np.log(2.0))) / ref_zooms
+                mov_vol = gaussian_filter(mov_data, sigma_vox, mode="nearest")
+            else:
+                mov_vol = mov_data
             mov_vol = mov_vol.astype(np.float32, copy=False)
-            cost_fn = _build_cost_function(sample_mm, ref_vals, moving_affine, mov_vol)
+            cost_fn = _build_cost_function(
+                sample_mm,
+                ref_vals,
+                moving_affine,
+                mov_vol,
+                intensity_scale=intensity_scale,
+                overlap_penalty_weight=overlap_penalty_weight,
+            )
             result = least_squares(
                 cost_fn,
                 params,
@@ -224,7 +317,7 @@ def _align_against_reference(
             )
             params = result.x
             if verbose:
-                print(f"[{idx}] sigma={sigma:.2f} cost={result.cost:.4f}")
+                print(f"[{idx}] fwhm_mm={float(fwhm_mm):.2f} cost={result.cost:.4f}")
 
         if 0.0 not in ref_samples_cache:
             ref_vol = ref_data
@@ -232,7 +325,14 @@ def _align_against_reference(
             ref_samples_cache[0.0] = ref_vals.astype(np.float32)
         ref_vals = ref_samples_cache[0.0]
         mov_vol = mov_data.astype(np.float32, copy=False)
-        final_cost = _build_cost_function(sample_mm, ref_vals, moving_affine, mov_vol)
+        final_cost = _build_cost_function(
+            sample_mm,
+            ref_vals,
+            moving_affine,
+            mov_vol,
+            intensity_scale=intensity_scale,
+            overlap_penalty_weight=overlap_penalty_weight,
+        )
         result = least_squares(
             final_cost,
             params,
@@ -261,16 +361,50 @@ def _build_cost_function(
     ref_samples: np.ndarray,
     moving_affine: np.ndarray,
     moving_volume: np.ndarray,
+    *,
+    intensity_scale: bool = True,
+    overlap_penalty_weight: float = 0.0,
 ) -> callable:
     inv_map = np.linalg.inv(moving_affine)
+    dim = np.asarray(moving_volume.shape, dtype=np.float64)
+    dim_minus_1 = dim - 1.0
+    eps = np.finfo(np.float32).eps
 
     def cost(params: np.ndarray) -> np.ndarray:
         T = _rigid_matrix(params)
         world_to_moving = inv_map @ np.linalg.inv(T)
         moving_vox = nib.affines.apply_affine(world_to_moving, ref_mm)
         coords = moving_vox.T  # map_coordinates expects x,y,z ordering
-        vals = map_coordinates(moving_volume, coords, order=1, mode="nearest")
+
+        # Use constant padding instead of 'nearest' to reduce degenerate solutions
+        # when samples fall outside of the moving FOV.
+        vals = map_coordinates(moving_volume, coords, order=1, mode="constant", cval=0.0)
+
+        if intensity_scale:
+            ref_sum = float(np.sum(ref_samples))
+            mov_sum = float(np.sum(vals))
+            if abs(mov_sum) > eps:
+                sc = ref_sum / mov_sum
+            else:
+                sc = 1.0
+            vals = vals * sc
+
         diff = vals - ref_samples
+
+        if overlap_penalty_weight > 0.0:
+            # Soft penalty that encourages overlap when a large fraction of points
+            # is outside the moving image bounds.
+            x = moving_vox[:, 0]
+            y = moving_vox[:, 1]
+            z = moving_vox[:, 2]
+
+            # Distance outside [0, dim-1] in voxel units.
+            dx = np.maximum(0.0, -x) + np.maximum(0.0, x - dim_minus_1[0])
+            dy = np.maximum(0.0, -y) + np.maximum(0.0, y - dim_minus_1[1])
+            dz = np.maximum(0.0, -z) + np.maximum(0.0, z - dim_minus_1[2])
+            outside = float(np.mean(dx + dy + dz))
+            diff = np.concatenate([diff, [np.sqrt(float(overlap_penalty_weight)) * outside]], axis=0)
+
         return diff
 
     return cost
@@ -283,6 +417,12 @@ def rigid_realign_to_first(
     verbose: bool = False,
     inverse_consistent: bool = False,
     register_to_mean: bool = True,
+    *,
+    max_fwhm_mm: float = 6.0,
+    intensity_scale: bool = True,
+    overlap_penalty_weight: float = 0.0,
+    sample_strategy: str = "grid",
+    grad_quantile: float = 0.80,
 ) -> RigidRealignOutputs:
     """Rigidly align all images either to the first volume or to a derived mean.
 
@@ -321,6 +461,11 @@ def rigid_realign_to_first(
         n_samples=n_samples,
         verbose=verbose,
         skip_identity_for_first=True,
+        max_fwhm_mm=max_fwhm_mm,
+        intensity_scale=intensity_scale,
+        overlap_penalty_weight=overlap_penalty_weight,
+        sample_strategy=sample_strategy,
+        grad_quantile=grad_quantile,
     )
 
     final_outputs = initial_outputs
@@ -341,6 +486,11 @@ def rigid_realign_to_first(
             n_samples=n_samples,
             verbose=verbose,
             skip_identity_for_first=False,
+            max_fwhm_mm=max_fwhm_mm,
+            intensity_scale=intensity_scale,
+            overlap_penalty_weight=overlap_penalty_weight,
+            sample_strategy=sample_strategy,
+            grad_quantile=grad_quantile,
         )
 
     if inverse_consistent:
@@ -370,6 +520,38 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
     )
     p.add_argument("--iterations", type=int, default=3, help="Multi-scale passes (default: 3)")
+    p.add_argument(
+        "--max-fwhm-mm",
+        type=float,
+        default=6.0,
+        help="Max smoothing (FWHM, mm) for the coarse alignment level (default: 6.0)",
+    )
+    p.add_argument(
+        "--no-intensity-scale",
+        action="store_true",
+        help="Disable SPM-like global intensity scaling during alignment",
+    )
+    p.add_argument(
+        "--overlap-penalty-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional penalty weight encouraging overlap when many samples fall outside the moving FOV "
+            "(default: 0.0). Try values like 1.0 to 100.0 for difficult cases."
+        ),
+    )
+    p.add_argument(
+        "--sample-strategy",
+        choices=("grid", "gradient"),
+        default="grid",
+        help="Sampling strategy for the cost function (default: grid)",
+    )
+    p.add_argument(
+        "--grad-quantile",
+        type=float,
+        default=0.80,
+        help="Quantile threshold for gradient sampling (default: 0.80)",
+    )
     p.add_argument("--device", default="cpu", help="Use cpu or gpu")
     p.add_argument("--save-template", action="store_true", help="Save the reference volume (for parity)")
     p.add_argument("--save-resampled", action="store_true", help="Write resampled copies in reference space")
@@ -470,6 +652,11 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
         verbose=args.verbose,
         inverse_consistent=args.inverse_consistent,
         register_to_mean=not args.register_to_first,
+        max_fwhm_mm=float(args.max_fwhm_mm),
+        intensity_scale=not bool(args.no_intensity_scale),
+        overlap_penalty_weight=float(args.overlap_penalty_weight),
+        sample_strategy=str(args.sample_strategy),
+        grad_quantile=float(args.grad_quantile),
     )
     ref_img = outputs.reference_img
 
