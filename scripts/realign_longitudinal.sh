@@ -43,6 +43,10 @@ Usage:
     scripts/realign_longitudinal.sh --inputs scan1.nii.gz scan2.nii.gz ... \
         --out-dir /path/to/output [other options]
 
+Example (more robust sampling):
+    scripts/realign_longitudinal.sh --inputs scan1.nii.gz scan2.nii.gz ... \
+        --out-dir /path/to/output --sample-strategy gradient
+
 Notes:
     - Wraps Python module: t1prep.realign_longitudinal
     - Activates ./env before running so dependencies are available
