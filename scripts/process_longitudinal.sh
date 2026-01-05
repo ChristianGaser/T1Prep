@@ -184,6 +184,12 @@ run_step() {
 }
 
 process_subjects() {
+    echo ${BOLD}${RED}
+    echo -----------------------------------------------------------------------------------
+    echo This code is still experimental and not yet optimized for VBM!
+    echo -----------------------------------------------------------------------------------
+    echo ${NC}
+    
     for ((idx = 0; idx < SUBJECT_COUNT; idx++)); do
         local -a subject_tp_paths=()
         for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
