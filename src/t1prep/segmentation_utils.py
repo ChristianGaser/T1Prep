@@ -101,8 +101,8 @@ def normalize_to_sum1(
         wrap_nifti(norm3, nifti3),
     )
 
-
-def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=None):
+def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, 
+      csf_TPM=None, vessel_TPM=None):
     """
     Clean/regularize CSF, GM, and WM probability maps by removing vessel-like
     misclassifications in CSF spaces *outside the cerebellum*, while preserving
@@ -144,6 +144,10 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
         If provided, vessel cleanup is restricted to voxels with CSF probability
         ≥ 2.5% (i.e., >= 0.025 * 255). Omit to apply outside-WM-core everywhere
         outside the cerebellum.
+    vessel_TPM : np.ndarray or None, optional
+        Blood vessel tissue probability map in the same space, *scaled 0–255* (e.g., SPM).
+        If provided, vessel cleanup is restricted to voxels with vessel probability
+        ≥ 10% (i.e., >= 0.1 * 255). 
 
     Returns
     -------
@@ -179,6 +183,8 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None, csf_TPM=N
         mask = mask & (cerebellum == 0)
     if csf_TPM is not None:
         mask = mask & (csf_TPM >= 0.025 * 255)
+    if vessel_TPM is not None:
+        mask = mask & (vessel_TPM >= 0.1 * 255)
 
     # 3) Collapse WM vessels in CSF spaces to GM (to be pushed to CSF in step 6 if outside parenchyma).
     gm[mask] += wm[mask]
