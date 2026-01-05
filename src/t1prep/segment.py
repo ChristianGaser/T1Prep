@@ -50,7 +50,7 @@ from segmentation_utils import (
     get_atlas,
     get_partition,
     cleanup_vessels,
-    laplacian_3d,
+    cleanup_vessels,
     get_regions_mask,
     correct_label_map,
     apply_LAS,
@@ -1035,6 +1035,7 @@ def run_segment():
 
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) to refine segmentation
     if vessel > 0:
+        """
         atlas = get_atlas(
             t1,
             affine,
@@ -1053,30 +1054,6 @@ def run_segment():
             "Left Cerebellum Exterior"]
         cerebellum = get_regions_mask(atlas, "neuromorphometrics", cerebellar_regions)
 
-        """
-        insular_regions = ["Right AIns anterior insula",
-            "Left AIns anterior insula",
-            "Right FO frontal operculum",
-            "Left FO frontal operculum",
-            "Right PIns posterior insula",
-            "Left PIns posterior insula"]
-        insula = get_regions_mask(atlas, "neuromorphometrics", insular_regions)
-        nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
-        cb_large = nib.Nifti1Image(cerebellum, p0_large.affine, p0_large.header)
-        nib.save(cb_large, f"{mri_dir}/{out_name}_cb_large.{ext}")
-        ins_large = nib.Nifti1Image(insula, p0_large.affine, p0_large.header)
-        nib.save(ins_large, f"{mri_dir}/{out_name}_insula_large.{ext}")
-        
-        insula_nvox = np.sum(insula)
-        bloodvessels = -laplacian_3d(p2_large.get_fdata())
-        bloodvessels[(~insula) | (bloodvessels < 0)] = 0
-        bv_large = nib.Nifti1Image(bloodvessels, p0_large.affine, p0_large.header)
-        nib.save(bv_large, f"{mri_dir}/{out_name}_bv_large.{ext}")
-        
-        bloodvessels_wm_ratio = 100*np.sum(bloodvessels)/insula_nvox
-        print(bloodvessels_wm_ratio)
-        """
-
         atlas = get_atlas(
             t1,
             affine,
@@ -1088,8 +1065,21 @@ def run_segment():
             is_label_atlas=False,
         )
         csf_TPM = atlas.get_fdata().copy()
+        """
+
+        atlas = get_atlas(
+            t1,
+            affine,
+            p0_large.header,
+            p0_large.affine,
+            "cat_bloodvessels",
+            None,
+            device,
+            is_label_atlas=False,
+        )
+        vessel_TPM = atlas.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
-            p1_large, p2_large, p3_large, vessel, cerebellum, csf_TPM
+            p1_large, p2_large, p3_large, vessel, None, None, vessel_TPM
         )
     else:
         gm = p1_large.get_fdata()

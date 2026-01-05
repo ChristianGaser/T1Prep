@@ -224,6 +224,7 @@ process_subjects() {
             --use-skullstrip
             --inverse-consistent
             --update-headers
+            --sample-strategy gradient
             --inputs
         )
         # Add per-timepoint subfolders to avoid collisions for non-BIDS inputs
