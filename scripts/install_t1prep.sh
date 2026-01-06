@@ -4,7 +4,7 @@
 #
 # This script:
 # 1) Detects curl or wget
-# 2) Queries GitHub for the latest release of ChristianGaser/T1prep
+# 2) Queries GitHub for the latest release of ChristianGaser/T1Prep
 # 3) Downloads the tarball, extracts into a temporary directory
 # 4) Locates the "T1Prep" launcher and runs `T1Prep --install`
 #
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 REPO_OWNER="${REPO_OWNER:-ChristianGaser}"
-REPO_NAME="${REPO_NAME:-T1prep}"
+REPO_NAME="${REPO_NAME:-T1Prep}"
 
 API_URL="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
 FALLBACK_TARBALL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/main.tar.gz"

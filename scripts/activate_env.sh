@@ -8,7 +8,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_DIR="$PROJECT_DIR/env"
 
 # If we're in the project directory, adjust paths
-if [[ "$(basename "$PWD")" == "T1prep" ]]; then
+if [[ "$(basename "$PWD")" == "T1Prep" ]]; then
     PROJECT_DIR="$PWD"
     ENV_DIR="$PROJECT_DIR/env"
 fi
@@ -37,8 +37,10 @@ if [[ "$VIRTUAL_ENV" == "$ENV_DIR" ]]; then
     echo "   Python version: $(python --version)"
     echo "   Project directory: $PROJECT_DIR"
     echo ""
-    echo "💡 You can now run: python src/cat_viewsurf.py [arguments...]"
+    echo "💡 You can now run: scripts/cat_viewsurf.sh <mesh_or_overlay> [options]"
+    echo "   Or: python src/t1prep/gui/cat_viewsurf.py -h"
 else
     echo "❌ Error: Failed to activate virtual environment"
     return 1 2>/dev/null || exit 1
 fi
+

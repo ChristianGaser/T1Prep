@@ -10,10 +10,11 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_DIR="$PROJECT_DIR/env"
 
 # Check if script name is provided
-if [[ $# -eq 0 ]]; then
-    echo "Usage: $0 <script_name> [arguments...]"
-    echo "Example: $0 src/cat_viewsurf.py --help"
-    exit 1
+if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: $0 <script_path> [arguments...]"
+    echo "Example: $0 src/t1prep/gui/cat_viewsurf.py --help"
+    echo "         $0 src/t1prep/segment.py --help"
+    exit 0
 fi
 
 SCRIPT_NAME="$1"
