@@ -1087,7 +1087,7 @@ def run_segment():
         vessel_TPM = atlas.get_fdata().copy()
         # Only modify label image for surface processing
         if vessel > 0:
-            p0_large = cleanup_vessels(
+            p0_large, _, _, _ = cleanup_vessels(
                 p1_large, p2_large, p3_large, vessel, None, None, vessel_TPM
             )
         # This is a hidden feature for testing since vessel removal for VBM was 
