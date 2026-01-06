@@ -13,6 +13,16 @@ Features:
   • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, g screenshot, plus standard VTK keys.
 
 Requires: vtk (>=9), PySide6; nibabel (for GIFTI fallback + FreeSurfer textures if VTK lacks vtkGIFTIReader).
+
+Usage
+-----
+Preferred (uses the repo's venv wrapper):
+
+    scripts/cat_viewsurf.sh <mesh_or_overlay> [more_overlays...] [options]
+
+Direct invocation:
+
+    python src/t1prep/gui/cat_viewsurf.py <mesh_or_overlay> [more_overlays...] [options]
 """
 from __future__ import annotations
 import argparse

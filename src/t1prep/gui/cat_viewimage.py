@@ -8,8 +8,8 @@ Intended as a Python port of deprecated/CAT_Image.cxx, and to be integrated
 with cat_viewsurf-like surface tooling.
 
 Usage (CLI):
-  python cat_viewimage.py <image.(nii|nii.gz|mnc|mha|mhd|nrrd)> [surf1] [surf2] [surf3] \
-                         --size 400 [--no-mirror]
+    python src/t1prep/gui/cat_viewimage.py <image.(nii|nii.gz|mnc|mha|mhd|nrrd)> [surf1] [surf2] [surf3] \
+                                                                                --size 400 [--no-mirror]
 
 Notes:
 - Tries to use vtkNIFTIImageReader for NIfTI, vtkMINCImageReader for MINC,

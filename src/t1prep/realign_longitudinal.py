@@ -1,12 +1,19 @@
-"""
-Rigid realignment of a series of 3D NIfTI volumes to the first volume or 
-optionally to the mean.
+"""Rigid realignment of a series of 3D NIfTI volumes (longitudinal).
 
-The implementation mirrors SPM's realign module conceptually. It optimizes a 
-6-DOF rigid transform (per subject) directly in world coordinates and optionally 
-writes resampled volumes or only updates the output headers and also allows for
-an inverse-consistent rigid registration to an unbiased mid-space for N 
-timepoints.
+This mirrors SPM's realign module conceptually: estimate a 6-DOF rigid transform
+per timepoint in world coordinates, optionally refine against the mean template,
+and then either resample volumes or only update headers.
+
+CLI usage
+---------
+This module can be run directly (as the bash pipeline does):
+
+    python src/t1prep/realign_longitudinal.py \
+        --inputs tp1.nii.gz tp2.nii.gz --out-dir out --save-resampled
+
+For convenience, the repository also provides a wrapper:
+
+    scripts/realign_longitudinal.sh --help
 """
 from __future__ import annotations
 
