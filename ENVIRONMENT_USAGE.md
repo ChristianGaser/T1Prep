@@ -4,7 +4,7 @@ This guide explains how to ensure you're using the correct virtual environment w
 
 ## 🎯 The Problem
 
-When you call `python src/cat_viewsurf.py`, you need to ensure that:
+When you call `python src/t1prep/gui/cat_viewsurf.py`, you need to ensure that:
 1. The virtual environment is activated
 2. All required dependencies (PyQt6, VTK, etc.) are available
 3. The correct Python version is being used
@@ -17,9 +17,9 @@ Use the dedicated wrapper script for `cat_viewsurf.py`:
 
 ```bash
 # From anywhere in your project
-./scripts/cat_viewsurf_wrapper.sh --help
-./scripts/cat_viewsurf_wrapper.sh mesh_file.gii
-./scripts/cat_viewsurf_wrapper.sh mesh_file.gii -overlay overlay.gii
+./scripts/cat_viewsurf.sh
+./scripts/cat_viewsurf.sh mesh_file.gii
+./scripts/cat_viewsurf.sh mesh_file.gii -overlay overlay.gii
 ```
 
 **What it does:**
@@ -35,9 +35,8 @@ For any Python script in the project:
 
 ```bash
 # Run any script with automatic environment activation
-./scripts/run_with_env.sh src/cat_viewsurf.py --help
-./scripts/run_with_env.sh src/segment.py [arguments...]
-./scripts/run_with_env.sh src/utils.py [arguments...]
+./scripts/run_with_env.sh src/t1prep/gui/cat_viewsurf.py --help
+./scripts/run_with_env.sh src/t1prep/segment.py [arguments...]
 ```
 
 ### 3. **Manual Environment Activation**
@@ -49,8 +48,8 @@ Activate the environment manually, then run scripts:
 source scripts/activate_env.sh
 
 # Now you can run any script normally
-python src/cat_viewsurf.py --help
-python src/segment.py [arguments...]
+python src/t1prep/gui/cat_viewsurf.py --help
+python src/t1prep/segment.py [arguments...]
 ```
 
 ### 4. **Direct Environment Activation**
@@ -59,13 +58,13 @@ Traditional approach:
 
 ```bash
 # Navigate to project directory
-cd /path/to/T1prep
+cd /path/to/T1Prep
 
 # Activate environment
 source env/bin/activate
 
 # Run scripts
-python src/cat_viewsurf.py --help
+python src/t1prep/gui/cat_viewsurf.py --help
 ```
 
 ## 🔍 How to Verify You're Using the Correct Environment
@@ -98,22 +97,21 @@ python --version
 
 ```bash
 # Method 1: Using wrapper (recommended)
-./scripts/cat_viewsurf_wrapper.sh data/templates_surfaces_32k/lh.pial.gii
+./scripts/cat_viewsurf.sh data/templates_surfaces_32k/lh.pial.gii
 
 # Method 2: Using generic runner
-./scripts/run_with_env.sh src/cat_viewsurf.py data/templates_surfaces_32k/lh.pial.gii
+./scripts/run_with_env.sh src/t1prep/gui/cat_viewsurf.py data/templates_surfaces_32k/lh.pial.gii
 
 # Method 3: Manual activation
 source scripts/activate_env.sh
-python src/cat_viewsurf.py data/templates_surfaces_32k/lh.pial.gii
+python src/t1prep/gui/cat_viewsurf.py data/templates_surfaces_32k/lh.pial.gii
 ```
 
 ### Running Other Scripts
 
 ```bash
 # Using generic runner for any script
-./scripts/run_with_env.sh src/segment.py input.nii.gz
-./scripts/run_with_env.sh src/utils.py --help
+./scripts/run_with_env.sh src/t1prep/segment.py input.nii.gz
 ```
 
 ## 🛠️ Troubleshooting
@@ -139,20 +137,20 @@ Python 3.8.10  # Wrong version
 ## 📁 File Structure
 
 ```
-T1prep/
+T1Prep/
 ├── env/                          # Virtual environment
 │   ├── bin/
 │   │   ├── activate             # Environment activation script
 │   │   └── python               # Environment Python executable
 │   └── pyvenv.cfg               # Environment configuration
 ├── scripts/
-│   ├── cat_viewsurf_wrapper.sh  # CAT_ViewSurf wrapper
+│   ├── cat_viewsurf.sh          # CAT_ViewSurf wrapper
 │   ├── run_with_env.sh          # Generic script runner
 │   └── activate_env.sh          # Environment activation helper
 ├── src/
-│   ├── cat_viewsurf.py          # Main CAT_ViewSurf script
-│   ├── segment.py               # Segmentation script
-│   └── utils.py                 # Utility functions
+│   └── t1prep/
+│       ├── gui/cat_viewsurf.py  # Main CAT_ViewSurf script
+│       └── segment.py           # Segmentation script
 └── requirements.txt             # Python dependencies
 ```
 
