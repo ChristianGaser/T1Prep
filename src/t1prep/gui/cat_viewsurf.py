@@ -212,6 +212,13 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
     #  - lh.thickness.name   -> lh.central.name.gii
     #  - lh.thickness        -> lh.central.gii
     def _fs_overlay_to_mesh(nm: str) -> Optional[str]:
+        # Handle overlays that already include a .gii extension.
+        # Example: lh.thickness.subj.gii -> lh.central.subj.gii
+        try:
+            if nm.lower().endswith('.gii'):
+                nm = Path(nm).stem
+        except Exception:
+            pass
         hemi = None
         remaining = None
         if nm.startswith('lh.'):
@@ -1054,6 +1061,10 @@ class Viewer(QtWidgets.QMainWindow):
     def __init__(self, opts: Options):
         super().__init__()
         self.opts = opts
+        # Cache of overlay path -> resolved mesh path.
+        # Prevents ambiguous directory-based mesh resolution from "sticking" to the
+        # most recently used mesh when toggling between multiple overlays.
+        self._overlay_mesh_cache: dict[str, str] = {}
         self._y_shift_l: float = 0.0
         self._y_shift_r: float = 0.0
         self._hist_win = None  # histogram window reference
@@ -2075,10 +2086,21 @@ class Viewer(QtWidgets.QMainWindow):
     def _on_overlay_combo_changed(self, _idx: int):
         path = self.ctrl.overlay_combo.currentText().strip()
         if path:
+            # Keep overlay navigation index consistent with combo selection
+            try:
+                if self.overlay_list and path in self.overlay_list:
+                    self.current_overlay_index = self.overlay_list.index(path)
+            except Exception:
+                pass
             self._set_overlay_from_path(path)
 
     def _on_overlay_combo_edited(self):
         path = self.ctrl.overlay_combo.currentText().strip()
+        try:
+            if self.overlay_list and path in self.overlay_list:
+                self.current_overlay_index = self.overlay_list.index(path)
+        except Exception:
+            pass
         self._set_overlay_from_path(path)
 
     def _set_overlay_from_path(self, new_overlay: str):
@@ -2384,9 +2406,29 @@ class Viewer(QtWidgets.QMainWindow):
         """
         ov_path = Path(overlay_path)
         ov_dir = ov_path.parent
-        new_mesh_path = self._find_mesh_for_overlay(str(ov_path))
-        if new_mesh_path is None:
-            return
+
+        # Resolve via cache first to ensure stable overlay->mesh pairing.
+        try:
+            overlay_key = str(ov_path.expanduser().resolve())
+        except Exception:
+            overlay_key = str(ov_path)
+
+        cached_mesh = None
+        try:
+            cached_mesh = self._overlay_mesh_cache.get(overlay_key)
+        except Exception:
+            cached_mesh = None
+
+        if cached_mesh:
+            new_mesh_path = Path(cached_mesh)
+        else:
+            new_mesh_path = self._find_mesh_for_overlay(str(ov_path))
+            if new_mesh_path is None:
+                return
+            try:
+                self._overlay_mesh_cache[overlay_key] = str(new_mesh_path.resolve())
+            except Exception:
+                self._overlay_mesh_cache[overlay_key] = str(new_mesh_path)
 
         # If the target mesh is the same file, do nothing
         if getattr(self.opts, 'mesh_left', None):
@@ -2652,22 +2694,38 @@ class Viewer(QtWidgets.QMainWindow):
         # Capture camera before modifying actors/ranges
         self._capture_camera_state()
         self.opts.overlay = overlay_path
-        cwd = os.getcwd()
         try:
-            os.chdir(str(Path(overlay_path).parent or Path('.')))
-            baseL = Path(overlay_path).name
-            scal_l = read_scalars(baseL); scal_r = None
-            rh_name = None
-            if 'lh.' in baseL: rh_name = baseL.replace('lh.', 'rh.')
-            elif 'left' in baseL: rh_name = baseL.replace('left', 'right')
-            if rh_name and Path(rh_name).exists() and self.poly_r is not None:
-                scal_r = read_scalars(rh_name)
-            elif self.poly_r is not None and scal_l is not None and scal_l.GetNumberOfTuples() == (self.poly_l.GetNumberOfPoints()+self.poly_r.GetNumberOfPoints()):
-                nL = self.poly_l.GetNumberOfPoints(); nR = self.poly_r.GetNumberOfPoints(); arr = scal_l
-                scal_r = vtkDoubleArray(); scal_r.SetNumberOfTuples(nR)
-                for i in range(nR): scal_r.SetValue(i, arr.GetValue(i+nL))
-                left_only = vtkDoubleArray(); left_only.SetNumberOfTuples(nL)
-                for i in range(nL): left_only.SetValue(i, arr.GetValue(i))
+            ov_path = Path(overlay_path)
+            scal_l = read_scalars(str(ov_path))
+            scal_r = None
+
+            # Prefer a separate RH overlay sitting next to the selected file
+            rh_path = None
+            base_name = ov_path.name
+            if 'lh.' in base_name:
+                rh_path = ov_path.with_name(base_name.replace('lh.', 'rh.'))
+            elif 'left' in base_name:
+                rh_path = ov_path.with_name(base_name.replace('left', 'right'))
+            if rh_path is not None and rh_path.exists() and self.poly_r is not None:
+                scal_r = read_scalars(str(rh_path))
+            # Or: a single overlay contains L+R concatenated values
+            elif (
+                self.poly_r is not None
+                and scal_l is not None
+                and scal_l.GetNumberOfTuples()
+                == (self.poly_l.GetNumberOfPoints() + self.poly_r.GetNumberOfPoints())
+            ):
+                nL = self.poly_l.GetNumberOfPoints()
+                nR = self.poly_r.GetNumberOfPoints()
+                arr = scal_l
+                scal_r = vtkDoubleArray()
+                scal_r.SetNumberOfTuples(nR)
+                for i in range(nR):
+                    scal_r.SetValue(i, arr.GetValue(i + nL))
+                left_only = vtkDoubleArray()
+                left_only.SetNumberOfTuples(nL)
+                for i in range(nL):
+                    left_only.SetValue(i, arr.GetValue(i))
                 scal_l = left_only
         except Exception as e:
             # If loading fails, clear the overlay and disable controls
@@ -2676,8 +2734,6 @@ class Viewer(QtWidgets.QMainWindow):
             if hasattr(self, 'ctrl'):
                 self.ctrl.set_overlay_controls_enabled(False)
             return
-        finally:
-            os.chdir(cwd)
         # Do not invert scalars; inversion is handled by flipping LUTs
         # Clip is rendered via LUT alpha; do not mutate scalar arrays
         # attach
