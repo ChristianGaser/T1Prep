@@ -28,11 +28,12 @@ classifiers = [
 dependencies = [
     "scipy>=1.10.1",
     "torch>=1.11.0",
+    "deepmriprep==0.2.0",
     "deepbet>=1.0.2",
     "torchreg>=0.1.3",
+    "spline-resize>=0.1.1",
     "SplineSmooth3D>=0.1.1",
     "nxbc>=0.2.0",
-    "deepmriprep==0.2.0",
     "requests"
 ]
 
@@ -41,8 +42,8 @@ cat-viewsurf = "t1prep.gui.cat_viewsurf:main"
 
 [project.optional-dependencies]
 gui = [
-    "PySide6>=6",
-    "vtk>=9",
+    "PySide6>=6.5",
+    "vtk>=9.0.0",
     "nibabel>=3.2",
 ]
 
