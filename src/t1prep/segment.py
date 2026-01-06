@@ -1,3 +1,18 @@
+"""T1Prep volume pipeline (segmentation) CLI.
+
+This module is primarily invoked by the bash pipeline in scripts/T1Prep.
+It can also be run directly for debugging:
+
+    python src/t1prep/segment.py --help
+
+Typical usage (as done by scripts/T1Prep) provides output directories and
+optionally atlas names:
+
+    python src/t1prep/segment.py \
+        --input sub-01_T1w.nii.gz --mri_dir out/mri --report_dir out/report --label_dir out/label \
+        --bin_dir /path/to/CAT/binaries --atlas "'neuromorphometrics','suit'" --bids
+"""
+
 import os
 import sys
 import platform
@@ -204,54 +219,71 @@ def all_models_present():
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments for the segmentation pipeline."""
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", help="Input file", required=True, type=str)
-    parser.add_argument("--mri_dir", help="Output mri folder", required=True, type=str)
-    parser.add_argument("--report_dir", help="Output report folder", type=str)
-    parser.add_argument("--label_dir", help="Output label folder", type=str)
-    parser.add_argument("--atlas", help="Atlases for ROI estimation", type=str)
-    parser.add_argument("--bin_dir", help="Amap binary folder", type=str)
+    parser = argparse.ArgumentParser(
+        description="T1Prep volume pipeline: skull-stripping, segmentation and atlas ROI export.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--input", required=True, type=str, help="Input NIfTI image")
+    parser.add_argument("--mri_dir", required=True, type=str, help="Output folder for MRI volumes")
+    parser.add_argument("--report_dir", required=True, type=str, help="Output folder for reports/logs")
+    parser.add_argument("--label_dir", required=True, type=str, help="Output folder for labels/aux outputs")
+    parser.add_argument(
+        "--atlas",
+        type=str,
+        default="",
+        help=(
+            "Atlases for ROI estimation (comma-separated). Examples: "
+            "\"neuromorphometrics,suit\" or \"'neuromorphometrics','suit'\". "
+            "Empty disables ROI export."
+        ),
+    )
+    parser.add_argument(
+        "--bin_dir",
+        type=str,
+        default="",
+        help="Folder with CAT/AMAP binaries (required for --amap or --lesions)",
+    )
     parser.add_argument(
         "--surf",
         action="store_true",
-        help="(optional) Save partioned segmentation map for surface estimation.",
+        help="Save partitioned segmentation maps for surface estimation.",
     )
     parser.add_argument(
-        "--csf", action="store_true", help="(optional) Save also CSF segmentations."
+        "--csf", action="store_true", help="Save also CSF segmentations."
     )
     parser.add_argument(
         "--mwp",
         action="store_true",
-        help="(optional) Save modulated and warped segmentations.",
+        help="Save modulated and warped segmentations.",
     )
     parser.add_argument(
-        "--wp", action="store_true", help="(optional) Save warped segmentations."
+        "--wp", action="store_true", help="Save warped segmentations."
     )
     parser.add_argument(
-        "--p", action="store_true", help="(optional) Save native segmentations."
+        "--p", action="store_true", help="Save native segmentations."
     )
     parser.add_argument(
         "--rp",
         action="store_true",
-        help="(optional) Save affine registered segmentations.",
+        help="Save affine registered segmentations.",
     )
     parser.add_argument(
-        "--lesions", action="store_true", help="(optional) Save also WMH lesions."
+        "--lesions", action="store_true", help="Save also WMH lesion maps (if available)."
     )
     parser.add_argument(
-        "--bids", action="store_true", help="(optional) Use bids naming convention."
+        "--bids", action="store_true", help="Use BIDS-like naming convention."
     )
     parser.add_argument(
-        "--gz", action="store_true", help="(optional) Save nii.gz images."
+        "--gz", action="store_true", help="Save compressed NIfTI outputs (.nii.gz)."
     )
     parser.add_argument(
-        "--amap", action="store_true", help="(optional) Use AMAP segmentation."
+        "--amap", action="store_true", help="Use AMAP segmentation (requires --bin_dir)."
     )
     parser.add_argument(
-        "--verbose", action="store_true", help="(optional) Be verbose."
+        "--verbose", action="store_true", help="Print progress output."
     )
     parser.add_argument(
-        "--debug", action="store_true", help="(optional) Do not delete temporary files."
+        "--debug", action="store_true", help="Do not delete temporary files."
     )
     parser.add_argument(
         "--vessel",
@@ -266,13 +298,19 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help=(
             "Only run skull stripping and save outputs to --mri_dir, then exit. "
-            "Writes '<input>_desc-skullstripped_T1w' and '<input>_desc-brain_mask'."
+            "Writes a skull-stripped volume and a brain mask."
         ),
     )
     skullstrip_group.add_argument(
         "--skip-skullstrip",
         action="store_true",
         help="Skip skull stripping (assume input is already skull-stripped).",
+    )
+    skullstrip_group.add_argument(
+        "--no-skullstrip",
+        action="store_true",
+        dest="skip_skullstrip",
+        help="Alias for --skip-skullstrip.",
     )
     parser.add_argument(
         "--seed",
