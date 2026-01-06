@@ -32,6 +32,7 @@ def run_t1prep(
     python: Optional[Union[str, os.PathLike]] = None,
     out_dir: Optional[Union[str, os.PathLike]] = None,
     initial_surf: Optional[Union[str, os.PathLike]] = None,
+    long_data: Optional[Union[str, os.PathLike]] = None,
     pre_fwhm: Optional[Union[int, float]] = None,
     downsample: Optional[Union[int, float]] = None,
     median_filter: Optional[int] = None,
@@ -43,10 +44,13 @@ def run_t1prep(
     seed: Optional[int] = None,
     atlas: Optional[Union[str, Sequence[str]]] = None,
     atlas_surf: Optional[Union[str, Sequence[str]]] = None,
+    no_atlas: bool = False,
     min_memory: Optional[Union[int, float]] = None,
     gz: bool = False,
     hemisphere: bool = False,
     no_surf: bool = False,
+    skullstrip_only: bool = False,
+    skip_skullstrip: bool = False,
     no_seg: bool = False,
     no_sphere_reg: bool = False,
     pial_white: bool = False,
@@ -77,13 +81,17 @@ def run_t1prep(
     - python: interpreter for the script to use internally (equivalent to --python)
     - out_dir: output directory (equivalent to --out-dir)
     - initial_surf: initial surface for longitudinal processing (equivalent to --initial-surf)
+    - long_data: longitudinal data path (equivalent to --long-data)
     - pre_fwhm, downsample, median_filter, vessel, thickness_method: numeric options
     - bin_dir: path to CAT/Cortex tool binaries (equivalent to --bin-dir)
     - no_overwrite: filename pattern to skip existing results (equivalent to --no-overwrite)
     - multi, seed, min_memory: parallelization and reproducibility options
     - atlas, atlas_surf: atlas lists; can be a string (passed through) or a sequence
+    - no_atlas: clear any default atlas selection (equivalent to --no-atlas)
     - gz, hemisphere, no_surf, no_seg, no_sphere_reg, pial_white, lesions, no_mwp,
-      wp, rp, p, csf, amap, bids, no_correct_folding, debug, fast: boolean flags
+            wp, rp, p, csf, amap, bids, no_correct_folding, debug, fast: boolean flags
+    - skullstrip_only: run skull stripping only (equivalent to --skullstrip-only)
+    - skip_skullstrip: skip skull stripping (equivalent to --no-skullstrip/--skip-skullstrip)
     - cwd, env: working directory and env overrides for the subprocess
     - check: raise if the process returns non-zero
     - log_file: tee stdout/stderr to this file if provided
@@ -127,6 +135,7 @@ def run_t1prep(
     add_opt("--python", python)
     add_opt("--out-dir", out_dir)
     add_opt("--initial-surf", initial_surf)
+    add_opt("--long-data", long_data)
     add_opt("--pre-fwhm", pre_fwhm)
     add_opt("--downsample", downsample)
     add_opt("--median-filter", median_filter)
@@ -137,9 +146,12 @@ def run_t1prep(
     add_opt("--thickness-method", thickness_method)
     add_opt("--multi", multi)
     add_opt("--seed", seed)
-    atl = _as_atlas_list(atlas)
-    if atl is not None:
-        add_opt("--atlas", atl)
+    if no_atlas:
+        add_flag("--no-atlas", True)
+    else:
+        atl = _as_atlas_list(atlas)
+        if atl is not None:
+            add_opt("--atlas", atl)
     atl_s = _as_atlas_list(atlas_surf)
     if atl_s is not None:
         add_opt("--atlas-surf", atl_s)
@@ -148,6 +160,8 @@ def run_t1prep(
     add_flag("--gz", gz)
     add_flag("--hemisphere", hemisphere)
     add_flag("--no-surf", no_surf)
+    add_flag("--skullstrip-only", skullstrip_only)
+    add_flag("--skip-skullstrip", skip_skullstrip)
     add_flag("--no-seg", no_seg)
     add_flag("--no-sphere-reg", no_sphere_reg)
     add_flag("--pial-white", pial_white)
