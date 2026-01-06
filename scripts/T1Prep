@@ -1198,7 +1198,8 @@ ${BOLD}${GREEN}Expert Options:${NC}
       (default: $pre_fwhm).
 
   --vessel <NUMBER>           
-      Set the initial white matter threshold for vessel removal:  
+      Set the initial white matter threshold for vessel removal before surface
+      processing:  
         0.2 = mild cleanup  
         0.4 = medium cleanup  
         0.6 = strong cleanup  

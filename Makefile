@@ -3,9 +3,6 @@
 
 VERSION="0.2.5"
 
-FILES=scripts src bin data LICENSE README.md requirements.txt Names.tsv setup.py T1Prep_defaults.txt
-DATA_FILES=data
-
 ZIPFILE=T1Prep_${VERSION}.zip
 
 # print available commands
@@ -24,7 +21,7 @@ zip: release
 	-@echo zip
 	-@test ! -d T1Prep || rm -r T1Prep
 	-@mkdir T1Prep
-	-@cp -rp ${FILES} T1Prep
+	-@rsync -av . T1Prep --exclude env --exclude '.*' --exclude Makefile --exclude Windows-Installation.txt --exclude test
 	-@zip ${ZIPFILE} -rm T1Prep
 
 # prepare a release
