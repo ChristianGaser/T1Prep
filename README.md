@@ -71,7 +71,7 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
 You can also call the full pipeline from Python without shelling out manually:
 
 ```python
-from T1prep import run_t1prep
+from t1prep import run_t1prep
 
 # Single file, BIDS naming
 run_t1prep("/data/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz", bids=True)
@@ -93,7 +93,12 @@ Simply call T1Prep to see available options
 
 Skull-stripping modes:
 - `--skullstrip-only`: run skull-stripping only and exit after writing a skull-stripped image and brain mask.
-- `--skip-skullstrip`: skip skull-stripping (assumes input is already skull-stripped).
+- `--no-skullstrip` / `--skip-skullstrip`: skip skull-stripping (assumes input is already skull-stripped).
+
+Longitudinal / advanced flags:
+- `--initial-surf <FILE>`: use an initial surface estimate for longitudinal processing.
+- `--long-data <PATH>`: process the volume at `<PATH>` while keeping output naming/folders based on the provided input file.
+- `--no-atlas`: disable atlas labeling (overrides any defaults file atlas selection).
 
 ## Output folders structure
 Output folder structure depends on the input dataset type:
@@ -160,10 +165,9 @@ spherical registration, but additionally save lesion map (named p7sTRIO*.nii)
 in native space.
 
 ```bash
-  ./scripts/T1Prep --no-amap sTRIO*.nii
+  ./scripts/T1Prep --amap sTRIO*.nii
 ```
-Process all files matching the pattern `'sTRIO*.nii'` and use DeppMriPrep 
-instead of AMAP segmentation.
+Process all files matching the pattern `'sTRIO*.nii'` and enable AMAP segmentation.
   
 ```bash
   ./scripts/T1Prep --multi 8 --p --csf sTRIO*.nii
@@ -196,6 +200,21 @@ the specified number of processes (e.g., 8) will be used for surface
 extraction, ensuring efficient parallelization across the two stages. The 
 default setting is -1, which automatically estimates the number of
 available processors.
+
+## Longitudinal realignment (experimental)
+
+For rigid realignment of a series of NIfTI volumes, use the realignment helper:
+
+```bash
+./scripts/realign_longitudinal.sh --help
+```
+
+New tuning flags in the Python realigner:
+- `--max-fwhm-mm <FLOAT>`: maximum smoothing (FWHM, mm) for coarse alignment.
+- `--no-intensity-scale`: disable SPM-like global intensity scaling.
+- `--overlap-penalty-weight <FLOAT>`: penalize samples that fall outside the moving FOV.
+- `--sample-strategy {grid,gradient}`: choose deterministic grid or edge-biased gradient sampling.
+- `--grad-quantile <FLOAT>`: threshold for selecting high-gradient samples.
 
 
 ## Input
