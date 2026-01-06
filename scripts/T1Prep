@@ -208,7 +208,7 @@ parse_args()
       --skullstrip-only)
         skullstrip_only=1
         ;;
-      --skip-skullstrip)
+      --no-skullstrip | --skip-skullstrip)
         skip_skullstrip=1
         ;;
       --no-seg*)
@@ -289,7 +289,7 @@ parse_args()
   fi
 
   if [[ "${skullstrip_only}" -eq 1 && "${skip_skullstrip}" -eq 1 ]]; then
-    echo "${RED}ERROR: Options --skullstrip-only and --skip-skullstrip cannot be used together.${NC}" >&2
+    echo "${RED}ERROR: Options --skullstrip-only and --no-skullstrip cannot be used together.${NC}" >&2
     exit 1
   fi
 
@@ -549,6 +549,7 @@ surface_estimation()
       run_cmd_log "${report_log}" "$cmd"
       
       # Resamples atlases to individual surface space
+      cmd=()  # reset to avoid re-running CAT_SurfWarp when appending
       code="ATLAS_label"
       pattern=$(get_pattern "$code" "$name_columns")
       # Create dynamic variables for filenames
@@ -616,12 +617,16 @@ process()
 
     # Call parallelize with filtered arguments and use memory limit per process
     # and a small delay of 5s between the jobs to avoid simultaneous peak memory usage
+    args=(--no-surf --multi -2)
+    if [ "${estimate_surf}" -eq 1 ]; then
+      args+=( --hemisphere)
+    fi
     cmd=(
       "${script_dir}/parallelize"
       -l "/tmp"
       -d 5
       ${arg_parallelize[@]}
-      -c "$(printf '%q ' "$0" "${filtered_args[@]}" --no-surf --hemisphere --multi -2)"
+      -c "$(printf '%q ' "$0" "${filtered_args[@]}" "${args[@]}")"
       "${ARRAY[@]}"
     )
 
@@ -1119,7 +1124,7 @@ ${BOLD}${GREEN}Save Options:${NC}
     Writes a skull-stripped image and a brain mask into the output mri folder.
     This option disables surface estimation and spherical registration.
 
-  --skip-skullstrip
+  --no-skullstrip
     Skip skull-stripping (assumes input is already skull-stripped).
     A brain mask is derived from the input image.
     Note: This works best if the background is close to zero.
