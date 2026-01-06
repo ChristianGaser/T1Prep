@@ -3,7 +3,7 @@
 ## Overview
 This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection and integration with CAT12. The code lives in the `src` directory and helper scripts are in `scripts/`.
 
-## Project Structure for OpenAI Codex Navigation
+## Project Structure
 
 ```
 T1Prep/
@@ -20,21 +20,26 @@ T1Prep/
 ## Development Guidelines
 - Use Python 3.9 or newer.
 - Keep functions small and well documented. Include docstrings for public functions.
-- Prefer using the utilities provided in `src/utils.py` when possible.
+- Prefer using the utilities provided in `src/t1prep/utils.py` (and related helpers in `src/t1prep/`) when possible.
 - Check documentation of functions and add missing documentation.
 
+## Common tasks
+- Show CLI options: `./scripts/T1Prep --help`
+- Run pipeline (example): `./scripts/T1Prep --out-dir /tmp/out sub-01_T1w.nii.gz`
+- Python API: `from t1prep import run_t1prep`
+- Quick Python sanity check: `python -m compileall src`
+
 ## Coding style
-- Follow [PEP 8](https://peps.python.org/pep-0008/) style. Format new Python code with `black` and verify with `black --check src scripts`.
-- Lint Python code with `flake8 src scripts`.
+- Follow [PEP 8](https://peps.python.org/pep-0008/) style.
+- If available in your environment, format with `black` and verify with `black --check src scripts`.
+- If available, lint with `flake8 src scripts` (or `ruff check src scripts` if the project migrates to Ruff).
 - Keep indentation at four spaces.
 - Provide docstrings for all public functions and classes.
-- Use consistent code formatting tools
-- Follow language-specific best practices
-- Keep code clean and readable
+- Keep code clean and readable.
 
 ## Performance Optimization
-- Prefer GPU-based libraries such as pytorch (over numpy)
-- Try to use vectorization such as numba
+- For compute-heavy voxel-wise operations, consider PyTorch or Numba.
+- Prefer clear, correct implementations first; optimize only when needed and measured.
 
 ## Commit Guidance
 - Break up work into small, logically separate commits.
@@ -45,11 +50,12 @@ T1Prep/
 
 ## Shell scripts
 - Validate scripts in `scripts/` with `shellcheck`.
+- Quick syntax check: `bash -n scripts/T1Prep`.
 
 ## Programmatic Checks
 - Install dependencies via `pip install -r requirements.txt`.
 - Run `python -m compileall src` to ensure files compile.
-- If tests are added in the future, run `pytest` before submitting.
+- Run `pytest` before submitting (when tests are present and configured).
 
 ## Pull Request Guidelines
 When creating a PR:
