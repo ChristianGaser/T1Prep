@@ -508,7 +508,10 @@ def rigid_realign_to_first(
 
 
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Rigid realignment to the first input (SPM-like)")
+    p = argparse.ArgumentParser(
+        description="Rigid realignment of a longitudinal series to the first input (SPM-like).",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     p.add_argument("--inputs", nargs="+", required=True, help="Input NIfTI images")
     p.add_argument("--out-dir", required=True, help="Directory for outputs")
     p.add_argument(
@@ -519,12 +522,12 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             " into <out-dir>/<subfolder_i> to avoid filename collisions when inputs share basenames."
         ),
     )
-    p.add_argument("--iterations", type=int, default=3, help="Multi-scale passes (default: 3)")
+    p.add_argument("--iterations", type=int, default=3, help="Multi-scale alignment passes")
     p.add_argument(
         "--max-fwhm-mm",
         type=float,
         default=6.0,
-        help="Max smoothing (FWHM, mm) for the coarse alignment level (default: 6.0)",
+        help="Max smoothing (FWHM, mm) at the coarsest alignment level",
     )
     p.add_argument(
         "--no-intensity-scale",
@@ -544,15 +547,19 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--sample-strategy",
         choices=("grid", "gradient"),
         default="grid",
-        help="Sampling strategy for the cost function (default: grid)",
+        help="Sampling strategy for the cost function",
     )
     p.add_argument(
         "--grad-quantile",
         type=float,
         default=0.80,
-        help="Quantile threshold for gradient sampling (default: 0.80)",
+        help="Quantile threshold for gradient sampling",
     )
-    p.add_argument("--device", default="cpu", help="Use cpu or gpu")
+    p.add_argument(
+        "--device",
+        default="cpu",
+        help="Reserved (currently unused).",
+    )
     p.add_argument("--save-template", action="store_true", help="Save the reference volume (for parity)")
     p.add_argument("--save-resampled", action="store_true", help="Write resampled copies in reference space")
     p.add_argument("--update-headers", action="store_true", help="Only update headers with new affines")

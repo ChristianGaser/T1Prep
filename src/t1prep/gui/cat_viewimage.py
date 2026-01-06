@@ -872,15 +872,31 @@ class _ClickStyle(vtkInteractorStyleImage):
 
 
 def _parse_args(argv: Optional[Sequence[str]] = None):
-    p = argparse.ArgumentParser(description="Orthogonal VTK image viewer with surface overlays")
+    p = argparse.ArgumentParser(
+        description="Orthogonal VTK image viewer with optional surface overlays.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     p.add_argument("image", help="Input image: .nii(.gz), .mnc, .mha/.mhd, .nrrd, ...")
     p.add_argument("surfaces", nargs="*", help="0-3 surface files (.gii, .vtk, .vtp, .obj, .stl)")
     p.add_argument("--size", type=int, default=400, help="Window size (pixels)")
     p.add_argument("--no-mirror", action="store_true", help="Disable mirroring (scale -1,1,1)")
     p.add_argument("--headless", action="store_true", help="Do not start interactor (no windows)")
-    p.add_argument("--screenshot", type=str, default=None, help="Base path or filename (.png) to save screenshots and exit")
+    p.add_argument(
+        "--screenshot",
+        type=str,
+        default=None,
+        help="Base path or filename (.png) to save screenshots and exit",
+    )
     p.add_argument("--verbose", action="store_true", help="Print diagnostic information")
-    p.add_argument("--surface-convention", choices=["auto","ras","lps","none"], default="auto", help="Coordinate convention of surfaces; convert to match image world (RAS)")
+    p.add_argument(
+        "--surface-convention",
+        choices=["auto", "ras", "lps", "none"],
+        default="auto",
+        help=(
+            "Coordinate convention of input surfaces; converted to match the image world (RAS). "
+            "Use 'none' to skip any conversion."
+        ),
+    )
     return p.parse_args(argv)
 
 

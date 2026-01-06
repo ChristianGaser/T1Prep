@@ -513,9 +513,9 @@ def parse_args(argv: List[str]) -> Options:
         prog='cat_viewsurf.py',
         description='Render LH/RH surfaces with optional overlays (CAT_ViewSurf.py).\n\n'
                     'Usage examples:\n'
-                    '  • Single mesh: src/cat_viewsurf.py lh.central.name.gii\n'
-                    '  • Single overlay: src/cat_viewsurf.py lh.thickness.name1\n'
-                    '  • Multiple overlays (navigate with ←/→): src/cat_viewsurf.py lh.thickness.name1 lh.thickness.name2 ...',
+                    '  • Single mesh: python src/t1prep/gui/cat_viewsurf.py lh.central.name.gii\n'
+                    '  • Single overlay: python src/t1prep/gui/cat_viewsurf.py lh.thickness.name1\n'
+                    '  • Multiple overlays (navigate with ←/→): python src/t1prep/gui/cat_viewsurf.py lh.thickness.name1 lh.thickness.name2 ...',
         formatter_class=argparse.RawTextHelpFormatter,
     )
     # Accept one or more positional inputs. If more than one is given, treat all as overlays
@@ -528,23 +528,23 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-overlays', dest='overlays', nargs='+', help='Multiple overlay files for navigation')
     p.add_argument('-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
     p.add_argument('-volume','-vol','--nifti', dest='volume', help='3D NIfTI volume to display in a separate orthogonal view window')
-    p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0])
-    p.add_argument('-range-bkg','-rb', dest='range_bkg', nargs=2, type=float, default=[0.0, -1.0])
-    p.add_argument('-clip','-cl', dest='clip', nargs=2, type=float, default=[0.0, -1.0])
-    p.add_argument('-size','-sz', dest='size', nargs=2, type=int, default=list(DEFAULT_WINDOW_SIZE))
-    p.add_argument('-title', dest='title')
-    p.add_argument('-output','-save', dest='output')
-    p.add_argument('-fontsize','-fs', dest='fontsize', type=int, default=0)
-    p.add_argument('-opacity','-op', dest='opacity', type=float, default=0.8)
+    p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0], help='Overlay value range (min max). Use -1 for auto.')
+    p.add_argument('-range-bkg','-rb', dest='range_bkg', nargs=2, type=float, default=[0.0, -1.0], help='Background value range (min max). Use -1 for auto.')
+    p.add_argument('-clip','-cl', dest='clip', nargs=2, type=float, default=[0.0, -1.0], help='Clip range for display (min max). Use -1 for none/auto.')
+    p.add_argument('-size','-sz', dest='size', nargs=2, type=int, default=list(DEFAULT_WINDOW_SIZE), help='Window size in pixels (width height)')
+    p.add_argument('-title', dest='title', help='Window/title string (overrides auto title)')
+    p.add_argument('-output','-save', dest='output', help='Save a screenshot to this path and exit')
+    p.add_argument('-fontsize','-fs', dest='fontsize', type=int, default=0, help='Title/font size (0 = auto)')
+    p.add_argument('-opacity','-op', dest='opacity', type=float, default=0.8, help='Overlay opacity')
     p.add_argument('-stats', action='store_true', help='Deprecated: same as --title-mode stats when colorbar is shown')
     p.add_argument('--title-mode', dest='title_mode', choices=['shape','stats','none'], default='shape',
                    help='Colorbar title: shape (filename), stats, or none')
-    p.add_argument('-inverse', action='store_true')
+    p.add_argument('-inverse', action='store_true', help='Invert the overlay colormap')
     p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true')
     p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=0,
-                   help='Number of discrete color levels (0 to disable). Default: 2')
-    p.add_argument('-log', action='store_true')
-    p.add_argument('-white', action='store_true')
+                   help='Number of discrete color levels (0 = continuous)')
+    p.add_argument('-log', action='store_true', help='Use logarithmic scaling for overlay display')
+    p.add_argument('-white', action='store_true', help='Use a white background')
     # Control panel visibility (default: hidden)
     p.add_argument('--panel', dest='panel', action='store_true', help='Start with the control panel shown')
     p.add_argument('--no-panel', dest='panel', action='store_false', help='Start with the control panel hidden (default)')
@@ -555,7 +555,7 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-c2', action='store_true')
     p.add_argument('-c3', action='store_true')
     p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true', help='Fix scaling across all overlays')
-    p.add_argument('-debug', action='store_true')
+    p.add_argument('-debug', action='store_true', help='Enable debug output')
     # External defaults file for viewer settings (key=value lines)
     p.add_argument('--defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
     a = p.parse_args(argv)

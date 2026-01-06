@@ -15,13 +15,20 @@ from .metrics import compute_dice_nifti
 
 
 def _parse_args(argv=None):
-    p = argparse.ArgumentParser(description="Compute Dice-based metrics for NIfTI label maps (2-3 classes)")
+    p = argparse.ArgumentParser(
+        description="Compute Dice-based metrics for NIfTI label maps (2-3 classes).",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     p.add_argument("--gt", required=True, help="Ground truth NIfTI path")
     p.add_argument("--pred", required=True, help="Test/prediction NIfTI path")
     p.add_argument(
         "--verbose",
         action="store_true",
-        help="Print detailed output (labels, overall and per-label Dice metrics). If not set, prints a single line with per-label Dice as a vector, generalized_dice and dice_weighted.",
+        help=(
+            "Print detailed output (labels, overall and per-label Dice metrics). "
+            "If not set, prints a single CSV-like line with per-label Dice as a vector, "
+            "followed by generalized_dice and dice_weighted."
+        ),
     )
     p.add_argument("--save-conf", help="Optional path to save confusion matrix as CSV")
     return p.parse_args(argv)
