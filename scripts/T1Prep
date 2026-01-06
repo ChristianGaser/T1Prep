@@ -29,7 +29,8 @@
 
 # Defaults
 version=0.2.5
-script_dir=$(dirname "$0")
+# Resolve this script's directory robustly (works even if invoked via symlink)
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 seed=0
 
@@ -829,10 +830,10 @@ process()
     # Check for outputs from previous step
     if [ -f "${input}" ]; then
 
-      # Ensure Python can import the package from src and run the module entry
-      export PYTHONPATH="${src_dir}:${PYTHONPATH}"
+      # Ensure Python can import the package from repo `src/`
+      export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
       # Initialize command string with the segmentation entrypoint
-      cmd="${python} ${src_dir}/t1prep/segment.py"
+      cmd="${python} ${src_dir}/segment.py"
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap"

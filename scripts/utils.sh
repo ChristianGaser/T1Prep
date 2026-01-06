@@ -24,8 +24,9 @@
 
 # defaults
 os_type=$(uname -s) # Determine OS type
-script_dir=$(dirname "$0")
-root_dir=$(dirname $script_dir)
+# Directory of this utils.sh file (robust when sourced)
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd "${script_dir}/.." && pwd)"
 src_dir=${root_dir}/src/t1prep
 data_dir=${src_dir}/data
 name_file=${data_dir}/Names.tsv
