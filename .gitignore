@@ -6,11 +6,8 @@ todo.txt
 Windows-Installation.txt
 log*
 *.nii
-#data
-#bin
-test
+internal
 __pycache__
 *.webloc
-BIDS-Naming.txt
 *.m
 *.zip
