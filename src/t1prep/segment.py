@@ -1033,40 +1033,9 @@ def run_segment():
 
     wj_affine = pd.Series([wj_affine])
 
-    # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) to refine segmentation
-    if vessel > 0:
-        """
-        atlas = get_atlas(
-            t1,
-            affine,
-            p0_large.header,
-            p0_large.affine,
-            "neuromorphometrics",
-            None,
-            device,
-            is_label_atlas=True,
-        )
-        cerebellar_regions = ["Cerebellar Vermal Lobules I-V",
-            "Cerebellar Vermal Lobules VI-VII",
-            "Right Cerebellum White Matter",
-            "Left Cerebellum White Matter",
-            "Right Cerebellum Exterior",
-            "Left Cerebellum Exterior"]
-        cerebellum = get_regions_mask(atlas, "neuromorphometrics", cerebellar_regions)
-
-        atlas = get_atlas(
-            t1,
-            affine,
-            p0_large.header,
-            p0_large.affine,
-            "csf_TPM",
-            None,
-            device,
-            is_label_atlas=False,
-        )
-        csf_TPM = atlas.get_fdata().copy()
-        """
-
+    # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) 
+    # to refine segmentation
+    if vessel != 0:
         atlas = get_atlas(
             t1,
             affine,
@@ -1078,9 +1047,18 @@ def run_segment():
             is_label_atlas=False,
         )
         vessel_TPM = atlas.get_fdata().copy()
-        p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
-            p1_large, p2_large, p3_large, vessel, None, None, vessel_TPM
-        )
+        # Only modify label image for surface processing
+        if vessel > 0:
+            p0_large = cleanup_vessels(
+                p1_large, p2_large, p3_large, vessel, None, None, vessel_TPM
+            )
+        # This is a hidden feature for testing since vessel removal for VBM was 
+        # not ending in better accuracy
+        else:
+            p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
+                p1_large, p2_large, p3_large, np.abs(vessel), None, None, 
+                vessel_TPM
+            )
     else:
         gm = p1_large.get_fdata()
         wm = p2_large.get_fdata()
