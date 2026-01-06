@@ -831,8 +831,8 @@ process()
 
       # Ensure Python can import the package from src and run the module entry
       export PYTHONPATH="${src_dir}:${PYTHONPATH}"
-      # Initialize command string with the Python module call so relative imports work
-      cmd="${python} ${src_dir}/segment.py"
+      # Initialize command string with the segmentation entrypoint
+      cmd="${python} ${src_dir}/t1prep/segment.py"
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap"
@@ -1231,9 +1231,8 @@ ${BLUE}${root_dir}/T1Prep --lesions --no-sphere-reg sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Skip processing of spherical
   registration, but additionally save lesion map (named p7sTRIO*.nii) in native space.
    
-${BLUE}${root_dir}/T1Prep --no-amap sTRIO*.nii${NC}
-  Process all files matching the pattern 'sTRIO*.nii' and use DeppMriPrep instead of AMAP
-  segmentation.
+${BLUE}${root_dir}/T1Prep --amap sTRIO*.nii${NC}
+  Process all files matching the pattern 'sTRIO*.nii' and enable AMAP segmentation.
 
 ${BLUE}${root_dir}/T1Prep --multi 8 --p --csf --atlas "'neuromorphometrics', 'suit'" sTRIO*.nii${NC}
   Process all files matching the pattern 'sTRIO*.nii'. Additionally save segmentations 
