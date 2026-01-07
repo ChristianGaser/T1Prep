@@ -46,6 +46,10 @@ ext="dat"
 lh_fsavg_sphere=${surf_templates_dir}/lh.sphere.freesurfer.gii
 lh_fsavg_mask=${surf_templates_dir}/lh.mask
 
+# Parallelization (via scripts/parallelize)
+parallel=0
+jobs=""
+
 declare -a FILES=()
 declare -a LH_ARRAY=()
 declare -a RH_ARRAY=()
@@ -59,6 +63,30 @@ main()
 {
   parse_args ${1+"$@"}
   get_OS
+
+  # Optional parallel execution: delegate one input per process via scripts/parallelize
+  if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
+    local -a cmd_argv
+    cmd_argv=("$0" "--ext" "$ext" "--trg-sphere" "$lh_fsavg_sphere" "--mask" "$lh_fsavg_mask" "--fwhm" "$fwhm")
+
+    if [[ -n "${out:-}" ]]; then
+      cmd_argv+=("--out" "$out")
+    fi
+
+    local command_str=""
+    local arg
+    for arg in "${cmd_argv[@]}"; do
+      command_str+="$(printf '%q ' "$arg")"
+    done
+    command_str=${command_str% }
+
+    if [[ -n "$jobs" ]]; then
+      "${script_dir}/parallelize" -p "$jobs" -c "$command_str" "${FILES[@]}"
+    else
+      "${script_dir}/parallelize" -c "$command_str" "${FILES[@]}"
+    fi
+    exit $?
+  fi
   
   process "$@"
 
@@ -87,6 +115,14 @@ parse_args()
       --out)
         exit_if_empty "$optname" "$optarg"
         out=$optarg
+        shift
+        ;;
+      --parallel)
+        parallel=1
+        ;;
+      --jobs|--processes|-p)
+        exit_if_empty "$optname" "$optarg"
+        jobs=$optarg
         shift
         ;;
       --ext)
@@ -158,6 +194,7 @@ process_file() {
     measure=${bname#*.}; measure=${measure%%.*}
     sphere_reg=".sphere.reg"
     rh_bname="${bname/lh./rh.}"
+    
     # default output naming
     if [[ -n "${out}" ]]; then
       out_name="${out}/${bname/lh./s${fwhm}.mesh.}.${ext}"
@@ -177,7 +214,6 @@ process_file() {
   local lh_sphere_reg="${dname}/${bname/.$measure/${sphere_reg}}.gii"
   local rh_central="${dname}/${rh_bname/.$measure/.central}.gii"
   local rh_sphere_reg="${dname}/${rh_bname/.$measure/${sphere_reg}}.gii"
-  local rh_central="${dname}/${rh_bname/.$measure/.central}.gii"
 
   # build units for CAT_SurfResampleMulti
   local lh_unit="surf=${lh_central},src_sphere=${lh_sphere_reg},vals=${dname}/${bname},trg_sphere=${lh_fsavg_sphere},mask=${lh_fsavg_mask}"
@@ -204,6 +240,13 @@ process()
     fi
     process_file "$f"
   done
+
+  # Use the actual number of queued jobs (some inputs might have been skipped)
+  n="${#OUT_ARRAY[@]}"
+  if [ "$n" -lt 1 ]; then
+    echo -e "${RED}No valid input files to process.${NC}" >&2
+    exit 1
+  fi
  
   # serial
   if [  ${n} -gt 1 ]; then
@@ -264,8 +307,11 @@ write a single combined GIfTI per subject using CAT_SurfResampleMulti.
 
 ${BOLD}OPTIONS:${NC}
   --out <DIR>                  Output directory (default: same as input file dir)
+  --parallel                   Process multiple inputs via ${script_dir}/parallelize
+  --jobs <N>                   Number of parallel processes (passed to parallelize -p)
   --ext <STR>                  Output file extension (default: $ext)
   --trg-sphere <FILE>          Target sphere for the left hemisphere
+  --mask <FILE>                Target mask for the left hemisphere
   --fwhm <FLOAT>               Smoothing FWHM applied inside CAT_SurfResampleMulti (default: $fwhm)
   -h | --help                  Show this help and exit
 
