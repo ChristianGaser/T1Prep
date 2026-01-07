@@ -67,7 +67,7 @@ main()
   # Optional parallel execution: delegate one input per process via scripts/parallelize
   if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
     local -a cmd_argv
-    cmd_argv=("$0" "--ext" "$ext" "--trg-sphere" "$lh_fsavg_sphere" "--mask" "$lh_fsavg_mask" "--fwhm" "$fwhm")
+    cmd_argv=("$0" "--no-parallel" "--ext" "$ext" "--trg-sphere" "$lh_fsavg_sphere" "--mask" "$lh_fsavg_mask" "--fwhm" "$fwhm")
 
     if [[ -n "${out:-}" ]]; then
       cmd_argv+=("--out" "$out")
