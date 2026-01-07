@@ -47,7 +47,7 @@ lh_fsavg_sphere=${surf_templates_dir}/lh.sphere.freesurfer.gii
 lh_fsavg_mask=${surf_templates_dir}/lh.mask
 
 # Parallelization (via scripts/parallelize)
-parallel=0
+parallel=1
 jobs=""
 
 declare -a FILES=()
@@ -117,8 +117,8 @@ parse_args()
         out=$optarg
         shift
         ;;
-      --parallel)
-        parallel=1
+      --no-parallel)
+        parallel=0
         ;;
       --jobs|--processes|-p)
         exit_if_empty "$optname" "$optarg"
@@ -307,7 +307,7 @@ write a single combined GIfTI per subject using CAT_SurfResampleMulti.
 
 ${BOLD}OPTIONS:${NC}
   --out <DIR>                  Output directory (default: same as input file dir)
-  --parallel                   Process multiple inputs via ${script_dir}/parallelize
+  --no-parallel                Disable parallelization via ${script_dir}/parallelize
   --jobs <N>                   Number of parallel processes (passed to parallelize -p)
   --ext <STR>                  Output file extension (default: $ext)
   --trg-sphere <FILE>          Target sphere for the left hemisphere
