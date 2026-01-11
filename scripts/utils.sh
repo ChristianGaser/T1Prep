@@ -196,6 +196,10 @@ run_cmd_log() {
     shift
     local start_cmd end_cmd runtime
 
+    # Ensure the report directory exists (important when called from functions
+    # that change the working directory, e.g. surface estimation).
+    mkdir -p "$(dirname "${report_log}")" 2>/dev/null || true
+
     start_cmd=$(date +%s)
 
     for cmd in "$@"; do
@@ -445,6 +449,12 @@ t1prep_output_folder_from_input()
   local outdir_override="${2:-}"
   local version_arg="${3:-}"
   local use_amap_arg="${4:-0}"
+
+  # Normalize outdir override to an absolute path so that later `cd` calls
+  # (e.g. in surface estimation) do not break relative paths.
+  if [ -n "${outdir_override}" ] && [[ "${outdir_override}" != /* ]]; then
+    outdir_override="$(pwd)/${outdir_override}"
+  fi
 
   bname=$(basename "$FILE")
   bname="${bname%.nii.gz}"
