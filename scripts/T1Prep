@@ -258,6 +258,7 @@ parse_args()
       --fast)
         estimate_spherereg=0
         save_mwp=0
+        save_hemi=0
         atlas_vol=""
         atlas_surf=""
         ;;
@@ -846,7 +847,9 @@ process()
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
       [ "${multi}" -ne -2 ] && cmd+=" --verbose"
       [ "${debug}" -eq 1 ] && cmd+=" --debug"
-      [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] && cmd+=" --surf"
+      [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] || \
+      [ "${save_mwp}" -eq 1 ] || [ "${save_wp}" -eq 1 ] || \
+      [ -n "${atlas_vol}" ] && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"
       [ "${skullstrip_only}" -eq 1 ] && cmd+=" --skullstrip-only"
       [ "${skip_skullstrip}" -eq 1 ] && cmd+=" --skip-skullstrip"
@@ -1148,8 +1151,11 @@ ${BOLD}${GREEN}Save Options:${NC}
   --pial-white                
       Additionally estimate pial and white matter surfaces during surface processing.
 
-  --hemisphere                
-      Additionally save hemispheric partitions of the segmentation.
+    --hemi, --hemisphere
+      Save hemispheric (lh/rh) partitions of the segmentation.
+      Note: these partitions are created automatically when surface estimation is enabled (default)
+      and also when non-linear outputs are requested (e.g., --wp/--mwp or --atlas). Use this mainly
+      together with --no-surf.
 
   --wp                        
       Additionally save warped segmentations.
