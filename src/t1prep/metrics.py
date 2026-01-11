@@ -8,7 +8,7 @@ Inputs may be file paths to NIfTI images or nibabel Nifti1Image objects.
 """
 from __future__ import annotations
 
-from typing import Sequence, Tuple, Union
+from typing import Optional, Sequence, Tuple, Union
 
 import numpy as np
 import nibabel as nib
@@ -18,13 +18,16 @@ NiftiLike = Union[str, nib.Nifti1Image]
 __all__ = ["compute_dice_nifti"]
 
 
-def _load_labels(img: NiftiLike) -> np.ndarray:
+def _load_labels(img: NiftiLike, round_labels: bool) -> np.ndarray:
     if isinstance(img, nib.Nifti1Image):
         data = img.get_fdata()
     else:
         data = nib.load(str(img)).get_fdata()
-    # Convert to integer labels; round to nearest to be robust to tiny float stores
-    return np.rint(data).astype(np.int64, copy=False)
+    if round_labels:
+        # Convert to integer labels; round to nearest to be robust to tiny float stores
+        return np.rint(data).astype(np.int64, copy=False)
+    # Preserve original floating values for soft/continuous Dice
+    return np.asarray(data, dtype=float)
 
 
 def _to_bool_mask_from_labels(arr: np.ndarray, labels_arr: np.ndarray) -> np.ndarray:
@@ -35,6 +38,8 @@ def _to_bool_mask_from_labels(arr: np.ndarray, labels_arr: np.ndarray) -> np.nda
 def compute_dice_nifti(
     gt: NiftiLike,
     pred: NiftiLike,
+    *,
+    round_labels: bool = True,
 ) -> Tuple[np.ndarray, Sequence[int], np.ndarray, float, float]:
     """Compute Dice-based metrics for 2- or 3-class integer labels from NIfTI images.
 
@@ -44,12 +49,19 @@ def compute_dice_nifti(
         Ground-truth label image (NIfTI). Integer labels (2 or 3 classes).
     pred : str | nib.Nifti1Image
         Test/predicted label image (NIfTI). Integer labels (2 or 3 classes).
-        Notes
-        -----
-        - All **non-zero** integer labels present in the ground truth ``gt`` are
-            evaluated. The prediction ``pred`` does **not** control which labels are
-            included, so missing classes in ``pred`` are treated as Dice = 0 rather
-            than being silently ignored.
+    round_labels : bool, optional
+        When True (default), round both inputs to the nearest integer before
+        computing Dice scores (original behaviour). When False, compute soft /
+        continuous Dice using the unrounded arrays. In soft mode, per-class
+        volumes and overlaps are derived from the continuous values, while the
+        class set and confusion matrix still follow the rounded label indices.
+
+    Notes
+    -----
+    - All **non-zero** integer labels present in the ground truth ``gt`` are
+        evaluated. The prediction ``pred`` does **not** control which labels are
+        included, so missing classes in ``pred`` are treated as Dice = 0 rather
+        than being silently ignored.
 
     Returns
     -------
@@ -65,31 +77,55 @@ def compute_dice_nifti(
         where w_c is proportional to the number of gt voxels of class c.
     generalized_dice : float
         Generalized Dice coefficient using inverse-squared class volumes as
-        weights:
+        weights. When ``round_labels`` is True, uses
 
             GDC = 2 * sum_c w_c * TP_c / sum_c w_c * (2*TP_c + FP_c + FN_c),
 
-        with w_c = 1 / (V_c^2 + eps) and V_c = #gt voxels of class c.
+        with w_c = 1 / (V_c^2 + eps) and V_c = #gt voxels of class c. When
+        ``round_labels`` is False, TP/FP/FN are replaced by continuous overlaps
+        and volumes derived from the unrounded maps.
 
     Notes
     -----
     - Dice-based metrics ignore true negatives (TN) by construction.
-    - A brain mask is obtained from ``gt != 0``; all voxels inside this mask
-        contribute to the confusion matrix, so disagreements between ``gt`` and
-        ``pred`` are fully accounted for.
+    - A brain mask is obtained from ``gt != 0`` (using raw values when
+        ``round_labels`` is False); all voxels inside this mask contribute to
+        the confusion matrix, so disagreements between ``gt`` and ``pred`` are
+        fully accounted for.
+    - In soft mode, per-class memberships are clipped to [0, 1] to keep Dice
+        values bounded.
     - Handles degenerate cases by returning NaN when denominators are zero or
         when there are no valid voxels after masking.
-    - Input labels are rounded before casting to integer to tolerate minor
-        float imprecision in saved NIfTI files.
     """
-    # Load integer labels
-    y_true = _load_labels(gt)
-    y_pred = _load_labels(pred)
+    # Load labels (rounded or continuous depending on mode)
+    y_true = _load_labels(gt, round_labels)
+    y_pred = _load_labels(pred, round_labels)
     if y_true.shape != y_pred.shape:
         raise ValueError(f"Shape mismatch: gt {y_true.shape} vs pred {y_pred.shape}")
 
+    # Keep an unrounded copy when we need soft/continuous Dice
+    if round_labels:
+        y_true_raw: Optional[np.ndarray] = None
+        y_pred_raw: Optional[np.ndarray] = None
+    else:
+        y_true_raw = y_true
+        y_pred_raw = y_pred
+        # For confusion/label discovery we still need integer views
+        y_true_round = np.rint(y_true_raw).astype(np.int64, copy=False)
+        y_pred_round = np.rint(y_pred_raw).astype(np.int64, copy=False)
+        # Reuse the rounded arrays for confusion while keeping raw for soft Dice
+        y_true_conf = y_true_round
+        y_pred_conf = y_pred_round
+    if round_labels:
+        y_true_conf = y_true
+        y_pred_conf = y_pred
+
     # Determine labels to consider from ground truth only (exclude background 0)
-    labels_arr = np.unique(y_true)
+    if y_true_conf.ndim > 3:
+        # Multi-channel probability maps: infer labels from channel count
+        labels_arr = np.arange(1, y_true_conf.shape[-1] + 1)
+    else:
+        labels_arr = np.unique(y_true_conf)
     labels_arr = labels_arr[labels_arr != 0]
     if labels_arr.size == 0:
         return (
@@ -106,17 +142,32 @@ def compute_dice_nifti(
 
     # Build a brain mask from ground truth and select valid voxels
     # All non-zero gt voxels contribute; disagreements in pred are preserved.
-    brain_mask = y_true != 0
+    if not round_labels and y_true_raw is not None:
+        source_for_mask = y_true_raw
+    else:
+        source_for_mask = y_true_conf
 
-    yt = y_true[brain_mask]
-    yp = y_pred[brain_mask]
+    if source_for_mask.ndim > 3:
+        brain_mask = np.any(source_for_mask != 0, axis=-1)
+    else:
+        brain_mask = source_for_mask != 0
+
+    if y_true_conf.ndim > 3:
+        yt_conf = np.argmax(y_true_conf, axis=-1) + 1
+        yp_conf = np.argmax(y_pred_conf, axis=-1) + 1
+    else:
+        yt_conf = y_true_conf
+        yp_conf = y_pred_conf
+
+    yt_conf = yt_conf[brain_mask]
+    yp_conf = yp_conf[brain_mask]
 
     # Ensure both yt and yp are within the label set (in case pred has
     # unexpected labels); voxels with out-of-set labels are ignored.
-    valid = np.isin(yt, labels_arr) & np.isin(yp, labels_arr)
-    yt = yt[valid]
-    yp = yp[valid]
-    if yt.size == 0:
+    valid = np.isin(yt_conf, labels_arr) & np.isin(yp_conf, labels_arr)
+    yt_conf = yt_conf[valid]
+    yp_conf = yp_conf[valid]
+    if yt_conf.size == 0:
         return (
             np.zeros((K, K), dtype=np.int64),
             labels_arr.tolist(),
@@ -126,8 +177,8 @@ def compute_dice_nifti(
         )
 
     # Map to indices
-    yt_idx = np.fromiter((label_to_idx[int(v)] for v in yt), count=yt.size, dtype=np.int64)
-    yp_idx = np.fromiter((label_to_idx[int(v)] for v in yp), count=yp.size, dtype=np.int64)
+    yt_idx = np.fromiter((label_to_idx[int(v)] for v in yt_conf), count=yt_conf.size, dtype=np.int64)
+    yp_idx = np.fromiter((label_to_idx[int(v)] for v in yp_conf), count=yp_conf.size, dtype=np.int64)
 
     # Confusion matrix via bincount
     idx = yt_idx * K + yp_idx
@@ -143,7 +194,7 @@ def compute_dice_nifti(
             float("nan"),
         )
 
-    # Row/col sums (gt / pred volumes per class)
+    # Row/col sums (gt / pred volumes per class) from confusion
     row = conf.sum(axis=1).astype(float)  # gt counts per class
     col = conf.sum(axis=0).astype(float)  # pred counts per class
 
@@ -152,43 +203,122 @@ def compute_dice_nifti(
     # ------------------------------------------------------------------
     dice_per = np.full((K,), np.nan, dtype=float)
 
-    tp = np.diag(conf).astype(float)
-    fn = row - tp
-    fp = col - tp
-    denom_dice = 2.0 * tp + fp + fn
+    if round_labels:
+        tp = np.diag(conf).astype(float)
+        fn = row - tp
+        fp = col - tp
+        denom_dice = 2.0 * tp + fp + fn
 
-    valid_dice = denom_dice > 0
-    dice_per[valid_dice] = 2.0 * tp[valid_dice] / denom_dice[valid_dice]
+        valid_dice = denom_dice > 0
+        dice_per[valid_dice] = 2.0 * tp[valid_dice] / denom_dice[valid_dice]
+    else:
+        # Soft/continuous Dice: operate on raw arrays mapped to per-class weights
+        if y_true_raw is None or y_pred_raw is None:
+            raise RuntimeError("Soft Dice requires access to raw arrays.")
+
+        if y_true_raw.ndim > 3:
+            yt_flat = y_true_raw[brain_mask]
+            yp_flat = y_pred_raw[brain_mask]
+            if yt_flat.ndim != 2:
+                yt_flat = yt_flat.reshape(-1, yt_flat.shape[-1])
+            if yp_flat.shape != yt_flat.shape:
+                raise ValueError("Soft Dice expects matching channel dimensions.")
+            if yt_flat.shape[1] != K:
+                raise ValueError(
+                    "Soft Dice channel count mismatch: "
+                    f"expected {K}, got {yt_flat.shape[1]}"
+                )
+            gt_stack = yt_flat.T
+            pred_stack = yp_flat.T
+        else:
+            yt_flat = y_true_raw[brain_mask].reshape(-1)
+            yp_flat = y_pred_raw[brain_mask].reshape(-1)
+            assignments = np.fromiter(
+                (label_to_idx.get(int(v), -1) for v in np.rint(yt_flat)),
+                count=yt_flat.size,
+                dtype=np.int64,
+            )
+            pred_assign = np.fromiter(
+                (label_to_idx.get(int(v), -1) for v in np.rint(yp_flat)),
+                count=yp_flat.size,
+                dtype=np.int64,
+            )
+            valid_soft = (assignments >= 0) & (pred_assign >= 0)
+            yt_flat = yt_flat[valid_soft]
+            yp_flat = yp_flat[valid_soft]
+            assignments = assignments[valid_soft]
+            pred_assign = pred_assign[valid_soft]
+            gt_stack = np.zeros((K, yt_flat.size), dtype=float)
+            pred_stack = np.zeros_like(gt_stack)
+            for idx_label in range(K):
+                gt_sel = assignments == idx_label
+                pred_sel = pred_assign == idx_label
+                gt_stack[idx_label, gt_sel] = yt_flat[gt_sel]
+                pred_stack[idx_label, pred_sel] = yp_flat[pred_sel]
+
+            # Clamp membership weights to [0, 1] to keep Dice bounded
+            np.clip(gt_stack, 0.0, 1.0, out=gt_stack)
+            np.clip(pred_stack, 0.0, 1.0, out=pred_stack)
+
+        num = 2.0 * np.sum(gt_stack * pred_stack, axis=1)
+        den = np.sum(gt_stack * gt_stack + pred_stack * pred_stack, axis=1)
+        valid_dice = den > 0
+        dice_per[valid_dice] = num[valid_dice] / den[valid_dice]
 
     # ------------------------------------------------------------------
     # Volume-weighted Dice (weights based on gt volumes)
     # ------------------------------------------------------------------
-    valid_vol = row > 0
-    if np.any(valid_vol) and np.any(valid_dice):
+    if round_labels:
+        valid_vol = row > 0
+        if np.any(valid_vol) and np.any(valid_dice):
+            valid_combined = valid_vol & valid_dice
+            if np.any(valid_combined):
+                weights = row[valid_combined]
+                weights = weights / weights.sum()
+                dice_weighted = float(np.sum(weights * dice_per[valid_combined]))
+            else:
+                dice_weighted = float("nan")
+        else:
+            dice_weighted = float("nan")
+    else:
+        vol_gt_soft = np.sum(gt_stack, axis=1)
+        valid_vol = vol_gt_soft > 0
         valid_combined = valid_vol & valid_dice
         if np.any(valid_combined):
-            weights = row[valid_combined]
+            weights = vol_gt_soft[valid_combined]
             weights = weights / weights.sum()
             dice_weighted = float(np.sum(weights * dice_per[valid_combined]))
         else:
             dice_weighted = float("nan")
-    else:
-        dice_weighted = float("nan")
 
     # ------------------------------------------------------------------
     # Generalized Dice (inverse-squared volume weights)
     # ------------------------------------------------------------------
     eps = np.finfo(float).eps
-    valid_gd = row > 0
-    if np.any(valid_gd):
-        w = np.zeros_like(row)
-        w[valid_gd] = 1.0 / (row[valid_gd] ** 2 + eps)
+    if round_labels:
+        valid_gd = row > 0
+        if np.any(valid_gd):
+            w = np.zeros_like(row)
+            w[valid_gd] = 1.0 / (row[valid_gd] ** 2 + eps)
 
-        num = 2.0 * np.sum(w * tp)
-        den = np.sum(w * (2.0 * tp + fp + fn))
-        generalized_dice = float(num / den) if den > 0.0 else float("nan")
+            num_gd = 2.0 * np.sum(w * tp)
+            den_gd = np.sum(w * (2.0 * tp + fp + fn))
+            generalized_dice = float(num_gd / den_gd) if den_gd > 0.0 else float("nan")
+        else:
+            generalized_dice = float("nan")
     else:
-        generalized_dice = float("nan")
+        vol_gt_soft = np.sum(gt_stack, axis=1)
+        vol_pred_soft = np.sum(pred_stack, axis=1)
+        tp_soft = np.sum(gt_stack * pred_stack, axis=1)
+        valid_gd = vol_gt_soft > 0
+        if np.any(valid_gd):
+            w = np.zeros_like(vol_gt_soft)
+            w[valid_gd] = 1.0 / (vol_gt_soft[valid_gd] ** 2 + eps)
+            num_gd = 2.0 * np.sum(w * tp_soft)
+            den_gd = np.sum(w * (vol_gt_soft + vol_pred_soft))
+            generalized_dice = float(num_gd / den_gd) if den_gd > 0.0 else float("nan")
+        else:
+            generalized_dice = float("nan")
 
     return (
         conf,
