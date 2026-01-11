@@ -300,6 +300,7 @@ parse_args()
     estimate_seg=1
     estimate_surf=0
     estimate_spherereg=0
+    save_hemi=0
   fi
 
 }
@@ -778,10 +779,9 @@ process()
     fi
               
     # Create output folders    
+    mkdir -p "${mri_dir}" "${report_dir}" "${label_dir}"
     if [ "${estimate_surf}" -eq 1 ]; then
-      mkdir -p "${mri_dir}" "${surf_dir}" "${report_dir}" "${label_dir}"
-    else
-      mkdir -p "${mri_dir}" "${report_dir}" "${label_dir}"
+      mkdir -p "${surf_dir}"
     fi
     
     # Get filename for log file
