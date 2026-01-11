@@ -15,6 +15,7 @@ clean:
 	-@find . -type f -name .DS_Store -exec rm {} \;
 	-@chmod -R a+r,g+w,o-w .
 	-@find . -type f \( -name "*.sh" \) -exec chmod a+x {} \;
+	-@find . -type f \( -name "*_ui" \) -exec chmod a+x {} \;
 
 # zip release
 zip: release
