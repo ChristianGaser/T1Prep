@@ -43,10 +43,12 @@ Dice-based metric — wrapper
 
 Usage:
     scripts/dice.sh --gt GT.nii.gz --pred PRED.nii.gz \
-        [--save-conf conf.csv] [--verbose]
+        [--soft] [--save-conf conf.csv] [--verbose]
 
 Notes:
     - Wraps Python module: t1prep.dice
+        - --soft computes soft/continuous Dice using unrounded inputs (for
+            probability/partial-volume maps); default is rounded labels.
     - A brain mask is obtained from ``gt != 0``; all voxels inside this mask
         contribute to the confusion matrix, so disagreements between ``gt`` and
         ``pred`` are fully accounted for.
