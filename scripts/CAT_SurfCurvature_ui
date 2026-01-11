@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 #
 # PURPOSE:
-#   Resample left (und optional right) hemisphere surface data to a target sphere,
-#   optionally smooth the values and write a single combined GIfTI using
-#   CAT_SurfCurvature.
+#   Compute curvature-based parameters from surface files and write them to
+#   text (or GIfTI) files. This is a T1Prep wrapper around CAT_SurfCurvature
+#   and is functionally aligned with CAT_DumpCurv_ui.
+#
+#   If a left hemisphere file (lh.*) is provided, the corresponding right
+#   hemisphere file (rh.*) is automatically processed as well (if present).
 #
 # USAGE:
-#   SurfResample.sh [options] <lh_input_value_file> [<lh_input_value_file> ...]
+#   $0 [options] <surface_file> [<surface_file> ...]
 #
 # INPUT:
-#   Left hemisphere value files (e.g. lh.thickness.gii or lh.thickness.dat).
-#   The script auto-derives corresponding central/sphere files and the right
-#   hemisphere counterparts by name.
+#   Surface files (*.obj or *.gii). For FreeSurfer-style naming (lh.* / rh.*),
+#   output names follow the CAT_DumpCurv_ui scheme.
 #
 # OUTPUT:
-#   One combined .gii per left input file containing LH (+RH) resampled values.
+#   One output per processed hemisphere/input (txt by default, or *.gii when
+#   -gifti is used).
 # ______________________________________________________________________
 #
 # Christian Gaser
@@ -31,14 +34,7 @@
 os_type=$(uname -s) # Determine OS type
 
 script_dir=$(dirname "$0")
-root_dir=$(dirname $script_dir)
-name_file=${root_dir}/Names.tsv
-
 source "${script_dir}/utils.sh"
-
-time=$(date "+%Y%b%d_%H%M")
-JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
-PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
 
 # Parameters
 use_absolute=0
@@ -48,8 +44,28 @@ removestr=''
 noclobber=0
 gifti=0
 
+# Parallelization (via scripts/parallelize)
+parallel=1
+jobs=""
+
 declare -a FILES=()
-declare -a OUT_ARRAY=()
+declare -a WORK_FILES=()
+
+# ----------------------------------------------------------------------
+# helpers (bash 3.2 compatible)
+# ----------------------------------------------------------------------
+
+array_contains()
+{
+  local seeking="$1"; shift
+  local element
+  for element in "$@"; do
+    if [[ "$element" == "$seeking" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 # ----------------------------------------------------------------------
 # run main
@@ -59,8 +75,89 @@ main()
 {
   parse_args ${1+"$@"}
   get_OS
+
+  # Optional parallel execution: delegate one input per process via scripts/parallelize
+  if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
+    local -a files_for_parallel
+    local -a lh_suffixes
+    local f b suffix
+
+    # Build a filtered file list:
+    # - keep only existing files
+    # - if both lh.X and rh.X are provided, skip rh.X (since lh.X auto-adds RH)
+    for f in "${FILES[@]}"; do
+      if [[ ! -f "$f" && ! -L "$f" ]]; then
+        continue
+      fi
+      b=$(basename "$f")
+      if [[ "$b" == lh.* ]]; then
+        suffix="${b#lh.}"
+        if ! array_contains "$suffix" "${lh_suffixes[@]}"; then
+          lh_suffixes+=("$suffix")
+        fi
+      fi
+    done
+    for f in "${FILES[@]}"; do
+      if [[ ! -f "$f" && ! -L "$f" ]]; then
+        continue
+      fi
+      b=$(basename "$f")
+      if [[ "$b" == rh.* ]]; then
+        suffix="${b#rh.}"
+        if array_contains "$suffix" "${lh_suffixes[@]}"; then
+          continue
+        fi
+      fi
+      if ! array_contains "$f" "${files_for_parallel[@]}"; then
+        files_for_parallel+=("$f")
+      fi
+    done
+
+    if [[ "${#files_for_parallel[@]}" -lt 2 ]]; then
+      process
+      exit 0
+    fi
+
+    local -a cmd_argv
+    cmd_argv=("$0" "--no-parallel")
+
+    if [[ "$use_absolute" -eq 1 ]]; then cmd_argv+=("-a"); fi
+    if [[ -n "$removestr" ]]; then cmd_argv+=("-r" "$removestr"); fi
+    if [[ "$fwhm" -gt 0 ]]; then cmd_argv+=("-f" "$fwhm"); fi
+    if [[ "$noclobber" -eq 1 ]]; then cmd_argv+=("-noclobber"); fi
+    if [[ "$gifti" -eq 1 ]]; then cmd_argv+=("-gifti"); fi
+
+    case "$method" in
+      0) cmd_argv+=("-mc") ;;
+      1) cmd_argv+=("-gc") ;;
+      2) cmd_argv+=("-cv") ;;
+      3) cmd_argv+=("-si") ;;
+      4) cmd_argv+=("-mc0") ;;
+      5) cmd_argv+=("-sd") ;;
+      6) cmd_argv+=("-bi") ;;
+      7) cmd_argv+=("-sh") ;;
+      8) cmd_argv+=("-fi") ;;
+      9) cmd_argv+=("-min-curv") ;;
+      10) cmd_argv+=("-max-curv") ;;
+      *) cmd_argv+=("-dp" "$method") ;;
+    esac
+
+    local command_str=""
+    local arg
+    for arg in "${cmd_argv[@]}"; do
+      command_str+="$(printf '%q ' "$arg")"
+    done
+    command_str=${command_str% }
+
+    if [[ -n "$jobs" ]]; then
+      "${script_dir}/parallelize" -p "$jobs" -c "$command_str" "${files_for_parallel[@]}"
+    else
+      "${script_dir}/parallelize" -c "$command_str" "${files_for_parallel[@]}"
+    fi
+    exit $?
+  fi
   
-  process "$@"
+  process
 
   exit 0
 }
@@ -81,20 +178,36 @@ parse_args()
   count=0
   while [ $# -gt 0 ]; do
     optname="${1%%=*}"
-    optarg="${2:-}"
+    # Support both "-x 10" and "-x=10" styles
+    if [[ "$1" == *=* ]]; then
+      optarg="${1#*=}"
+    else
+      optarg="${2:-}"
+    fi
 
     case "$1" in
+    --no-parallel)
+      parallel=0
+      ;;
+    --jobs|--processes|-p)
+      exit_if_empty "$optname" "$optarg"
+      jobs=$optarg
+      # Only shift if the value was provided as the next token
+      if [[ "$1" != *=* ]]; then shift; fi
+      ;;
     --a* | -a*)
       use_absolute=1
       ;;
     --r* | -r*)
       exit_if_empty "$optname" "$optarg"
       removestr=$optarg
+      if [[ "$1" != *=* ]]; then shift; fi
       ;;
     --f* | -f*)
-      optarg=`echo $optarg | sed 's,[^0-9],,g'`
+      optarg=$(echo "$optarg" | sed 's,[^0-9],,g')
       exit_if_empty "$optname" "$optarg"
       fwhm=$optarg
+      if [[ "$1" != *=* ]]; then shift; fi
       ;;
     --n* | -n*)
       noclobber=1
@@ -136,9 +249,10 @@ parse_args()
       method=10
       ;;
     --dp | -dp)
-      optarg=`echo $optarg | sed 's,[^0-9],,g'`
+      optarg=$(echo "$optarg" | sed 's,[^0-9],,g')
       exit_if_empty "$optname" "$optarg"
       method=$optarg
+      if [[ "$1" != *=* ]]; then shift; fi
       ;;
       -h | --help | --h | -v | --version | -V)
         help
@@ -149,14 +263,8 @@ parse_args()
         exit 1
         ;;
       *)
-        if [ ! -f "$1" ]; then
-          if [ ! -L "$1" ]; then
-            echo "${RED}File $1 was not found and will be skipped.${NC}" >&2
-          fi
-        else
-          FILES[$count]=$1
-          ((count++))
-        fi
+        FILES[$count]="$1"
+        ((count++))
         ;;
     esac
     shift
@@ -167,34 +275,62 @@ parse_args()
 # ----------------------------------------------------------------------
 # per-file processing
 # ----------------------------------------------------------------------
-process_file() {
+get_outputname()
+{
   local infile="$1"
+  local dn bn bn1 str
 
-  local dname bname hemi measure out_name
-  dname=$(dirname "$infile")
-  bname=$(basename "$infile")
+  dn=$(dirname "$infile")
+  bn=$(basename "$infile")
 
-  # only lh.* supported for now
-  if [[ "$bname" == lh.* ]]; then
-    measure=${bname#*.}; measure=${measure%%.*}
-    sphere_reg=".sphere.reg"
-    rh_bname="${bname/lh./rh.}"
-    # default output naming
-    if [[ -n "${out}" ]]; then
-      out_name="${out}/${bname/lh./s${fwhm}.mesh.}.${ext}"
-    else
-      out_name="${dname}/${bname/lh./s${fwhm}.mesh.}.${ext}"
-    fi
-    out_name="${out_name/.$measure/.${measure}.resampled_32k}"
-  elif [[ "$bname" == *_left* ]]; then
-    echo -e "${RED}BIDS format not yet implemented (${bname}).${NC}" >&2
-    return 1
-  else
-    echo -e "${RED}File '$infile' should be left hemisphere data (lh.*).${NC}" >&2
-    return 1
+  # remove extensions
+  bn=${bn%.obj}
+  bn=${bn%.gii}
+
+  # optional remove string
+  if [[ -n "$removestr" ]]; then
+    bn=${bn//${removestr}/}
   fi
 
-  OUT_ARRAY+=("$out_name")
+  case "$method" in
+    0) str='mc' ;;
+    1) str='gc' ;;
+    2) str='cv' ;;
+    3) str='si' ;;
+    4) str='mc0' ;;
+    5) str='sd' ;;
+    6) str='bi' ;;
+    7) str='sh' ;;
+    8) str='fi' ;;
+    9) str='mincurv' ;;
+    10) str='maxcurv' ;;
+    *) str="dp${method}" ;;
+  esac
+
+  if [[ "$use_absolute" -eq 1 ]]; then
+    str="a${str}"
+  fi
+  if [[ "$fwhm" -ne 0 ]]; then
+    str="${fwhm}mm_${str}"
+  fi
+
+  bn1=${bn%%.*}
+  if [[ "$bn1" == "lh" || "$bn1" == "rh" ]]; then
+    # FreeSurfer-like naming: collapse "lh.central.SUBJ" -> "lh.SUBJ"
+    bn=${bn//h.central/h}
+    if [[ -n "$removestr" ]]; then
+      bn=${bn//${removestr}/}
+    fi
+    bn=${bn//lh./}
+    bn=${bn//rh./}
+    outputname="${dn}/${bn1}.${str}.${bn}"
+  else
+    outputname="${dn}/${str}_${bn}.txt"
+  fi
+
+  if [[ "$gifti" -eq 1 ]]; then
+    outputname="${outputname}.gii"
+  fi
 }
 
 
@@ -203,55 +339,57 @@ process_file() {
 # ----------------------------------------------------------------------
 
 process()
-{  
-  n="${#FILES[@]}"
+{
+  if [ "${#FILES[@]}" -lt 1 ]; then
+    echo "${RED}No arguments given.${NC}" >&2
+    echo
+    help
+    exit 1
+  fi
+
+  WORK_FILES=()
   
+  local f dname bname rh_bname rh_file
   for f in "${FILES[@]}"; do
     if [[ ! -f "$f" && ! -L "$f" ]]; then
-      echo -e "${RED}File '$f' not found – skipping.${NC}" >&2
+      echo -e "${RED}File '$f' was not found and will be skipped.${NC}" >&2
       continue
     fi
-    process_file "$f"
-  done
- 
-  # serial
-  if [  ${n} -gt 1 ]; then
-    mkdir -p "$PROGRESS_DIR"
-    rm -f "$PROGRESS_DIR"/*.progress
-    ${script_dir}/progress_bar_multi.sh 1 "$PROGRESS_DIR" 40 2 "CAT_SurfCurvature" &
-    progress_pid=$!
 
-    # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
-    trap cleanup INT TERM
-  fi 
-   
-  j=1
-  for ((i=0; i<${n}; i++)); do
-    if [  ${n} -gt 1 ]; then
-      echo "$j/$n" > "$PROGRESS_DIR/job0.progress"
-      ((j++))
-      echo 0 > "$PROGRESS_DIR/job0.status"
+    if ! array_contains "$f" "${WORK_FILES[@]}"; then
+      WORK_FILES+=("$f")
     fi
-    
-    "${bin_dir}/CAT_SurfCurvature" \
-      -fwhm "${fwhm}" \
-      -out  "${OUT_ARRAY[$i]}" \
-      -unit "${LH_ARRAY[$i]}" \
-      -unit "${RH_ARRAY[$i]}" 2>&1
-      
-    exit_code=$?
-    pids=($!)
 
-    if [[ ${n} -gt 1  &&  $exit_code -ne 0 ]]; then
-      echo 1 > "$PROGRESS_DIR/job0.status"
+    bname=$(basename "$f")
+    if [[ "$bname" == lh.* ]]; then
+      dname=$(dirname "$f")
+      rh_bname="rh.${bname#lh.}"
+      rh_file="${dname}/${rh_bname}"
+      if [[ -f "$rh_file" || -L "$rh_file" ]]; then
+        if ! array_contains "$rh_file" "${WORK_FILES[@]}"; then
+          WORK_FILES+=("$rh_file")
+        fi
+      else
+        echo -e "${YELLOW}Right hemisphere file '$rh_file' not found – skipping RH.${NC}" >&2
+      fi
     fi
   done
-  
-  if [  ${n} -gt 1 ]; then
-    wait $progress_pid
-    rm -r "$PROGRESS_DIR"
+
+  if [ "${#WORK_FILES[@]}" -lt 1 ]; then
+    echo "${RED}No valid input files to process.${NC}" >&2
+    exit 1
   fi
-  exit $?
+
+  local infile
+  for infile in "${WORK_FILES[@]}"; do
+    get_outputname "$infile"
+    if [[ -f "${outputname}" && "$noclobber" -eq 1 ]]; then
+      echo "${outputname} will not be overwritten. Do not use -noclobber if you want to overwrite." >&2
+      continue
+    fi
+    echo "calculating ${outputname}"
+    "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" "$method" "$fwhm" "$use_absolute"
+  done
 }
 
 
@@ -268,34 +406,47 @@ ${BOLD}USAGE:${NC}
   ${GREEN}$0 [options] <filename(s)>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
-Resample left (and optional right) hemisphere surfaces/values to target spheres and
-write a single combined GIfTI per subject using CAT_SurfCurvature.
+Compute curvature-based parameters from surface files using CAT_SurfCurvature.
+
+If an input file is named like "lh.*", the corresponding "rh.*" file is also
+processed automatically (if present).
 
 ${BOLD}OPTIONS:${NC}
-  --out <DIR>                  Output directory (default: same as input file dir)
-  --ext <STR>                  Output file extension (default: $ext)
-  --trg-sphere <FILE>          Target sphere for the left hemisphere
-  --fwhm <FLOAT>               Smoothing FWHM applied inside CAT_SurfCurvature (default: $fwhm)
+  --no-parallel                 Disable parallelization via ${script_dir}/parallelize
+  --jobs <N>                    Number of parallel processes (passed to parallelize -p)
+
+  -a                            Calculate absolute values
+  -r <STR>                      Remove string from output name
+  -f <FWHM>                     Diffusion heat kernel smoothing (mm)
+  -noclobber                    Do not overwrite existing output
+  -gifti                        Save output as GIfTI (appends .gii)
+
+  -mc                           Mean curvature averaged over 3mm [default]
+  -mc0                          Mean curvature
+  -gc                           Gaussian curvature
+  -cv                           Curvedness
+  -si                           Shape index
+  -sd                           Sulcal depth-like estimator
+
+  -bi                           Binary index (if supported)
+  -sh                           Shape (if supported)
+  -fi                           Folding index (if supported)
+  -min-curv                     Minimum curvature (if supported)
+  -max-curv                     Maximum curvature (if supported)
+  -dp <N>                       Use method id directly
+
   -h | --help                  Show this help and exit
 
 ${BOLD}INPUT NAMING EXPECTATIONS:${NC}
-  lh.* case (supported now)
-    lh.<measure>.something.gii
-    Will look for:
-      lh.central.gii               (same base, measure replaced by "central")
-      lh.sphere.reg.gii            (same base, measure replaced by "sphere.reg")
-      rh.<measure>.something.gii   (right hemisphere counterpart)
-      rh.central.gii, rh.sphere.reg.gii accordingly
-
-  *_left* (BIDS) not yet implemented → the script exits with an error.
+  *.obj and *.gii are accepted.
+  For FreeSurfer-like files named "lh.*" or "rh.*", output naming follows
+  CAT_DumpCurv_ui conventions.
         
 ${BOLD}OUTPUT:${NC}
-  For each LH input file, writes a combined GIfTI (LH+RH) with resampled (and optionally smoothed) values. If extension is "dat" used, then an external binary file is saved, which is the default
-  for use with SPM.
+  Per input (and hemisphere if auto-RH applies): curvature values for each node.
 
 ${BOLD}Dependencies:${NC}
   CAT_SurfCurvature
-  ${script_dir}/progress_bar_multi.sh
   ${script_dir}/parallelize
 
 ${BOLD}Author:${NC}
