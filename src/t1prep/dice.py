@@ -22,6 +22,14 @@ def _parse_args(argv=None):
     p.add_argument("--gt", required=True, help="Ground truth NIfTI path")
     p.add_argument("--pred", required=True, help="Test/prediction NIfTI path")
     p.add_argument(
+        "--soft",
+        action="store_true",
+        help=(
+            "Use soft/continuous Dice without rounding labels. Applicable when "
+            "inputs store probability/partial-volume values."
+        ),
+    )
+    p.add_argument(
         "--verbose",
         action="store_true",
         help=(
@@ -43,8 +51,9 @@ def main(argv=None) -> int:
     # dice_weighted: weighted average Dice score (float)
     # generalized_dice: generalized Dice score (float)
     conf, order, dice_per, dice_weighted, generalized_dice = compute_dice_nifti(
-        args.gt, args.pred
+        args.gt, args.pred, round_labels=not args.soft
     )
+    
     if args.verbose:
         if dice_per.size:
             for lab, kv in zip(order, dice_per):
