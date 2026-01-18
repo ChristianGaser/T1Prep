@@ -27,22 +27,24 @@
 # global parameters
 # ----------------------------------------------------------------------
 
+# Parameters
+fwhm=12
+ext="dat"
+res="32k"
+
 # defaults
 os_type=$(uname -s) # Determine OS type
 
 script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
 name_file=${root_dir}/src/t1prep/data/Names.tsv
-surf_templates_dir=${root_dir}/src/t1prep/data/templates_surfaces_32k
+surf_templates_dir=${root_dir}/src/t1prep/data/templates_surfaces_${res}
 
 source "${script_dir}/utils.sh"
 
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
 PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
 
-# Parameters
-fwhm=12
-ext="dat"
 lh_fsavg_sphere=${surf_templates_dir}/lh.sphere.freesurfer.gii
 lh_fsavg_mask=${surf_templates_dir}/lh.mask
 
@@ -67,7 +69,7 @@ main()
   # Optional parallel execution: delegate one input per process via scripts/parallelize
   if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
     local -a cmd_argv
-    cmd_argv=("$0" "--no-parallel" "--ext" "$ext" "--trg-sphere" "$lh_fsavg_sphere" "--mask" "$lh_fsavg_mask" "--fwhm" "$fwhm")
+    cmd_argv=("$0" "--no-parallel" "--res" "$res" "--ext" "$ext" "--trg-sphere" "$lh_fsavg_sphere" "--mask" "$lh_fsavg_mask" "--fwhm" "$fwhm")
 
     if [[ -n "${out:-}" ]]; then
       cmd_argv+=("--out" "$out")
@@ -128,6 +130,11 @@ parse_args()
       --ext)
         exit_if_empty "$optname" "$optarg"
         ext=$optarg
+        shift
+        ;;
+      --res)
+        exit_if_empty "$optname" "$optarg"
+        res=$optarg
         shift
         ;;
       --trg-sphere)
@@ -201,7 +208,7 @@ process_file() {
     else
       out_name="${dname}/${bname/lh./s${fwhm}.mesh.}.${ext}"
     fi
-    out_name="${out_name/.$measure/.${measure}.resampled_32k}"
+    out_name="${out_name/.$measure/.${measure}.resampled_${res}}"
   elif [[ "$bname" == *_left* ]]; then
     echo -e "${RED}BIDS format not yet implemented (${bname}).${NC}" >&2
     return 1
@@ -269,6 +276,7 @@ process()
     
     "${bin_dir}/CAT_SurfResampleMulti" \
       -fwhm "${fwhm}" \
+      -res "${res}" \
       -out  "${OUT_ARRAY[$i]}" \
       -unit "${LH_ARRAY[$i]}" \
       -unit "${RH_ARRAY[$i]}" 2>&1
@@ -310,6 +318,7 @@ ${BOLD}OPTIONS:${NC}
   --no-parallel                Disable parallelization via ${script_dir}/parallelize
   --jobs <N>                   Number of parallel processes (passed to parallelize -p)
   --ext <STR>                  Output file extension (default: $ext)
+  --res <STR>                  Output surface resolution (32k or 4k, default: $res)
   --trg-sphere <FILE>          Target sphere for the left hemisphere
   --mask <FILE>                Target mask for the left hemisphere
   --fwhm <FLOAT>               Smoothing FWHM applied inside CAT_SurfResampleMulti (default: $fwhm)
