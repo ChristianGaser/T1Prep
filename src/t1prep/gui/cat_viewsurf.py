@@ -196,6 +196,29 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
     """
     overlay_path = Path(overlay_filename)
 
+    # Prefer explicit non-BIDS mapping for lh/rh thickness (and pbt) overlays
+    # Examples:
+    #   lh.thickness.name     -> lh.central.name.gii
+    #   rh.thickness.name.gii -> rh.central.name.gii
+    #   lh.thickness          -> lh.central.gii
+    def _fs_thickness_to_mesh(nm: str) -> Optional[str]:
+        base = nm
+        if base.lower().endswith('.gii'):
+            base = Path(base).stem
+        m = re.match(r'^(lh|rh)\.(thickness|pbt)(?:\.(.+))?$', base, flags=re.IGNORECASE)
+        if not m:
+            return None
+        hemi = m.group(1).lower()
+        suffix = m.group(3)
+        if suffix:
+            return f"{hemi}.central.{suffix}.gii"
+        return f"{hemi}.central.gii"
+
+    if not detect_naming_scheme(overlay_filename):
+        mesh_name = _fs_thickness_to_mesh(overlay_path.name)
+        if mesh_name is not None:
+            return str(overlay_path.parent / mesh_name)
+
     # Try BIDS-style conversion first; only succeed when a hemisphere token exists
     mesh_candidate: Optional[Path] = None
     if detect_naming_scheme(overlay_filename):
@@ -2360,6 +2383,27 @@ class Viewer(QtWidgets.QMainWindow):
                 cand = ov_dir / cand
             if _is_mesh(cand):
                 return cand
+
+        # Step 1b: explicit non-BIDS dot-token replacement for lh/rh thickness/pbt
+        try:
+            if hemi and not detect_naming_scheme(ov_path.name):
+                parts = ov_path.name.split('.')
+                parts_lower = [p.lower() for p in parts]
+                replaced = False
+                for i, p in enumerate(parts_lower):
+                    if p in ('thickness', 'pbt'):
+                        parts[i] = 'central'
+                        replaced = True
+                        break
+                if replaced:
+                    direct = '.'.join(parts)
+                    if not direct.lower().endswith('.gii'):
+                        direct = f"{direct}.gii"
+                    cand2 = ov_dir / direct
+                    if _is_mesh(cand2):
+                        return cand2
+        except Exception:
+            pass
 
         # Step 2: glob for meshes near the overlay
         patterns = []

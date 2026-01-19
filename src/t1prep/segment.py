@@ -16,6 +16,10 @@ optionally atlas names:
 import os
 import sys
 import platform
+
+if sys.platform == "darwin":
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 import torch
 import argparse
 import warnings
