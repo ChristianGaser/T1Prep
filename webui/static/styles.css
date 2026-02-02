@@ -127,6 +127,10 @@ small {
   color: var(--danger);
 }
 
+.subtle {
+  color: var(--muted);
+}
+
 .checkbox-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -139,6 +143,23 @@ small {
   align-items: center;
   gap: 0.5rem;
   font-weight: 400;
+}
+
+.dropzone {
+  margin-top: 0.75rem;
+  padding: 1.25rem;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  background: var(--panel-alt);
+  color: var(--muted);
+  text-align: center;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.dropzone.dragover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--panel);
 }
 
 .actions {

@@ -13,8 +13,8 @@ from flask import Flask, redirect, render_template, request, url_for
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT_DIR / "scripts" / "T1Prep"
-UPLOAD_ROOT = ROOT_DIR / "webui_uploads"
-JOB_ROOT = Path("/tmp") / "webui_jobs"
+DEFAULT_UPLOAD_ROOT = ROOT_DIR / "webui_uploads"
+DEFAULT_JOB_ROOT = Path("/tmp") / "webui_jobs"
 
 app = Flask(__name__)
 
@@ -26,8 +26,8 @@ LOCK = threading.Lock()
 
 
 def ensure_dirs() -> None:
-    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-    JOB_ROOT.mkdir(parents=True, exist_ok=True)
+    DEFAULT_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    DEFAULT_JOB_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def parse_datetime(value: str) -> Optional[datetime]:
@@ -81,7 +81,28 @@ def resolve_defaults_path(value: Optional[str]) -> Path:
     return candidate
 
 
-def build_command(form: dict, input_files: list[Path]) -> list[str]:
+def resolve_storage_root(form: dict) -> Optional[Path]:
+    storage_root = form.get("storage_root")
+    if storage_root:
+        root = Path(storage_root)
+        if not root.is_absolute():
+            root = ROOT_DIR / root
+        return root
+
+    out_dir = form.get("--out-dir")
+    if not out_dir:
+        return None
+    root = Path(out_dir)
+    if not root.is_absolute():
+        root = ROOT_DIR / root
+    return root
+
+
+def build_command(
+    form: dict,
+    input_files: list[Path],
+    storage_root: Optional[Path] = None,
+) -> list[str]:
     cmd = [str(SCRIPT_PATH)]
 
     def add_flag(name: str) -> None:
@@ -99,7 +120,10 @@ def build_command(form: dict, input_files: list[Path]) -> list[str]:
     add_value("--min-memory")
     add_flag("--debug")
 
-    add_value("--out-dir")
+    if form.get("--out-dir"):
+        add_value("--out-dir")
+    elif storage_root is not None:
+        cmd.extend(["--out-dir", str(storage_root)])
     add_flag("--bids")
     add_value("--no-overwrite")
     add_flag("--gz")
@@ -224,29 +248,39 @@ def submit():
     ensure_dirs()
 
     input_files = request.files.getlist("inputs")
-    if not input_files:
+    all_inputs = [file for file in input_files if file and file.filename]
+
+    if not all_inputs:
         return "No input files selected.", 400
 
     job_id = uuid.uuid4().hex
-    job_dir = JOB_ROOT / job_id
-    upload_dir = UPLOAD_ROOT / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    storage_root = resolve_storage_root(request.form)
+    if storage_root is None:
+        upload_dir = DEFAULT_UPLOAD_ROOT / job_id
+        job_dir = DEFAULT_JOB_ROOT / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        log_path = job_dir / "t1prep.log"
+    else:
+        storage_root.mkdir(parents=True, exist_ok=True)
+        upload_dir = storage_root
+        job_dir = storage_root
+        log_path = job_dir / f"t1prep_{job_id}.log"
 
     saved_paths = []
-    for file_storage in input_files:
-        if not file_storage.filename:
-            continue
-        target_path = upload_dir / Path(file_storage.filename).name
+    for file_storage in all_inputs:
+        safe_name = Path(file_storage.filename).name
+        if storage_root is None:
+            target_path = upload_dir / safe_name
+        else:
+            target_path = upload_dir / f"{job_id}_{safe_name}"
         file_storage.save(target_path)
         saved_paths.append(target_path)
 
     if not saved_paths:
         return "No valid input files uploaded.", 400
 
-    cmd = build_command(request.form, saved_paths)
-    log_path = job_dir / "t1prep.log"
-
+    cmd = build_command(request.form, saved_paths, storage_root)
     job_info = {
         "id": job_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),

@@ -20,7 +20,14 @@
       <legend>Inputs</legend>
       <label>
         Input NIfTI files
-        <input type="file" name="inputs" multiple required>
+        <input type="file" name="inputs" multiple accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip" required>
+      </label>
+      <div id="dropzone" class="dropzone">
+        Drag & drop files here
+      </div>
+      <label>
+        Storage directory (optional)
+        <input type="text" name="storage_root" placeholder="/path/to/storage">
       </label>
       <label>
         Start at (optional)
@@ -144,6 +151,25 @@
         event.preventDefault();
         reloadWithDefaults(defaultsInput.value.trim());
       }
+    });
+
+    const fileInput = document.querySelector("input[name='inputs']");
+    const dropzone = document.getElementById("dropzone");
+
+    dropzone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+
+    dropzone.addEventListener("dragleave", () => {
+      dropzone.classList.remove("dragover");
+    });
+
+    dropzone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dropzone.classList.remove("dragover");
+      if (!event.dataTransfer || !event.dataTransfer.files.length) return;
+      fileInput.files = event.dataTransfer.files;
     });
   </script>
   </div>
