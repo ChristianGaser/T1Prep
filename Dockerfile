@@ -24,13 +24,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
     bash \
-      ca-certificates \
-      wget \
-      unzip \
-      zip \
-      default-jre-headless \
-      build-essential \
-      git \
+    ca-certificates \
+    wget \
+    unzip \
+    zip \
+    default-jre-headless \
+    build-essential \
+    git \
  && rm -rf /var/lib/apt/lists/*
 
 # --- fetch & install T1Prep
@@ -38,12 +38,11 @@ WORKDIR /opt
 RUN set -eux; \
     if [ "${T1PREP_SOURCE}" = "git" ]; then \
         echo "Cloning T1Prep @ ${T1PREP_REF} from GitHub..."; \
-        git clone https://github.com/ChristianGaser/T1Prep.git /opt/T1Prep; \
+        git clone --depth=1 --branch "${T1PREP_REF}" \
+            https://github.com/ChristianGaser/T1Prep.git /opt/T1Prep \
+            || git clone https://github.com/ChristianGaser/T1Prep.git /opt/T1Prep; \
         cd /opt/T1Prep; \
-        # Try to fetch the requested ref (branch/tag/commit) efficiently.
-        git fetch --depth=1 origin "${T1PREP_REF}" || true; \
-        git fetch --depth=1 origin "refs/tags/${T1PREP_REF}:refs/tags/${T1PREP_REF}" || true; \
-        git checkout --detach "${T1PREP_REF}" || git checkout "${T1PREP_REF}"; \
+        git checkout "${T1PREP_REF}" 2>/dev/null || true; \
         rm -rf /opt/T1Prep/.git; \
     else \
         echo "Downloading release ${T1PREP_VERSION}..."; \
