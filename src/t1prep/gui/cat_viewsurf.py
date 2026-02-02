@@ -577,7 +577,7 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-fontsize','-fs', dest='fontsize', type=int, default=0, help='Title/font size (0 = auto)')
     p.add_argument('-opacity','-op', dest='opacity', type=float, default=0.8, help='Overlay opacity')
     p.add_argument('-stats', action='store_true', help='Deprecated: same as --title-mode stats when colorbar is shown')
-    p.add_argument('--title-mode', dest='title_mode', choices=['shape','stats','none'], default='shape',
+    p.add_argument('-title-mode', dest='title_mode', choices=['shape','stats','none'], default='shape',
                    help='Colorbar title: shape (filename), stats, or none')
     p.add_argument('-inverse', action='store_true', help='Invert the overlay colormap')
     p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true')
@@ -586,8 +586,8 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-log', action='store_true', help='Use logarithmic scaling for overlay display')
     p.add_argument('-white', action='store_true', help='Use a white background')
     # Control panel visibility (default: hidden)
-    p.add_argument('--panel', dest='panel', action='store_true', help='Start with the control panel shown')
-    p.add_argument('--no-panel', dest='panel', action='store_false', help='Start with the control panel hidden (default)')
+    p.add_argument('-panel', dest='panel', action='store_true', help='Start with the control panel shown')
+    p.add_argument('-no-panel', dest='panel', action='store_false', help='Start with the control panel hidden (default)')
     p.set_defaults(panel=False)
     p.add_argument('-fire', action='store_true')
     p.add_argument('-bipolar', action='store_true')
@@ -597,7 +597,7 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true', help='Fix scaling across all overlays')
     p.add_argument('-debug', action='store_true', help='Enable debug output')
     # External defaults file for viewer settings (key=value lines)
-    p.add_argument('--defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
+    p.add_argument('-defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
     a = p.parse_args(argv)
 
     # Optionally load external defaults and apply only for values not explicitly provided on CLI
