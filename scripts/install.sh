@@ -190,7 +190,8 @@ prompt_release_version() {
 
   local choice
   while true; do
-    read_input "Enter your choice [1-3]: " choice
+    read_input "Enter your choice [1-3]: "
+    choice="$REPLY"
     case "$choice" in
       1)
         SELECTED_VERSION="${release_array[0]}"
