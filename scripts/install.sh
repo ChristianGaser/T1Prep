@@ -38,6 +38,21 @@ info() { printf "\033[32m[info]\033[0m %s\n" "$*"; }
 warn() { printf "[warn] %s\n" "$*"; }
 err()  { printf "\033[31m[error]\033[0m %s\n" "$*" 1>&2; }
 
+# Read user input - works even when script is piped
+read_input() {
+  local prompt="$1"
+  printf "%s" "$prompt"
+  # When piped (stdin not a tty), read from /dev/tty instead
+  if [ -t 0 ]; then
+    read -r REPLY
+  elif [ -e /dev/tty ]; then
+    read -r REPLY < /dev/tty
+  else
+    err "Cannot read user input (no tty available). Use environment variables for non-interactive mode."
+    exit 1
+  fi
+}
+
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -168,8 +183,7 @@ prompt_release_version() {
 
   local choice
   while true; do
-    printf "Enter your choice [1-3]: "
-    read -r choice < /dev/tty
+    read_input "Enter your choice [1-3]: " choice
     case "$choice" in
       1)
         SELECTED_VERSION="${release_array[0]}"
@@ -193,8 +207,8 @@ prompt_release_version() {
         
         local rel_choice
         while true; do
-          printf "Enter release number [1-%d]: " "${#release_array[@]}"
-          read -r rel_choice < /dev/tty
+          read_input "Enter release number [1-${#release_array[@]}]: "
+          rel_choice="$REPLY"
           if [[ "$rel_choice" =~ ^[0-9]+$ ]] && [ "$rel_choice" -ge 1 ] && [ "$rel_choice" -le "${#release_array[@]}" ]; then
             local idx=$((rel_choice - 1))
             SELECTED_VERSION="${release_array[$idx]}"
@@ -256,8 +270,8 @@ prompt_install_location() {
   
   local choice
   while true; do
-    printf "Enter your choice [1-3]: "
-    read -r choice < /dev/tty
+    read_input "Enter your choice [1-3]: "
+    choice="$REPLY"
     case "$choice" in
       1)
         INSTALL_DIR="$current_dir/T1Prep"
@@ -269,8 +283,8 @@ prompt_install_location() {
         break
         ;;
       3)
-        printf "Enter installation path: "
-        read -r custom_path < /dev/tty
+        read_input "Enter installation path: "
+        custom_path="$REPLY"
         if [ -z "$custom_path" ]; then
           warn "Path cannot be empty. Please try again."
           continue
@@ -298,8 +312,8 @@ prepare_install_dir() {
     # Check if it looks like an existing T1Prep installation
     if [ -f "$INSTALL_DIR/scripts/T1Prep" ] || [ -f "$INSTALL_DIR/T1Prep" ]; then
       warn "Existing T1Prep installation found at: $INSTALL_DIR"
-      printf "Do you want to overwrite it? [y/N]: "
-      read -r confirm < /dev/tty
+      read_input "Do you want to overwrite it? [y/N]: "
+      confirm="$REPLY"
       case "$confirm" in
         [yY]|[yY][eE][sS])
           info "Removing existing installation..."
