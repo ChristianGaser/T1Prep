@@ -13,7 +13,11 @@
 
 time=$(date "+%Y%b%d_%H%M")
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
-PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
+if [ -n "${PROGRESS_DIR}" ]; then
+  PROGRESS_DIR="${PROGRESS_DIR}"
+else
+  PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
+fi
 MEM_LIMIT=0
 FG=1
 LOGDIR="/tmp"

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT_DIR / "scripts" / "T1Prep"
@@ -70,6 +70,17 @@ def _to_int(value: str, fallback: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def format_command_for_log(cmd: list[str]) -> str:
+    formatted = []
+    for arg in cmd:
+        if any(ch in arg for ch in [" ", ",", "\t"]):
+            escaped = arg.replace('"', '\\"')
+            formatted.append(f'"{escaped}"')
+        else:
+            formatted.append(arg)
+    return " ".join(formatted)
 
 
 def resolve_defaults_path(value: Optional[str]) -> Path:
@@ -159,10 +170,13 @@ def run_job(job_id: str) -> None:
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
+    progress_dir = job.get("progress_dir")
+    if progress_dir:
+        env["PROGRESS_DIR"] = progress_dir
 
     with log_path.open("w", encoding="utf-8") as log_file:
         log_file.write("Command:\n")
-        log_file.write(" ".join(cmd) + "\n\n")
+        log_file.write(format_command_for_log(cmd) + "\n\n")
         log_file.flush()
 
         process = subprocess.Popen(
@@ -261,11 +275,15 @@ def submit():
         job_dir.mkdir(parents=True, exist_ok=True)
         upload_dir.mkdir(parents=True, exist_ok=True)
         log_path = job_dir / "t1prep.log"
+        progress_dir = job_dir / "progress"
     else:
         storage_root.mkdir(parents=True, exist_ok=True)
         upload_dir = storage_root
         job_dir = storage_root
         log_path = job_dir / f"t1prep_{job_id}.log"
+        progress_dir = job_dir / f"progress_{job_id}"
+
+    progress_dir.mkdir(parents=True, exist_ok=True)
 
     saved_paths = []
     for file_storage in all_inputs:
@@ -286,7 +304,9 @@ def submit():
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "status": "queued",
         "command": cmd,
+        "command_display": format_command_for_log(cmd),
         "log_path": str(log_path),
+        "progress_dir": str(progress_dir),
         "inputs": [str(path) for path in saved_paths],
         "options": {key: value for key, value in request.form.items()},
     }
@@ -321,6 +341,61 @@ def job_detail(job_id: str):
         log_content = log_path.read_text(encoding="utf-8")
 
     return render_template("job_detail.html", job=job, log_content=log_content)
+
+
+@app.route("/jobs/<job_id>/progress")
+def job_progress(job_id: str):
+    with LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    progress_dir = Path(job.get("progress_dir", ""))
+    if not progress_dir.exists():
+        return jsonify({"available": False})
+
+    progress_files = sorted(progress_dir.glob("job*.progress"))
+    if not progress_files:
+        return jsonify({"available": False})
+
+    total_done = 0
+    total_items = 0
+    failed = False
+
+    for progress_file in progress_files:
+        try:
+            raw = progress_file.read_text(encoding="utf-8").strip()
+            done_str, total_str = raw.split("/", 1)
+            done = int(done_str)
+            total = int(total_str)
+        except Exception:
+            continue
+
+        total_done += done
+        total_items += max(total, 1)
+
+        status_file = progress_dir / progress_file.name.replace(".progress", ".status")
+        if status_file.exists():
+            try:
+                if int(status_file.read_text(encoding="utf-8").strip() or "0") != 0:
+                    failed = True
+            except ValueError:
+                pass
+
+    if total_items <= 0:
+        return jsonify({"available": False})
+
+    percent = int(min(100, max(0, (total_done * 100) // total_items)))
+    return jsonify(
+        {
+            "available": True,
+            "percent": percent,
+            "done": total_done,
+            "total": total_items,
+            "failed": failed,
+            "label": "T1Prep",
+        }
+    )
 
 
 if __name__ == "__main__":

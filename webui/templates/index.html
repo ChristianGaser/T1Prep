@@ -20,7 +20,11 @@
       <legend>Inputs</legend>
       <label>
         Input NIfTI files
-        <input type="file" name="inputs" multiple accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip" required>
+        <input id="file-input" class="file-input-hidden" type="file" name="inputs" multiple accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip" required>
+        <div class="file-input-row">
+          <button id="file-button" type="button" class="file-button">Select files</button>
+          <span id="file-summary" class="file-summary">No files selected</span>
+        </div>
       </label>
       <div id="dropzone" class="dropzone">
         Drag & drop files here
@@ -115,13 +119,13 @@
     const themeToggle = document.getElementById("theme-toggle");
     const savedTheme = localStorage.getItem("t1prep-theme") || "dark";
     document.body.setAttribute("data-theme", savedTheme);
-    themeToggle.textContent = savedTheme === "dark" ? "Dark mode" : "Light mode";
+    themeToggle.textContent = savedTheme === "dark" ? "Light mode" : "Dark mode";
 
     themeToggle.addEventListener("click", () => {
       const next = document.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
       document.body.setAttribute("data-theme", next);
       localStorage.setItem("t1prep-theme", next);
-      themeToggle.textContent = next === "dark" ? "Dark mode" : "Light mode";
+      themeToggle.textContent = next === "dark" ? "Light mode" : "Dark mode";
     });
 
     const defaultsSelect = document.getElementById("defaults-select");
@@ -154,7 +158,9 @@
       }
     });
 
-    const fileInput = document.querySelector("input[name='inputs']");
+    const fileInput = document.getElementById("file-input");
+    const fileButton = document.getElementById("file-button");
+    const fileSummary = document.getElementById("file-summary");
     const dropzone = document.getElementById("dropzone");
     const fileList = document.getElementById("file-list");
     let selectedFiles = [];
@@ -167,6 +173,13 @@
 
     function renderFileList() {
       fileList.innerHTML = "";
+      if (selectedFiles.length === 0) {
+        fileSummary.textContent = "No files selected";
+      } else if (selectedFiles.length === 1) {
+        fileSummary.textContent = selectedFiles[0].name;
+      } else {
+        fileSummary.textContent = `${selectedFiles.length} files selected`;
+      }
       selectedFiles.forEach((file, index) => {
         const chip = document.createElement("button");
         chip.type = "button";
@@ -185,6 +198,10 @@
     fileInput.addEventListener("change", () => {
       selectedFiles = Array.from(fileInput.files);
       renderFileList();
+    });
+
+    fileButton.addEventListener("click", () => {
+      fileInput.click();
     });
 
     dropzone.addEventListener("dragover", (event) => {

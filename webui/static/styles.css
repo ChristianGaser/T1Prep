@@ -121,6 +121,37 @@ input[type="file"] {
   margin-top: 0.4rem;
 }
 
+.file-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.4rem;
+}
+
+.file-input-hidden {
+  position: absolute;
+  left: -9999px;
+}
+
+.file-button {
+  background: transparent;
+  color: var(--accent-2);
+  border: 1px solid var(--accent-2);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.file-button:hover {
+  background: rgba(0, 194, 168, 0.08);
+}
+
+.file-summary {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
 small {
   display: block;
   margin-top: 0.35rem;
@@ -198,19 +229,22 @@ small {
 
 .actions button,
 .actions a {
-  background: var(--accent);
-  color: #fff;
-  border: none;
+  background: transparent;
+  color: var(--accent-2);
+  border: 1px solid var(--accent-2);
   padding: 0.7rem 1.5rem;
   border-radius: 6px;
   font-weight: 600;
+  font-size: 1rem;
+  font-family: inherit;
+  line-height: 1.1;
   text-decoration: none;
   cursor: pointer;
 }
 
 .actions button:hover,
 .actions a:hover {
-  opacity: 0.9;
+  background: rgba(0, 194, 168, 0.08);
 }
 
 .card {
@@ -256,4 +290,33 @@ pre {
   border-radius: 8px;
   max-height: 500px;
   overflow: auto;
+}
+
+.progress-panel {
+  margin-bottom: 1rem;
+}
+
+.progress-track {
+  width: 100%;
+  height: 16px;
+  background: var(--panel-alt);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.4s ease;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
