@@ -42,18 +42,6 @@
 
     <fieldset>
       <legend>General Options</legend>
-      <label>
-        Defaults file
-        <select id="defaults-select">
-          {% for option in defaults_options %}
-            <option value="{{ option }}" {% if option == defaults_file %}selected{% endif %}>{{ option }}</option>
-          {% endfor %}
-        </select>
-        <input type="text" id="defaults-input" name="--defaults" value="{{ defaults_file }}" placeholder="/path/to/T1Prep_defaults.txt">
-        {% if defaults_missing %}
-          <small style="color: #b00020;">Defaults file not found. Showing empty values.</small>
-        {% endif %}
-      </label>
       <div class="checkbox-row">
         <label><input type="checkbox" name="--debug" value="1" {% if debug %}checked{% endif %}> Debug</label>
       </div>
@@ -126,36 +114,6 @@
       document.body.setAttribute("data-theme", next);
       localStorage.setItem("t1prep-theme", next);
       themeToggle.textContent = next === "dark" ? "Light mode" : "Dark mode";
-    });
-
-    const defaultsSelect = document.getElementById("defaults-select");
-    const defaultsInput = document.getElementById("defaults-input");
-    let reloadTimer = null;
-
-    function reloadWithDefaults(path) {
-      if (!path) return;
-      const url = new URL(window.location.href);
-      url.searchParams.set("defaults", path);
-      window.location.href = url.toString();
-    }
-
-    defaultsSelect.addEventListener("change", () => {
-      defaultsInput.value = defaultsSelect.value;
-      reloadWithDefaults(defaultsInput.value);
-    });
-
-    defaultsInput.addEventListener("input", () => {
-      if (reloadTimer) clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(() => {
-        reloadWithDefaults(defaultsInput.value.trim());
-      }, 600);
-    });
-
-    defaultsInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        reloadWithDefaults(defaultsInput.value.trim());
-      }
     });
 
     const fileInput = document.getElementById("file-input");

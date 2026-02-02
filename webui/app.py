@@ -125,7 +125,6 @@ def build_command(
         if value:
             cmd.extend([name, value])
 
-    add_value("--defaults")
     add_value("--python")
     add_value("--multi")
     add_value("--min-memory")
@@ -213,21 +212,10 @@ def schedule_or_run(job_id: str, run_at: Optional[datetime]) -> None:
 
 @app.route("/")
 def index():
-    requested_defaults = request.args.get("defaults")
-    default_file = resolve_defaults_path(requested_defaults)
+    default_file = ROOT_DIR / "T1Prep_defaults.txt"
     defaults = load_defaults(default_file)
-    defaults_missing = bool(requested_defaults and not defaults)
-
-    defaults_options = [
-        str(ROOT_DIR / "T1Prep_defaults.txt"),
-    ]
-    if requested_defaults and str(default_file) not in defaults_options:
-        defaults_options.append(str(default_file))
 
     context = {
-        "defaults_file": str(default_file),
-        "defaults_missing": defaults_missing,
-        "defaults_options": defaults_options,
         "python": defaults.get("python", ""),
         "multi": defaults.get("multi", ""),
         "min_memory": defaults.get("min_memory", ""),
