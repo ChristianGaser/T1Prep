@@ -38,19 +38,26 @@ info() { printf "\033[32m[info]\033[0m %s\n" "$*"; }
 warn() { printf "[warn] %s\n" "$*"; }
 err()  { printf "\033[31m[error]\033[0m %s\n" "$*" 1>&2; }
 
-# Read user input - works even when script is piped
-read_input() {
-  local prompt="$1"
-  printf "%s" "$prompt"
-  # When piped (stdin not a tty), read from /dev/tty instead
+# Setup TTY input - call once at script start
+setup_tty_input() {
   if [ -t 0 ]; then
-    read -r REPLY
+    # stdin is a terminal, use it directly
+    exec 3<&0
   elif [ -e /dev/tty ]; then
-    read -r REPLY < /dev/tty
+    # stdin is piped, open /dev/tty on fd 3
+    exec 3</dev/tty
   else
     err "Cannot read user input (no tty available). Use environment variables for non-interactive mode."
     exit 1
   fi
+}
+
+# Read user input from fd 3 (set up by setup_tty_input)
+# Usage: read_input "prompt" variable_name
+read_input() {
+  local prompt="$1"
+  printf "%s" "$prompt"
+  IFS= read -r REPLY <&3
 }
 
 have_cmd() {
@@ -336,6 +343,9 @@ prepare_install_dir() {
 
 main() {
   bold "T1Prep installer"
+
+  # Setup TTY input for interactive prompts (works when piped)
+  setup_tty_input
 
   # Prompt for release version
   prompt_release_version
