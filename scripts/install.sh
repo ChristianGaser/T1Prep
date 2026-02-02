@@ -169,7 +169,7 @@ prompt_release_version() {
   local choice
   while true; do
     printf "Enter your choice [1-3]: "
-    read -r choice
+    read -r choice < /dev/tty
     case "$choice" in
       1)
         SELECTED_VERSION="${release_array[0]}"
@@ -194,7 +194,7 @@ prompt_release_version() {
         local rel_choice
         while true; do
           printf "Enter release number [1-%d]: " "${#release_array[@]}"
-          read -r rel_choice
+          read -r rel_choice < /dev/tty
           if [[ "$rel_choice" =~ ^[0-9]+$ ]] && [ "$rel_choice" -ge 1 ] && [ "$rel_choice" -le "${#release_array[@]}" ]; then
             local idx=$((rel_choice - 1))
             SELECTED_VERSION="${release_array[$idx]}"
@@ -257,7 +257,7 @@ prompt_install_location() {
   local choice
   while true; do
     printf "Enter your choice [1-3]: "
-    read -r choice
+    read -r choice < /dev/tty
     case "$choice" in
       1)
         INSTALL_DIR="$current_dir/T1Prep"
@@ -270,7 +270,7 @@ prompt_install_location() {
         ;;
       3)
         printf "Enter installation path: "
-        read -r custom_path
+        read -r custom_path < /dev/tty
         if [ -z "$custom_path" ]; then
           warn "Path cannot be empty. Please try again."
           continue
@@ -299,7 +299,7 @@ prepare_install_dir() {
     if [ -f "$INSTALL_DIR/scripts/T1Prep" ] || [ -f "$INSTALL_DIR/T1Prep" ]; then
       warn "Existing T1Prep installation found at: $INSTALL_DIR"
       printf "Do you want to overwrite it? [y/N]: "
-      read -r confirm
+      read -r confirm < /dev/tty
       case "$confirm" in
         [yY]|[yY][eE][sS])
           info "Removing existing installation..."
