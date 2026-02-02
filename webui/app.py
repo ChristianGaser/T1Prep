@@ -14,7 +14,7 @@ from flask import Flask, redirect, render_template, request, url_for
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT_DIR / "scripts" / "T1Prep"
 UPLOAD_ROOT = ROOT_DIR / "webui_uploads"
-JOB_ROOT = ROOT_DIR / "webui_jobs"
+JOB_ROOT = Path("/tmp") / "webui_jobs"
 
 app = Flask(__name__)
 
