@@ -72,6 +72,15 @@ def _to_int(value: str, fallback: int = 0) -> int:
         return fallback
 
 
+def resolve_defaults_path(value: Optional[str]) -> Path:
+    if not value:
+        return ROOT_DIR / "T1Prep_defaults.txt"
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = ROOT_DIR / candidate
+    return candidate
+
+
 def build_command(form: dict, input_files: list[Path]) -> list[str]:
     cmd = [str(SCRIPT_PATH)]
 
@@ -166,11 +175,21 @@ def schedule_or_run(job_id: str, run_at: Optional[datetime]) -> None:
 
 @app.route("/")
 def index():
-    default_file = ROOT_DIR / "T1Prep_defaults.txt"
+    requested_defaults = request.args.get("defaults")
+    default_file = resolve_defaults_path(requested_defaults)
     defaults = load_defaults(default_file)
+    defaults_missing = bool(requested_defaults and not defaults)
+
+    defaults_options = [
+        str(ROOT_DIR / "T1Prep_defaults.txt"),
+    ]
+    if requested_defaults and str(default_file) not in defaults_options:
+        defaults_options.append(str(default_file))
 
     context = {
         "defaults_file": str(default_file),
+        "defaults_missing": defaults_missing,
+        "defaults_options": defaults_options,
         "python": defaults.get("python", ""),
         "multi": defaults.get("multi", ""),
         "min_memory": defaults.get("min_memory", ""),

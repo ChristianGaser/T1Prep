@@ -3,19 +3,20 @@
 <head>
   <meta charset="utf-8">
   <title>T1Prep Jobs</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 2rem; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
-    th { background: #f5f5f5; }
-  </style>
+  <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body>
-  <h1>Jobs</h1>
-  <p><a href="/">New job</a></p>
+<body data-theme="dark">
+  <div class="container">
+    <header>
+      <div>
+        <h1>Jobs</h1>
+        <p><a href="/">New job</a></p>
+      </div>
+      <button class="theme-toggle" type="button" id="theme-toggle">Dark mode</button>
+    </header>
 
   {% if jobs %}
-    <table>
+    <table class="table">
       <thead>
         <tr>
           <th>ID</th>
@@ -40,5 +41,20 @@
   {% else %}
     <p>No jobs created yet.</p>
   {% endif %}
+
+  <script>
+    const themeToggle = document.getElementById("theme-toggle");
+    const savedTheme = localStorage.getItem("t1prep-theme") || "dark";
+    document.body.setAttribute("data-theme", savedTheme);
+    themeToggle.textContent = savedTheme === "dark" ? "Dark mode" : "Light mode";
+
+    themeToggle.addEventListener("click", () => {
+      const next = document.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      document.body.setAttribute("data-theme", next);
+      localStorage.setItem("t1prep-theme", next);
+      themeToggle.textContent = next === "dark" ? "Dark mode" : "Light mode";
+    });
+  </script>
+  </div>
 </body>
 </html>

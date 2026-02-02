@@ -3,25 +3,19 @@
 <head>
   <meta charset="utf-8">
   <title>T1Prep Web UI</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 2rem; }
-    fieldset { margin-bottom: 1.5rem; padding: 1rem; }
-    legend { font-weight: bold; }
-    label { display: block; margin-top: 0.75rem; }
-    input[type="text"], input[type="number"], input[type="datetime-local"] {
-      width: 100%; max-width: 520px; padding: 0.4rem;
-    }
-    .checkbox-row { display: flex; gap: 1rem; flex-wrap: wrap; }
-    .checkbox-row label { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
-    .actions { margin-top: 1.5rem; }
-    .actions button { padding: 0.6rem 1.2rem; }
-  </style>
+  <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body>
-  <h1>T1Prep Web UI</h1>
-  <p>Upload NIfTI files and configure options. Scheduling is optional.</p>
+<body data-theme="dark">
+  <div class="container">
+    <header>
+      <div>
+        <h1>T1Prep Web UI</h1>
+        <p>Upload NIfTI files and configure options. Scheduling is optional.</p>
+      </div>
+      <button class="theme-toggle" type="button" id="theme-toggle">Dark mode</button>
+    </header>
 
-  <form action="/submit" method="post" enctype="multipart/form-data">
+    <form action="/submit" method="post" enctype="multipart/form-data">
     <fieldset>
       <legend>Inputs</legend>
       <label>
@@ -38,7 +32,15 @@
       <legend>General Options</legend>
       <label>
         Defaults file
-        <input type="text" name="--defaults" value="{{ defaults_file }}" placeholder="/path/to/T1Prep_defaults.txt">
+        <select id="defaults-select">
+          {% for option in defaults_options %}
+            <option value="{{ option }}" {% if option == defaults_file %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" id="defaults-input" name="--defaults" value="{{ defaults_file }}" placeholder="/path/to/T1Prep_defaults.txt">
+        {% if defaults_missing %}
+          <small style="color: #b00020;">Defaults file not found. Showing empty values.</small>
+        {% endif %}
       </label>
       <div class="checkbox-row">
         <label><input type="checkbox" name="--debug" value="1" {% if debug %}checked{% endif %}> Debug</label>
@@ -100,5 +102,50 @@
       <a href="/jobs">View Jobs</a>
     </div>
   </form>
+
+  <script>
+    const themeToggle = document.getElementById("theme-toggle");
+    const savedTheme = localStorage.getItem("t1prep-theme") || "dark";
+    document.body.setAttribute("data-theme", savedTheme);
+    themeToggle.textContent = savedTheme === "dark" ? "Dark mode" : "Light mode";
+
+    themeToggle.addEventListener("click", () => {
+      const next = document.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      document.body.setAttribute("data-theme", next);
+      localStorage.setItem("t1prep-theme", next);
+      themeToggle.textContent = next === "dark" ? "Dark mode" : "Light mode";
+    });
+
+    const defaultsSelect = document.getElementById("defaults-select");
+    const defaultsInput = document.getElementById("defaults-input");
+    let reloadTimer = null;
+
+    function reloadWithDefaults(path) {
+      if (!path) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set("defaults", path);
+      window.location.href = url.toString();
+    }
+
+    defaultsSelect.addEventListener("change", () => {
+      defaultsInput.value = defaultsSelect.value;
+      reloadWithDefaults(defaultsInput.value);
+    });
+
+    defaultsInput.addEventListener("input", () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        reloadWithDefaults(defaultsInput.value.trim());
+      }, 600);
+    });
+
+    defaultsInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        reloadWithDefaults(defaultsInput.value.trim());
+      }
+    });
+  </script>
+  </div>
 </body>
 </html>
