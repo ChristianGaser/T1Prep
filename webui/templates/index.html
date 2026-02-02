@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>T1Prep Web UI</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    fieldset { margin-bottom: 1.5rem; padding: 1rem; }
+    legend { font-weight: bold; }
+    label { display: block; margin-top: 0.75rem; }
+    input[type="text"], input[type="number"], input[type="datetime-local"] {
+      width: 100%; max-width: 520px; padding: 0.4rem;
+    }
+    .checkbox-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .checkbox-row label { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
+    .actions { margin-top: 1.5rem; }
+    .actions button { padding: 0.6rem 1.2rem; }
+  </style>
+</head>
+<body>
+  <h1>T1Prep Web UI</h1>
+  <p>Upload NIfTI files and configure options. Scheduling is optional.</p>
+
+  <form action="/submit" method="post" enctype="multipart/form-data">
+    <fieldset>
+      <legend>Inputs</legend>
+      <label>
+        Input NIfTI files
+        <input type="file" name="inputs" multiple required>
+      </label>
+      <label>
+        Start at (optional)
+        <input type="datetime-local" name="start_at">
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>General Options</legend>
+      <label>
+        Defaults file
+        <input type="text" name="--defaults" value="{{ defaults_file }}" placeholder="/path/to/T1Prep_defaults.txt">
+      </label>
+      <div class="checkbox-row">
+        <label><input type="checkbox" name="--debug" value="1" {% if debug %}checked{% endif %}> Debug</label>
+      </div>
+      <label>
+        Python interpreter
+        <input type="text" name="--python" value="{{ python }}" placeholder="/path/to/python">
+      </label>
+      <label>
+        Parallel jobs
+        <input type="number" name="--multi" value="{{ multi }}" placeholder="-1 for auto">
+      </label>
+      <label>
+        Minimum memory per job (GB)
+        <input type="number" name="--min-memory" value="{{ min_memory }}" step="1" placeholder="24">
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Save Options</legend>
+      <label>
+        Output directory
+        <input type="text" name="--out-dir" value="{{ outdir }}" placeholder="/path/to/output">
+      </label>
+      <label>
+        No-overwrite pattern
+        <input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness.">
+      </label>
+      <label>
+        Atlas list
+        <input type="text" name="--atlas" value="{{ atlas }}" placeholder="'suit','cobra'">
+      </label>
+      <label>
+        Surface atlas list
+        <input type="text" name="--atlas-surf" value="{{ atlas_surf }}" placeholder="'aparc_DK40.freesurfer'">
+      </label>
+      <div class="checkbox-row">
+        <label><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}> BIDS naming</label>
+        <label><input type="checkbox" name="--gz" value="1" {% if gz %}checked{% endif %}> Save .nii.gz</label>
+        <label><input type="checkbox" name="--skullstrip-only" value="1" {% if skullstrip_only %}checked{% endif %}> Skullstrip only</label>
+        <label><input type="checkbox" name="--no-skullstrip" value="1" {% if skip_skullstrip %}checked{% endif %}> Skip skullstrip</label>
+        <label><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}> No surface</label>
+        <label><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}> No segmentation</label>
+        <label><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}> No sphere registration</label>
+        <label><input type="checkbox" name="--no-mwp" value="1" {% if no_mwp %}checked{% endif %}> No modulated/warped seg</label>
+        <label><input type="checkbox" name="--no-atlas" value="1" {% if no_atlas %}checked{% endif %}> No volumetric atlas</label>
+        <label><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}> Pial + white surfaces</label>
+        <label><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}> Save hemispheric seg</label>
+        <label><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}> Save warped seg</label>
+        <label><input type="checkbox" name="--rp" value="1" {% if rp %}checked{% endif %}> Save affine seg</label>
+        <label><input type="checkbox" name="--p" value="1" {% if p %}checked{% endif %}> Save native seg</label>
+        <label><input type="checkbox" name="--csf" value="1" {% if csf %}checked{% endif %}> Save CSF seg</label>
+        <label><input type="checkbox" name="--lesions" value="1" {% if lesions %}checked{% endif %}> Save lesion seg</label>
+      </div>
+    </fieldset>
+
+    <div class="actions">
+      <button type="submit">Create Job</button>
+      <a href="/jobs">View Jobs</a>
+    </div>
+  </form>
+</body>
+</html>

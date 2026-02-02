@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Job {{ job.id }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    pre { background: #f5f5f5; padding: 1rem; max-height: 500px; overflow: auto; }
+    .meta { margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Job {{ job.id }}</h1>
+  <p><a href="/jobs">Back to jobs</a> | <a href="/">New job</a></p>
+
+  <div class="meta">
+    <p><strong>Status:</strong> {{ job.status }}</p>
+    <p><strong>Created:</strong> {{ job.created_at }}</p>
+    <p><strong>Scheduled for:</strong> {{ job.scheduled_for or "" }}</p>
+    <p><strong>Started:</strong> {{ job.started_at or "" }}</p>
+    <p><strong>Finished:</strong> {{ job.finished_at or "" }}</p>
+    <p><strong>Return code:</strong> {{ job.return_code if job.return_code is not none else "" }}</p>
+  </div>
+
+  <h2>Command</h2>
+  <pre>{{ job.command | join(' ') }}</pre>
+
+  <h2>Log</h2>
+  <pre>{{ log_content }}</pre>
+</body>
+</html>

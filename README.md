@@ -78,6 +78,21 @@ Alternatively, install the dependencies manually:
 python3.12 -m pip install -r requirements.txt
 ```
 
+## Web UI (Flask)
+
+A minimal browser-based UI is available for local use. It uploads selected NIfTI
+files, lets you configure General and Save options, and can schedule jobs to
+start at a specific time.
+
+```bash
+python3.12 webui/app.py
+```
+
+Then open http://127.0.0.1:5000 in your browser.
+
+Uploaded files are stored under `webui_uploads/` and per-job logs under
+`webui_jobs/`.
+
 ### Docker
 
 A Dockerfile is provided to build an image with all required dependencies.
