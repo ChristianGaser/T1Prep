@@ -38,7 +38,12 @@ activate_environment() {
     fi
     
     # Source the activation script
-    source "$ENV_DIR/bin/activate"    
+    source "$ENV_DIR/bin/activate"
+
+    # On macOS, remove quarantine attributes to prevent Gatekeeper blocking
+    if [[ "$(uname)" == "Darwin" ]]; then
+        xattr -dr com.apple.quarantine "$ENV_DIR" 2>/dev/null || true
+    fi
 }
 
 # Validate that at least one positional arg is an existing file (skip options)
