@@ -223,10 +223,31 @@ T1-weighted MRI images in NIfTI format (extension nii/nii.gz).
 ## Installation
 
 ### Quick Install (Recommended)
-Install T1Prep directly with a single command (downloads and installs the latest release):
+Install T1Prep directly with a single command:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
 ```
+
+The installer will interactively prompt you to:
+1. **Select a version**: Latest release, development (main branch), or choose from available releases
+2. **Choose installation directory**: Current folder, temporary folder, or custom path
+
+#### Non-Interactive Installation
+Use environment variables to skip the interactive prompts:
+```bash
+# Install latest release to current directory
+T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" \
+  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+
+# Install specific version to custom directory
+T1PREP_VERSION=v1.0.0 T1PREP_INSTALL_DIR=/opt/T1Prep \
+  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+```
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `T1PREP_VERSION` | Release tag (e.g., `v1.0.0`) or `latest` |
+| `T1PREP_INSTALL_DIR` | Absolute path for installation |
 
 ### Manual Installation
 Download T1Prep_$version.zip from Github and unzip:
