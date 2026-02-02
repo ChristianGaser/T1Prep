@@ -29,7 +29,7 @@ save_p=0              # Additionally save native space segmentations
 use_bids_naming=0     # Use BIDS standard for output file naming conventions
 atlas_vol="'neuromorphometrics', 'cobra'"
                       # Define an atlas list in the format "'suit','cobra'"
-atlas_surf=""
+atlas_surf="'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"
                       # Define an surface atlas list in the format 
                       #"'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"
 

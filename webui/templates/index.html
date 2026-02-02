@@ -69,13 +69,35 @@
         No-overwrite pattern
         <input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness.">
       </label>
+      <div class="atlas-panel">
+        <div class="atlas-header">Available atlases</div>
+        <div class="atlas-grid">
+          {% for atlas_name in atlas_names %}
+            <label>
+              <input type="checkbox" name="atlas_choice" value="{{ atlas_name }}" {% if atlas_name in atlas_selected %}checked{% endif %}>
+              {{ atlas_name }}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
       <label>
-        Atlas list
-        <input type="text" name="--atlas" value="{{ atlas }}" placeholder="'suit','cobra'">
+        Custom atlas file (.nii or .nii.gz)
+        <input type="file" name="atlas_file" accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip">
       </label>
+      <div class="atlas-panel">
+        <div class="atlas-header">Available surface atlases</div>
+        <div class="atlas-grid">
+          {% for atlas_name in surface_atlas_names %}
+            <label>
+              <input type="checkbox" name="surface_atlas_choice" value="{{ atlas_name }}" {% if atlas_name in surface_atlas_selected %}checked{% endif %}>
+              {{ atlas_name }}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
       <label>
-        Surface atlas list
-        <input type="text" name="--atlas-surf" value="{{ atlas_surf }}" placeholder="'aparc_DK40.freesurfer'">
+        Custom surface atlas file (.annot)
+        <input type="file" name="surface_atlas_file" accept=".annot">
       </label>
       <div class="checkbox-row">
         <label><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}> BIDS naming</label>

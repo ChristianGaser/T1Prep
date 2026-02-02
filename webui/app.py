@@ -13,6 +13,8 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT_DIR / "scripts" / "T1Prep"
+TEMPLATE_ATLAS_DIR = ROOT_DIR / "src" / "t1prep" / "data" / "templates_MNI152NLin2009cAsym"
+SURFACE_ATLAS_DIR = ROOT_DIR / "src" / "t1prep" / "data" / "atlases_surfaces_32k"
 DEFAULT_UPLOAD_ROOT = ROOT_DIR / "webui_uploads"
 DEFAULT_JOB_ROOT = Path("/tmp") / "webui_jobs"
 
@@ -83,6 +85,53 @@ def format_command_for_log(cmd: list[str]) -> str:
     return " ".join(formatted)
 
 
+def list_atlas_names() -> list[str]:
+    if not TEMPLATE_ATLAS_DIR.exists():
+        return []
+    names = []
+    for path in sorted(TEMPLATE_ATLAS_DIR.glob("*.nii*")):
+        name = path.name
+        if name.endswith(".nii.gz"):
+            name = name[:-7]
+        elif name.endswith(".nii"):
+            name = name[:-4]
+        csv_path = TEMPLATE_ATLAS_DIR / f"{name}.csv"
+        if not csv_path.exists():
+            continue
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def list_surface_atlas_names() -> list[str]:
+    if not SURFACE_ATLAS_DIR.exists():
+        return []
+    names = []
+    for path in sorted(SURFACE_ATLAS_DIR.glob("lh.*.annot")):
+        name = path.name
+        if name.startswith("lh."):
+            name = name[3:]
+        if name.endswith(".annot"):
+            name = name[:-6]
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def parse_atlas_string(value: str) -> list[str]:
+    if not value:
+        return []
+    parts = [item.strip().strip("'\"") for item in value.split(",")]
+    return [item for item in parts if item]
+
+
+def build_atlas_arg(atlas_items: list[str]) -> Optional[str]:
+    if not atlas_items:
+        return None
+    quoted = [f"'{item}'" for item in atlas_items]
+    return ",".join(quoted)
+
+
 def resolve_defaults_path(value: Optional[str]) -> Path:
     if not value:
         return ROOT_DIR / "T1Prep_defaults.txt"
@@ -113,6 +162,8 @@ def build_command(
     form: dict,
     input_files: list[Path],
     storage_root: Optional[Path] = None,
+    atlas_override: Optional[str] = None,
+    surface_atlas_override: Optional[str] = None,
 ) -> list[str]:
     cmd = [str(SCRIPT_PATH)]
 
@@ -151,8 +202,14 @@ def build_command(
     add_flag("--p")
     add_flag("--csf")
     add_flag("--lesions")
-    add_value("--atlas")
-    add_value("--atlas-surf")
+    if atlas_override:
+        cmd.extend(["--atlas", atlas_override])
+    else:
+        add_value("--atlas")
+    if surface_atlas_override:
+        cmd.extend(["--atlas-surf", surface_atlas_override])
+    else:
+        add_value("--atlas-surf")
 
     cmd.extend([str(path) for path in input_files])
     return cmd
@@ -215,6 +272,11 @@ def index():
     default_file = ROOT_DIR / "T1Prep_defaults.txt"
     defaults = load_defaults(default_file)
 
+    atlas_names = list_atlas_names()
+    atlas_selected = set(parse_atlas_string(defaults.get("atlas_vol", "")))
+    surface_atlas_names = list_surface_atlas_names()
+    surface_atlas_selected = set(parse_atlas_string(defaults.get("atlas_surf", "")))
+
     context = {
         "python": defaults.get("python", ""),
         "multi": defaults.get("multi", ""),
@@ -240,6 +302,10 @@ def index():
         "lesions": _to_int(defaults.get("save_lesions", "0"), 0) == 1,
         "atlas": defaults.get("atlas_vol", ""),
         "atlas_surf": defaults.get("atlas_surf", ""),
+        "atlas_names": atlas_names,
+        "atlas_selected": atlas_selected,
+        "surface_atlas_names": surface_atlas_names,
+        "surface_atlas_selected": surface_atlas_selected,
     }
 
     return render_template("index.html", **context)
@@ -286,7 +352,67 @@ def submit():
     if not saved_paths:
         return "No valid input files uploaded.", 400
 
-    cmd = build_command(request.form, saved_paths, storage_root)
+    atlas_items = []
+    atlas_items.extend(request.form.getlist("atlas_choice"))
+
+    atlas_files = request.files.getlist("atlas_file")
+    for atlas_file in atlas_files:
+        if not atlas_file or not atlas_file.filename:
+            continue
+        if not atlas_file.filename.endswith((".nii", ".nii.gz")):
+            continue
+        safe_name = Path(atlas_file.filename).name
+        if storage_root is None:
+            target_path = upload_dir / f"atlas_{job_id}_{safe_name}"
+        else:
+            target_path = upload_dir / f"atlas_{job_id}_{safe_name}"
+        atlas_file.save(target_path)
+        atlas_items.append(str(target_path))
+
+    deduped = []
+    seen = set()
+    for item in atlas_items:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+
+    atlas_arg = build_atlas_arg(deduped)
+
+    surface_items = []
+    surface_items.extend(request.form.getlist("surface_atlas_choice"))
+
+    surface_files = request.files.getlist("surface_atlas_file")
+    for surface_file in surface_files:
+        if not surface_file or not surface_file.filename:
+            continue
+        if not surface_file.filename.endswith(".annot"):
+            continue
+        safe_name = Path(surface_file.filename).name
+        if storage_root is None:
+            target_path = upload_dir / f"surface_atlas_{job_id}_{safe_name}"
+        else:
+            target_path = upload_dir / f"surface_atlas_{job_id}_{safe_name}"
+        surface_file.save(target_path)
+        surface_items.append(str(target_path))
+
+    surface_deduped = []
+    surface_seen = set()
+    for item in surface_items:
+        if item in surface_seen:
+            continue
+        surface_seen.add(item)
+        surface_deduped.append(item)
+
+    surface_atlas_arg = build_atlas_arg(surface_deduped)
+
+    cmd = build_command(
+        request.form,
+        saved_paths,
+        storage_root,
+        atlas_override=atlas_arg,
+        surface_atlas_override=surface_atlas_arg,
+    )
     job_info = {
         "id": job_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
