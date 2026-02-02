@@ -25,6 +25,7 @@
       <div id="dropzone" class="dropzone">
         Drag & drop files here
       </div>
+      <div id="file-list" class="file-list"></div>
       <label>
         Storage directory (optional)
         <input type="text" name="storage_root" placeholder="/path/to/storage">
@@ -155,6 +156,36 @@
 
     const fileInput = document.querySelector("input[name='inputs']");
     const dropzone = document.getElementById("dropzone");
+    const fileList = document.getElementById("file-list");
+    let selectedFiles = [];
+
+    function syncFileInput() {
+      const dataTransfer = new DataTransfer();
+      selectedFiles.forEach((file) => dataTransfer.items.add(file));
+      fileInput.files = dataTransfer.files;
+    }
+
+    function renderFileList() {
+      fileList.innerHTML = "";
+      selectedFiles.forEach((file, index) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "file-chip";
+        chip.textContent = file.name;
+        chip.title = "Click to remove";
+        chip.addEventListener("click", () => {
+          selectedFiles.splice(index, 1);
+          syncFileInput();
+          renderFileList();
+        });
+        fileList.appendChild(chip);
+      });
+    }
+
+    fileInput.addEventListener("change", () => {
+      selectedFiles = Array.from(fileInput.files);
+      renderFileList();
+    });
 
     dropzone.addEventListener("dragover", (event) => {
       event.preventDefault();
@@ -169,7 +200,9 @@
       event.preventDefault();
       dropzone.classList.remove("dragover");
       if (!event.dataTransfer || !event.dataTransfer.files.length) return;
-      fileInput.files = event.dataTransfer.files;
+      selectedFiles = Array.from(event.dataTransfer.files);
+      syncFileInput();
+      renderFileList();
     });
   </script>
   </div>
