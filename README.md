@@ -34,6 +34,102 @@ CAT12 folder structures and the BIDS derivatives standard.
 - No quality assessment implemented yet.
 - Only T1 MRI data supported.
 
+## Installation
+
+### Quick Install (Recommended)
+Install T1Prep directly with a single command:
+```bash
+curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+```
+
+The installer will interactively prompt you to:
+1. **Select a version**: Latest release, development (main branch), or choose from available releases
+2. **Choose installation directory**: Current folder, temporary folder, or custom path
+
+#### Non-Interactive Installation
+Use environment variables to skip the interactive prompts:
+```bash
+# Install latest release to current directory
+T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" \
+  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+
+# Install specific version to custom directory
+T1PREP_VERSION=v1.0.0 T1PREP_INSTALL_DIR=/opt/T1Prep \
+  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+```
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `T1PREP_VERSION` | Release tag (e.g., `v1.0.0`) or `latest` |
+| `T1PREP_INSTALL_DIR` | Absolute path for installation |
+
+### Manual Installation
+Download T1Prep_$version.zip from Github and unzip:
+```bash
+  unzip T1Prep_$version.zip -d your_installation_folder
+```
+Install required Python packages (check that the correct Python version 3.9-3.12
+is being used):
+```bash
+./scripts/T1Prep --python python3.12 --install
+```
+Alternatively, install the dependencies manually:
+```bash
+python3.12 -m pip install -r requirements.txt
+```
+
+### Docker
+
+A Dockerfile is provided to build an image with all required dependencies.
+
+#### Build
+
+**Default (release ZIP):**
+```bash
+docker build -t t1prep:latest .
+```
+
+**Latest GitHub source (e.g., main):**
+
+```bash
+docker build \
+  --build-arg T1PREP_SOURCE=git \
+  --build-arg T1PREP_REF=main \
+  -t t1prep:git-main .
+```
+
+**Specific release:**
+
+```bash
+docker build \
+  --build-arg T1PREP_VERSION=v0.2.0-beta \
+  -t t1prep:release .
+```
+
+#### Run
+
+Mount your data directory into the container (replace /path/to/data with your folder):
+
+```bash
+docker run --rm -it \
+  -v /path/to/data:/data \
+  t1prep:latest \
+  --out-dir /data/out /data/file.nii.gz
+```
+Append `--gpus all` to `docker run` to enable GPU acceleration when available.
+
+#### Memory & performance
+
+Make sure that the container has at least 16-24 GB of RAM available. If you are using Docker Desktop/WSL2, increase the VM memory in the settings. If you receive an error message stating that there is no space left on the device: /tmp/, you can try the following:
+If you obtain an error that no space is left on device: /tmp/ you can try that:
+```bash
+docker run --rm -it \
+  --tmpfs /tmp:rw,exec,nosuid,nodev,size=16g \
+  -v /path/to/data:/data \
+  t1prep:latest \
+  --out-dir /data/out /data/file.nii.gz
+```
+
 ## Output Folder Structure and Naming Conventions
 
 T1Prep automatically determines output locations based on the input data structure:
@@ -219,103 +315,6 @@ New tuning flags in the Python realigner:
 
 ## Input
 T1-weighted MRI images in NIfTI format (extension nii/nii.gz).
-
-## Installation
-
-### Quick Install (Recommended)
-Install T1Prep directly with a single command:
-```bash
-curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
-```
-
-The installer will interactively prompt you to:
-1. **Select a version**: Latest release, development (main branch), or choose from available releases
-2. **Choose installation directory**: Current folder, temporary folder, or custom path
-
-#### Non-Interactive Installation
-Use environment variables to skip the interactive prompts:
-```bash
-# Install latest release to current directory
-T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" \
-  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
-
-# Install specific version to custom directory
-T1PREP_VERSION=v1.0.0 T1PREP_INSTALL_DIR=/opt/T1Prep \
-  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
-```
-
-| Environment Variable | Description |
-|---------------------|-------------|
-| `T1PREP_VERSION` | Release tag (e.g., `v1.0.0`) or `latest` |
-| `T1PREP_INSTALL_DIR` | Absolute path for installation |
-
-### Manual Installation
-Download T1Prep_$version.zip from Github and unzip:
-```bash
-  unzip T1Prep_$version.zip -d your_installation_folder
-```
-Install required Python packages (check that the correct Python version 3.9-3.12
-is being used):
-```bash
-./scripts/T1Prep --python python3.12 --install
-```
-Alternatively, install the dependencies manually:
-```bash
-python3.12 -m pip install -r requirements.txt
-
-```
-
-## Docker
-
-A Dockerfile is provided to build an image with all required dependencies.
-
-### Build
-
-**Default (release ZIP):**
-```bash
-docker build -t t1prep:latest .
-```
-
-**Latest GitHub source (e.g., main):**
-
-```bash
-docker build \
-  --build-arg T1PREP_SOURCE=git \
-  --build-arg T1PREP_REF=main \
-  -t t1prep:git-main .
-```
-
-**Specific release:**
-
-```bash
-docker build \
-  --build-arg T1PREP_VERSION=v0.2.0-beta \
-  -t t1prep:release .
-```
-
-### Run
-
-Mount your data directory into the container (replace /path/to/data with your folder):
-
-```bash
-docker run --rm -it \
-  -v /path/to/data:/data \
-  t1prep:latest \
-  --out-dir /data/out /data/file.nii.gz
-```
-Append `--gpus all` to `docker run` to enable GPU acceleration when available.
-
-### Memory & performance
-
-Make sure that the container has at least 16-24 GB of RAM available. If you are using Docker Desktop/WSL2, increase the VM memory in the settings. If you receive an error message stating that there is no space left on the device: /tmp/, you can try the following:
-If you obtain an error that no space is left on device: /tmp/ you can try that:
-```bash
-docker run --rm -it \
-  --tmpfs /tmp:rw,exec,nosuid,nodev,size=16g \
-  -v /path/to/data:/data \
-  t1prep:latest \
-  --out-dir /data/out /data/file.nii.gz
-```
 
 ## Support
 For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
