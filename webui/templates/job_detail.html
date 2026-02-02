@@ -28,7 +28,7 @@
   <pre>{{ job.command | join(' ') }}</pre>
 
   <h2>Log</h2>
-  <pre>{{ log_content }}</pre>
+  <pre id="log-output">{{ log_content }}</pre>
 
   <script>
     const themeToggle = document.getElementById("theme-toggle");
@@ -42,6 +42,27 @@
       localStorage.setItem("t1prep-theme", next);
       themeToggle.textContent = next === "dark" ? "Dark mode" : "Light mode";
     });
+
+    const logOutput = document.getElementById("log-output");
+    const pollIntervalMs = 5000;
+
+    async function refreshLog() {
+      try {
+        const response = await fetch(window.location.href, { headers: { "X-Requested-With": "fetch" } });
+        if (!response.ok) return;
+        const text = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, "text/html");
+        const updated = doc.getElementById("log-output");
+        if (updated && logOutput) {
+          logOutput.textContent = updated.textContent;
+        }
+      } catch (error) {
+        // Ignore polling errors.
+      }
+    }
+
+    setInterval(refreshLog, pollIntervalMs);
   </script>
   </div>
 </body>
