@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install_t1prep.sh — Download the latest T1Prep release and run installation
+# install.sh — Download the latest T1Prep release and run installation
 #
 # This script:
 # 1) Detects curl or wget

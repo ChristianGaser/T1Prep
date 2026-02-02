@@ -221,6 +221,14 @@ New tuning flags in the Python realigner:
 T1-weighted MRI images in NIfTI format (extension nii/nii.gz).
 
 ## Installation
+
+### Quick Install (Recommended)
+Install T1Prep directly with a single command (downloads and installs the latest release):
+```bash
+curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+```
+
+### Manual Installation
 Download T1Prep_$version.zip from Github and unzip:
 ```bash
   unzip T1Prep_$version.zip -d your_installation_folder
