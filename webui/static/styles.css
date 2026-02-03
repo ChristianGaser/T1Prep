@@ -344,6 +344,10 @@ pre {
   transition: width 0.4s ease;
 }
 
+.progress-bar.failed {
+  background: linear-gradient(90deg, var(--danger), #ff3333);
+}
+
 .progress-meta {
   display: flex;
   justify-content: space-between;

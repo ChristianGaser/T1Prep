@@ -16,12 +16,13 @@
     </header>
 
   <div class="card meta">
-    <p><strong>Status:</strong> {{ job.status }}</p>
+    <p><strong>Status:</strong> <span id="job-status">{{ job.status }}</span></p>
+    <p><strong>Phase:</strong> <span id="job-phase">Initializing</span></p>
     <p><strong>Created:</strong> {{ job.created_at }}</p>
     <p><strong>Scheduled for:</strong> {{ job.scheduled_for or "" }}</p>
-    <p><strong>Started:</strong> {{ job.started_at or "" }}</p>
-    <p><strong>Finished:</strong> {{ job.finished_at or "" }}</p>
-    <p><strong>Return code:</strong> {{ job.return_code if job.return_code is not none else "" }}</p>
+    <p><strong>Started:</strong> <span id="job-started">{{ job.started_at or "" }}</span></p>
+    <p><strong>Finished:</strong> <span id="job-finished">{{ job.finished_at or "" }}</span></p>
+    <p><strong>Return code:</strong> <span id="job-return-code">{{ job.return_code if job.return_code is not none else "" }}</span></p>
   </div>
 
   <h2>Command</h2>
@@ -35,6 +36,9 @@
     <div class="progress-meta">
       <span id="progress-label">Waiting for progress…</span>
       <span id="progress-percent">0%</span>
+    </div>
+    <div class="progress-detail" style="margin-top: 0.5em; font-size: 0.9em; opacity: 0.8;">
+      <span id="progress-ratio"></span>
     </div>
   </div>
 
@@ -58,38 +62,18 @@
     const progressBar = document.getElementById("progress-bar");
     const progressLabel = document.getElementById("progress-label");
     const progressPercent = document.getElementById("progress-percent");
-    const pollIntervalMs = 5000;
+    const progressRatio = document.getElementById("progress-ratio");
+    const jobStatus = document.getElementById("job-status");
+    const jobPhase = document.getElementById("job-phase");
+    const jobStarted = document.getElementById("job-started");
+    const jobFinished = document.getElementById("job-finished");
+    const jobReturnCode = document.getElementById("job-return-code");
 
-    function updateProgressFromLog(text) {
-      const lines = text.trim().split(/\r?\n/).reverse();
-      let matchLine = null;
-      for (const line of lines) {
-        if (line.includes("%") && line.includes("]")) {
-          matchLine = line;
-          break;
-        }
-      }
-
-      if (!matchLine) {
-        progressBar.style.width = "0%";
-        progressLabel.textContent = "Waiting for progress…";
-        progressPercent.textContent = "0%";
-        return;
-      }
-
-      const match = matchLine.match(/\]\s*(\d{1,3})%\s*(.*)$/);
-      if (!match) {
-        return;
-      }
-
-      const percent = Math.min(100, Math.max(0, parseInt(match[1], 10)));
-      const label = match[2]?.trim() || "In progress";
-      progressBar.style.width = `${percent}%`;
-      progressLabel.textContent = label;
-      progressPercent.textContent = `${percent}%`;
-    }
+    const pollIntervalMs = 2000;
+    let isFinished = {{ 'true' if job.status in ('finished', 'failed') else 'false' }};
 
     async function refreshLog() {
+      if (isFinished) return;
       try {
         const response = await fetch(window.location.href, { headers: { "X-Requested-With": "fetch" } });
         if (!response.ok) return;
@@ -99,7 +83,6 @@
         const updated = doc.getElementById("log-output");
         if (updated && logOutput) {
           logOutput.textContent = updated.textContent;
-          updateProgressFromLog(updated.textContent || "");
         }
       } catch (error) {
         // Ignore polling errors.
@@ -107,6 +90,7 @@
     }
 
     async function refreshProgress() {
+      if (isFinished) return;
       try {
         const response = await fetch(`${window.location.pathname}/progress`);
         if (!response.ok) return;
@@ -116,16 +100,70 @@
         }
         const percent = data.percent ?? 0;
         progressBar.style.width = `${percent}%`;
-        progressLabel.textContent = data.failed ? "Failed" : (data.label || "Progress");
+        if (data.failed) {
+          progressBar.classList.add("failed");
+          progressLabel.textContent = "Failed";
+        } else {
+          progressBar.classList.remove("failed");
+          progressLabel.textContent = data.label || "Progress";
+        }
         progressPercent.textContent = `${percent}%`;
+        if (data.done !== undefined && data.total !== undefined) {
+          progressRatio.textContent = `${data.done} / ${data.total} items`;
+        }
       } catch (error) {
         // Ignore polling errors.
       }
     }
 
-    updateProgressFromLog(logOutput.textContent || "");
+    async function refreshStatus() {
+      try {
+        const response = await fetch(`${window.location.pathname}/status`);
+        if (!response.ok) return;
+        const data = await response.json();
+
+        if (data.status) {
+          jobStatus.textContent = data.status;
+          if (data.status === "finished") {
+            jobStatus.style.color = "#4caf50";
+            isFinished = true;
+            progressBar.style.width = "100%";
+            progressPercent.textContent = "100%";
+            progressLabel.textContent = "Completed";
+          } else if (data.status === "failed") {
+            jobStatus.style.color = "#f44336";
+            isFinished = true;
+            progressBar.classList.add("failed");
+            progressLabel.textContent = "Failed";
+          } else if (data.status === "running") {
+            jobStatus.style.color = "#2196f3";
+          }
+        }
+        if (data.phase) {
+          jobPhase.textContent = data.phase;
+        }
+        if (data.started_at) {
+          jobStarted.textContent = data.started_at;
+        }
+        if (data.finished_at) {
+          jobFinished.textContent = data.finished_at;
+        }
+        if (data.return_code !== null && data.return_code !== undefined) {
+          jobReturnCode.textContent = data.return_code;
+        }
+      } catch (error) {
+        // Ignore polling errors.
+      }
+    }
+
+    // Initial refresh
+    refreshStatus();
+    refreshProgress();
+
+    // Set up polling
     setInterval(refreshLog, pollIntervalMs);
     setInterval(refreshProgress, pollIntervalMs);
+    setInterval(refreshStatus, pollIntervalMs);
   </script>
   </div>
 </body>

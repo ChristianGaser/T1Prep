@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import glob
 import os
+import socket
 import subprocess
 import threading
 import uuid
@@ -209,6 +211,7 @@ def build_command(
     add_flag("--no-skullstrip")
     add_flag("--no-surf")
     add_flag("--no-seg")
+    add_flag("--amap")
     add_flag("--no-sphere-reg")
     add_flag("--no-mwp")
     add_flag("--no-atlas")
@@ -230,6 +233,17 @@ def build_command(
 
     cmd.extend([str(path) for path in input_files])
     return cmd
+
+
+def find_parallelize_log() -> Optional[Path]:
+    """Find the most recent parallelize log file from /tmp."""
+    hostname = socket.gethostname()
+    pattern = f"/tmp/parallelize_{hostname}_*.log"
+    candidates = glob.glob(pattern)
+    if not candidates:
+        return None
+    # Return the most recently modified one
+    return Path(max(candidates, key=os.path.getmtime))
 
 
 def run_job(job_id: str) -> None:
@@ -259,12 +273,26 @@ def run_job(job_id: str) -> None:
             text=True,
             bufsize=1,
             env=env,
+            start_new_session=True,
         )
+
+        with LOCK:
+            JOBS[job_id]["pid"] = process.pid
+
         assert process.stdout is not None
         for line in process.stdout:
             log_file.write(line)
             log_file.flush()
         return_code = process.wait()
+
+        # Append parallelize log if available
+        parallelize_log = find_parallelize_log()
+        if parallelize_log and parallelize_log.exists():
+            log_file.write("\n\n--- Parallelize Log ---\n")
+            try:
+                log_file.write(parallelize_log.read_text(encoding="utf-8"))
+            except Exception:
+                pass
 
     with LOCK:
         job = JOBS[job_id]
@@ -307,6 +335,7 @@ def index():
         "skip_skullstrip": _to_int(defaults.get("skip_skullstrip", "0"), 0) == 1,
         "no_surf": _to_int(defaults.get("estimate_surf", "1"), 1) == 0,
         "no_seg": _to_int(defaults.get("estimate_seg", "1"), 1) == 0,
+        "amap": _to_int(defaults.get("amap", "0"), 0) == 1,
         "no_sphere_reg": _to_int(defaults.get("estimate_spherereg", "1"), 1) == 0,
         "no_mwp": _to_int(defaults.get("save_mwp", "1"), 1) == 0,
         "no_atlas": defaults.get("atlas_vol", "") == "",
@@ -541,6 +570,43 @@ def job_progress(job_id: str):
             "total": total_items,
             "failed": failed,
             "label": "T1Prep",
+        }
+    )
+
+
+@app.route("/jobs/<job_id>/status")
+def job_status(job_id: str):
+    """Return current job status and phase information."""
+    with LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    status = job.get("status", "unknown")
+    phase = "Initializing"
+
+    # Parse phase from log file
+    log_path = Path(job["log_path"])
+    if log_path.exists():
+        try:
+            content = log_path.read_text(encoding="utf-8")
+            # Detect phase from log content
+            if "Surface Estimation" in content:
+                phase = "Surface Estimation"
+            elif "Volume Segmentation" in content:
+                phase = "Volume Segmentation"
+            elif "Check" in content:
+                phase = "Checking files"
+        except Exception:
+            pass
+
+    return jsonify(
+        {
+            "status": status,
+            "phase": phase,
+            "started_at": job.get("started_at"),
+            "finished_at": job.get("finished_at"),
+            "return_code": job.get("return_code"),
         }
     )
 
