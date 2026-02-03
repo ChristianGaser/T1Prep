@@ -280,7 +280,19 @@ def run_job(job_id: str) -> None:
             JOBS[job_id]["pid"] = process.pid
 
         assert process.stdout is not None
+        last_progress_line = ""
         for line in process.stdout:
+            # Filter out repetitive progress bar lines (keep only changes)
+            stripped = line.strip()
+            if stripped.startswith("[") and "]" in stripped and "%" in stripped:
+                # This is a progress bar line - only log if it changed
+                if stripped != last_progress_line:
+                    last_progress_line = stripped
+                    # Only write 100% completion or first occurrence
+                    if "100%" in stripped or last_progress_line == "":
+                        log_file.write(line)
+                        log_file.flush()
+                continue
             log_file.write(line)
             log_file.flush()
         return_code = process.wait()
