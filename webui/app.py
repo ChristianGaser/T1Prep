@@ -158,6 +158,23 @@ def resolve_storage_root(form: dict) -> Optional[Path]:
     return root
 
 
+def resolve_folder_pattern_inputs(form: dict) -> list[Path]:
+    folder_root = form.get("folder_root", "").strip()
+    pattern = form.get("file_pattern", "").strip()
+    if not folder_root or not pattern:
+        return []
+
+    root = Path(folder_root).expanduser()
+    if not root.is_absolute():
+        root = ROOT_DIR / root
+    if not root.exists() or not root.is_dir():
+        return []
+
+    matches = [p for p in root.glob(pattern) if p.is_file()]
+    filtered = [p for p in matches if p.name.endswith((".nii", ".nii.gz"))]
+    return sorted(filtered)
+
+
 def build_command(
     form: dict,
     input_files: list[Path],
@@ -309,16 +326,20 @@ def index():
     }
 
     return render_template("index.html", **context)
-
-
 @app.route("/submit", methods=["POST"])
 def submit():
     ensure_dirs()
 
     input_files = request.files.getlist("inputs")
     all_inputs = [file for file in input_files if file and file.filename]
+    pattern_files = resolve_folder_pattern_inputs(request.form)
+    removed_pattern = set(
+        p for p in request.form.get("removed_pattern_files", "").split("||") if p
+    )
+    if removed_pattern:
+        pattern_files = [p for p in pattern_files if str(p) not in removed_pattern]
 
-    if not all_inputs:
+    if not all_inputs and not pattern_files:
         return "No input files selected.", 400
 
     job_id = uuid.uuid4().hex
@@ -349,8 +370,20 @@ def submit():
         file_storage.save(target_path)
         saved_paths.append(target_path)
 
+    saved_paths.extend(pattern_files)
+
     if not saved_paths:
-        return "No valid input files uploaded.", 400
+        return "No valid input files selected.", 400
+
+    deduped_paths = []
+    seen_paths = set()
+    for path in saved_paths:
+        path_str = str(path)
+        if path_str in seen_paths:
+            continue
+        seen_paths.add(path_str)
+        deduped_paths.append(path)
+    saved_paths = deduped_paths
 
     atlas_items = []
     atlas_items.extend(request.form.getlist("atlas_choice"))
@@ -510,6 +543,18 @@ def job_progress(job_id: str):
             "label": "T1Prep",
         }
     )
+
+
+@app.route("/resolve-pattern")
+def resolve_pattern():
+    folder_root = request.args.get("folder_root", "").strip()
+    file_pattern = request.args.get("file_pattern", "").strip()
+    if not folder_root or not file_pattern:
+        return jsonify({"files": []})
+
+    fake_form = {"folder_root": folder_root, "file_pattern": file_pattern}
+    files = resolve_folder_pattern_inputs(fake_form)
+    return jsonify({"files": [str(path) for path in files]})
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@
       <legend>Inputs</legend>
       <label>
         Input NIfTI files
-        <input id="file-input" class="file-input-hidden" type="file" name="inputs" multiple accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip" required>
+        <input id="file-input" class="file-input-hidden" type="file" name="inputs" multiple accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip">
         <div class="file-input-row">
           <button id="file-button" type="button" class="file-button">Select files</button>
           <span id="file-summary" class="file-summary">No files selected</span>
@@ -30,6 +30,16 @@
         Drag & drop files here
       </div>
       <div id="file-list" class="file-list"></div>
+      <label>
+        Or select by folder + pattern
+        <input type="text" name="folder_root" placeholder="/path/to/folder">
+      </label>
+      <label>
+        File pattern (recursive)
+        <input type="text" name="file_pattern" placeholder="**/*.nii*">
+      </label>
+      <input type="hidden" name="removed_pattern_files" id="removed-pattern-files" value="">
+      <div id="pattern-list" class="file-list"></div>
       <label>
         Storage directory (optional)
         <input type="text" name="storage_root" placeholder="/path/to/storage">
@@ -143,7 +153,13 @@
     const fileSummary = document.getElementById("file-summary");
     const dropzone = document.getElementById("dropzone");
     const fileList = document.getElementById("file-list");
+    const patternList = document.getElementById("pattern-list");
+    const removedPatternField = document.getElementById("removed-pattern-files");
+    const folderRootInput = document.querySelector("input[name='folder_root']");
+    const filePatternInput = document.querySelector("input[name='file_pattern']");
     let selectedFiles = [];
+    let patternFiles = [];
+    let removedPattern = new Set();
 
     function syncFileInput() {
       const dataTransfer = new DataTransfer();
@@ -175,10 +191,63 @@
       });
     }
 
+    function renderPatternList() {
+      patternList.innerHTML = "";
+      const visible = patternFiles.filter((path) => !removedPattern.has(path));
+      visible.forEach((path) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "file-chip";
+        chip.textContent = path;
+        chip.title = "Click to remove";
+        chip.addEventListener("click", () => {
+          removedPattern.add(path);
+          removedPatternField.value = Array.from(removedPattern).join("||");
+          renderPatternList();
+        });
+        patternList.appendChild(chip);
+      });
+    }
+
+    async function updatePatternList() {
+      const folderRoot = folderRootInput.value.trim();
+      const filePattern = filePatternInput.value.trim();
+      if (!folderRoot || !filePattern) {
+        patternFiles = [];
+        removedPattern.clear();
+        removedPatternField.value = "";
+        renderPatternList();
+        return;
+      }
+      const url = new URL("/resolve-pattern", window.location.origin);
+      url.searchParams.set("folder_root", folderRoot);
+      url.searchParams.set("file_pattern", filePattern);
+      try {
+        const response = await fetch(url.toString());
+        if (!response.ok) return;
+        const data = await response.json();
+        patternFiles = Array.isArray(data.files) ? data.files : [];
+        const stillRemoved = new Set();
+        removedPattern.forEach((path) => {
+          if (patternFiles.includes(path)) {
+            stillRemoved.add(path);
+          }
+        });
+        removedPattern = stillRemoved;
+        removedPatternField.value = Array.from(removedPattern).join("||");
+        renderPatternList();
+      } catch (error) {
+        // Ignore preview errors.
+      }
+    }
+
     fileInput.addEventListener("change", () => {
       selectedFiles = Array.from(fileInput.files);
       renderFileList();
     });
+
+    folderRootInput.addEventListener("blur", updatePatternList);
+    filePatternInput.addEventListener("blur", updatePatternList);
 
     fileButton.addEventListener("click", () => {
       fileInput.click();

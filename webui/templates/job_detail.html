@@ -45,13 +45,13 @@
     const themeToggle = document.getElementById("theme-toggle");
     const savedTheme = localStorage.getItem("t1prep-theme") || "dark";
     document.body.setAttribute("data-theme", savedTheme);
-    themeToggle.textContent = savedTheme === "dark" ? "Dark mode" : "Light mode";
+    themeToggle.textContent = savedTheme === "dark" ? "Light mode" : "Dark mode";
 
     themeToggle.addEventListener("click", () => {
       const next = document.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
       document.body.setAttribute("data-theme", next);
       localStorage.setItem("t1prep-theme", next);
-      themeToggle.textContent = next === "dark" ? "Dark mode" : "Light mode";
+      themeToggle.textContent = next === "dark" ? "Light mode" : "Dark mode";
     });
 
     const logOutput = document.getElementById("log-output");
