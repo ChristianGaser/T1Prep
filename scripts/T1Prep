@@ -32,9 +32,6 @@ version=0.2.5
 # Resolve this script's directory robustly (works even if invoked via symlink)
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Undocumented option to remove input files after successful processing
-remove_input=0
-
 seed=0
 
 # Load additional defaults
@@ -273,9 +270,6 @@ parse_args()
         save_hemi=0
         atlas_vol=""
         atlas_surf=""
-        ;;
-      --remove-input)
-        remove_input=1
         ;;
       -h | --help | --h | -v | --version | -V)
         help
@@ -960,16 +954,6 @@ process()
     if [[ "$multi" -ne -2 ]]; then
       echo "${GREEN}----------------------------------------------------------                                ${NC}"
       echo "${GREEN}${overall}${NC}"
-    fi
-
-    # Remove input file if requested and processing was successful
-    if [[ "$remove_input" -eq 1 && "$errors" -eq 0 ]]; then
-      if [ -f "$FILE" ]; then
-        rm -f "$FILE"
-        if [[ "$multi" -ne -2 ]]; then
-          echo "${GREEN}Removed input file: ${FILE}${NC}"
-        fi
-      fi
     fi
       
     ((i++))
