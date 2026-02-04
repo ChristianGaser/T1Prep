@@ -80,55 +80,75 @@
         No-overwrite pattern
         <span class="input-icon" data-icon="🛡️"><input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness."></span>
       </label>
-      <div class="atlas-panel">
-        <div class="atlas-header">Available atlases</div>
-        <div class="atlas-grid">
-          {% for atlas_name in atlas_names %}
-            <label>
-              <input type="checkbox" name="atlas_choice" value="{{ atlas_name }}" {% if atlas_name in atlas_selected %}checked{% endif %}>
-              {{ atlas_name }}
-            </label>
-          {% endfor %}
+
+      <fieldset class="sub-fieldset">
+        <legend>Volume Atlases</legend>
+        <div class="atlas-panel">
+          <div class="atlas-header">Available atlases</div>
+          <div class="atlas-grid">
+            {% for atlas_name in atlas_names %}
+              <label>
+                <input type="checkbox" name="atlas_choice" value="{{ atlas_name }}" {% if atlas_name in atlas_selected %}checked{% endif %}>
+                {{ atlas_name }}
+              </label>
+            {% endfor %}
+          </div>
         </div>
-      </div>
-      <label>
-        Custom atlas file (.nii or .nii.gz)
-        <input type="file" name="atlas_file" accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip">
-      </label>
-      <div class="atlas-panel">
-        <div class="atlas-header">Available surface atlases</div>
-        <div class="atlas-grid">
-          {% for atlas_name in surface_atlas_names %}
-            <label>
-              <input type="checkbox" name="surface_atlas_choice" value="{{ atlas_name }}" {% if atlas_name in surface_atlas_selected %}checked{% endif %}>
-              {{ atlas_name }}
-            </label>
-          {% endfor %}
+        <label>
+          Custom atlas file (.nii or .nii.gz)
+          <input id="atlas-file-input" class="file-input-hidden" type="file" name="atlas_file" accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip">
+          <div class="file-input-row">
+            <button id="atlas-file-button" type="button" class="file-button">Select file</button>
+            <span id="atlas-file-summary" class="file-summary">No file selected</span>
+          </div>
+        </label>
+      </fieldset>
+
+      <fieldset class="sub-fieldset">
+        <legend>Surface Atlases</legend>
+        <div class="atlas-panel">
+          <div class="atlas-header">Available atlases</div>
+          <div class="atlas-grid">
+            {% for atlas_name in surface_atlas_names %}
+              <label>
+                <input type="checkbox" name="surface_atlas_choice" value="{{ atlas_name }}" {% if atlas_name in surface_atlas_selected %}checked{% endif %}>
+                {{ atlas_name }}
+              </label>
+            {% endfor %}
+          </div>
         </div>
-      </div>
-      <label>
-        Custom surface atlas file (.annot)
-        <input type="file" name="surface_atlas_file" accept=".annot">
-      </label>
-      <div class="checkbox-row">
-        <label><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}> BIDS naming</label>
-        <label><input type="checkbox" name="--gz" value="1" {% if gz %}checked{% endif %}> Save .nii.gz</label>
-        <label><input type="checkbox" name="--skullstrip-only" value="1" {% if skullstrip_only %}checked{% endif %}> Skullstrip only</label>
-        <label><input type="checkbox" name="--no-skullstrip" value="1" {% if skip_skullstrip %}checked{% endif %}> Skip skullstrip</label>
-        <label><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}> No surface</label>
-        <label><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}> No segmentation</label>
-        <label><input type="checkbox" name="--amap" value="1" {% if amap %}checked{% endif %}> AMAP segmentation</label>
-        <label><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}> No sphere registration</label>
-        <label><input type="checkbox" name="--no-mwp" value="1" {% if no_mwp %}checked{% endif %}> No modulated/warped seg</label>
-        <label><input type="checkbox" name="--no-atlas" value="1" {% if no_atlas %}checked{% endif %}> No volumetric atlas</label>
-        <label><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}> Pial + white surfaces</label>
-        <label><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}> Save hemispheric seg</label>
-        <label><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}> Save warped seg</label>
-        <label><input type="checkbox" name="--rp" value="1" {% if rp %}checked{% endif %}> Save affine seg</label>
-        <label><input type="checkbox" name="--p" value="1" {% if p %}checked{% endif %}> Save native seg</label>
-        <label><input type="checkbox" name="--csf" value="1" {% if csf %}checked{% endif %}> Save CSF seg</label>
-        <label><input type="checkbox" name="--lesions" value="1" {% if lesions %}checked{% endif %}> Save lesion seg</label>
-      </div>
+        <label>
+          Custom atlas file (.annot)
+          <input id="surface-atlas-file-input" class="file-input-hidden" type="file" name="surface_atlas_file" accept=".annot">
+          <div class="file-input-row">
+            <button id="surface-atlas-file-button" type="button" class="file-button">Select file</button>
+            <span id="surface-atlas-file-summary" class="file-summary">No file selected</span>
+          </div>
+        </label>
+      </fieldset>
+
+      <fieldset class="sub-fieldset">
+        <legend>Processing Options</legend>
+        <div class="checkbox-row">
+          <label><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}> BIDS naming</label>
+          <label><input type="checkbox" name="--gz" value="1" {% if gz %}checked{% endif %}> Save .nii.gz</label>
+          <label><input type="checkbox" name="--skullstrip-only" value="1" {% if skullstrip_only %}checked{% endif %}> Skullstrip only</label>
+          <label><input type="checkbox" name="--no-skullstrip" value="1" {% if skip_skullstrip %}checked{% endif %}> Skip skullstrip</label>
+          <label><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}> No surface</label>
+          <label><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}> No segmentation</label>
+          <label><input type="checkbox" name="--amap" value="1" {% if amap %}checked{% endif %}> AMAP segmentation</label>
+          <label><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}> No sphere registration</label>
+          <label><input type="checkbox" name="--no-mwp" value="1" {% if no_mwp %}checked{% endif %}> No modulated/warped seg</label>
+          <label><input type="checkbox" name="--no-atlas" value="1" {% if no_atlas %}checked{% endif %}> No volumetric atlas</label>
+          <label><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}> Pial + white surfaces</label>
+          <label><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}> Save hemispheric seg</label>
+          <label><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}> Save warped seg</label>
+          <label><input type="checkbox" name="--rp" value="1" {% if rp %}checked{% endif %}> Save affine seg</label>
+          <label><input type="checkbox" name="--p" value="1" {% if p %}checked{% endif %}> Save native seg</label>
+          <label><input type="checkbox" name="--csf" value="1" {% if csf %}checked{% endif %}> Save CSF seg</label>
+          <label><input type="checkbox" name="--lesions" value="1" {% if lesions %}checked{% endif %}> Save lesion seg</label>
+        </div>
+      </fieldset>
     </fieldset>
 
     <div class="actions">
@@ -271,6 +291,40 @@
       selectedFiles = Array.from(event.dataTransfer.files);
       syncFileInput();
       renderFileList();
+    });
+
+    // Custom atlas file button
+    const atlasFileInput = document.getElementById("atlas-file-input");
+    const atlasFileButton = document.getElementById("atlas-file-button");
+    const atlasFileSummary = document.getElementById("atlas-file-summary");
+
+    atlasFileButton.addEventListener("click", () => {
+      atlasFileInput.click();
+    });
+
+    atlasFileInput.addEventListener("change", () => {
+      if (atlasFileInput.files.length > 0) {
+        atlasFileSummary.textContent = atlasFileInput.files[0].name;
+      } else {
+        atlasFileSummary.textContent = "No file selected";
+      }
+    });
+
+    // Custom surface atlas file button
+    const surfaceAtlasFileInput = document.getElementById("surface-atlas-file-input");
+    const surfaceAtlasFileButton = document.getElementById("surface-atlas-file-button");
+    const surfaceAtlasFileSummary = document.getElementById("surface-atlas-file-summary");
+
+    surfaceAtlasFileButton.addEventListener("click", () => {
+      surfaceAtlasFileInput.click();
+    });
+
+    surfaceAtlasFileInput.addEventListener("change", () => {
+      if (surfaceAtlasFileInput.files.length > 0) {
+        surfaceAtlasFileSummary.textContent = surfaceAtlasFileInput.files[0].name;
+      } else {
+        surfaceAtlasFileSummary.textContent = "No file selected";
+      }
     });
   </script>
   </div>

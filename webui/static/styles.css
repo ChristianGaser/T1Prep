@@ -110,6 +110,23 @@ fieldset {
   box-shadow: var(--shadow);
 }
 
+fieldset.sub-fieldset {
+  margin-top: 1.25rem;
+  padding: 1rem 1.25rem;
+  background: var(--panel-alt);
+  box-shadow: none;
+  border-radius: 6px;
+}
+
+fieldset.sub-fieldset legend {
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+
+fieldset.sub-fieldset .atlas-panel {
+  margin-top: 0;
+}
+
 legend {
   padding: 0 0.5rem;
   font-weight: 600;
