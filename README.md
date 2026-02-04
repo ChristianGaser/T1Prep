@@ -63,6 +63,51 @@ T1PREP_VERSION=v1.0.0 T1PREP_INSTALL_DIR=/opt/T1Prep \
 | `T1PREP_VERSION` | Release tag (e.g., `v1.0.0`) or `latest` |
 | `T1PREP_INSTALL_DIR` | Absolute path for installation |
 
+### Windows Installation via WSL (Recommended)
+
+T1Prep requires a Linux environment to run. On Windows, we recommend using **Windows Subsystem for Linux (WSL)**, which provides a complete Linux environment with full compatibility.
+
+#### WSL Requirements
+
+| Windows Version | WSL Support |
+|-----------------|-------------|
+| Windows 11 (all versions) | WSL 2 ✓ |
+| Windows 10 version 2004+ (Build 19041+) | WSL 2 ✓ |
+| Windows 10 version 1903-1909 | WSL 2 (with manual kernel update) |
+| Windows 10 version 1607-1903 | WSL 1 only |
+| Windows Server 2019+ | WSL ✓ |
+
+#### Installing WSL and T1Prep
+
+1. **Install WSL** (run PowerShell as Administrator):
+   ```powershell
+   wsl --install
+   ```
+   This installs WSL 2 with Ubuntu by default. Restart your computer when prompted.
+
+2. **Open Ubuntu** from the Start menu and complete the initial setup (create username/password).
+
+3. **Install T1Prep** inside WSL (Ubuntu terminal):
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/scripts/install.sh | bash
+   ```
+
+4. **Access Windows files** from WSL at `/mnt/c/` (C: drive), `/mnt/d/` (D: drive), etc.:
+   ```bash
+   # Process a file from your Windows Documents folder
+   T1Prep --out-dir /mnt/c/Users/YourName/T1Prep_output /mnt/c/Users/YourName/Documents/scan.nii.gz
+   ```
+
+#### Alternative: Docker on Windows
+
+If you prefer not to install WSL directly, you can use Docker Desktop for Windows (which uses WSL 2 internally):
+
+```powershell
+docker run --rm -it -v C:\path\to\data:/data t1prep:latest --out-dir /data/out /data/file.nii.gz
+```
+
+See the [Docker](#docker) section for build instructions.
+
 ### Manual Installation
 Download T1Prep_$version.zip from Github and unzip:
 ```bash
