@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob
 import os
+import shutil
 import socket
 import subprocess
 import threading
@@ -331,6 +332,16 @@ def run_job(job_id: str) -> None:
         job["return_code"] = return_code
         job["finished_at"] = datetime.now().isoformat(timespec="seconds")
         job["status"] = "finished" if return_code == 0 else "failed"
+        upload_dir = job.get("upload_dir")
+
+    # Clean up uploaded files after successful completion
+    if return_code == 0 and upload_dir:
+        upload_path = Path(upload_dir)
+        if upload_path.exists():
+            try:
+                shutil.rmtree(upload_path)
+            except Exception:
+                pass  # Ignore cleanup errors
 
 
 def schedule_or_run(job_id: str, run_at: Optional[datetime]) -> None:
@@ -503,7 +514,7 @@ def submit():
         out_dir=out_dir,
         atlas_override=atlas_arg,
         surface_atlas_override=surface_atlas_arg,
-        remove_input=has_uploaded_files,
+        remove_input=False,  # Don't use --remove-input, we'll clean up after job completes
     )
     job_info = {
         "id": job_id,
@@ -515,6 +526,7 @@ def submit():
         "progress_dir": str(progress_dir),
         "inputs": [str(path) for path in saved_paths],
         "options": {key: value for key, value in request.form.items()},
+        "upload_dir": str(upload_dir) if has_uploaded_files else None,
     }
 
     with LOCK:

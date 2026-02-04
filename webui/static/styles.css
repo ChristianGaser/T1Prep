@@ -127,6 +127,56 @@ fieldset.sub-fieldset .atlas-panel {
   margin-top: 0;
 }
 
+/* Collapsible fieldset */
+fieldset.collapsible {
+  padding: 0;
+}
+
+fieldset.collapsible .collapsible-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 1.5rem;
+  margin: 0;
+  width: 100%;
+  transition: color 0.15s;
+}
+
+fieldset.collapsible .collapsible-toggle:hover {
+  color: var(--accent);
+}
+
+fieldset.collapsible .toggle-icon {
+  font-size: 0.75rem;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+fieldset.collapsible:not(.collapsed) .toggle-icon {
+  transform: rotate(90deg);
+}
+
+fieldset.collapsible .collapsible-content {
+  padding: 0 1.5rem 1.5rem;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+fieldset.collapsible.collapsed .collapsible-content {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+fieldset.collapsible:not(.collapsed) .collapsible-content {
+  max-height: 2000px;
+  opacity: 1;
+}
+
 legend {
   padding: 0 0.5rem;
   font-weight: 600;
@@ -305,11 +355,96 @@ small {
   border-radius: 999px;
   cursor: pointer;
   font-size: 0.9rem;
+  position: relative;
+  padding-right: 1.5rem;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.file-chip::after {
+  content: "✕";
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  opacity: 0;
+  color: var(--danger);
+  transition: opacity 0.15s;
 }
 
 .file-chip:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(255, 107, 107, 0.1);
+}
+
+.file-chip:hover::after {
+  opacity: 1;
+}
+
+/* File list with multi-select support */
+.file-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.remove-selected-btn {
+  background: var(--danger);
+  border: none;
+  color: white;
+  padding: 0.4rem 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+
+.remove-selected-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.remove-selected-btn:not(:disabled):hover {
+  opacity: 0.85;
+}
+
+.selection-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.file-list-item {
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  border: 1px solid transparent;
+  margin-bottom: 2px;
+  transition: background-color 0.1s, border-color 0.1s;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-list-item:hover {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+.file-list-item.selected {
+  background: rgba(62, 166, 255, 0.15);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+[data-theme="light"] .file-list-item.selected {
+  background: rgba(31, 107, 255, 0.12);
 }
 
 .atlas-panel {

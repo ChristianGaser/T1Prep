@@ -12,7 +12,7 @@
       <div>
         <h1>T1Prep Web UI</h1>
         <p>Upload NIfTI files and configure options. Scheduling is optional.</p>
-        <p class="hint"><kbd>Tab</kbd> to confirm field entries and update file list &bull; <kbd>Return</kbd> to submit the job</p>
+        <p class="hint"><kbd>Tab</kbd> to confirm field entries and update file list &bull; <kbd>Return</kbd> to submit the job &bull; <span class="required">*</span> required field</p>
       </div>
       <button class="theme-toggle" type="button" id="theme-toggle">Dark mode</button>
     </header>
@@ -34,7 +34,6 @@
         <div id="dropzone" class="dropzone">
           Drag & drop files here
         </div>
-        <div id="file-list" class="file-list"></div>
         <label>
           Or select by folder + pattern
           <span class="input-icon" data-icon="📁"><input type="text" name="folder_root" placeholder="/path/to/folder"></span>
@@ -44,7 +43,7 @@
           <span class="input-icon" data-icon="🔍"><input type="text" name="file_pattern" placeholder="**/*.nii*"></span>
         </label>
         <input type="hidden" name="removed_pattern_files" id="removed-pattern-files" value="">
-        <div id="pattern-list" class="file-list"></div>
+        <div id="combined-file-list" class="file-list"></div>
       </fieldset>
 
       <fieldset class="sub-fieldset">
@@ -79,8 +78,11 @@
       </label>
     </fieldset>
 
-    <fieldset>
-      <legend>Save Options</legend>
+    <fieldset class="collapsible collapsed" id="save-options-fieldset">
+      <legend class="collapsible-toggle">
+        <span class="toggle-icon">▶</span> Save Options
+      </legend>
+      <div class="collapsible-content">
       <label>
         No-overwrite pattern
         <span class="input-icon" data-icon="🛡️"><input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness."></span>
@@ -154,6 +156,7 @@
           <label><input type="checkbox" name="--lesions" value="1" {% if lesions %}checked{% endif %}> Save lesion seg</label>
         </div>
       </fieldset>
+      </div>
     </fieldset>
 
     <div class="actions">
@@ -175,19 +178,61 @@
       themeToggle.textContent = next === "dark" ? "Light mode" : "Dark mode";
     });
 
+    // Collapsible fieldset toggle
+    document.querySelectorAll("fieldset.collapsible .collapsible-toggle").forEach(legend => {
+      legend.addEventListener("click", () => {
+        const fieldset = legend.closest("fieldset.collapsible");
+        fieldset.classList.toggle("collapsed");
+        // Save state
+        const id = fieldset.id;
+        if (id) {
+          localStorage.setItem(`t1prep-${id}-collapsed`, fieldset.classList.contains("collapsed"));
+        }
+      });
+    });
+
+    // Restore collapsed state from localStorage
+    document.querySelectorAll("fieldset.collapsible").forEach(fieldset => {
+      const id = fieldset.id;
+      if (id) {
+        const saved = localStorage.getItem(`t1prep-${id}-collapsed`);
+        if (saved === "false") {
+          fieldset.classList.remove("collapsed");
+        }
+      }
+    });
+
     const fileInput = document.getElementById("file-input");
     const fileButton = document.getElementById("file-button");
     const fileSummary = document.getElementById("file-summary");
     const dropzone = document.getElementById("dropzone");
-    const fileList = document.getElementById("file-list");
-    const patternList = document.getElementById("pattern-list");
+    const combinedFileList = document.getElementById("combined-file-list");
     const removedPatternField = document.getElementById("removed-pattern-files");
     const folderRootInput = document.querySelector("input[name='folder_root']");
     const filePatternInput = document.querySelector("input[name='file_pattern']");
     const outDirInput = document.querySelector("input[name='out_dir']");
-    let selectedFiles = [];
-    let patternFiles = [];
+    let selectedFiles = [];  // Uploaded files (File objects)
+    let patternFiles = [];   // Pattern-matched files (path strings)
     let removedPattern = new Set();
+    let combinedSelection = new Set();  // Track selected items (index strings like "upload-0" or "pattern-/path/to/file")
+    let lastClickedItem = null;
+
+    // Set default output directory on page load
+    (async function initDefaultOutput() {
+      if (!outDirInput.value.trim()) {
+        try {
+          const response = await fetch("/get-default-output");
+          if (response.ok) {
+            const data = await response.json();
+            if (data.default_output) {
+              outDirInput.value = data.default_output;
+            }
+          }
+        } catch (error) {
+          // Ignore errors
+        }
+      }
+    })();
 
     // Auto-populate output directory from file path
     async function suggestOutputDir(pathValue, force = false) {
@@ -214,8 +259,15 @@
       fileInput.files = dataTransfer.files;
     }
 
-    function renderFileList() {
-      fileList.innerHTML = "";
+    function renderCombinedFileList() {
+      combinedFileList.innerHTML = "";
+      combinedSelection.clear();
+      lastClickedItem = null;
+
+      const visiblePatternFiles = patternFiles.filter((path) => !removedPattern.has(path));
+      const totalFiles = selectedFiles.length + visiblePatternFiles.length;
+
+      // Update summary
       if (selectedFiles.length === 0) {
         fileSummary.textContent = "No files selected";
       } else if (selectedFiles.length === 1) {
@@ -223,37 +275,100 @@
       } else {
         fileSummary.textContent = `${selectedFiles.length} files selected`;
       }
-      selectedFiles.forEach((file, index) => {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "file-chip";
-        chip.textContent = file.name;
-        chip.title = "Click to remove";
-        chip.addEventListener("click", () => {
-          selectedFiles.splice(index, 1);
-          syncFileInput();
-          renderFileList();
-        });
-        fileList.appendChild(chip);
-      });
-    }
 
-    function renderPatternList() {
-      patternList.innerHTML = "";
-      const visible = patternFiles.filter((path) => !removedPattern.has(path));
-      visible.forEach((path) => {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "file-chip";
-        chip.textContent = path;
-        chip.title = "Click to remove";
-        chip.addEventListener("click", () => {
-          removedPattern.add(path);
-          removedPatternField.value = Array.from(removedPattern).join("||");
-          renderPatternList();
-        });
-        patternList.appendChild(chip);
+      if (totalFiles === 0) return;
+
+      // Build combined items array: [{type, index, name, fullPath}]
+      const items = [];
+      selectedFiles.forEach((file, idx) => {
+        items.push({ type: "upload", index: idx, name: file.name, fullPath: null, key: `upload-${idx}` });
       });
+      visiblePatternFiles.forEach((path, idx) => {
+        const filename = path.split("/").pop();
+        items.push({ type: "pattern", index: idx, name: filename, fullPath: path, key: `pattern-${path}` });
+      });
+
+      // Add toolbar
+      const toolbar = document.createElement("div");
+      toolbar.className = "file-list-toolbar";
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "remove-selected-btn";
+      removeBtn.textContent = "Remove selected";
+      removeBtn.disabled = true;
+      removeBtn.addEventListener("click", () => {
+        // Separate selected items by type
+        const uploadIndicesToRemove = [];
+        const patternPathsToRemove = [];
+        combinedSelection.forEach(key => {
+          if (key.startsWith("upload-")) {
+            uploadIndicesToRemove.push(parseInt(key.replace("upload-", "")));
+          } else if (key.startsWith("pattern-")) {
+            patternPathsToRemove.push(key.replace("pattern-", ""));
+          }
+        });
+        // Remove uploaded files (in reverse order to preserve indices)
+        uploadIndicesToRemove.sort((a, b) => b - a).forEach(i => selectedFiles.splice(i, 1));
+        // Mark pattern files as removed
+        patternPathsToRemove.forEach(path => removedPattern.add(path));
+        removedPatternField.value = Array.from(removedPattern).join("||");
+        syncFileInput();
+        renderCombinedFileList();
+      });
+      const hint = document.createElement("span");
+      hint.className = "selection-hint";
+      hint.textContent = "Click to select, Shift+click for range";
+      toolbar.appendChild(removeBtn);
+      toolbar.appendChild(hint);
+      combinedFileList.appendChild(toolbar);
+
+      // Render items
+      items.forEach((itemData, globalIndex) => {
+        const item = document.createElement("div");
+        item.className = "file-list-item";
+        item.dataset.key = itemData.key;
+        item.dataset.globalIndex = globalIndex;
+        item.textContent = itemData.name;
+        item.title = itemData.fullPath || itemData.name;
+        if (itemData.type === "pattern") {
+          item.classList.add("pattern-file");
+        }
+        item.addEventListener("click", (e) => {
+          if (e.shiftKey && lastClickedItem !== null) {
+            // Range selection
+            const lastIdx = lastClickedItem;
+            const start = Math.min(lastIdx, globalIndex);
+            const end = Math.max(lastIdx, globalIndex);
+            for (let i = start; i <= end; i++) {
+              combinedSelection.add(items[i].key);
+            }
+          } else if (e.ctrlKey || e.metaKey) {
+            // Toggle selection
+            if (combinedSelection.has(itemData.key)) {
+              combinedSelection.delete(itemData.key);
+            } else {
+              combinedSelection.add(itemData.key);
+            }
+          } else {
+            // Single selection
+            combinedSelection.clear();
+            combinedSelection.add(itemData.key);
+          }
+          lastClickedItem = globalIndex;
+          updateSelectionUI();
+        });
+        combinedFileList.appendChild(item);
+      });
+
+      function updateSelectionUI() {
+        combinedFileList.querySelectorAll(".file-list-item").forEach(el => {
+          el.classList.toggle("selected", combinedSelection.has(el.dataset.key));
+        });
+        removeBtn.disabled = combinedSelection.size === 0;
+        removeBtn.textContent = combinedSelection.size > 0 
+          ? `Remove selected (${combinedSelection.size})` 
+          : "Remove selected";
+      }
     }
 
     async function updatePatternList() {
@@ -263,7 +378,7 @@
         patternFiles = [];
         removedPattern.clear();
         removedPatternField.value = "";
-        renderPatternList();
+        renderCombinedFileList();
         return;
       }
       const url = new URL("/resolve-pattern", window.location.origin);
@@ -282,7 +397,7 @@
         });
         removedPattern = stillRemoved;
         removedPatternField.value = Array.from(removedPattern).join("||");
-        renderPatternList();
+        renderCombinedFileList();
         clearInputError();
         // Auto-fill output directory from first file's dirname
         if (patternFiles.length > 0) {
@@ -295,7 +410,7 @@
 
     fileInput.addEventListener("change", async () => {
       selectedFiles = Array.from(fileInput.files);
-      renderFileList();
+      renderCombinedFileList();
       clearInputError();
       // For uploaded files, browsers don't expose full path for security.
       // Set a default output directory if not already set.
@@ -364,7 +479,7 @@
       if (!event.dataTransfer || !event.dataTransfer.files.length) return;
       selectedFiles = Array.from(event.dataTransfer.files);
       syncFileInput();
-      renderFileList();
+      renderCombinedFileList();
       clearInputError();
     });
 
