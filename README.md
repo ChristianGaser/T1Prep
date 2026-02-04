@@ -11,6 +11,30 @@
 
 # T1Prep: T1 PREProcessing Pipeline (aka PyCAT) 
 
+## Table of Contents
+
+- [Requirements](#requirements)
+- [Main Differences to CAT12](#main-differences-to-cat12)
+- [Installation](#installation)
+  - [Quick Install (Recommended)](#quick-install-recommended)
+  - [Windows Installation via WSL](#windows-installation-via-wsl-recommended)
+  - [Manual Installation](#manual-installation)
+- [Web UI (Flask)](#web-ui-flask)
+  - [Docker](#docker)
+- [Output Folder Structure and Naming Conventions](#output-folder-structure-and-naming-conventions)
+- [Usage](#usage)
+  - [Python API](#python-api)
+- [Options](#options)
+- [Output folders structure](#output-folders-structure)
+- [Naming behaviour](#naming-behaviour)
+- [Examples](#examples)
+- [Longitudinal realignment (experimental)](#longitudinal-realignment-experimental)
+- [Input](#input)
+- [Support](#support)
+- [License](#license)
+
+---
+
 T1Prep is a pipeline that preprocesses T1-weighted MRI data and supports segmentation and cortical surface reconstruction. It provides a complete set of tools for efficiently processing structural MRI scans.
 
 T1Prep partially integrates [DeepMriPrep](https://github.com/wwu-mmll/deepmriprep), which uses deep learning (DL) techniques to mimic CAT12's functionality for processing structural MRIs. For details, see:
