@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>T1Prep Web UI</title>
+  <link rel="icon" type="image" href="icons8-gehirn-50.png">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body data-theme="dark">
@@ -24,7 +25,7 @@
         <legend>Input Files <span class="required">*</span></legend>
         <label>
           Input NIfTI files
-          <input id="file-input" class="file-input-hidden" type="file" name="inputs" multiple accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip">
+          <input id="file-input" class="file-input-hidden" type="file" name="inputs" multiple accept=".nii,.nii.gz,application/gzip,application/x-gzip">
           <div class="file-input-row">
             <button id="file-button" type="button" class="file-button">Select files</button>
             <span id="file-summary" class="file-summary">No files selected</span>
@@ -47,9 +48,9 @@
       </fieldset>
 
       <fieldset class="sub-fieldset">
-        <legend>Output</legend>
+        <legend>Output Directory</legend>
         <label>
-          Output directory
+          Auto-filled when using folder+pattern
           <span class="input-icon input-required" data-icon="💾"><input type="text" name="out_dir" required placeholder="/path/to/output"></span>
         </label>
       </fieldset>
@@ -80,10 +81,6 @@
 
     <fieldset>
       <legend>Save Options</legend>
-      <label>
-        Output directory
-        <span class="input-icon" data-icon="📂"><input type="text" name="--out-dir" value="{{ outdir }}" placeholder="/path/to/output"></span>
-      </label>
       <label>
         No-overwrite pattern
         <span class="input-icon" data-icon="🛡️"><input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness."></span>
@@ -187,9 +184,29 @@
     const removedPatternField = document.getElementById("removed-pattern-files");
     const folderRootInput = document.querySelector("input[name='folder_root']");
     const filePatternInput = document.querySelector("input[name='file_pattern']");
+    const outDirInput = document.querySelector("input[name='out_dir']");
     let selectedFiles = [];
     let patternFiles = [];
     let removedPattern = new Set();
+
+    // Auto-populate output directory from file path
+    async function suggestOutputDir(pathValue, force = false) {
+      if (!pathValue) return;
+      // Skip if already set and not forcing
+      if (!force && outDirInput.value.trim()) return;
+      const url = new URL("/resolve-dirname", window.location.origin);
+      url.searchParams.set("path", pathValue);
+      try {
+        const response = await fetch(url.toString());
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data.dirname) {
+          outDirInput.value = data.dirname;
+        }
+      } catch (error) {
+        // Ignore errors
+      }
+    }
 
     function syncFileInput() {
       const dataTransfer = new DataTransfer();
@@ -267,18 +284,40 @@
         removedPatternField.value = Array.from(removedPattern).join("||");
         renderPatternList();
         clearInputError();
+        // Auto-fill output directory from first file's dirname
+        if (patternFiles.length > 0) {
+          suggestOutputDir(patternFiles[0], true);
+        }
       } catch (error) {
         // Ignore preview errors.
       }
     }
 
-    fileInput.addEventListener("change", () => {
+    fileInput.addEventListener("change", async () => {
       selectedFiles = Array.from(fileInput.files);
       renderFileList();
       clearInputError();
+      // For uploaded files, browsers don't expose full path for security.
+      // Set a default output directory if not already set.
+      if (selectedFiles.length > 0 && !outDirInput.value.trim()) {
+        try {
+          const response = await fetch("/get-default-output");
+          if (response.ok) {
+            const data = await response.json();
+            if (data.default_output) {
+              outDirInput.value = data.default_output;
+            }
+          }
+        } catch (error) {
+          // Ignore errors
+        }
+      }
     });
 
-    folderRootInput.addEventListener("blur", updatePatternList);
+    folderRootInput.addEventListener("blur", () => {
+      updatePatternList();
+      suggestOutputDir(folderRootInput.value.trim());
+    });
     filePatternInput.addEventListener("blur", updatePatternList);
 
     fileButton.addEventListener("click", () => {

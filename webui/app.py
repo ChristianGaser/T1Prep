@@ -721,6 +721,59 @@ def resolve_pattern():
     return jsonify({"files": [str(path) for path in files]})
 
 
+@app.route("/resolve-dirname")
+def resolve_dirname():
+    """Return the directory name from a file path or folder path.
+
+    Query parameters:
+        path: A file or folder path
+
+    Returns:
+        JSON with 'dirname' key containing the resolved directory,
+        or an empty string if the path is invalid.
+    """
+    raw_path = request.args.get("path", "").strip()
+    if not raw_path:
+        return jsonify({"dirname": ""})
+
+    p = Path(raw_path).expanduser()
+    if not p.is_absolute():
+        p = ROOT_DIR / p
+
+    # If path exists and is a directory, use it directly
+    if p.exists() and p.is_dir():
+        return jsonify({"dirname": str(p)})
+
+    # If path exists and is a file, return its parent
+    if p.exists() and p.is_file():
+        return jsonify({"dirname": str(p.parent)})
+
+    # If path doesn't exist, try to determine if it looks like a file or directory
+    # A path ending with / or without extension is likely a directory
+    if raw_path.endswith("/") or raw_path.endswith(os.sep):
+        return jsonify({"dirname": str(p)})
+
+    # Check if it looks like a NIfTI file path
+    if p.name.endswith((".nii", ".nii.gz", ".gz")):
+        return jsonify({"dirname": str(p.parent)})
+
+    # Otherwise return the path as-is (assume it's a directory)
+    return jsonify({"dirname": str(p)})
+
+
+@app.route("/get-default-output")
+def get_default_output():
+    """Return a default output directory for uploaded files.
+
+    Returns:
+        JSON with 'default_output' key containing a suggested output directory.
+    """
+    # Use user's home directory with a T1Prep_output subfolder as default
+    home = Path.home()
+    default_output = home / "T1Prep_output"
+    return jsonify({"default_output": str(default_output)})
+
+
 if __name__ == "__main__":
     ensure_dirs()
     app.run(host="127.0.0.1", port=5000, debug=True)
