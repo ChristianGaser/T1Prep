@@ -63,6 +63,22 @@ p {
   margin: 0.5rem 0 0;
 }
 
+p.hint {
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+}
+
+kbd {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 1px 0 var(--border);
+}
+
 .theme-toggle {
   background: transparent;
   border: 1px solid var(--border);
@@ -101,7 +117,10 @@ legend {
 }
 
 label {
-  display: block;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  align-items: center;
+  gap: 1rem;
   margin-top: 0.85rem;
   font-weight: 500;
 }
@@ -109,7 +128,16 @@ label {
 input[type="text"],
 input[type="number"],
 input[type="datetime-local"],
-select,
+select {
+  width: 100%;
+  max-width: 560px;
+  padding: 0.6rem 0.65rem 0.6rem 2.2rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+}
+
 input[type="file"] {
   width: 100%;
   max-width: 560px;
@@ -118,7 +146,28 @@ input[type="file"] {
   border: 1px solid var(--border);
   background: var(--panel-alt);
   color: var(--text);
-  margin-top: 0.4rem;
+}
+
+.input-icon {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+}
+
+.input-icon::before {
+  content: attr(data-icon);
+  position: absolute;
+  left: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1rem;
+  color: var(--muted);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.input-icon input {
+  width: 100%;
 }
 
 .file-input-row {

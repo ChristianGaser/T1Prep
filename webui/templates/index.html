@@ -11,6 +11,7 @@
       <div>
         <h1>T1Prep Web UI</h1>
         <p>Upload NIfTI files and configure options. Scheduling is optional.</p>
+        <p class="hint"><kbd>Tab</kbd> to confirm field entries and update file list &bull; <kbd>Return</kbd> to submit the job</p>
       </div>
       <button class="theme-toggle" type="button" id="theme-toggle">Dark mode</button>
     </header>
@@ -32,21 +33,21 @@
       <div id="file-list" class="file-list"></div>
       <label>
         Or select by folder + pattern
-        <input type="text" name="folder_root" placeholder="/path/to/folder">
+        <span class="input-icon" data-icon="📁"><input type="text" name="folder_root" placeholder="/path/to/folder"></span>
       </label>
       <label>
         File pattern (recursive)
-        <input type="text" name="file_pattern" placeholder="**/*.nii*">
+        <span class="input-icon" data-icon="🔍"><input type="text" name="file_pattern" placeholder="**/*.nii*"></span>
       </label>
       <input type="hidden" name="removed_pattern_files" id="removed-pattern-files" value="">
       <div id="pattern-list" class="file-list"></div>
       <label>
         Storage directory (optional)
-        <input type="text" name="storage_root" placeholder="/path/to/storage">
+        <span class="input-icon" data-icon="💾"><input type="text" name="storage_root" placeholder="/path/to/storage"></span>
       </label>
       <label>
         Start at (optional)
-        <input type="datetime-local" name="start_at">
+        <span class="input-icon" data-icon="🕐"><input type="datetime-local" name="start_at"></span>
       </label>
     </fieldset>
 
@@ -57,15 +58,15 @@
       </div>
       <label>
         Python interpreter
-        <input type="text" name="--python" value="{{ python }}" placeholder="/path/to/python">
+        <span class="input-icon" data-icon="🐍"><input type="text" name="--python" value="{{ python }}" placeholder="/path/to/python"></span>
       </label>
       <label>
         Parallel jobs
-        <input type="number" name="--multi" value="{{ multi }}" placeholder="-1 for auto">
+        <span class="input-icon" data-icon="⚡"><input type="number" name="--multi" value="{{ multi }}" placeholder="-1 for auto"></span>
       </label>
       <label>
         Minimum memory per job (GB)
-        <input type="number" name="--min-memory" value="{{ min_memory }}" step="1" placeholder="24">
+        <span class="input-icon" data-icon="🧠"><input type="number" name="--min-memory" value="{{ min_memory }}" step="1" placeholder="24"></span>
       </label>
     </fieldset>
 
@@ -73,11 +74,11 @@
       <legend>Save Options</legend>
       <label>
         Output directory
-        <input type="text" name="--out-dir" value="{{ outdir }}" placeholder="/path/to/output">
+        <span class="input-icon" data-icon="📂"><input type="text" name="--out-dir" value="{{ outdir }}" placeholder="/path/to/output"></span>
       </label>
       <label>
         No-overwrite pattern
-        <input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness.">
+        <span class="input-icon" data-icon="🛡️"><input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness."></span>
       </label>
       <div class="atlas-panel">
         <div class="atlas-header">Available atlases</div>
