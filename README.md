@@ -20,10 +20,10 @@
   - [Windows Installation via WSL](#windows-installation-via-wsl-recommended)
   - [Manual Installation](#manual-installation)
 - [Web UI (Flask)](#web-ui-flask)
-  - [Docker](#docker)
+- [Docker](#docker)
 - [Output Folder Structure and Naming Conventions](#output-folder-structure-and-naming-conventions)
 - [Usage](#usage)
-  - [Python API](#python-api)
+- [Python API](#python-api)
 - [Options](#options)
 - [Output folders structure](#output-folders-structure)
 - [Naming behaviour](#naming-behaviour)
@@ -162,11 +162,11 @@ Then open http://127.0.0.1:5000 in your browser.
 Uploaded files are stored under `webui_uploads/` and per-job logs under
 `webui_jobs/`.
 
-### Docker
+## Docker
 
 A Dockerfile is provided to build an image with all required dependencies.
 
-#### Build
+### Build
 
 **Default (release ZIP):**
 ```bash
@@ -190,7 +190,7 @@ docker build \
   -t t1prep:release .
 ```
 
-#### Run
+### Run
 
 Mount your data directory into the container (replace /path/to/data with your folder):
 
@@ -202,7 +202,7 @@ docker run --rm -it \
 ```
 Append `--gpus all` to `docker run` to enable GPU acceleration when available.
 
-#### Memory & performance
+### Memory & performance
 
 Make sure that the container has at least 16-24 GB of RAM available. If you are using Docker Desktop/WSL2, increase the VM memory in the settings. If you receive an error message stating that there is no space left on the device: /tmp/, you can try the following:
 If you obtain an error that no space is left on device: /tmp/ you can try that:
@@ -247,7 +247,7 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
 ./scripts/T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
 ```
 
-### Python API
+## Python API
 You can also call the full pipeline from Python without shelling out manually:
 
 ```python
