@@ -143,23 +143,6 @@ def resolve_defaults_path(value: Optional[str]) -> Path:
     return candidate
 
 
-def resolve_storage_root(form: dict) -> Optional[Path]:
-    storage_root = form.get("storage_root")
-    if storage_root:
-        root = Path(storage_root)
-        if not root.is_absolute():
-            root = ROOT_DIR / root
-        return root
-
-    out_dir = form.get("--out-dir")
-    if not out_dir:
-        return None
-    root = Path(out_dir)
-    if not root.is_absolute():
-        root = ROOT_DIR / root
-    return root
-
-
 def resolve_folder_pattern_inputs(form: dict) -> list[Path]:
     folder_root = form.get("folder_root", "").strip()
     pattern = form.get("file_pattern", "").strip()
@@ -180,9 +163,10 @@ def resolve_folder_pattern_inputs(form: dict) -> list[Path]:
 def build_command(
     form: dict,
     input_files: list[Path],
-    storage_root: Optional[Path] = None,
+    out_dir: Optional[Path] = None,
     atlas_override: Optional[str] = None,
     surface_atlas_override: Optional[str] = None,
+    remove_input: bool = False,
 ) -> list[str]:
     cmd = [str(SCRIPT_PATH)]
 
@@ -195,15 +179,12 @@ def build_command(
         if value:
             cmd.extend([name, value])
 
-    add_value("--python")
     add_value("--multi")
     add_value("--min-memory")
     add_flag("--debug")
 
-    if form.get("--out-dir"):
-        add_value("--out-dir")
-    elif storage_root is not None:
-        cmd.extend(["--out-dir", str(storage_root)])
+    if out_dir is not None:
+        cmd.extend(["--out-dir", str(out_dir)])
     add_flag("--bids")
     add_value("--no-overwrite")
     add_flag("--gz")
@@ -230,6 +211,10 @@ def build_command(
         cmd.extend(["--atlas-surf", surface_atlas_override])
     else:
         add_value("--atlas-surf")
+
+    # Remove input files after successful processing (WebUI copies files to upload dir)
+    if remove_input:
+        cmd.append("--remove-input")
 
     cmd.extend([str(path) for path in input_files])
     return cmd
@@ -418,31 +403,34 @@ def submit():
     if not all_inputs and not pattern_files:
         return "No input files selected.", 400
 
+    # Get mandatory output directory
+    out_dir_str = request.form.get("out_dir", "").strip()
+    if not out_dir_str:
+        return "Output directory is required.", 400
+    out_dir = Path(out_dir_str)
+    if not out_dir.is_absolute():
+        out_dir = ROOT_DIR / out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     job_id = uuid.uuid4().hex
-    storage_root = resolve_storage_root(request.form)
-    if storage_root is None:
-        upload_dir = DEFAULT_UPLOAD_ROOT / job_id
-        job_dir = DEFAULT_JOB_ROOT / job_id
-        job_dir.mkdir(parents=True, exist_ok=True)
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        log_path = job_dir / "t1prep.log"
-        progress_dir = job_dir / "progress"
-    else:
-        storage_root.mkdir(parents=True, exist_ok=True)
-        upload_dir = storage_root
-        job_dir = storage_root
-        log_path = job_dir / f"t1prep_{job_id}.log"
-        progress_dir = job_dir / f"progress_{job_id}"
+
+    # Use temp directories for job management, but output goes to user-specified dir
+    upload_dir = DEFAULT_UPLOAD_ROOT / job_id
+    job_dir = DEFAULT_JOB_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    log_path = job_dir / "t1prep.log"
+    progress_dir = job_dir / "progress"
 
     progress_dir.mkdir(parents=True, exist_ok=True)
+
+    # Track whether we have uploaded files that should be removed after processing
+    has_uploaded_files = len(all_inputs) > 0
 
     saved_paths = []
     for file_storage in all_inputs:
         safe_name = Path(file_storage.filename).name
-        if storage_root is None:
-            target_path = upload_dir / safe_name
-        else:
-            target_path = upload_dir / f"{job_id}_{safe_name}"
+        target_path = upload_dir / safe_name
         file_storage.save(target_path)
         saved_paths.append(target_path)
 
@@ -471,10 +459,7 @@ def submit():
         if not atlas_file.filename.endswith((".nii", ".nii.gz")):
             continue
         safe_name = Path(atlas_file.filename).name
-        if storage_root is None:
-            target_path = upload_dir / f"atlas_{job_id}_{safe_name}"
-        else:
-            target_path = upload_dir / f"atlas_{job_id}_{safe_name}"
+        target_path = upload_dir / f"atlas_{job_id}_{safe_name}"
         atlas_file.save(target_path)
         atlas_items.append(str(target_path))
 
@@ -498,10 +483,7 @@ def submit():
         if not surface_file.filename.endswith(".annot"):
             continue
         safe_name = Path(surface_file.filename).name
-        if storage_root is None:
-            target_path = upload_dir / f"surface_atlas_{job_id}_{safe_name}"
-        else:
-            target_path = upload_dir / f"surface_atlas_{job_id}_{safe_name}"
+        target_path = upload_dir / f"surface_atlas_{job_id}_{safe_name}"
         surface_file.save(target_path)
         surface_items.append(str(target_path))
 
@@ -518,9 +500,10 @@ def submit():
     cmd = build_command(
         request.form,
         saved_paths,
-        storage_root,
+        out_dir=out_dir,
         atlas_override=atlas_arg,
         surface_atlas_override=surface_atlas_arg,
+        remove_input=has_uploaded_files,
     )
     job_info = {
         "id": job_id,

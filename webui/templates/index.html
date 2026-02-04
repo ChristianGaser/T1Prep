@@ -16,39 +16,51 @@
       <button class="theme-toggle" type="button" id="theme-toggle">Dark mode</button>
     </header>
 
-    <form action="/submit" method="post" enctype="multipart/form-data">
+    <form id="t1prep-form" action="/submit" method="post" enctype="multipart/form-data">
     <fieldset>
       <legend>Inputs</legend>
-      <label>
-        Input NIfTI files
-        <input id="file-input" class="file-input-hidden" type="file" name="inputs" multiple accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip">
-        <div class="file-input-row">
-          <button id="file-button" type="button" class="file-button">Select files</button>
-          <span id="file-summary" class="file-summary">No files selected</span>
+
+      <fieldset class="sub-fieldset" id="input-files-fieldset">
+        <legend>Input Files <span class="required">*</span></legend>
+        <label>
+          Input NIfTI files
+          <input id="file-input" class="file-input-hidden" type="file" name="inputs" multiple accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip">
+          <div class="file-input-row">
+            <button id="file-button" type="button" class="file-button">Select files</button>
+            <span id="file-summary" class="file-summary">No files selected</span>
+          </div>
+        </label>
+        <div id="dropzone" class="dropzone">
+          Drag & drop files here
         </div>
-      </label>
-      <div id="dropzone" class="dropzone">
-        Drag & drop files here
-      </div>
-      <div id="file-list" class="file-list"></div>
-      <label>
-        Or select by folder + pattern
-        <span class="input-icon" data-icon="📁"><input type="text" name="folder_root" placeholder="/path/to/folder"></span>
-      </label>
-      <label>
-        File pattern (recursive)
-        <span class="input-icon" data-icon="🔍"><input type="text" name="file_pattern" placeholder="**/*.nii*"></span>
-      </label>
-      <input type="hidden" name="removed_pattern_files" id="removed-pattern-files" value="">
-      <div id="pattern-list" class="file-list"></div>
-      <label>
-        Storage directory (optional)
-        <span class="input-icon" data-icon="💾"><input type="text" name="storage_root" placeholder="/path/to/storage"></span>
-      </label>
-      <label>
-        Start at (optional)
-        <span class="input-icon" data-icon="🕐"><input type="datetime-local" name="start_at"></span>
-      </label>
+        <div id="file-list" class="file-list"></div>
+        <label>
+          Or select by folder + pattern
+          <span class="input-icon" data-icon="📁"><input type="text" name="folder_root" placeholder="/path/to/folder"></span>
+        </label>
+        <label>
+          File pattern (recursive)
+          <span class="input-icon" data-icon="🔍"><input type="text" name="file_pattern" placeholder="**/*.nii*"></span>
+        </label>
+        <input type="hidden" name="removed_pattern_files" id="removed-pattern-files" value="">
+        <div id="pattern-list" class="file-list"></div>
+      </fieldset>
+
+      <fieldset class="sub-fieldset">
+        <legend>Output</legend>
+        <label>
+          Output directory
+          <span class="input-icon input-required" data-icon="💾"><input type="text" name="out_dir" required placeholder="/path/to/output"></span>
+        </label>
+      </fieldset>
+
+      <fieldset class="sub-fieldset">
+        <legend>Scheduling</legend>
+        <label>
+          Start at (optional)
+          <span class="input-icon" data-icon="🕐"><input type="datetime-local" name="start_at"></span>
+        </label>
+      </fieldset>
     </fieldset>
 
     <fieldset>
@@ -56,10 +68,6 @@
       <div class="checkbox-row">
         <label><input type="checkbox" name="--debug" value="1" {% if debug %}checked{% endif %}> Debug</label>
       </div>
-      <label>
-        Python interpreter
-        <span class="input-icon" data-icon="🐍"><input type="text" name="--python" value="{{ python }}" placeholder="/path/to/python"></span>
-      </label>
       <label>
         Parallel jobs
         <span class="input-icon" data-icon="⚡"><input type="number" name="--multi" value="{{ multi }}" placeholder="-1 for auto"></span>
@@ -258,6 +266,7 @@
         removedPattern = stillRemoved;
         removedPatternField.value = Array.from(removedPattern).join("||");
         renderPatternList();
+        clearInputError();
       } catch (error) {
         // Ignore preview errors.
       }
@@ -266,6 +275,7 @@
     fileInput.addEventListener("change", () => {
       selectedFiles = Array.from(fileInput.files);
       renderFileList();
+      clearInputError();
     });
 
     folderRootInput.addEventListener("blur", updatePatternList);
@@ -273,6 +283,31 @@
 
     fileButton.addEventListener("click", () => {
       fileInput.click();
+    });
+
+    // Form validation: ensure at least one input file is selected
+    const form = document.getElementById("t1prep-form");
+    const inputFilesFieldset = document.getElementById("input-files-fieldset");
+
+    function clearInputError() {
+      const hasUploadedFiles = selectedFiles.length > 0;
+      const hasPatternFiles = patternFiles.filter((p) => !removedPattern.has(p)).length > 0;
+      if (hasUploadedFiles || hasPatternFiles) {
+        inputFilesFieldset.classList.remove("error");
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      const hasUploadedFiles = selectedFiles.length > 0;
+      const hasPatternFiles = patternFiles.filter((p) => !removedPattern.has(p)).length > 0;
+
+      if (!hasUploadedFiles && !hasPatternFiles) {
+        event.preventDefault();
+        inputFilesFieldset.classList.add("error");
+        alert("Please select at least one input file or specify a folder with pattern.");
+        return false;
+      }
+      inputFilesFieldset.classList.remove("error");
     });
 
     dropzone.addEventListener("dragover", (event) => {
@@ -291,6 +326,7 @@
       selectedFiles = Array.from(event.dataTransfer.files);
       syncFileInput();
       renderFileList();
+      clearInputError();
     });
 
     // Custom atlas file button

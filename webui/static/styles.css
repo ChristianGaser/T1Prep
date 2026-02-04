@@ -165,6 +165,20 @@ input[type="file"] {
   color: var(--text);
 }
 
+.required {
+  color: #e53935;
+  font-weight: bold;
+}
+
+fieldset.error {
+  border-color: #e53935 !important;
+  box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.3);
+}
+
+fieldset.error legend {
+  color: #e53935;
+}
+
 .input-icon {
   position: relative;
   width: 100%;
@@ -181,6 +195,17 @@ input[type="file"] {
   color: var(--muted);
   pointer-events: none;
   z-index: 1;
+}
+
+.input-icon.input-required::after {
+  content: "*";
+  position: absolute;
+  right: -1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1rem;
+  font-weight: bold;
+  color: #e53935;
 }
 
 .input-icon input {
