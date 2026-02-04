@@ -328,6 +328,23 @@ pre {
   margin-bottom: 1rem;
 }
 
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.progress-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.progress-time {
+  font-size: 0.85rem;
+  color: var(--accent-2);
+}
+
 .progress-track {
   width: 100%;
   height: 16px;

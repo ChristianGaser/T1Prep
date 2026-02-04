@@ -257,9 +257,14 @@ def run_job(job_id: str) -> None:
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
+    env["T1PREP_WEBUI"] = "1"  # Enable progress output in non-TTY mode
     progress_dir = job.get("progress_dir")
     if progress_dir:
         env["PROGRESS_DIR"] = progress_dir
+
+    # Initialize live progress tracking
+    with LOCK:
+        JOBS[job_id]["live_progress"] = {"vol_percent": 0, "surf_percent": 0, "current_phase": "volume"}
 
     with log_path.open("w", encoding="utf-8") as log_file:
         log_file.write("Command:\n")
@@ -281,21 +286,51 @@ def run_job(job_id: str) -> None:
 
         assert process.stdout is not None
         last_progress_line = ""
+        current_phase = "volume"
         for line in process.stdout:
-            # Filter out repetitive progress bar lines (keep only changes)
             stripped = line.strip()
+
+            # Detect phase transitions
+            if "Surface Estimation" in stripped:
+                current_phase = "surface"
+                with LOCK:
+                    JOBS[job_id]["live_progress"]["current_phase"] = "surface"
+                    JOBS[job_id]["live_progress"]["vol_percent"] = 100
+                log_file.write(line)
+                log_file.flush()
+                continue
+
+            # Filter out repetitive progress bar lines (keep only changes)
             if stripped.startswith("[") and "]" in stripped and "%" in stripped:
-                # This is a progress bar line - only log if it changed
+                # Extract percentage from progress bar line
+                import re
+                pct_match = re.search(r"\]\s*(\d{1,3})%", stripped)
+                if pct_match:
+                    pct = int(pct_match.group(1))
+                    with LOCK:
+                        if current_phase == "volume":
+                            JOBS[job_id]["live_progress"]["vol_percent"] = pct
+                        else:
+                            JOBS[job_id]["live_progress"]["surf_percent"] = pct
+
+                # Only log if it changed significantly
                 if stripped != last_progress_line:
                     last_progress_line = stripped
-                    # Only write 100% completion or first occurrence
-                    if "100%" in stripped or last_progress_line == "":
+                    # Only write 100% completion to log
+                    if "100%" in stripped:
                         log_file.write(line)
                         log_file.flush()
                 continue
+
             log_file.write(line)
             log_file.flush()
         return_code = process.wait()
+
+        # Mark both phases as 100% when finished successfully
+        if return_code == 0:
+            with LOCK:
+                JOBS[job_id]["live_progress"]["vol_percent"] = 100
+                JOBS[job_id]["live_progress"]["surf_percent"] = 100
 
         # Append parallelize log if available
         parallelize_log = find_parallelize_log()
@@ -539,49 +574,117 @@ def job_progress(job_id: str):
         return jsonify({"error": "Job not found"}), 404
 
     progress_dir = Path(job.get("progress_dir", ""))
-    if not progress_dir.exists():
-        return jsonify({"available": False})
+    log_path = Path(job["log_path"])
 
-    progress_files = sorted(progress_dir.glob("job*.progress"))
-    if not progress_files:
-        return jsonify({"available": False})
+    # Parse log to determine phases and their completion status
+    vol_complete = False
+    vol_time = ""
+    surf_started = False
+    surf_complete = False
+    surf_time = ""
 
-    total_done = 0
-    total_items = 0
+    if log_path.exists():
+        try:
+            content = log_path.read_text(encoding="utf-8")
+            lines = content.split("\n")
+            for line in lines:
+                if "Volume Segmentation" in line:
+                    pass  # Volume phase started
+                elif "Surface Estimation" in line:
+                    surf_started = True
+                    vol_complete = True  # Volume must be done if surface started
+                elif "Finished after" in line:
+                    # Extract time from "Finished after: Xmin Ys" or "Finished after Xmin Ys"
+                    import re
+                    time_match = re.search(r"Finished after:?\s*(.+)", line)
+                    if time_match:
+                        finish_time = time_match.group(1).strip()
+                        if surf_started and not surf_complete:
+                            surf_complete = True
+                            surf_time = finish_time
+                        elif not vol_complete:
+                            vol_complete = True
+                            vol_time = finish_time
+        except Exception:
+            pass
+
+    # Read current progress from files
+    current_done = 0
+    current_total = 0
     failed = False
 
-    for progress_file in progress_files:
-        try:
-            raw = progress_file.read_text(encoding="utf-8").strip()
-            done_str, total_str = raw.split("/", 1)
-            done = int(done_str)
-            total = int(total_str)
-        except Exception:
-            continue
-
-        total_done += done
-        total_items += max(total, 1)
-
-        status_file = progress_dir / progress_file.name.replace(".progress", ".status")
-        if status_file.exists():
+    if progress_dir.exists():
+        progress_files = sorted(progress_dir.glob("job*.progress"))
+        for progress_file in progress_files:
             try:
-                if int(status_file.read_text(encoding="utf-8").strip() or "0") != 0:
-                    failed = True
-            except ValueError:
-                pass
+                raw = progress_file.read_text(encoding="utf-8").strip()
+                done_str, total_str = raw.split("/", 1)
+                done = int(done_str)
+                total = int(total_str)
+                current_done += done
+                current_total += max(total, 1)
 
-    if total_items <= 0:
-        return jsonify({"available": False})
+                status_file = progress_dir / progress_file.name.replace(".progress", ".status")
+                if status_file.exists():
+                    try:
+                        if int(status_file.read_text(encoding="utf-8").strip() or "0") != 0:
+                            failed = True
+                    except ValueError:
+                        pass
+            except Exception:
+                continue
 
-    percent = int(min(100, max(0, (total_done * 100) // total_items)))
+    # Determine current phase progress
+    # First, check live progress from stdout parsing (works for serial/single-job mode)
+    live_progress = job.get("live_progress", {})
+    live_vol_percent = live_progress.get("vol_percent", 0)
+    live_surf_percent = live_progress.get("surf_percent", 0)
+    live_phase = live_progress.get("current_phase", "volume")
+
+    if surf_complete:
+        # Both phases complete
+        vol_percent = 100
+        surf_percent = 100
+    elif surf_started:
+        # Surface estimation in progress
+        vol_percent = 100
+        # Use progress files if available, otherwise use live progress
+        if current_total > 0:
+            surf_percent = int(min(100, max(0, (current_done * 100) // current_total)))
+        else:
+            surf_percent = live_surf_percent
+    elif vol_complete:
+        # Volume done, surface not started yet (brief transition)
+        vol_percent = 100
+        surf_percent = 0
+    else:
+        # Volume segmentation in progress
+        # Use progress files if available, otherwise use live progress from stdout
+        if current_total > 0:
+            vol_percent = int(min(100, max(0, (current_done * 100) // current_total)))
+        else:
+            vol_percent = live_vol_percent
+        surf_percent = 0
+
     return jsonify(
         {
             "available": True,
-            "percent": percent,
-            "done": total_done,
-            "total": total_items,
+            "volume": {
+                "percent": vol_percent,
+                "complete": vol_complete,
+                "time": vol_time,
+                "failed": failed and not surf_started,
+            },
+            "surface": {
+                "percent": surf_percent,
+                "complete": surf_complete,
+                "time": surf_time,
+                "started": surf_started,
+                "failed": failed and surf_started,
+            },
+            "done": current_done,
+            "total": current_total,
             "failed": failed,
-            "label": "T1Prep",
         }
     )
 

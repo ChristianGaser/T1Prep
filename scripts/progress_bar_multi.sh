@@ -68,6 +68,9 @@ single_job_bar() {
     if [ "$current" -eq "$total" ]; then
       echo ""  # newline at end
     fi
+  elif [ -n "$T1PREP_WEBUI" ]; then
+    # Web UI mode: always output progress for tracking
+    echo "[${bar}] ${percent}% $label"
   else
     # Non-TTY: only final output
     if [ "$current" -eq "$total" ]; then

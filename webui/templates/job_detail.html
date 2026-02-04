@@ -29,16 +29,32 @@
   <pre>{{ job.command_display }}</pre>
 
   <h2>Progress</h2>
+  
   <div class="card progress-panel">
+    <div class="progress-header">
+      <span class="progress-title">Volume Segmentation</span>
+      <span id="vol-time" class="progress-time"></span>
+    </div>
     <div class="progress-track">
-      <div id="progress-bar" class="progress-bar"></div>
+      <div id="vol-progress-bar" class="progress-bar"></div>
     </div>
     <div class="progress-meta">
-      <span id="progress-label">Waiting for progress…</span>
-      <span id="progress-percent">0%</span>
+      <span id="vol-progress-label">Waiting…</span>
+      <span id="vol-progress-percent">0%</span>
     </div>
-    <div class="progress-detail" style="margin-top: 0.5em; font-size: 0.9em; opacity: 0.8;">
-      <span id="progress-ratio"></span>
+  </div>
+
+  <div class="card progress-panel">
+    <div class="progress-header">
+      <span class="progress-title">Surface Estimation</span>
+      <span id="surf-time" class="progress-time"></span>
+    </div>
+    <div class="progress-track">
+      <div id="surf-progress-bar" class="progress-bar"></div>
+    </div>
+    <div class="progress-meta">
+      <span id="surf-progress-label">Waiting…</span>
+      <span id="surf-progress-percent">0%</span>
     </div>
   </div>
 
@@ -59,10 +75,20 @@
     });
 
     const logOutput = document.getElementById("log-output");
-    const progressBar = document.getElementById("progress-bar");
-    const progressLabel = document.getElementById("progress-label");
-    const progressPercent = document.getElementById("progress-percent");
-    const progressRatio = document.getElementById("progress-ratio");
+    
+    // Volume Segmentation elements
+    const volProgressBar = document.getElementById("vol-progress-bar");
+    const volProgressLabel = document.getElementById("vol-progress-label");
+    const volProgressPercent = document.getElementById("vol-progress-percent");
+    const volTime = document.getElementById("vol-time");
+    
+    // Surface Estimation elements
+    const surfProgressBar = document.getElementById("surf-progress-bar");
+    const surfProgressLabel = document.getElementById("surf-progress-label");
+    const surfProgressPercent = document.getElementById("surf-progress-percent");
+    const surfTime = document.getElementById("surf-time");
+    
+    // Status elements
     const jobStatus = document.getElementById("job-status");
     const jobPhase = document.getElementById("job-phase");
     const jobStarted = document.getElementById("job-started");
@@ -98,19 +124,49 @@
         if (!data.available) {
           return;
         }
-        const percent = data.percent ?? 0;
-        progressBar.style.width = `${percent}%`;
-        if (data.failed) {
-          progressBar.classList.add("failed");
-          progressLabel.textContent = "Failed";
+        
+        // Update Volume Segmentation progress
+        const vol = data.volume || {};
+        const volPercent = vol.percent ?? 0;
+        volProgressBar.style.width = `${volPercent}%`;
+        volProgressPercent.textContent = `${volPercent}%`;
+        
+        if (vol.failed) {
+          volProgressBar.classList.add("failed");
+          volProgressLabel.textContent = "Failed";
+        } else if (vol.complete) {
+          volProgressBar.classList.remove("failed");
+          volProgressLabel.textContent = "Complete";
+          if (vol.time) {
+            volTime.textContent = vol.time;
+          }
+        } else if (volPercent > 0) {
+          volProgressBar.classList.remove("failed");
+          volProgressLabel.textContent = "In progress";
+        }
+        
+        // Update Surface Estimation progress
+        const surf = data.surface || {};
+        const surfPercent = surf.percent ?? 0;
+        surfProgressBar.style.width = `${surfPercent}%`;
+        surfProgressPercent.textContent = `${surfPercent}%`;
+        
+        if (surf.failed) {
+          surfProgressBar.classList.add("failed");
+          surfProgressLabel.textContent = "Failed";
+        } else if (surf.complete) {
+          surfProgressBar.classList.remove("failed");
+          surfProgressLabel.textContent = "Complete";
+          if (surf.time) {
+            surfTime.textContent = surf.time;
+          }
+        } else if (surf.started) {
+          surfProgressBar.classList.remove("failed");
+          surfProgressLabel.textContent = "In progress";
         } else {
-          progressBar.classList.remove("failed");
-          progressLabel.textContent = data.label || "Progress";
+          surfProgressLabel.textContent = "Waiting…";
         }
-        progressPercent.textContent = `${percent}%`;
-        if (data.done !== undefined && data.total !== undefined) {
-          progressRatio.textContent = `${data.done} / ${data.total} items`;
-        }
+        
       } catch (error) {
         // Ignore polling errors.
       }
@@ -127,14 +183,11 @@
           if (data.status === "finished") {
             jobStatus.style.color = "#4caf50";
             isFinished = true;
-            progressBar.style.width = "100%";
-            progressPercent.textContent = "100%";
-            progressLabel.textContent = "Completed";
+            // Final refresh to get completion state
+            refreshProgress();
           } else if (data.status === "failed") {
             jobStatus.style.color = "#f44336";
             isFinished = true;
-            progressBar.classList.add("failed");
-            progressLabel.textContent = "Failed";
           } else if (data.status === "running") {
             jobStatus.style.color = "#2196f3";
           }
