@@ -104,11 +104,23 @@ USAGE
     if ! check_environment; then
         activate_environment
     fi
+
+    # Always use the venv Python to avoid system Python/ABI mismatches
+    PYTHON_BIN="$ENV_DIR/bin/python"
+    if [[ ! -x "$PYTHON_BIN" ]]; then
+        echo "❌ Error: Python executable not found in virtual environment: $PYTHON_BIN" >&2
+        exit 1
+    fi
     
+    # Suppress noisy Qt painter warnings
+    export QT_LOGGING_RULES="${QT_LOGGING_RULES:qt.gui.painting=false;qt.qpa.*=false}"
+
     # Run the Python script by absolute path so user-provided relative paths remain relative to caller's CWD
     export ORIGINAL_CWD="$(pwd)"
     PY_SCRIPT="$PROJECT_DIR/src/t1prep/gui/cat_viewsurf.py"
-    python "$PY_SCRIPT" "$@"
+    # Filter noisy QPainter warnings while preserving other stderr output
+    "$PYTHON_BIN" "$PY_SCRIPT" "$@" \
+        2> >(grep -v "QPainter::begin: Paint device returned engine == 0, type: 1" >&2)
 }
 
 # Run main function with all arguments

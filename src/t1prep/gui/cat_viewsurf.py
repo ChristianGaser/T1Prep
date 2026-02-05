@@ -36,8 +36,8 @@ from typing import List, Optional, Tuple
 
 # --- Qt setup (PySide6 only) ---
 from PySide6 import QtWidgets
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence, QShortcut, QPainter, QColor, QPen, QBrush
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QKeySequence, QShortcut, QPainter, QColor, QPen, QBrush, QSurfaceFormat
 
 # Qt compatibility shims
 ORIENT_H = Qt.Orientation.Horizontal
@@ -82,6 +82,8 @@ from vtkmodules.vtkCommonMath import vtkMatrix4x4
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleImage
 
 # Qt interactor & backends
+import vtkmodules.qt as vtk_qt
+vtk_qt.QVTKRWIBase = "QOpenGLWidget"
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 import vtkmodules.vtkRenderingOpenGL2   # registers OpenGL2 backend (fixes vtkShaderProperty)
 import vtkmodules.vtkRenderingFreeType  # text rendering for labels/ScalarBar
@@ -1103,6 +1105,14 @@ class Viewer(QtWidgets.QMainWindow):
         self.frame = QtWidgets.QFrame(); self.vl = QtWidgets.QVBoxLayout(); self.vl.setContentsMargins(0,0,0,0)
         self.frame.setLayout(self.vl); self.setCentralWidget(self.frame)
         self.vtk_widget = QVTKRenderWindowInteractor(self.frame); self.vl.addWidget(self.vtk_widget)
+        # Ensure Qt uses a native window for the GL surface on macOS
+        try:
+            self.vtk_widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        except Exception:
+            try:
+                self.vtk_widget.setAttribute(Qt.WA_NativeWindow, True)
+            except Exception:
+                pass
         # Ensure the VTK widget can accept keyboard focus
         try:
             self.vtk_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -1111,6 +1121,11 @@ class Viewer(QtWidgets.QMainWindow):
 
         self.ren = vtkRenderer(); self.ren.SetBackground(1,1,1) if opts.white else self.ren.SetBackground(0,0,0)
         self.rw: vtkRenderWindow = self.vtk_widget.GetRenderWindow();
+        try:
+            self.rw.SetMultiSamples(0)
+            self.rw.SetAlphaBitPlanes(0)
+        except Exception:
+            pass
         # Use two layers: main 3D in layer 0, UI (colorbar) in layer 1 to keep camera bounds stable
         self.rw.SetNumberOfLayers(2)
         self.ren.SetLayer(0)
@@ -1375,26 +1390,15 @@ class Viewer(QtWidgets.QMainWindow):
             self._attach_colorbar()
         else:
             self._detach_colorbar()
-        # Render once so initial state is applied
-        try:
-            self.rw.Render()
-        except Exception:
-            pass
-
-        # Camera
-        self.ren.ResetCamera()
-        self.ren.GetActiveCamera().Zoom(2.0)
-        # Track camera state to preserve view across overlay switches
+        # Defer initial render/camera setup until the Qt event loop is running
         self._cam_state = None
-        # Capture baseline camera right after initial setup
-        self._capture_camera_state()
-        self._base_cam_state = dict(self._cam_state) if self._cam_state else None
+        self._base_cam_state = None
 
         # Right-side control panel (dock)
         self._build_control_panel()
 
-        # Start interactor
-        self.vtk_widget.Initialize(); self.vtk_widget.Start(); self.vtk_widget.setFocus()
+        # Start interactor after the window is shown (avoid blocking render)
+        QTimer.singleShot(0, self._post_init_render)
 
         self.vtk_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu
                                              if hasattr(Qt, "ContextMenuPolicy")
@@ -1416,6 +1420,21 @@ class Viewer(QtWidgets.QMainWindow):
         # position relative to the widget, map to global
         global_pos = self.vtk_widget.mapToGlobal(pos)
         menu.exec(global_pos)
+
+    def _post_init_render(self):
+        try:
+            self.vtk_widget.Initialize()
+            self.vtk_widget.setFocus()
+        except Exception:
+            pass
+        try:
+            self.ren.ResetCamera()
+            self.ren.GetActiveCamera().Zoom(2.0)
+            self._capture_camera_state()
+            self._base_cam_state = dict(self._cam_state) if self._cam_state else None
+            self.rw.Render()
+        except Exception:
+            pass
     
     # -- Control panel integration --
     def _build_control_panel(self):
@@ -3464,6 +3483,18 @@ class HistogramWindow(QtWidgets.QMainWindow):
 # ---- Entrypoint ----
 def main(argv: List[str]):
     opts = parse_args(argv)
+    # Ensure a compatible OpenGL surface format before QApplication is created.
+    try:
+        QSurfaceFormat.setDefaultFormat(QVTKRenderWindowInteractor.defaultFormat())
+    except Exception:
+        pass
+    try:
+        QtWidgets.QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+    except Exception:
+        try:
+            QtWidgets.QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+        except Exception:
+            pass
     app = QtWidgets.QApplication(sys.argv)
     win = Viewer(opts); win.show()
     sys.exit(app.exec())
