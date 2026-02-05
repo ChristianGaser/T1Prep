@@ -141,16 +141,13 @@
       <fieldset class="sub-fieldset">
         <legend>Processing Options</legend>
         <div class="checkbox-row">
+          <label><input type="checkbox" name="--amap" value="1" {% if amap %}checked{% endif %}> AMAP segmentation</label>
           <label><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}> BIDS naming</label>
           <label><input type="checkbox" name="--gz" value="1" {% if gz %}checked{% endif %}> Save .nii.gz</label>
-          <label><input type="checkbox" name="--skullstrip-only" value="1" {% if skullstrip_only %}checked{% endif %}> Skullstrip only</label>
-          <label><input type="checkbox" name="--no-skullstrip" value="1" {% if skip_skullstrip %}checked{% endif %}> Skip skullstrip</label>
           <label><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}> No surface</label>
           <label><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}> No segmentation</label>
-          <label><input type="checkbox" name="--amap" value="1" {% if amap %}checked{% endif %}> AMAP segmentation</label>
           <label><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}> No sphere registration</label>
-          <label><input type="checkbox" name="--no-mwp" value="1" {% if no_mwp %}checked{% endif %}> No modulated/warped seg</label>
-          <label><input type="checkbox" name="--no-atlas" value="1" {% if no_atlas %}checked{% endif %}> No volumetric atlas</label>
+          <label><input type="checkbox" name="--no-mwp" value="1" {% if not save_mwp %}checked{% endif %}> Save modulated/warped seg</label>
           <label><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}> Pial + white surfaces</label>
           <label><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}> Save hemispheric seg</label>
           <label><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}> Save warped seg</label>
@@ -170,6 +167,13 @@
   </form>
 
   <script>
+        // Always collapse 'Save Options' on first load unless user has set otherwise
+        (function ensureSaveOptionsCollapsed() {
+          const key = 't1prep-save-options-fieldset-collapsed';
+          if (localStorage.getItem(key) === null) {
+            localStorage.setItem(key, 'true');
+          }
+        })();
     const themeToggle = document.getElementById("theme-toggle");
     const savedTheme = localStorage.getItem("t1prep-theme") || "dark";
     document.body.setAttribute("data-theme", savedTheme);
