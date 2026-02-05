@@ -198,11 +198,12 @@ input[type="datetime-local"],
 select {
   width: 100%;
   max-width: 560px;
-  padding: 0.6rem 0.65rem 0.6rem 2.2rem;
+  padding: 0.5rem 0.6rem 0.5rem 2.1rem;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--panel-alt);
   color: var(--text);
+  font-size: 0.95rem;
 }
 
 input[type="file"] {
@@ -315,6 +316,107 @@ small {
   align-items: center;
   gap: 0.5rem;
   font-weight: 400;
+}
+
+/* Toggle (slider) style */
+label.toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+label.toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+}
+
+.toggle-text {
+  flex: 1;
+}
+
+.toggle-track {
+  position: relative;
+  --toggle-w: 25px; /* 75% of 42px */
+  --toggle-h: 11px; /* 50% of 22px */
+  width: var(--toggle-w);
+  height: var(--toggle-h);
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--muted);
+  flex: 0 0 auto;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 0px;
+  left: 1px;
+  width: calc(var(--toggle-h) - 2px);
+  height: calc(var(--toggle-h) - 2px);
+  border-radius: 50%;
+  background: var(--accent);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+label.toggle input[type="checkbox"]:checked + .toggle-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+label.toggle input[type="checkbox"]:checked + .toggle-track::after {
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-h)));
+  background: var(--text);
+}
+
+label.toggle input[type="checkbox"]:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Debug toggle row aligned like other label+input rows */
+label.toggle-row {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.85rem;
+  font-weight: 500;
+}
+
+label.toggle-row .toggle-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 560px;
+}
+
+label.toggle-row .toggle-inline input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+}
+
+label.toggle-row .toggle-inline input[type="checkbox"]:checked + .toggle-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+label.toggle-row .toggle-inline input[type="checkbox"]:checked + .toggle-track::after {
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-h)));
+  background: var(--text);
+}
+
+label.toggle-row .toggle-inline input[type="checkbox"]:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Atlas toggles need slightly tighter spacing */
+.atlas-grid label.toggle {
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.95rem;
 }
 
 .dropzone {

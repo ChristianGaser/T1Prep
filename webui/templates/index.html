@@ -70,9 +70,13 @@
 
     <fieldset>
       <legend>General Options</legend>
-      <div class="checkbox-row">
-        <label><input type="checkbox" name="--debug" value="1" {% if debug %}checked{% endif %}> Debug</label>
-      </div>
+      <label class="toggle-row">
+        Debug
+        <span class="toggle-inline">
+          <input type="checkbox" name="--debug" value="1" {% if debug %}checked{% endif %}>
+          <span class="toggle-track" aria-hidden="true"></span>
+        </span>
+      </label>
       <label>
         Parallel jobs
         <span class="input-icon" data-icon="⚡"><input type="number" name="--multi" value="{{ multi }}" placeholder="-1 for auto"></span>
@@ -99,9 +103,10 @@
           <div class="atlas-header">Available atlases</div>
           <div class="atlas-grid">
             {% for atlas_name in atlas_names %}
-              <label>
+              <label class="toggle">
+                <span class="toggle-text">{{ atlas_name }}</span>
                 <input type="checkbox" name="atlas_choice" value="{{ atlas_name }}" {% if atlas_name in atlas_selected %}checked{% endif %}>
-                {{ atlas_name }}
+                <span class="toggle-track" aria-hidden="true"></span>
               </label>
             {% endfor %}
           </div>
@@ -122,9 +127,10 @@
           <div class="atlas-header">Available atlases</div>
           <div class="atlas-grid">
             {% for atlas_name in surface_atlas_names %}
-              <label>
+              <label class="toggle">
+                <span class="toggle-text">{{ atlas_name }}</span>
                 <input type="checkbox" name="surface_atlas_choice" value="{{ atlas_name }}" {% if atlas_name in surface_atlas_selected %}checked{% endif %}>
-                {{ atlas_name }}
+                <span class="toggle-track" aria-hidden="true"></span>
               </label>
             {% endfor %}
           </div>
@@ -142,20 +148,20 @@
       <fieldset class="sub-fieldset">
         <legend>Processing Options</legend>
         <div class="checkbox-row">
-          <label><input type="checkbox" name="--amap" value="1" {% if amap %}checked{% endif %}> AMAP segmentation</label>
-          <label><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}> BIDS naming</label>
-          <label><input type="checkbox" name="--gz" value="1" {% if gz %}checked{% endif %}> Save .nii.gz</label>
-          <label><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}> No surface</label>
-          <label><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}> No segmentation</label>
-          <label><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}> No sphere registration</label>
-          <label><input type="checkbox" name="save_mwp" value="1" {% if save_mwp %}checked{% endif %}> Save modulated/warped seg</label>
-          <label><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}> Pial + white surfaces</label>
-          <label><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}> Save hemispheric seg</label>
-          <label><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}> Save warped seg</label>
-          <label><input type="checkbox" name="--rp" value="1" {% if rp %}checked{% endif %}> Save affine seg</label>
-          <label><input type="checkbox" name="--p" value="1" {% if p %}checked{% endif %}> Save native seg</label>
-          <label><input type="checkbox" name="--csf" value="1" {% if csf %}checked{% endif %}> Save CSF seg</label>
-          <label><input type="checkbox" name="--lesions" value="1" {% if lesions %}checked{% endif %}> Save lesion seg</label>
+          <label class="toggle"><span class="toggle-text">AMAP segmentation</span><input type="checkbox" name="--amap" value="1" {% if amap %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">BIDS naming</span><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Save .nii.gz</span><input type="checkbox" name="--gz" value="1" {% if gz %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">No surface</span><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">No segmentation</span><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">No sphere registration</span><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Save modulated/warped seg</span><input type="checkbox" name="save_mwp" value="1" {% if save_mwp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Pial + white surfaces</span><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Save hemispheric seg</span><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Save warped seg</span><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Save affine seg</span><input type="checkbox" name="--rp" value="1" {% if rp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Save native seg</span><input type="checkbox" name="--p" value="1" {% if p %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Save CSF seg</span><input type="checkbox" name="--csf" value="1" {% if csf %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
+          <label class="toggle"><span class="toggle-text">Save lesion seg</span><input type="checkbox" name="--lesions" value="1" {% if lesions %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
         </div>
       </fieldset>
       </div>
