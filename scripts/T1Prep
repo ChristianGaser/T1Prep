@@ -436,10 +436,11 @@ surface_estimation()
   
     # Executes the 'CAT_VolThicknessPbt' tool with various options:
     # - ${verbose} toggles verbose output.
-    # - '-n-avgs 8' sets the number of averages for distance estimation.
-    # - '-min-thickness' sets a minimum thickness threshold.
-    # - '-fwhm' sets the FWHM for thickness smoothing.
-    cmd="CAT_VolThicknessPbt ${verbose} -correct-voxelsize -0.75 -median-filter ${median_filter} -sharpen 0 -downsample ${downsample} -n-avgs 8 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
+    # - '-n-avgs' sets the number of averages for distance estimation.
+    # - '-range' extends range for masking of euclidean distance estimation.
+    # - '-correct-voxelsize' sets amount of thickness correction for voxel-size.
+    # - '-median-filter' sets number of median filter iterations to high-gradient areas
+    cmd="CAT_VolThicknessPbt ${verbose} -correct-voxelsize -0.5 -median-filter ${median_filter} -downsample ${downsample} -n-avgs 2 -range 0.45 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
     run_cmd_log "${report_log}" "$cmd"
     
     # Exit if nothing was saved from 1st command
@@ -1160,7 +1161,7 @@ ${BOLD}${GREEN}Save Options:${NC}
   --pial-white                
       Additionally estimate pial and white matter surfaces during surface processing.
 
-    --hemi, --hemisphere
+  --hemi, --hemisphere
       Save hemispheric (lh/rh) partitions of the segmentation.
       Note: these partitions are created automatically when surface estimation is enabled (default)
       and also when non-linear outputs are requested (e.g., --wp/--mwp or --atlas). Use this mainly
