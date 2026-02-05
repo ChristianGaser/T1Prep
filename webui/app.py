@@ -858,23 +858,25 @@ def open_chrome_app_mode(url: str, width: int = 1100, height: int = 900) -> bool
 
 if __name__ == "__main__":
     import sys
-
     ensure_dirs()
-
     host = "127.0.0.1"
     port = 5000
+    # Parse --port argument
+    for i, arg in enumerate(sys.argv):
+        if arg == "--port" and i + 1 < len(sys.argv):
+            try:
+                port = int(sys.argv[i + 1])
+            except ValueError:
+                print(f"Invalid port: {sys.argv[i + 1]}")
+                sys.exit(1)
     url = f"http://{host}:{port}"
-
     # Check if --no-browser flag is passed
     open_browser = "--no-browser" not in sys.argv
-
     if open_browser:
         # Open Chrome in app mode after a short delay to allow server to start
         def delayed_open():
             import time
             time.sleep(1.0)
             open_chrome_app_mode(url, width=1100, height=900)
-
         threading.Thread(target=delayed_open, daemon=True).start()
-
     app.run(host=host, port=port, debug=True, use_reloader=False)
