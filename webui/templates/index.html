@@ -148,7 +148,7 @@
           <label><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}> No surface</label>
           <label><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}> No segmentation</label>
           <label><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}> No sphere registration</label>
-          <label><input type="checkbox" name="--no-mwp" value="1" {% if not save_mwp %}checked{% endif %}> Save modulated/warped seg</label>
+          <label><input type="checkbox" name="save_mwp" value="1" {% if save_mwp %}checked{% endif %}> Save modulated/warped seg</label>
           <label><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}> Pial + white surfaces</label>
           <label><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}> Save hemispheric seg</label>
           <label><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}> Save warped seg</label>

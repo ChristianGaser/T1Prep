@@ -195,7 +195,16 @@ def build_command(
     add_flag("--no-seg")
     add_flag("--amap")
     add_flag("--no-sphere-reg")
-    add_flag("--no-mwp")
+
+    # WebUI uses a positive checkbox (save_mwp=1) but the CLI option is inverted
+    # (--no-mwp). If the form explicitly sends --no-mwp, honor it.
+    if form.get("--no-mwp"):
+        cmd.append("--no-mwp")
+    else:
+        # If save_mwp checkbox is unchecked (missing), disable MWP via --no-mwp.
+        if not form.get("save_mwp"):
+            cmd.append("--no-mwp")
+
     add_flag("--no-atlas")
     add_flag("--pial-white")
     add_flag("--hemi")
@@ -380,7 +389,10 @@ def index():
         "no_seg": _to_int(defaults.get("estimate_seg", "1"), 1) == 0,
         "amap": _to_int(defaults.get("use_amap", "0"), 0) == 1,
         "no_sphere_reg": _to_int(defaults.get("estimate_spherereg", "1"), 1) == 0,
-        "save_mwp": (_to_int(defaults.get("save_mwp", "1"), 1) == 1 or _to_int(defaults.get("no_mwp", "1"), 1) == 0),
+        "save_mwp": (
+            (_to_int(defaults.get("save_mwp", "1"), 1) == 1)
+            and (_to_int(defaults.get("no_mwp", "0"), 0) == 0)
+        ),
         "no_atlas": defaults.get("atlas_vol", "") == "",
         "pial_white": _to_int(defaults.get("save_pial_white", "0"), 0) == 1,
         "hemi": _to_int(defaults.get("save_hemi", "0"), 0) == 1,
