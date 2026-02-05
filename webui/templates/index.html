@@ -43,6 +43,10 @@
           <span class="input-icon" data-icon="🔍"><input type="text" name="file_pattern" placeholder="**/*.nii*"></span>
         </label>
         <input type="hidden" name="removed_pattern_files" id="removed-pattern-files" value="">
+        <div id="file-list-toolbar" class="file-list-toolbar" style="display: none;">
+          <button id="remove-selected-btn" type="button" class="remove-selected-btn" disabled>Remove selected</button>
+          <span class="selection-hint">Click to select, Shift+click for range</span>
+        </div>
         <div id="combined-file-list" class="file-list"></div>
       </fieldset>
 
@@ -207,6 +211,8 @@
     const fileSummary = document.getElementById("file-summary");
     const dropzone = document.getElementById("dropzone");
     const combinedFileList = document.getElementById("combined-file-list");
+    const fileListToolbar = document.getElementById("file-list-toolbar");
+    const removeSelectedBtn = document.getElementById("remove-selected-btn");
     const removedPatternField = document.getElementById("removed-pattern-files");
     const folderRootInput = document.querySelector("input[name='folder_root']");
     const filePatternInput = document.querySelector("input[name='file_pattern']");
@@ -216,6 +222,27 @@
     let removedPattern = new Set();
     let combinedSelection = new Set();  // Track selected items (index strings like "upload-0" or "pattern-/path/to/file")
     let lastClickedItem = null;
+
+    // Set up remove button click handler
+    removeSelectedBtn.addEventListener("click", () => {
+      // Separate selected items by type
+      const uploadIndicesToRemove = [];
+      const patternPathsToRemove = [];
+      combinedSelection.forEach(key => {
+        if (key.startsWith("upload-")) {
+          uploadIndicesToRemove.push(parseInt(key.replace("upload-", "")));
+        } else if (key.startsWith("pattern-")) {
+          patternPathsToRemove.push(key.replace("pattern-", ""));
+        }
+      });
+      // Remove uploaded files (in reverse order to preserve indices)
+      uploadIndicesToRemove.sort((a, b) => b - a).forEach(i => selectedFiles.splice(i, 1));
+      // Mark pattern files as removed
+      patternPathsToRemove.forEach(path => removedPattern.add(path));
+      removedPatternField.value = Array.from(removedPattern).join("||");
+      syncFileInput();
+      renderCombinedFileList();
+    });
 
     // Set default output directory on page load
     (async function initDefaultOutput() {
@@ -264,19 +291,41 @@
       combinedSelection.clear();
       lastClickedItem = null;
 
+      // Reset button state since selection is cleared
+      removeSelectedBtn.disabled = true;
+      removeSelectedBtn.textContent = "Remove selected";
+
       const visiblePatternFiles = patternFiles.filter((path) => !removedPattern.has(path));
       const totalFiles = selectedFiles.length + visiblePatternFiles.length;
 
-      // Update summary
-      if (selectedFiles.length === 0) {
+      // Hide toolbar when no files
+      if (totalFiles === 0) {
+        fileListToolbar.style.display = "none";
+      }
+
+      // Update summary to show total file count from all sources
+      if (totalFiles === 0) {
         fileSummary.textContent = "No files selected";
-      } else if (selectedFiles.length === 1) {
-        fileSummary.textContent = selectedFiles[0].name;
+      } else if (totalFiles === 1) {
+        // Show single filename
+        if (selectedFiles.length === 1) {
+          fileSummary.textContent = selectedFiles[0].name;
+        } else {
+          fileSummary.textContent = visiblePatternFiles[0].split("/").pop();
+        }
       } else {
-        fileSummary.textContent = `${selectedFiles.length} files selected`;
+        // Show total count with breakdown if from multiple sources
+        if (selectedFiles.length > 0 && visiblePatternFiles.length > 0) {
+          fileSummary.textContent = `${totalFiles} files (${selectedFiles.length} uploaded + ${visiblePatternFiles.length} from pattern)`;
+        } else {
+          fileSummary.textContent = `${totalFiles} files selected`;
+        }
       }
 
       if (totalFiles === 0) return;
+
+      // Show the toolbar when there are files
+      fileListToolbar.style.display = "flex";
 
       // Build combined items array: [{type, index, name, fullPath}]
       const items = [];
@@ -287,40 +336,6 @@
         const filename = path.split("/").pop();
         items.push({ type: "pattern", index: idx, name: filename, fullPath: path, key: `pattern-${path}` });
       });
-
-      // Add toolbar
-      const toolbar = document.createElement("div");
-      toolbar.className = "file-list-toolbar";
-      const removeBtn = document.createElement("button");
-      removeBtn.type = "button";
-      removeBtn.className = "remove-selected-btn";
-      removeBtn.textContent = "Remove selected";
-      removeBtn.disabled = true;
-      removeBtn.addEventListener("click", () => {
-        // Separate selected items by type
-        const uploadIndicesToRemove = [];
-        const patternPathsToRemove = [];
-        combinedSelection.forEach(key => {
-          if (key.startsWith("upload-")) {
-            uploadIndicesToRemove.push(parseInt(key.replace("upload-", "")));
-          } else if (key.startsWith("pattern-")) {
-            patternPathsToRemove.push(key.replace("pattern-", ""));
-          }
-        });
-        // Remove uploaded files (in reverse order to preserve indices)
-        uploadIndicesToRemove.sort((a, b) => b - a).forEach(i => selectedFiles.splice(i, 1));
-        // Mark pattern files as removed
-        patternPathsToRemove.forEach(path => removedPattern.add(path));
-        removedPatternField.value = Array.from(removedPattern).join("||");
-        syncFileInput();
-        renderCombinedFileList();
-      });
-      const hint = document.createElement("span");
-      hint.className = "selection-hint";
-      hint.textContent = "Click to select, Shift+click for range";
-      toolbar.appendChild(removeBtn);
-      toolbar.appendChild(hint);
-      combinedFileList.appendChild(toolbar);
 
       // Render items
       items.forEach((itemData, globalIndex) => {
@@ -364,8 +379,8 @@
         combinedFileList.querySelectorAll(".file-list-item").forEach(el => {
           el.classList.toggle("selected", combinedSelection.has(el.dataset.key));
         });
-        removeBtn.disabled = combinedSelection.size === 0;
-        removeBtn.textContent = combinedSelection.size > 0 
+        removeSelectedBtn.disabled = combinedSelection.size === 0;
+        removeSelectedBtn.textContent = combinedSelection.size > 0 
           ? `Remove selected (${combinedSelection.size})` 
           : "Remove selected";
       }

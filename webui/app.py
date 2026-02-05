@@ -786,6 +786,95 @@ def get_default_output():
     return jsonify({"default_output": str(default_output)})
 
 
+import platform
+import webbrowser
+
+
+def open_chrome_app_mode(url: str, width: int = 1100, height: int = 900) -> bool:
+    """Open Google Chrome in app mode with specified window size.
+
+    Args:
+        url: The URL to open.
+        width: Window width in pixels.
+        height: Window height in pixels.
+
+    Returns:
+        True if Chrome was successfully launched, False otherwise.
+    """
+    system = platform.system()
+
+    # Chrome paths for different operating systems
+    if system == "Darwin":  # macOS
+        chrome_paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    elif system == "Linux":
+        chrome_paths = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium",
+        ]
+    else:
+        # Unsupported OS, fall back to default browser
+        webbrowser.open(url)
+        return False
+
+    # Find the first available Chrome executable
+    chrome_path = None
+    for path in chrome_paths:
+        if os.path.exists(path):
+            chrome_path = path
+            break
+
+    if chrome_path is None:
+        # Chrome not found, fall back to default browser
+        print("Chrome not found, opening in default browser...")
+        webbrowser.open(url)
+        return False
+
+    # Launch Chrome in app mode
+    try:
+        cmd = [
+            chrome_path,
+            f"--app={url}",
+            f"--window-size={width},{height}",
+            "--window-position=100,100",
+        ]
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except Exception as e:
+        print(f"Failed to open Chrome: {e}")
+        webbrowser.open(url)
+        return False
+
+
 if __name__ == "__main__":
+    import sys
+
     ensure_dirs()
-    app.run(host="127.0.0.1", port=5000, debug=True)
+
+    host = "127.0.0.1"
+    port = 5000
+    url = f"http://{host}:{port}"
+
+    # Check if --no-browser flag is passed
+    open_browser = "--no-browser" not in sys.argv
+
+    if open_browser:
+        # Open Chrome in app mode after a short delay to allow server to start
+        def delayed_open():
+            import time
+            time.sleep(1.0)
+            open_chrome_app_mode(url, width=1100, height=900)
+
+        threading.Thread(target=delayed_open, daemon=True).start()
+
+    app.run(host=host, port=port, debug=True, use_reloader=False)
