@@ -154,13 +154,29 @@ files, lets you configure General and Save options, and can schedule jobs to
 start at a specific time.
 
 ```bash
-python3.12 webui/app.py
+./scripts/T1Prep_ui
 ```
 
-Then open http://127.0.0.1:5000 in your browser.
+By default the Web UI runs on port 5050. To use a different port:
+
+```bash
+./scripts/T1Prep_ui 5500
+```
+
+When started, the UI will try to open an app-style window (Chrome if available,
+otherwise your default browser). You can also open the URL manually in any
+browser.
+
+Then open http://127.0.0.1:5050 (or the port you selected) in your browser.
+
+To prevent auto-opening a browser window:
+
+```bash
+./scripts/T1Prep_ui --no-browser
+```
 
 Uploaded files are stored under `webui_uploads/` and per-job logs under
-`webui_jobs/`.
+`/tmp/webui_jobs/`.
 
 ## Docker
 
