@@ -18,6 +18,7 @@
     </header>
 
     <form id="t1prep-form" action="/submit" method="post" enctype="multipart/form-data">
+      <div id="user-error-message" class="user-error-message" style="display:none;color:#f55;margin-bottom:1em;"></div>
     <fieldset>
       <legend>Inputs</legend>
 
@@ -167,13 +168,24 @@
   </form>
 
   <script>
-        // Always collapse 'Save Options' on first load unless user has set otherwise
-        (function ensureSaveOptionsCollapsed() {
-          const key = 't1prep-save-options-fieldset-collapsed';
-          if (localStorage.getItem(key) === null) {
-            localStorage.setItem(key, 'true');
-          }
-        })();
+    // Show user-facing error message
+    function showUserError(msg) {
+      const el = document.getElementById("user-error-message");
+      el.textContent = msg;
+      el.style.display = msg ? "block" : "none";
+    }
+    function clearUserError() {
+      showUserError("");
+    }
+    
+    // Always collapse 'Save Options' on first load unless user has set otherwise
+    (function ensureSaveOptionsCollapsed() {
+      const key = 't1prep-save-options-fieldset-collapsed';
+      if (localStorage.getItem(key) === null) {
+        localStorage.setItem(key, 'true');
+      }
+    })();
+    
     const themeToggle = document.getElementById("theme-toggle");
     const savedTheme = localStorage.getItem("t1prep-theme") || "dark";
     document.body.setAttribute("data-theme", savedTheme);
@@ -258,9 +270,11 @@
             if (data.default_output) {
               outDirInput.value = data.default_output;
             }
+          } else {
+            showUserError("Failed to fetch default output directory (server error)");
           }
         } catch (error) {
-          // Ignore errors
+          showUserError("Network error while fetching default output directory.");
         }
       }
     })();
@@ -274,13 +288,18 @@
       url.searchParams.set("path", pathValue);
       try {
         const response = await fetch(url.toString());
-        if (!response.ok) return;
+        if (!response.ok) {
+          showUserError("Failed to suggest output directory (server error)");
+          return;
+        }
         const data = await response.json();
         if (data.dirname) {
           outDirInput.value = data.dirname;
+        } else {
+          showUserError("No output directory could be suggested for this path.");
         }
       } catch (error) {
-        // Ignore errors
+        showUserError("Network error while suggesting output directory.");
       }
     }
 
