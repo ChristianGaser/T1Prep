@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Run T1Prep Web UI (Flask) with environment activation.
+# Usage:
+#   ./scripts/T1Prep_ui [PORT] [--no-browser]
+# Examples:
+#   ./scripts/T1Prep_ui
+#   ./scripts/T1Prep_ui 5500
+#   ./scripts/T1Prep_ui --no-browser
+#   ./scripts/T1Prep_ui 5500 --no-browser
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+ENV_DIR="$PROJECT_DIR/env"
+APP_FILE="$PROJECT_DIR/webui/app.py"
+
+PORT="5050"
+if [[ "${1-}" =~ ^[0-9]+$ ]]; then
+    PORT="$1"
+    shift
+fi
+
+# Activate environment if not already active
+if [[ "$VIRTUAL_ENV" != "$ENV_DIR" ]]; then
+    source "$ENV_DIR/bin/activate"
+fi
+
+cd "$PROJECT_DIR"
+
+# Run Flask app on specified port
+exec python "$APP_FILE" --port "$PORT" "$@"
