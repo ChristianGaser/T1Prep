@@ -162,16 +162,21 @@
             Specify volumetric atlases to estimate ROI volumes.
           </div>
         </legend>
-        <div class="atlas-panel">
+        <div class="atlas-panel atlas-panel-overlay">
           <div class="atlas-header">Available atlases</div>
-          <div class="atlas-grid">
-            {% for atlas_name in atlas_names %}
-              <label class="toggle">
-                <span class="toggle-text">{{ atlas_name }}</span>
-                <input type="checkbox" name="atlas_choice" value="{{ atlas_name }}" {% if atlas_name in atlas_selected %}checked{% endif %}>
-                <span class="toggle-track" aria-hidden="true"></span>
-              </label>
-            {% endfor %}
+          <div class="atlas-grid-scroll">
+            <div class="atlas-grid">
+              {% for atlas_name in atlas_names %}
+                <label class="toggle help-anchor" data-help-target="atlas-help-{{ atlas_name }}" data-atlas-help="{{ atlas_name }}">
+                  <span class="toggle-text">{{ atlas_name }}</span>
+                  <input type="checkbox" name="atlas_choice" value="{{ atlas_name }}" {% if atlas_name in atlas_selected %}checked{% endif %}>
+                  <span class="toggle-track" aria-hidden="true"></span>
+                  <div id="atlas-help-{{ atlas_name }}" class="help-box atlas-help" role="tooltip">
+                    Loading atlas details...
+                  </div>
+                </label>
+              {% endfor %}
+            </div>
           </div>
         </div>
         <label>
@@ -319,6 +324,7 @@
     const filePatternInput = document.querySelector("input[name='file_pattern']");
     const outDirInput = document.querySelector("input[name='out_dir']");
     const helpAnchors = document.querySelectorAll("[data-help-target]");
+    const atlasHelpCache = new Map();
     let selectedFiles = [];  // Uploaded files (File objects)
     let patternFiles = [];   // Pattern-matched files (path strings)
     let removedPattern = new Set();
@@ -568,6 +574,15 @@
       const showHelp = () => {
         if (timer) return;
         timer = window.setTimeout(() => {
+          if (helpBox.classList.contains("atlas-help")) {
+            const rect = anchor.getBoundingClientRect();
+            const maxWidth = 520;
+            const left = Math.max(12, Math.min(rect.left, window.innerWidth - maxWidth - 12));
+            const top = rect.bottom + 8;
+            helpBox.style.position = "fixed";
+            helpBox.style.left = `${left}px`;
+            helpBox.style.top = `${top}px`;
+          }
           helpBox.classList.add("visible");
           timer = null;
         }, 220);
@@ -579,12 +594,61 @@
           timer = null;
         }
         helpBox.classList.remove("visible");
+        if (helpBox.classList.contains("atlas-help")) {
+          helpBox.style.left = "";
+          helpBox.style.top = "";
+          helpBox.style.position = "";
+        }
       };
 
       anchor.addEventListener("mouseenter", showHelp);
       anchor.addEventListener("mouseleave", hideHelp);
       anchor.addEventListener("focusin", showHelp);
       anchor.addEventListener("focusout", hideHelp);
+    });
+
+    function setAtlasHelpText(helpBox, text) {
+      helpBox.textContent = text;
+    }
+
+    async function loadAtlasHelp(name, helpBox) {
+      if (!name || !helpBox) return;
+      if (helpBox.dataset.currentName === name) return;
+      helpBox.dataset.currentName = name;
+
+      if (atlasHelpCache.has(name)) {
+        setAtlasHelpText(helpBox, atlasHelpCache.get(name));
+        return;
+      }
+
+      setAtlasHelpText(helpBox, "Loading atlas details...");
+      try {
+        const url = new URL("/atlas-help", window.location.origin);
+        url.searchParams.set("name", name);
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+          throw new Error("Atlas help not available");
+        }
+        const data = await response.json();
+        const text = data && data.text ? data.text : "No description available.";
+        atlasHelpCache.set(name, text);
+        if (helpBox.dataset.currentName === name) {
+          setAtlasHelpText(helpBox, text);
+        }
+      } catch (error) {
+        if (helpBox.dataset.currentName === name) {
+          setAtlasHelpText(helpBox, "No description available.");
+        }
+      }
+    }
+
+    document.querySelectorAll("[data-atlas-help]").forEach((item) => {
+      const name = item.getAttribute("data-atlas-help");
+      const helpId = item.getAttribute("data-help-target");
+      const helpBox = helpId ? document.getElementById(helpId) : null;
+      if (!name || !helpBox) return;
+      item.addEventListener("mouseenter", () => loadAtlasHelp(name, helpBox));
+      item.addEventListener("focusin", () => loadAtlasHelp(name, helpBox));
     });
 
     fileButton.addEventListener("click", () => {

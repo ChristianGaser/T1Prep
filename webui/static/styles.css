@@ -230,6 +230,16 @@ label {
   max-height: 120px;
 }
 
+.help-box.atlas-help {
+  white-space: pre-wrap;
+  max-width: 520px;
+}
+
+.help-box.atlas-help.visible {
+  max-height: none;
+}
+
+
 input[type="text"],
 input[type="number"],
 input[type="datetime-local"],
@@ -603,6 +613,7 @@ label.toggle-row .toggle-inline input[type="checkbox"]:focus-visible + .toggle-t
   background: rgba(31, 107, 255, 0.12);
 }
 
+
 .atlas-panel {
   margin-top: 0.75rem;
   padding: 0.75rem;
@@ -611,6 +622,18 @@ label.toggle-row .toggle-inline input[type="checkbox"]:focus-visible + .toggle-t
   background: var(--panel-alt);
   max-height: 220px;
   overflow: auto;
+}
+
+.atlas-panel.atlas-panel-overlay {
+  max-height: none;
+  overflow: visible;
+  position: relative;
+}
+
+.atlas-panel.atlas-panel-overlay .atlas-grid-scroll {
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 0.35rem;
 }
 
 .atlas-panel.options-panel {
@@ -628,6 +651,7 @@ label.toggle-row .toggle-inline input[type="checkbox"]:focus-visible + .toggle-t
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0.4rem 1rem;
+  overflow: visible;
 }
 
 .atlas-grid label {

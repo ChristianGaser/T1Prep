@@ -410,6 +410,27 @@ def index():
     }
 
     return render_template("index.html", **context)
+
+
+@app.route("/atlas-help")
+def atlas_help():
+    name = request.args.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "Missing atlas name."}), 400
+
+    valid_names = set(list_atlas_names())
+    if name not in valid_names:
+        return jsonify({"error": "Unknown atlas."}), 404
+
+    txt_path = TEMPLATE_ATLAS_DIR / f"{name}.txt"
+    if not txt_path.exists():
+        return jsonify({"error": "Description not found."}), 404
+
+    lines = txt_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    preview = "\n".join(lines[:20]).strip() or "No description available."
+    truncated = len(lines) > 20
+
+    return jsonify({"name": name, "text": preview, "truncated": truncated})
 @app.route("/submit", methods=["POST"])
 def submit():
     ensure_dirs()
