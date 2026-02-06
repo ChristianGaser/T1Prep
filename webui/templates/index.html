@@ -27,9 +27,14 @@
         <label>
           Input NIfTI files
           <input id="file-input" class="file-input-hidden" type="file" name="inputs" multiple accept=".nii,.nii.gz,application/gzip,application/x-gzip">
-          <div class="file-input-row">
-            <button id="file-button" type="button" class="file-button">Select files</button>
-            <span id="file-summary" class="file-summary">No files selected</span>
+          <div class="input-with-help">
+            <div class="file-input-row">
+              <button id="file-button" type="button" class="file-button" data-help-target="input-files-help">Select files</button>
+              <span id="file-summary" class="file-summary">No files selected</span>
+            </div>
+            <div id="input-files-help" class="help-box" role="tooltip">
+              Input T1-weighted NIfTI files (.nii or .nii.gz).
+            </div>
           </div>
         </label>
         <div id="dropzone" class="dropzone">
@@ -37,11 +42,21 @@
         </div>
         <label>
           Or select by folder + pattern
-          <span class="input-icon" data-icon="📁"><input type="text" name="folder_root" placeholder="/path/to/folder"></span>
+          <div class="input-with-help">
+            <span class="input-icon" data-icon="📁"><input type="text" name="folder_root" placeholder="/path/to/folder" data-help-target="folder-root-help"></span>
+            <div id="folder-root-help" class="help-box" role="tooltip">
+              Root folder to search for input files when using a pattern.
+            </div>
+          </div>
         </label>
         <label>
           File pattern (recursive)
-          <span class="input-icon" data-icon="🔍"><input type="text" name="file_pattern" placeholder="**/*.nii*"></span>
+          <div class="input-with-help">
+            <span class="input-icon" data-icon="🔍"><input type="text" name="file_pattern" placeholder="**/*.nii*" data-help-target="file-pattern-help"></span>
+            <div id="file-pattern-help" class="help-box" role="tooltip">
+              Recursive glob pattern used with the folder above.
+            </div>
+          </div>
         </label>
         <input type="hidden" name="removed_pattern_files" id="removed-pattern-files" value="">
         <div id="file-list-toolbar" class="file-list-toolbar" style="display: none;">
@@ -55,7 +70,12 @@
         <legend>Output Directory</legend>
         <label>
           Auto-filled when using folder+pattern
-          <span class="input-icon input-required" data-icon="💾"><input type="text" name="out_dir" required placeholder="/path/to/output"></span>
+          <div class="input-with-help">
+            <span class="input-icon input-required" data-icon="💾"><input type="text" name="out_dir" required placeholder="/path/to/output" aria-describedby="out-dir-help" data-help-target="out-dir-help"></span>
+            <div id="out-dir-help" class="help-box" role="tooltip">
+              Set the base output directory. BIDS subfolders are appended when BIDS naming is used.
+            </div>
+          </div>
         </label>
       </fieldset>
 
@@ -63,27 +83,43 @@
         <legend>Scheduling</legend>
         <label>
           Start at (optional)
-          <span class="input-icon" data-icon="🕐"><input type="datetime-local" name="start_at"></span>
+          <div class="input-with-help">
+            <span class="input-icon" data-icon="🕐"><input type="datetime-local" name="start_at" data-help-target="start-at-help"></span>
+            <div id="start-at-help" class="help-box" role="tooltip">
+              Schedule the job to start at a specific date and time.
+            </div>
+          </div>
         </label>
       </fieldset>
     </fieldset>
 
     <fieldset>
       <legend>General Options</legend>
-      <label class="toggle-row">
-        Debug
-        <span class="toggle-inline">
-          <input type="checkbox" name="--debug" value="1" {% if debug %}checked{% endif %}>
-          <span class="toggle-track" aria-hidden="true"></span>
-        </span>
+      <label class="toggle help-anchor" data-help-target="debug-help">
+        <input type="checkbox" name="--debug" value="1" {% if debug %}checked{% endif %}>
+        <span class="toggle-track" aria-hidden="true"></span>
+        <span class="toggle-text">Debug</span>
+        <div id="debug-help" class="help-box" role="tooltip">
+          Enable verbose output, retain temporary files, and save debugging information.
+        </div>
       </label>
       <label>
         Parallel jobs
-        <span class="input-icon" data-icon="⚡"><input type="number" name="--multi" value="{{ multi }}" placeholder="-1 for auto"></span>
+        <div class="input-with-help">
+          <span class="input-icon" data-icon="⚡"><input type="number" name="--multi" value="{{ multi }}" placeholder="-1 for auto" data-help-target="multi-help"></span>
+          <div id="multi-help" class="help-box" role="tooltip">
+            Set the maximum number of parallel jobs. Use -1 to auto-detect CPU cores.
+          </div>
+        </div>
       </label>
       <label>
         Minimum memory per job (GB)
-        <span class="input-icon" data-icon="🧠"><input type="number" name="--min-memory" value="{{ min_memory }}" step="1" placeholder="24"></span>
+        <div class="input-with-help">
+          <span class="input-icon" data-icon="🧠"><input type="number" name="--min-memory" value="{{ min_memory }}" step="1" placeholder="24" data-help-target="min-memory-help"></span>
+          <div id="min-memory-help" class="help-box" role="tooltip">
+            Minimum memory in GB per job. Increase if the system runs low on memory.
+          </div>
+        </div>
       </label>
     </fieldset>
 
@@ -94,11 +130,38 @@
       <div class="collapsible-content">
       <label>
         No-overwrite pattern
-        <span class="input-icon" data-icon="🛡️"><input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness."></span>
+        <div class="input-with-help">
+          <span class="input-icon" data-icon="🛡️"><input type="text" name="--no-overwrite" value="{{ no_overwrite }}" placeholder="surf/lh.thickness." data-help-target="no-overwrite-help"></span>
+          <div id="no-overwrite-help" class="help-box" role="tooltip">
+            Prevent overwriting results by checking for the given filename pattern.
+          </div>
+        </div>
       </label>
 
       <fieldset class="sub-fieldset">
-        <legend>Volume Atlases</legend>
+        <legend>Processing Options</legend>
+        <div class="atlas-panel options-panel">
+          <div class="checkbox-row">
+          <label class="toggle help-anchor" data-help-target="amap-help"><span class="toggle-text">AMAP segmentation</span><input type="checkbox" name="--amap" value="1" {% if amap %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="amap-help" class="help-box" role="tooltip">Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.</div></label>
+          <label class="toggle help-anchor" data-help-target="bids-help"><span class="toggle-text">BIDS naming</span><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="bids-help" class="help-box" role="tooltip">Use BIDS derivatives naming conventions instead of CAT12 style.</div></label>
+          <label class="toggle help-anchor" data-help-target="gz-help"><span class="toggle-text">Save .nii.gz</span><input type="checkbox" name="--gz" value="1" {% if gz %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="gz-help" class="help-box" role="tooltip">Save images in compressed NIfTI format (*.nii.gz).</div></label>
+          <label class="toggle help-anchor" data-help-target="no-surf-help"><span class="toggle-text">No surface estimation</span><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="no-surf-help" class="help-box" role="tooltip">Skip surface and cortical thickness estimation.</div></label>
+          <label class="toggle help-anchor" data-help-target="mwp-help"><span class="toggle-text">Save modulated/warped seg</span><input type="checkbox" name="save_mwp" value="1" {% if save_mwp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="mwp-help" class="help-box" role="tooltip">Save modulated and warped segmentations.</div></label>
+          <label class="toggle help-anchor" data-help-target="wp-help"><span class="toggle-text">Save warped seg</span><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="wp-help" class="help-box" role="tooltip">Additionally save warped segmentations.</div></label>
+          <label class="toggle help-anchor" data-help-target="rp-help"><span class="toggle-text">Save affine seg</span><input type="checkbox" name="--rp" value="1" {% if rp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="rp-help" class="help-box" role="tooltip">Additionally save affine-registered segmentations.</div></label>
+          <label class="toggle help-anchor" data-help-target="p-help"><span class="toggle-text">Save native seg</span><input type="checkbox" name="--p" value="1" {% if p %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="p-help" class="help-box" role="tooltip">Additionally save native-space segmentations.</div></label>
+          <label class="toggle help-anchor" data-help-target="lesions-help"><span class="toggle-text">Save lesion seg</span><input type="checkbox" name="--lesions" value="1" {% if lesions %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="lesions-help" class="help-box" role="tooltip">Additionally save WMH lesion segmentations.</div></label>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="sub-fieldset">
+        <legend class="help-anchor" data-help-target="volume-atlas-help">
+          Volume Atlases
+          <div id="volume-atlas-help" class="help-box" role="tooltip">
+            Specify volumetric atlases to estimate ROI volumes.
+          </div>
+        </legend>
         <div class="atlas-panel">
           <div class="atlas-header">Available atlases</div>
           <div class="atlas-grid">
@@ -114,15 +177,25 @@
         <label>
           Custom atlas file (.nii or .nii.gz)
           <input id="atlas-file-input" class="file-input-hidden" type="file" name="atlas_file" accept=".nii,.nii.gz,.gz,application/gzip,application/x-gzip">
-          <div class="file-input-row">
-            <button id="atlas-file-button" type="button" class="file-button">Select file</button>
-            <span id="atlas-file-summary" class="file-summary">No file selected</span>
+          <div class="input-with-help">
+            <div class="file-input-row">
+              <button id="atlas-file-button" type="button" class="file-button" data-help-target="atlas-file-help">Select file</button>
+              <span id="atlas-file-summary" class="file-summary">No file selected</span>
+            </div>
+            <div id="atlas-file-help" class="help-box" role="tooltip">
+              Optional custom volumetric atlas file (.nii or .nii.gz).
+            </div>
           </div>
         </label>
       </fieldset>
 
       <fieldset class="sub-fieldset">
-        <legend>Surface Atlases</legend>
+        <legend class="help-anchor" data-help-target="surface-atlas-help">
+          Surface Atlases
+          <div id="surface-atlas-help" class="help-box" role="tooltip">
+            Specify surface atlases for labeling in surface space.
+          </div>
+        </legend>
         <div class="atlas-panel">
           <div class="atlas-header">Available atlases</div>
           <div class="atlas-grid">
@@ -138,34 +211,40 @@
         <label>
           Custom atlas file (.annot)
           <input id="surface-atlas-file-input" class="file-input-hidden" type="file" name="surface_atlas_file" accept=".annot">
-          <div class="file-input-row">
-            <button id="surface-atlas-file-button" type="button" class="file-button">Select file</button>
-            <span id="surface-atlas-file-summary" class="file-summary">No file selected</span>
+          <div class="input-with-help">
+            <div class="file-input-row">
+              <button id="surface-atlas-file-button" type="button" class="file-button" data-help-target="surface-atlas-file-help">Select file</button>
+              <span id="surface-atlas-file-summary" class="file-summary">No file selected</span>
+            </div>
+            <div id="surface-atlas-file-help" class="help-box" role="tooltip">
+              Optional custom surface atlas file (.annot).
+            </div>
           </div>
         </label>
       </fieldset>
 
-      <fieldset class="sub-fieldset">
-        <legend>Processing Options</legend>
-        <div class="checkbox-row">
-          <label class="toggle"><span class="toggle-text">AMAP segmentation</span><input type="checkbox" name="--amap" value="1" {% if amap %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">BIDS naming</span><input type="checkbox" name="--bids" value="1" {% if use_bids %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Save .nii.gz</span><input type="checkbox" name="--gz" value="1" {% if gz %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">No surface</span><input type="checkbox" name="--no-surf" value="1" {% if no_surf %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">No segmentation</span><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">No sphere registration</span><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Save modulated/warped seg</span><input type="checkbox" name="save_mwp" value="1" {% if save_mwp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Pial + white surfaces</span><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Save hemispheric seg</span><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Save warped seg</span><input type="checkbox" name="--wp" value="1" {% if wp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Save affine seg</span><input type="checkbox" name="--rp" value="1" {% if rp %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Save native seg</span><input type="checkbox" name="--p" value="1" {% if p %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Save CSF seg</span><input type="checkbox" name="--csf" value="1" {% if csf %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-          <label class="toggle"><span class="toggle-text">Save lesion seg</span><input type="checkbox" name="--lesions" value="1" {% if lesions %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label>
-        </div>
-      </fieldset>
       </div>
     </fieldset>
+
+    <fieldset class="collapsible collapsed" id="expert-options-fieldset">
+      <legend class="collapsible-toggle">
+        <span class="toggle-icon">▶</span> Expert Options
+      </legend>
+      <div class="collapsible-content">
+        <fieldset class="sub-fieldset">
+          <legend>Processing Options</legend>
+          <div class="atlas-panel options-panel">
+            <div class="checkbox-row">
+            <label class="toggle help-anchor" data-help-target="no-sphere-help"><span class="toggle-text">No spherical registration</span><input type="checkbox" name="--no-sphere-reg" value="1" {% if no_sphere_reg %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="no-sphere-help" class="help-box" role="tooltip">Skip spherical surface registration.</div></label>
+            <label class="toggle help-anchor" data-help-target="no-seg-help"><span class="toggle-text">No segmentation</span><input type="checkbox" name="--no-seg" value="1" {% if no_seg %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="no-seg-help" class="help-box" role="tooltip">Skip tissue segmentation processing.</div></label>
+            <label class="toggle help-anchor" data-help-target="hemi-help"><span class="toggle-text">Save hemispheric seg</span><input type="checkbox" name="--hemi" value="1" {% if hemi %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="hemi-help" class="help-box" role="tooltip">Save hemispheric (lh/rh) partitions of the segmentation.</div></label>
+            <label class="toggle help-anchor" data-help-target="pial-white-help"><span class="toggle-text">Pial + white surfaces</span><input type="checkbox" name="--pial-white" value="1" {% if pial_white %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="pial-white-help" class="help-box" role="tooltip">Additionally estimate pial and white matter surfaces.</div></label>
+            <label class="toggle help-anchor" data-help-target="csf-help"><span class="toggle-text">Save CSF seg</span><input type="checkbox" name="--csf" value="1" {% if csf %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span><div id="csf-help" class="help-box" role="tooltip">Additionally save CSF segmentations.</div></label>
+            </div>
+          </div>
+        </fieldset>
+        </div>
+      </fieldset>
 
     <div class="actions">
       <button type="submit">Create Job</button>
@@ -239,6 +318,7 @@
     const folderRootInput = document.querySelector("input[name='folder_root']");
     const filePatternInput = document.querySelector("input[name='file_pattern']");
     const outDirInput = document.querySelector("input[name='out_dir']");
+    const helpAnchors = document.querySelectorAll("[data-help-target]");
     let selectedFiles = [];  // Uploaded files (File objects)
     let patternFiles = [];   // Pattern-matched files (path strings)
     let removedPattern = new Set();
@@ -478,6 +558,34 @@
       suggestOutputDir(folderRootInput.value.trim());
     });
     filePatternInput.addEventListener("blur", updatePatternList);
+
+    helpAnchors.forEach((anchor) => {
+      const helpId = anchor.getAttribute("data-help-target");
+      const helpBox = helpId ? document.getElementById(helpId) : null;
+      if (!helpBox) return;
+      let timer = null;
+
+      const showHelp = () => {
+        if (timer) return;
+        timer = window.setTimeout(() => {
+          helpBox.classList.add("visible");
+          timer = null;
+        }, 220);
+      };
+
+      const hideHelp = () => {
+        if (timer) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+        helpBox.classList.remove("visible");
+      };
+
+      anchor.addEventListener("mouseenter", showHelp);
+      anchor.addEventListener("mouseleave", hideHelp);
+      anchor.addEventListener("focusin", showHelp);
+      anchor.addEventListener("focusout", hideHelp);
+    });
 
     fileButton.addEventListener("click", () => {
       fileInput.click();
