@@ -12,10 +12,10 @@ T1Prep/
 │       ├── __init__.py             # Package init, exports run_t1prep
 │       ├── t1prep.py               # Python API: run_t1prep() function
 │       ├── segment.py              # Segmentation logic
-│       ├── segmentation_utils.py
+│       ├── _segment_utils.py       # Private segmentation helpers (internal use)
 │       ├── utils.py                # Shared utilities
-│       ├── metrics.py              # Dice/evaluation metrics
-│       ├── dice.py                 # Dice coefficient calculation
+│       ├── metrics.py              # Dice/evaluation metrics + CLI
+│       ├── dice.py                 # CLI wrapper for metrics (python -m t1prep.dice)
 │       ├── realign_longitudinal.py
 │       ├── bin/                    # Compiled CAT-Surface binaries
 │       ├── data/                   # Templates, atlases, default files

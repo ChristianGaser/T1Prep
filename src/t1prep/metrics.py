@@ -15,7 +15,7 @@ import nibabel as nib
 
 NiftiLike = Union[str, nib.Nifti1Image]
 
-__all__ = ["compute_dice_nifti"]
+__all__ = ["compute_dice_nifti", "dice_cli_main"]
 
 
 def _load_labels(img: NiftiLike, round_labels: bool) -> np.ndarray:
@@ -327,3 +327,81 @@ def compute_dice_nifti(
         float(dice_weighted),
         float(generalized_dice),
     )
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point (merged from dice.py)
+# ---------------------------------------------------------------------------
+
+
+def _parse_dice_args(argv=None):
+    """Parse command-line arguments for Dice CLI."""
+    import argparse
+
+    p = argparse.ArgumentParser(
+        description="Compute Dice-based metrics for NIfTI label maps (2-3 classes).",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("--gt", required=True, help="Ground truth NIfTI path")
+    p.add_argument("--pred", required=True, help="Test/prediction NIfTI path")
+    p.add_argument(
+        "--soft",
+        action="store_true",
+        help=(
+            "Use soft/continuous Dice without rounding labels. Applicable when "
+            "inputs store probability/partial-volume values."
+        ),
+    )
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Print detailed output (labels, overall and per-label Dice metrics). "
+            "If not set, prints a single CSV-like line with per-label Dice as a vector, "
+            "followed by generalized_dice and dice_weighted."
+        ),
+    )
+    p.add_argument("--save-conf", help="Optional path to save confusion matrix as CSV")
+    return p.parse_args(argv)
+
+
+def dice_cli_main(argv=None) -> int:
+    """CLI main function for computing Dice metrics.
+    
+    Returns 0 on success, non-zero on error.
+    """
+    import sys
+
+    args = _parse_dice_args(argv)
+    conf, order, dice_per, dice_weighted, generalized_dice = compute_dice_nifti(
+        args.gt, args.pred, round_labels=not args.soft
+    )
+
+    if args.verbose:
+        if dice_per.size:
+            for lab, kv in zip(order, dice_per):
+                kv_str = "nan" if not np.isfinite(kv) else f"{kv:.6f}"
+                print(f"dice_per[{lab}]: {kv_str}")
+        print(f"generalized_dice: {generalized_dice:.6f}")
+        print(f"dice_weighted:    {dice_weighted:.6f}")
+    else:
+        if dice_per.size:
+            vec_str = ",".join(
+                "nan" if not np.isfinite(kv) else f"{kv:.6f}" for kv in dice_per
+            )
+            print(f"{vec_str},{generalized_dice:.6f},{dice_weighted:.6f}")
+        else:
+            print(f"{generalized_dice:.6f},{dice_weighted:.6f}")
+
+    if args.save_conf:
+        try:
+            np.savetxt(args.save_conf, conf.astype(int), fmt="%d", delimiter=",")
+            print(f"confusion saved to: {args.save_conf}")
+        except Exception as e:
+            print(f"Failed to save confusion: {e}", file=sys.stderr)
+            return 3
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(dice_cli_main())
