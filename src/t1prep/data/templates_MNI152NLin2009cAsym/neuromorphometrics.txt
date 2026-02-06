@@ -85,10 +85,6 @@ Contestants are encouraged (but not required) to make available the software, to
 Contest Results
 After the workshop (after October 5, 2012), a summary of all methods will be presented here. We will publish a citable book (with ISBN) with a compilation of all results and a summary of rankings. This book will be available at cost (or no cost, if possible) – neither editors nor their institutions will receive any compensation for this publication. On this website, we will make available copies of all papers, the label masks submitted for each method, the PDF result files for each method, and (if the authors desire) additional resources (software/code/etc.) that a reader may find relevant to each paper.
 
-
-
-
-
 Challenge Demographics
 --------------------------------------------------------------------------------
 
@@ -142,6 +138,3 @@ Case #	train/test	Testing	Subject	Gender	Age	Notes
 1125	test		OAS1_0113	F	83	
 1128	test		OAS1_0083	F	90	
 
-
---------------------------------------------------------------------------------
-$Id$

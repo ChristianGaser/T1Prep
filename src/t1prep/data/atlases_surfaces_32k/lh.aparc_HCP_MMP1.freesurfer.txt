@@ -1,0 +1,14 @@
+HCP Multi-Modal Parcellation (HCP-MMP1.0)
+
+File:
+- ?h.aparc_HCP_MMP1.freesurfer.annot
+
+Conversion source (to FreeSurfer fsaverage):
+- https://figshare.com/articles/HCP-MMP1_0_projected_on_fsaverage/3498446/2
+
+Website:
+- https://balsa.wustl.edu/study/show/RVVG
+
+Reference:
+- Glasser MF, Coalson TS, Robinson EC, et al. *A multi-modal parcellation of human cerebral cortex.*
+  Nature. 2016;536(7615):171-178.

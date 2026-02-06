@@ -21,8 +21,3 @@ imaging data. NeuroImage 25(4), 1325-1335, 2005
 
 3) Evans AC, Janke AL, Collins DL, Baillet S (2012). Brain templates and atlases. 
 Neuroimage, 62(2):911-22.
-
-
-
---------------------------------------------------------------------------------
-$Id julichbrain.txt $

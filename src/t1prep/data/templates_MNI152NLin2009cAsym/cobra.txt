@@ -152,6 +152,3 @@ Labels
 	101 - right striatum 
 	102 - right globus pallidus 
 	103 - right thalamus
-
---------------------------------------------------------------------------------
-$Id$

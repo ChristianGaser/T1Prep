@@ -133,5 +133,3 @@ Cerebellar atlas Diedrichsen,J. et al., (2009) Neuroimage. 46(1), 39-46. http://
 The JuBrain Anatomy Toolbox also include the Thalamic Connectivity atlas by Behrens
 Behrens TE et al., (2003) Nat Neurosci. 6(7):750-7. http://www.fmrib.ox.ac.uk/connect/
 
---------------------------------------------------------------------------------
-$Id$

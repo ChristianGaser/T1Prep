@@ -48,6 +48,3 @@ cingulate cortex into subgenual, pregenual and supracallosal parts; the thalamus
 the nucleus accumbens, substantia nigra, ventral tegmental area, red nucleus, 
 locus coeruleus, and raphe nuclei. The new atlas is available as a toolbox for 
 SPM, and can be used with MRIcron.
-
---------------------------------------------------------------------------------
-$Id$

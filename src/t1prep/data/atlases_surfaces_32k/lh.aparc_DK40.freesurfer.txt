@@ -1,0 +1,13 @@
+Desikan–Killiany atlas (DK40)
+
+File:
+- ?h.aparc_DK40.freesurfer.annot
+
+Website:
+- https://surfer.nmr.mgh.harvard.edu/fswiki/CorticalParcellation
+
+Reference:
+- Desikan RS, Ségonne F, Fischl B, Quinn BT, Dickerson BC, Blacker D, Buckner RL, Dale AM,
+  Maguire RP, Hyman BT, Albert MS, Killiany RJ. *An automated labeling system for subdividing the
+  human cerebral cortex on MRI scans into gyral based regions of interest.* Neuroimage.
+  2006 Jul 1;31(3):968-80.

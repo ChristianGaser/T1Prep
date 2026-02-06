@@ -1,0 +1,12 @@
+Destrieux atlas (aparc.a2009s)
+
+File:
+- ?h.aparc_a2009s.freesurfer.annot
+
+Websites:
+- https://surfer.nmr.mgh.harvard.edu/fswiki/CorticalParcellation
+- https://surfer.nmr.mgh.harvard.edu/fswiki/DestrieuxAtlasChanges
+
+Reference:
+- Destrieux C, Fischl B, Dale A, Halgren E. *A sulcal depth-based anatomical parcellation of the
+  cerebral cortex.* Human Brain Mapping (HBM) Congress 2009, Poster #541.

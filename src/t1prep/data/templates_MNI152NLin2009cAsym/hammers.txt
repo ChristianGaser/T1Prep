@@ -28,6 +28,7 @@ Hammers A. Automatic segmentation of brain MRIs of 2-year-olds into 83 regions
 of interest. Neuroimage 2008 Apr 1;40(2):672-684. 
 (for region names #50-67 and access to protocols: www.brain-development.org)
 
+--------------------------------------------------------------------------------
 LICENSE AGREEMENT
 Copyright Imperial College of Science Technology & Medicine (“Imperial”), Alexander Hammers, and University College London (“UCL”), together the “Copyright Holders”, 2004-2017.
 
@@ -52,7 +53,3 @@ Without prejudice to the generality of the foregoing paragraph, the Materials pr
 In no event, unless required by law or agreed to in writing, will Imperial be liable to you for damages, including any general, special, incidental or consequential damages arising out of the use or inability to use the Materials (including but not limited to loss of data, data being rendered inaccurate, losses being sustained by you or third parties), or a failure of the Materials to operate with any materials or software used by you.
 You agree to indemnify Imperial and its officers, employees, students, other researchers and agents (together, the “Indemnitees”) and hold the Indemnitees harmless from and against any and all claims, damages and liabilities asserted by third parties (including claims for negligence) which arise directly or indirectly from the use of the Materials or the sale of any products based on the Materials.
 To maintain the protection of human subjects you undertake not to use the Materials so as to attempt in any way to discover the identity of or make contact with any individual from whom the information originated.
-
-
---------------------------------------------------------------------------------
-$Id$
