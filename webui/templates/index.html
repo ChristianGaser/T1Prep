@@ -205,10 +205,13 @@
           <div class="atlas-header">Available atlases</div>
           <div class="atlas-grid">
             {% for atlas_name in surface_atlas_names %}
-              <label class="toggle">
+              <label class="toggle help-anchor" data-help-target="surface-atlas-help-{{ atlas_name }}" data-atlas-help="{{ atlas_name }}" data-atlas-kind="surface">
                 <span class="toggle-text">{{ atlas_name }}</span>
                 <input type="checkbox" name="surface_atlas_choice" value="{{ atlas_name }}" {% if atlas_name in surface_atlas_selected %}checked{% endif %}>
                 <span class="toggle-track" aria-hidden="true"></span>
+                <div id="surface-atlas-help-{{ atlas_name }}" class="help-box atlas-help" role="tooltip">
+                  Loading atlas details...
+                </div>
               </label>
             {% endfor %}
           </div>
@@ -611,13 +614,22 @@
       helpBox.textContent = text;
     }
 
-    async function loadAtlasHelp(name, helpBox) {
-      if (!name || !helpBox) return;
-      if (helpBox.dataset.currentName === name) return;
-      helpBox.dataset.currentName = name;
+    async function loadAtlasHelp(name, kind, helpBox) {
+      console.log("loadAtlasHelp called:", { name, kind, helpBox: helpBox?.id });
+      if (!name || !helpBox) {
+        console.log("loadAtlasHelp: early return, name or helpBox missing");
+        return;
+      }
+      const cacheKey = `${kind || "volume"}:${name}`;
+      if (helpBox.dataset.currentName === cacheKey) {
+        console.log("loadAtlasHelp: already loaded for", cacheKey);
+        return;
+      }
+      helpBox.dataset.currentName = cacheKey;
 
-      if (atlasHelpCache.has(name)) {
-        setAtlasHelpText(helpBox, atlasHelpCache.get(name));
+      if (atlasHelpCache.has(cacheKey)) {
+        console.log("loadAtlasHelp: using cached value for", cacheKey);
+        setAtlasHelpText(helpBox, atlasHelpCache.get(cacheKey));
         return;
       }
 
@@ -625,18 +637,23 @@
       try {
         const url = new URL("/atlas-help", window.location.origin);
         url.searchParams.set("name", name);
+        url.searchParams.set("kind", kind || "volume");
+        console.log("loadAtlasHelp: fetching", url.toString());
         const response = await fetch(url.toString());
+        console.log("loadAtlasHelp: response status", response.status);
         if (!response.ok) {
           throw new Error("Atlas help not available");
         }
         const data = await response.json();
+        console.log("loadAtlasHelp: received data", data);
         const text = data && data.text ? data.text : "No description available.";
-        atlasHelpCache.set(name, text);
-        if (helpBox.dataset.currentName === name) {
+        atlasHelpCache.set(cacheKey, text);
+        if (helpBox.dataset.currentName === cacheKey) {
           setAtlasHelpText(helpBox, text);
         }
       } catch (error) {
-        if (helpBox.dataset.currentName === name) {
+        console.error("loadAtlasHelp: error", error);
+        if (helpBox.dataset.currentName === cacheKey) {
           setAtlasHelpText(helpBox, "No description available.");
         }
       }
@@ -644,11 +661,16 @@
 
     document.querySelectorAll("[data-atlas-help]").forEach((item) => {
       const name = item.getAttribute("data-atlas-help");
+      const kind = item.getAttribute("data-atlas-kind") || "volume";
       const helpId = item.getAttribute("data-help-target");
       const helpBox = helpId ? document.getElementById(helpId) : null;
-      if (!name || !helpBox) return;
-      item.addEventListener("mouseenter", () => loadAtlasHelp(name, helpBox));
-      item.addEventListener("focusin", () => loadAtlasHelp(name, helpBox));
+      console.log("Binding atlas help:", { name, kind, helpId, helpBoxFound: !!helpBox });
+      if (!name || !helpBox) {
+        console.warn("Skipping atlas help binding - missing name or helpBox:", { name, helpId });
+        return;
+      }
+      item.addEventListener("mouseenter", () => loadAtlasHelp(name, kind, helpBox));
+      item.addEventListener("focusin", () => loadAtlasHelp(name, kind, helpBox));
     });
 
     fileButton.addEventListener("click", () => {

@@ -414,17 +414,33 @@ def index():
 
 @app.route("/atlas-help")
 def atlas_help():
+    kind = request.args.get("kind", "volume").strip().lower()
     name = request.args.get("name", "").strip()
     if not name:
         return jsonify({"error": "Missing atlas name."}), 400
 
-    valid_names = set(list_atlas_names())
-    if name not in valid_names:
+    if kind == "surface":
+        core_name = name
+        if core_name.startswith("lh.") or core_name.startswith("rh."):
+            core_name = core_name[3:]
+        for suffix in (".annot", ".txt"):
+            if core_name.endswith(suffix):
+                core_name = core_name[: -len(suffix)]
+        txt_candidates = [
+            SURFACE_ATLAS_DIR / f"{core_name}.txt",
+            SURFACE_ATLAS_DIR / f"lh.{core_name}.txt",
+            SURFACE_ATLAS_DIR / f"rh.{core_name}.txt",
+        ]
+    else:
+        valid_names = set(list_atlas_names())
+        txt_candidates = [TEMPLATE_ATLAS_DIR / f"{name}.txt"]
+
+    if kind != "surface" and name not in valid_names:
         return jsonify({"error": "Unknown atlas."}), 404
 
-    txt_path = TEMPLATE_ATLAS_DIR / f"{name}.txt"
-    if not txt_path.exists():
-        return jsonify({"error": "Description not found."}), 404
+    txt_path = next((path for path in txt_candidates if path.exists()), None)
+    if txt_path is None:
+        return jsonify({"name": name, "text": "No description available.", "truncated": False})
 
     lines = txt_path.read_text(encoding="utf-8", errors="replace").splitlines()
     preview = "\n".join(lines[:20]).strip() or "No description available."
