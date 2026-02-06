@@ -192,6 +192,44 @@ label {
   font-weight: 500;
 }
 
+.input-with-help {
+  position: relative;
+  display: grid;
+  gap: 0.4rem;
+  max-width: 560px;
+}
+
+.help-anchor {
+  position: relative;
+}
+
+.help-box {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(-4px);
+  max-height: 0;
+  overflow: hidden;
+  z-index: 10;
+  width: max-content;
+  max-width: 360px;
+  transition: opacity 0.15s ease, transform 0.15s ease, max-height 0.15s ease;
+}
+
+.help-box.visible {
+  opacity: 1;
+  transform: translateY(0);
+  max-height: 120px;
+}
+
 input[type="text"],
 input[type="number"],
 input[type="datetime-local"],
@@ -322,8 +360,8 @@ small {
 label.toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  justify-content: flex-start;
+  gap: 0.6rem;
 }
 
 label.toggle input[type="checkbox"] {
@@ -333,6 +371,14 @@ label.toggle input[type="checkbox"] {
 
 .toggle-text {
   flex: 1;
+}
+
+label.toggle .toggle-track {
+  order: 0;
+}
+
+label.toggle .toggle-text {
+  order: 1;
 }
 
 .toggle-track {
@@ -388,8 +434,16 @@ label.toggle-row {
 label.toggle-row .toggle-inline {
   display: inline-flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.6rem;
   max-width: 560px;
+}
+
+label.toggle-row .toggle-inline .toggle-track {
+  order: 0;
+}
+
+label.toggle-row .toggle-inline .help-box {
+  order: 2;
 }
 
 label.toggle-row .toggle-inline input[type="checkbox"] {
@@ -557,6 +611,11 @@ label.toggle-row .toggle-inline input[type="checkbox"]:focus-visible + .toggle-t
   background: var(--panel-alt);
   max-height: 220px;
   overflow: auto;
+}
+
+.atlas-panel.options-panel {
+  max-height: none;
+  overflow: visible;
 }
 
 .atlas-header {
