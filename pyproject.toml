@@ -34,7 +34,9 @@ dependencies = [
     "spline-resize>=0.1.1",
     "SplineSmooth3D>=0.1.1",
     "nxbc>=0.2.0",
-    "requests"
+    "requests",
+    "flask>=2.3",
+    "apscheduler>=3.10"
 ]
 
 [project.scripts]
