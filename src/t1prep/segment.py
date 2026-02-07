@@ -63,7 +63,7 @@ from utils import (
     DATA_PATH_T1PREP,
     TEMPLATE_PATH_T1PREP,
 )
-from segmentation_utils import (
+from _segment_utils import (
     correct_bias_field,
     unsmooth_kernel,
     get_atlas,
@@ -472,7 +472,7 @@ def run_amap_segmentation(
     cmd = (
         os.path.join(bin_dir, "CAT_VolAmap")
         + f" -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 "
-        + "-h-ornlm 0.0 -write-seg 1 1 1 -sub 64 -label "
+        + "-h-ornlm 0.0 -multistep -write-seg 1 1 1 -sub 64 -label "
         + f"{mri_dir}/{out_name}_seg_large.{ext}"
         + " "
         + f"{mri_dir}/{out_name}_brain_large.{ext}"
