@@ -146,6 +146,9 @@ When adding atlas files to `src/t1prep/data/`:
    - Add `lh.<atlas_name>.annot` and `rh.<atlas_name>.annot`
    - Add `lh.<atlas_name>.txt` (description shown in Web UI tooltip)
 
+## Ignore Rules
+- Coding agents should treat any files or folders matched by `.gitignore` as out of scope (do not search, edit, or base decisions on them) unless the user explicitly asks to work with those ignored paths.
+
 ## Coding Style
 - Follow [PEP 8](https://peps.python.org/pep-0008/) style.
 - If available in your environment, format with `black` and verify with `black --check src scripts`.
