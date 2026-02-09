@@ -939,21 +939,19 @@ def run_segment():
     brain_value[~mask_value] = 0
     brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
 
-    # Call SANLM filter and rename output to original name
-    """
-    nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
-    print("SANLM")
-    cmd = (
-        os.path.join(bin_dir, "CAT_VolSanlm")
-        + " "
-        + f"{mri_dir}/{out_name}_brain_large_tmp.{ext}"
-        + " "
-        + f"{mri_dir}/{out_name}_brain_large.{ext}"
-    )
-    os.system(cmd)
-    brain_large = nib.load(f"{mri_dir}/{out_name}_brain_large.{ext}")
-    remove_file(f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
-    """
+    # Call SANLM filter for non-Amap approach and rename output to original name
+    if not use_amap:
+        nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
+        cmd = (
+            os.path.join(bin_dir, "CAT_VolSanlm")
+            + " "
+            + f"{mri_dir}/{out_name}_brain_large_tmp.{ext}"
+            + " "
+            + f"{mri_dir}/{out_name}_brain_large.{ext}"
+        )
+        os.system(cmd)
+        brain_large = nib.load(f"{mri_dir}/{out_name}_brain_large.{ext}")
+        remove_file(f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")    
 
     # Step 4: Segmentation
     if verbose:

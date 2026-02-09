@@ -28,7 +28,7 @@
 # ----------------------------------------------------------------------
 
 # Defaults
-version=0.2.5
+version=0.3.0
 # Resolve this script's directory robustly (works even if invoked via symlink)
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
