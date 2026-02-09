@@ -1,7 +1,7 @@
 .PHONY: help release clean zip cp_binaries
 .DEFAULT: help
 
-VERSION="0.2.5"
+VERSION="0.3.0"
 
 ZIPFILE=T1Prep_${VERSION}.zip
 

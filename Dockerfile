@@ -5,7 +5,7 @@ FROM python:3.12-slim
 # SOURCE: 'release' (default) downloads a ZIP archive for the given tag;
 #         'git' clones the repo at the ref you specify (branch/tag/commit).
 ARG T1PREP_SOURCE=release
-ARG T1PREP_VERSION=v0.2.5
+ARG T1PREP_VERSION=v0.3.0
 ARG T1PREP_REF=main              # used only when T1PREP_SOURCE=git
 
 LABEL org.opencontainers.image.authors="Christian Gaser <christian.gaser@uni-jena.de>"
