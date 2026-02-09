@@ -98,12 +98,23 @@ webui/static/styles.css
 - Prefer using the utilities provided in `src/t1prep/utils.py` (and related helpers in `src/t1prep/`) when possible.
 - Check documentation of functions and add missing documentation.
 
+### Environment Usage
+- See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for activating the virtual environment and running scripts safely.
+- Prefer wrapper scripts that auto-activate the environment:
+       - [scripts/activate_env.sh](scripts/activate_env.sh)
+       - [scripts/run_with_env.sh](scripts/run_with_env.sh)
+       - [scripts/cat_viewsurf.sh](scripts/cat_viewsurf.sh)
+       - [scripts/T1Prep_ui](scripts/T1Prep_ui) (Web UI launcher)
+  
+These helpers ensure the correct interpreter and dependencies are used across CLI, GUI, and Web UI workflows.
+
 ## Common Tasks
 - Show CLI options: `./scripts/T1Prep --help`
 - Run pipeline (example): `./scripts/T1Prep --out-dir /tmp/out sub-01_T1w.nii.gz`
 - Python API: `from t1prep import run_t1prep`
 - Quick Python sanity check: `python -m compileall src`
 - Run Web UI: `cd webui && python app.py`
+ - Run Web UI (recommended): `./scripts/T1Prep_ui --port 5000`
 
 ## When to Update README.md
 
