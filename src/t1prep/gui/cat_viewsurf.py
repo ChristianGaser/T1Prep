@@ -198,6 +198,40 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
     """
     overlay_path = Path(overlay_filename)
 
+    # SPM analysis overlays map to the template LH mesh
+    if is_spm_surface_overlay(overlay_filename):
+        template_dir = _get_template_surface_dir()
+        lh_template = template_dir / 'lh.central.freesurfer.gii'
+        if lh_template.exists():
+            return str(lh_template)
+
+    # Combined-hemisphere 'mesh.' overlays
+    # e.g. s12.mesh.thickness.resampled_32k.HR075_MPRAGE.gii
+    #   -> try lh.central.<suffix>.gii, then progressively strip prefix tokens,
+    #      then fall back to the 32k template mesh.
+    parsed = _parse_mesh_combined_overlay(overlay_filename)
+    if parsed is not None:
+        _ov_type, suffix = parsed
+        # Try exact suffix first, then progressively strip leading tokens
+        # e.g. suffix = 'resampled_32k.HR075_MPRAGE'
+        # try: lh.central.resampled_32k.HR075_MPRAGE.gii
+        # try: lh.central.HR075_MPRAGE.gii
+        suffix_tokens = suffix.split('.') if suffix else []
+        for start_idx in range(len(suffix_tokens) + 1):
+            sub_suffix = '.'.join(suffix_tokens[start_idx:])
+            if sub_suffix:
+                mesh_name = f"lh.central.{sub_suffix}.gii"
+            else:
+                mesh_name = "lh.central.gii"
+            cand = overlay_path.parent / mesh_name
+            if cand.exists():
+                return str(cand)
+        # Fall back to 32k template (resampled_32k data lives on this mesh)
+        template_dir = _get_template_surface_dir()
+        lh_template = template_dir / 'lh.central.freesurfer.gii'
+        if lh_template.exists():
+            return str(lh_template)
+
     # Prefer explicit non-BIDS mapping for lh/rh thickness (and pbt) overlays
     # Examples:
     #   lh.thickness.name     -> lh.central.name.gii
@@ -291,6 +325,14 @@ def is_overlay_file(filename: str) -> bool:
         if parts[1] not in mesh_types:
             return True
 
+    # SPM surface analysis overlays
+    if is_spm_surface_overlay(filename):
+        return True
+
+    # Combined-hemisphere 'mesh.' overlays (e.g. s12.mesh.thickness.rest.gii)
+    if _parse_mesh_combined_overlay(filename) is not None:
+        return True
+
     overlay_patterns = [
         '_desc-thickness.', '_desc-pbt.',  # BIDS shape files
         '.annot',  # FreeSurfer annotation
@@ -307,6 +349,169 @@ def detect_overlay_kind(filename: str) -> Optional[str]:
     if '_desc-pbt' in name or '.pbt.' in name or name.endswith('pbt'):
         return 'pbt'
     return None
+
+
+def _get_template_surface_dir() -> Path:
+    """Return the path to the templates_surfaces_32k directory."""
+    return Path(__file__).resolve().parent.parent / 'data' / 'templates_surfaces_32k'
+
+
+def is_spm_surface_overlay(filename: str) -> bool:
+    """Check if a file is an SPM surface analysis overlay (.gii with .dat companion).
+
+    SPM stores surface-based analysis results as .gii/.dat pairs where:
+    - The .gii file contains the GIFTI metadata referencing external binary data
+    - The .dat file contains the actual scalar values
+    - Data covers the combined LH+RH template mesh
+
+    Common SPM analysis filenames: spmT_*.gii, spmF_*.gii, con_*.gii,
+    ess_*.gii, beta_*.gii, ResMS.gii, etc.
+
+    Args:
+        filename: Path to a potential SPM surface overlay file
+
+    Returns:
+        True if the file looks like an SPM surface analysis overlay
+    """
+    p = Path(filename)
+    if p.suffix.lower() != '.gii':
+        return False
+    # Known SPM analysis filename patterns
+    spm_patterns = [
+        r'^spmT_\d+\.gii$',     # T-statistic maps
+        r'^spmF_\d+\.gii$',     # F-statistic maps
+        r'^con_\d+\.gii$',      # Contrast images
+        r'^ess_\d+\.gii$',      # Extra sum of squares
+        r'^beta_\d+\.gii$',     # Beta (parameter) images
+        r'^ResMS\.gii$',        # Residual mean square
+        r'^RPV\.gii$',          # Resels per voxel
+    ]
+    name = p.name
+    pattern_match = any(re.match(pat, name, re.IGNORECASE) for pat in spm_patterns)
+    if pattern_match:
+        return True
+    # Also accept when a .dat companion AND SPM.mat exist in the same directory
+    dat_file = p.with_suffix('.dat')
+    spm_mat = p.parent / 'SPM.mat'
+    if dat_file.exists() and spm_mat.exists():
+        return True
+    return False
+
+
+def _parse_mesh_combined_overlay(filename: str) -> Optional[Tuple[str, str]]:
+    """Parse a 'mesh' combined-hemisphere overlay filename.
+
+    Recognizes CAT12-style patterns where 'mesh' replaces 'lh'/'rh' to
+    indicate combined LH+RH data:
+        mesh.thickness.rest.gii
+        s12.mesh.thickness.rest.gii   (with smoothing prefix)
+
+    Args:
+        filename: The overlay filename (basename or full path).
+
+    Returns:
+        (overlay_type, suffix) if the file is a combined-hemisphere overlay,
+        None otherwise.  *suffix* contains the remaining dot-separated tokens
+        after the overlay type (e.g. 'resampled_32k.HR075_MPRAGE').
+    """
+    name = Path(filename).name
+    if name.lower().endswith('.gii'):
+        name = name[:-4]
+    parts = name.split('.')
+
+    mesh_types = {
+        'central', 'pial', 'white', 'inflated', 'sphere',
+        'patch', 'mc', 'sqrtsulc',
+    }
+
+    # Find the 'mesh' token
+    mesh_idx = None
+    for i, p in enumerate(parts):
+        if p.lower() == 'mesh':
+            mesh_idx = i
+            break
+    if mesh_idx is None:
+        return None
+
+    # After 'mesh' we expect an overlay-type token (not a mesh type)
+    if mesh_idx + 1 >= len(parts):
+        return None
+    overlay_type = parts[mesh_idx + 1].lower()
+    if overlay_type in mesh_types:
+        return None  # e.g. mesh.central.* is a mesh, not an overlay
+
+    # Remaining tokens form the suffix
+    suffix_parts = parts[mesh_idx + 2:]
+    suffix = '.'.join(suffix_parts) if suffix_parts else ''
+    return (overlay_type, suffix)
+
+
+def split_combined_mesh(
+    poly: vtkPolyData,
+    n_left: int,
+) -> Tuple[vtkPolyData, vtkPolyData]:
+    """Split a combined LH+RH mesh into separate left and right polydata.
+
+    Vertices 0..n_left-1 are assigned to LH, the rest to RH.
+    Faces are partitioned based on whether all their vertex indices belong
+    to the left or right range.
+
+    Args:
+        poly: Combined polydata with interleaved LH+RH vertices.
+        n_left: Number of vertices belonging to the left hemisphere.
+
+    Returns:
+        (poly_l, poly_r): Separate vtkPolyData objects.
+    """
+    from vtkmodules.util.numpy_support import vtk_to_numpy as _v2n
+
+    pts_all = poly.GetPoints()
+    n_total = pts_all.GetNumberOfPoints()
+    n_right = n_total - n_left
+
+    # --- Extract vertex coordinates ---
+    coords = np.empty((n_total, 3), dtype=float)
+    for i in range(n_total):
+        coords[i] = pts_all.GetPoint(i)
+
+    # --- Extract face indices ---
+    polys = poly.GetPolys()
+    polys.InitTraversal()
+    from vtkmodules.vtkCommonCore import vtkIdList
+    id_list = vtkIdList()
+    faces_list = []
+    while polys.GetNextCell(id_list):
+        if id_list.GetNumberOfIds() == 3:
+            faces_list.append((
+                id_list.GetId(0),
+                id_list.GetId(1),
+                id_list.GetId(2),
+            ))
+    faces = np.array(faces_list, dtype=np.int64)
+
+    def _build_poly(v_start: int, v_count: int) -> vtkPolyData:
+        v_end = v_start + v_count
+        c = coords[v_start:v_end]
+        # Faces that belong entirely to this vertex range
+        mask = np.all((faces >= v_start) & (faces < v_end), axis=1)
+        f = faces[mask] - v_start  # reindex to 0-based
+        pts_v = vtkPoints()
+        pts_v.SetNumberOfPoints(v_count)
+        for i in range(v_count):
+            pts_v.SetPoint(i, float(c[i, 0]), float(c[i, 1]), float(c[i, 2]))
+        cells_v = vtkCellArray()
+        for tri in f:
+            cells_v.InsertNextCell(3)
+            cells_v.InsertCellPoint(int(tri[0]))
+            cells_v.InsertCellPoint(int(tri[1]))
+            cells_v.InsertCellPoint(int(tri[2]))
+        pd = vtkPolyData()
+        pd.SetPoints(pts_v)
+        pd.SetPolys(cells_v)
+        return pd
+
+    return _build_poly(0, n_left), _build_poly(n_left, n_right)
+
 
 # ---- I/O helpers ----
 def read_gifti_mesh(filename: str) -> vtkPolyData:
@@ -386,7 +591,7 @@ def read_scalars(filename: str) -> vtkDoubleArray:
             elif img and img.GetPointData() and img.GetPointData().GetNumberOfArrays() > 0:
                 arr = img.GetPointData().GetArray(0)
             if arr:
-                npv = vtk_to_numpy(arr).astype(float)
+                npv = np.nan_to_num(vtk_to_numpy(arr).astype(float), nan=0.0)
                 out = vtkDoubleArray(); out.SetNumberOfTuples(len(npv))
                 for i, v in enumerate(npv): out.SetValue(i, float(v))
                 return out
@@ -407,6 +612,7 @@ def read_scalars(filename: str) -> vtkDoubleArray:
                 data_arr = d.data.reshape(-1).astype(float); break
         if data_arr is None:
             raise RuntimeError(f"No scalar data array found in {filename}")
+        data_arr = np.nan_to_num(data_arr, nan=0.0)
         out = vtkDoubleArray(); out.SetNumberOfTuples(len(data_arr))
         for i, v in enumerate(data_arr): out.SetValue(i, float(v))
         return out
@@ -414,7 +620,7 @@ def read_scalars(filename: str) -> vtkDoubleArray:
     # --- Case 2: FreeSurfer texture data (thickness/curv/sulc, with or without extension) ---
     try:
         from nibabel.freesurfer.io import read_morph_data
-        fs = read_morph_data(filename)
+        fs = np.nan_to_num(read_morph_data(filename).astype(float), nan=0.0)
         out = vtkDoubleArray(); out.SetNumberOfTuples(len(fs))
         for i, v in enumerate(fs): out.SetValue(i, float(v))
         return out
@@ -443,8 +649,9 @@ def read_scalars(filename: str) -> vtkDoubleArray:
                     continue
     if not data:
         raise RuntimeError(f"Unsupported overlay format for {filename}. Use GIFTI, FreeSurfer morph, or text.")
-    out = vtkDoubleArray(); out.SetNumberOfTuples(len(data))
-    for i, v in enumerate(data): out.SetValue(i, float(v))
+    data_np = np.nan_to_num(np.array(data, dtype=float), nan=0.0)
+    out = vtkDoubleArray(); out.SetNumberOfTuples(len(data_np))
+    for i, v in enumerate(data_np): out.SetValue(i, float(v))
     return out
 
 # ---- Stats ----
@@ -714,7 +921,15 @@ def parse_args(argv: List[str]) -> Options:
     if len(pos_inputs) == 1:
         # Single input can be either a mesh or an overlay. Prefer real mesh content when .gii.
         single = pos_inputs[0]
-        if str(single).lower().endswith('.gii') and is_gifti_mesh_file(single):
+        # Combined 'mesh.' overlays contain both geometry AND scalars;
+        # treat them as overlays so the scalar data is loaded.
+        if _parse_mesh_combined_overlay(single) is not None:
+            try:
+                mesh_left_resolved = convert_filename_to_mesh(single)
+            except Exception:
+                mesh_left_resolved = single
+            overlay_single_from_pos = single
+        elif str(single).lower().endswith('.gii') and is_gifti_mesh_file(single):
             mesh_left_resolved = single
             overlay_single_from_pos = None
         elif is_overlay_file(single):
@@ -1189,9 +1404,13 @@ class Viewer(QtWidgets.QMainWindow):
                     pass
             if not input_path.exists(): 
                 raise FileNotFoundError(f"File not found: {input_path}")
-            # Determine if input is an overlay file; but let .gii meshes pass through
-            if (not (str(input_path).lower().endswith('.gii') and is_gifti_mesh_file(str(input_path)))
-                and is_overlay_file(str(input_path))):
+            # Determine if input is an overlay file; but let .gii meshes pass through.
+            # Combined 'mesh.' files contain geometry AND scalars — treat as overlay.
+            is_combined_mesh_overlay = (_parse_mesh_combined_overlay(str(input_path)) is not None)
+            if is_combined_mesh_overlay or (
+                not (str(input_path).lower().endswith('.gii') and is_gifti_mesh_file(str(input_path)))
+                and is_overlay_file(str(input_path))
+            ):
                 # Input is an overlay file, find the corresponding mesh
                 mesh_path = convert_filename_to_mesh(str(input_path))
                 mesh_path_obj = Path(mesh_path)
@@ -1297,6 +1516,8 @@ class Viewer(QtWidgets.QMainWindow):
         lut_bkg.SetTableRange(self.range_bkg)
         # Overlay range (init before calling _load_overlay)
         self.overlay_range = list(opts.range)
+        # Track whether the user explicitly provided a valid range via CLI
+        self._user_set_range = (opts.range[1] > opts.range[0])
         # Predefine overlay actors (referenced in _load_overlay)
         self.actor_ov_l = None
         self.actor_ov_r = None
@@ -2374,10 +2595,30 @@ class Viewer(QtWidgets.QMainWindow):
         """Locate the central/midthickness mesh that corresponds to an overlay.
 
         Strategy:
+          0) SPM analysis overlays use the template LH mesh.
+          0b) Combined-hemisphere 'mesh.' overlays: use convert_filename_to_mesh.
           1) Use convert_filename_to_mesh heuristic.
           2) Search overlay directory for likely meshes (central/midthickness) with matching hemi tokens.
         """
         ov_path = Path(overlay_path)
+
+        # SPM surface analysis overlays → template LH mesh
+        if is_spm_surface_overlay(str(ov_path)):
+            template_dir = _get_template_surface_dir()
+            lh_template = template_dir / 'lh.central.freesurfer.gii'
+            if lh_template.exists():
+                return lh_template
+
+        # Combined-hemisphere 'mesh.' overlays
+        if _parse_mesh_combined_overlay(str(ov_path)) is not None:
+            try:
+                cand_str = convert_filename_to_mesh(str(ov_path))
+                cand = Path(cand_str)
+                if cand.exists() and is_gifti_mesh_file(str(cand)):
+                    return cand
+            except Exception:
+                pass
+
         ov_dir = ov_path.parent
         ov_name = ov_path.name.lower()
         hemi = None
@@ -2761,6 +3002,77 @@ class Viewer(QtWidgets.QMainWindow):
             ov_path = Path(overlay_path)
             scal_l = read_scalars(str(ov_path))
             scal_r = None
+            n_scal = scal_l.GetNumberOfTuples() if scal_l is not None else 0
+
+            # For SPM surface analysis overlays the data covers the combined
+            # LH+RH template mesh.  If the current meshes do not match, switch
+            # to the template first so the split logic below can succeed.
+            if (
+                is_spm_surface_overlay(str(ov_path))
+                and n_scal > 0
+                and self.poly_l is not None
+            ):
+                nL_cur = self.poly_l.GetNumberOfPoints()
+                nR_cur = self.poly_r.GetNumberOfPoints() if self.poly_r is not None else 0
+                if n_scal != nL_cur and n_scal != (nL_cur + nR_cur):
+                    # Current mesh does not match; switch to template
+                    template_dir = _get_template_surface_dir()
+                    lh_tpl = template_dir / 'lh.central.freesurfer.gii'
+                    if lh_tpl.exists():
+                        self._switch_mesh(str(lh_tpl))
+
+            # For combined 'mesh.' overlays the .gii contains its own mesh
+            # geometry.  If the overlay data count doesn't match the current
+            # mesh, load the embedded mesh from the file and split it.
+            is_mesh_combined = _parse_mesh_combined_overlay(str(ov_path)) is not None
+            if is_mesh_combined and n_scal > 0 and self.poly_l is not None:
+                nL_cur = self.poly_l.GetNumberOfPoints()
+                nR_cur = self.poly_r.GetNumberOfPoints() if self.poly_r is not None else 0
+                if n_scal != nL_cur and n_scal != (nL_cur + nR_cur):
+                    # The overlay data has n_scal values.  If n_scal is even
+                    # it encodes equal-sized hemispheres.
+                    n_half = n_scal // 2
+                    # Try to read the embedded mesh from the same file
+                    try:
+                        combined_poly = read_gifti_mesh(str(ov_path))
+                        n_mesh_pts = combined_poly.GetNumberOfPoints()
+                    except Exception:
+                        combined_poly = None
+                        n_mesh_pts = 0
+                    if combined_poly is not None and n_mesh_pts == n_scal:
+                        # Split the embedded combined mesh at half
+                        poly_l_new, poly_r_new = split_combined_mesh(
+                            combined_poly, n_half,
+                        )
+                        self.poly_l = poly_l_new
+                        self.poly_r = poly_r_new
+                        self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
+                        self._y_shift_r = self._shift_y_to(self.poly_r) or 0.0
+                        # Rebuild curvature on new meshes
+                        self.curv_l = vtkCurvatures()
+                        self.curv_l.SetInputData(self.poly_l)
+                        self.curv_l.SetCurvatureTypeToMean()
+                        self.curv_l.Update()
+                        self.curv_l_out = self.curv_l.GetOutput()
+                        self.curv_r = vtkCurvatures()
+                        self.curv_r.SetInputData(self.poly_r)
+                        self.curv_r.SetCurvatureTypeToMean()
+                        self.curv_r.Update()
+                        self.curv_r_out = self.curv_r.GetOutput()
+                        # Rewire actors to new meshes
+                        if getattr(self, 'actor_bkg_l', None) is not None:
+                            self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
+                        if getattr(self, 'actor_bkg_r', None) is not None:
+                            self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
+                        if getattr(self, 'actor_ov_l', None) is not None:
+                            self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
+                        if getattr(self, 'actor_ov_r', None) is not None:
+                            self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
+                    else:
+                        # Fallback: try template mesh or derived mesh
+                        mesh_path = convert_filename_to_mesh(str(ov_path))
+                        if mesh_path and Path(mesh_path).exists():
+                            self._switch_mesh(mesh_path)
 
             # Prefer a separate RH overlay sitting next to the selected file
             rh_path = None
@@ -2780,6 +3092,26 @@ class Viewer(QtWidgets.QMainWindow):
             ):
                 nL = self.poly_l.GetNumberOfPoints()
                 nR = self.poly_r.GetNumberOfPoints()
+                arr = scal_l
+                scal_r = vtkDoubleArray()
+                scal_r.SetNumberOfTuples(nR)
+                for i in range(nR):
+                    scal_r.SetValue(i, arr.GetValue(i + nL))
+                left_only = vtkDoubleArray()
+                left_only.SetNumberOfTuples(nL)
+                for i in range(nL):
+                    left_only.SetValue(i, arr.GetValue(i))
+                scal_l = left_only
+            # SPM / combined 'mesh.' overlay: force split at half when
+            # data count equals 2× one hemisphere
+            elif (
+                self.poly_r is not None
+                and scal_l is not None
+                and scal_l.GetNumberOfTuples() > 0
+                and scal_l.GetNumberOfTuples() == 2 * self.poly_l.GetNumberOfPoints()
+            ):
+                nL = self.poly_l.GetNumberOfPoints()
+                nR = nL  # equal-sized hemispheres
                 arr = scal_l
                 scal_r = vtkDoubleArray()
                 scal_r.SetNumberOfTuples(nR)
@@ -2810,14 +3142,17 @@ class Viewer(QtWidgets.QMainWindow):
             self.overlay_range = [0.5, 5.0]
             self.opts.clip = (0.0, 0.0)
             self.range_bkg = [-1.0, 1.0]
+        elif self.opts.fix_scaling and self.fixed_overlay_range is not None:
+            # Use the fixed range across all overlays
+            self.overlay_range = list(self.fixed_overlay_range)
+        elif getattr(self, '_user_set_range', False):
+            # User explicitly provided a range via CLI; keep it
+            pass
         else:
-            # recompute overlay range if needed and fix scaling is not enabled
-            if not (self.overlay_range[1] > self.overlay_range[0]) and (self.scal_l is not None):
-                if not self.opts.fix_scaling:
-                    r = [0.0,0.0]; self.poly_l.GetScalarRange(r); self.overlay_range = r
-                elif self.fixed_overlay_range is not None:
-                    # Use the fixed range
-                    self.overlay_range = list(self.fixed_overlay_range)
+            # Auto-scale: always recompute overlay range from data
+            if self.scal_l is not None:
+                r = [0.0, 0.0]; self.poly_l.GetScalarRange(r)
+                self.overlay_range = r
         for actor in (self.actor_ov_l, self.actor_ov_r):
             if actor:
                 actor.GetMapper().SetLookupTable(self.lut_overlay_l)
