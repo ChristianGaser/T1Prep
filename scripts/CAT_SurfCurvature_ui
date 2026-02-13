@@ -121,20 +121,19 @@ main()
     local -a cmd_argv
     cmd_argv=("$0" "--no-parallel")
 
-    if [[ "$use_absolute" -eq 1 ]]; then cmd_argv+=("-a"); fi
     if [[ -n "$removestr" ]]; then cmd_argv+=("-r" "$removestr"); fi
     if [[ "$fwhm" -gt 0 ]]; then cmd_argv+=("-f" "$fwhm"); fi
     if [[ "$noclobber" -eq 1 ]]; then cmd_argv+=("-noclobber"); fi
     if [[ "$gifti" -eq 1 ]]; then cmd_argv+=("-gifti"); fi
 
     case "$method" in
-      0) cmd_argv+=("-mc") ;;
+      0) cmd_argv+=("-gy") ;;
       1) cmd_argv+=("-gc") ;;
       2) cmd_argv+=("-cv") ;;
       3) cmd_argv+=("-si") ;;
-      4) cmd_argv+=("-mc0") ;;
+      4) cmd_argv+=("-mc") ;;
       5) cmd_argv+=("-sd") ;;
-      6) cmd_argv+=("-bi") ;;
+      6) cmd_argv+=("-be") ;;
       7) cmd_argv+=("-sh") ;;
       8) cmd_argv+=("-fi") ;;
       9) cmd_argv+=("-min-curv") ;;
@@ -195,9 +194,6 @@ parse_args()
       # Only shift if the value was provided as the next token
       if [[ "$1" != *=* ]]; then shift; fi
       ;;
-    --a* | -a*)
-      use_absolute=1
-      ;;
     --r* | -r*)
       exit_if_empty "$optname" "$optarg"
       removestr=$optarg
@@ -215,25 +211,26 @@ parse_args()
     --gifti | -gifti)
       gifti=1
       ;;
-    --mc | -mc)
+    --gy* | -gy*)
       method=0
+      use_absolute=1
       ;;
     --gc* | -gc*)
       method=1
       ;;
-    --c* | -c*)
+    --cv | -cv)
       method=2
       ;;
     --si | -si)
       method=3
       ;;
-    --mc0 | -mc0)
+    --mc | -mc | --curv | -curv)
       method=4
       ;;
-    --sd | -sd)
+    --sd | -sd | --depth | -depth)
       method=5
       ;;
-    --bi | -bi)
+    --be | -be)
       method=6
       ;;
     --sh | -sh)
@@ -254,18 +251,18 @@ parse_args()
       method=$optarg
       if [[ "$1" != *=* ]]; then shift; fi
       ;;
-      -h | --help | --h | -v | --version | -V)
-        help
-        exit 1
-        ;;
-      -*)
-        echo "basename $0: ERROR: Unrecognized option \"$1\"" >&2
-        exit 1
-        ;;
-      *)
-        FILES[$count]="$1"
-        ((count++))
-        ;;
+    -h | --help | --h | -v | --version | -V)
+      help
+      exit 1
+      ;;
+    -*)
+      echo "basename $0: ERROR: Unrecognized option \"$1\"" >&2
+      exit 1
+      ;;
+    *)
+      FILES[$count]="$1"
+      ((count++))
+      ;;
     esac
     shift
   done
@@ -293,18 +290,18 @@ get_outputname()
   fi
 
   case "$method" in
-    0) str='mc' ;;
-    1) str='gc' ;;
-    2) str='cv' ;;
-    3) str='si' ;;
-    4) str='mc0' ;;
-    5) str='sd' ;;
-    6) str='bi' ;;
-    7) str='sh' ;;
-    8) str='fi' ;;
-    9) str='mincurv' ;;
-    10) str='maxcurv' ;;
-    *) str="dp${method}" ;;
+    0) str='gyrification' ;;
+    1) str='gauss-curv' ;;
+    2) str='curvedness' ;;
+    3) str='shape-index' ;;
+    4) str='curv' ;;
+    5) str='depth' ;;
+    6) str='bending-energy' ;;
+    7) str='sharpness' ;;
+    8) str='folding-index' ;;
+    9) str='min-curv' ;;
+    10) str='max-curv' ;;
+    *) str="depth-potential${method}" ;;
   esac
 
   if [[ "$use_absolute" -eq 1 ]]; then
@@ -412,30 +409,29 @@ If an input file is named like "lh.*", the corresponding "rh.*" file is also
 processed automatically (if present).
 
 ${BOLD}OPTIONS:${NC}
-  --no-parallel                 Disable parallelization via ${script_dir}/parallelize
-  --jobs <N>                    Number of parallel processes (passed to parallelize -p)
+  --no-parallel   Disable parallelization via ${script_dir}/parallelize
+  --jobs <N>      Number of parallel processes (passed to parallelize -p)
 
-  -a                            Calculate absolute values
-  -r <STR>                      Remove string from output name
-  -f <FWHM>                     Diffusion heat kernel smoothing (mm)
-  -noclobber                    Do not overwrite existing output
-  -gifti                        Save output as GIfTI (appends .gii)
+  -r <STR>        Remove string from output name
+  -f <FWHM>       Diffusion heat kernel smoothing (mm)
+  -noclobber      Do not overwrite existing output
+  -gifti          Save output as GIfTI (appends .gii)
 
-  -mc                           Mean curvature averaged over 3mm [default]
-  -mc0                          Mean curvature
-  -gc                           Gaussian curvature
-  -cv                           Curvedness
-  -si                           Shape index
-  -sd                           Sulcal depth-like estimator
+  -gy             Gyrification based on absolute Mean curvature abs(k1+k2)/2 [default]
+  -mc | -curv     Mean curvature (in radians) (k1+k2)/2
+  -gc             Gaussian curvature k1*k2
+  -cv             Curvedness sqrt(0.5*(k1*k1+k2*k2))
+  -si             Shape index atan((k1+k2)/(k2-k1))
+  -sd | -depth    Sulcal depth-like estimator
 
-  -bi                           Binary index (if supported)
-  -sh                           Shape (if supported)
-  -fi                           Folding index (if supported)
-  -min-curv                     Minimum curvature (if supported)
-  -max-curv                     Maximum curvature (if supported)
-  -dp <N>                       Use method id directly
+  -be             Bending energy k1*k1 + k2*k2
+  -sh             Sharpness (k1 - k2)^2
+  -fi             Folding index |k1|*(|k1| - |k2|)
+  -min-curv       Minimum curvature k2
+  -max-curv       Maximum curvature k1
+  -dp <N>         depth potential with alpha = 1/curvtype (recommended value curvtype=650)
 
-  -h | --help                  Show this help and exit
+  -h | --help     Show this help and exit
 
 ${BOLD}INPUT NAMING EXPECTATIONS:${NC}
   *.obj and *.gii are accepted.
