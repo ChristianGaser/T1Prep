@@ -39,7 +39,6 @@ source "${script_dir}/utils.sh"
 # Parameters
 use_absolute=0
 method=0
-fwhm=0
 removestr=''
 noclobber=0
 gifti=0
@@ -122,7 +121,6 @@ main()
     cmd_argv=("$0" "--no-parallel")
 
     if [[ -n "$removestr" ]]; then cmd_argv+=("-r" "$removestr"); fi
-    if [[ "$fwhm" -gt 0 ]]; then cmd_argv+=("-f" "$fwhm"); fi
     if [[ "$noclobber" -eq 1 ]]; then cmd_argv+=("-noclobber"); fi
     if [[ "$gifti" -eq 1 ]]; then cmd_argv+=("-gifti"); fi
 
@@ -138,7 +136,7 @@ main()
       8) cmd_argv+=("-fi") ;;
       9) cmd_argv+=("-min-curv") ;;
       10) cmd_argv+=("-max-curv") ;;
-      *) cmd_argv+=("-dp" "$method") ;;
+      11) cmd_argv+=("-dp") ;;
     esac
 
     local command_str=""
@@ -199,12 +197,6 @@ parse_args()
       removestr=$optarg
       if [[ "$1" != *=* ]]; then shift; fi
       ;;
-    --f* | -f*)
-      optarg=$(echo "$optarg" | sed 's,[^0-9],,g')
-      exit_if_empty "$optname" "$optarg"
-      fwhm=$optarg
-      if [[ "$1" != *=* ]]; then shift; fi
-      ;;
     --n* | -n*)
       noclobber=1
       ;;
@@ -230,7 +222,7 @@ parse_args()
     --sd | -sd | --depth | -depth)
       method=5
       ;;
-    --be | -be)
+    --b* | -b*)
       method=6
       ;;
     --sh | -sh)
@@ -246,10 +238,7 @@ parse_args()
       method=10
       ;;
     --dp | -dp)
-      optarg=$(echo "$optarg" | sed 's,[^0-9],,g')
-      exit_if_empty "$optname" "$optarg"
-      method=$optarg
-      if [[ "$1" != *=* ]]; then shift; fi
+      method=11
       ;;
     -h | --help | --h | -v | --version | -V)
       help
@@ -301,14 +290,11 @@ get_outputname()
     8) str='folding-index' ;;
     9) str='min-curv' ;;
     10) str='max-curv' ;;
-    *) str="depth-potential${method}" ;;
+    11) str="depth-potential" ;;
   esac
 
   if [[ "$use_absolute" -eq 1 ]]; then
     str="a${str}"
-  fi
-  if [[ "$fwhm" -ne 0 ]]; then
-    str="${fwhm}mm_${str}"
   fi
 
   bn1=${bn%%.*}
@@ -385,7 +371,11 @@ process()
       continue
     fi
     echo "calculating ${outputname}"
-    "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" "$method" "$fwhm" "$use_absolute"
+    if [ "${method}" -eq 11 ]; then
+      "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" 650 0 "$use_absolute"
+    elif [ "${method}" -lt 11 ]; then
+      "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" "$method" 0 "$use_absolute"
+    fi
   done
 }
 
@@ -413,23 +403,22 @@ ${BOLD}OPTIONS:${NC}
   --jobs <N>      Number of parallel processes (passed to parallelize -p)
 
   -r <STR>        Remove string from output name
-  -f <FWHM>       Diffusion heat kernel smoothing (mm)
   -noclobber      Do not overwrite existing output
   -gifti          Save output as GIfTI (appends .gii)
 
-  -gy             Gyrification based on absolute Mean curvature abs(k1+k2)/2 [default]
+  -gy             Gyrification based on absolute mean curvature abs(k1+k2)/2 [default]
   -mc | -curv     Mean curvature (in radians) (k1+k2)/2
   -gc             Gaussian curvature k1*k2
   -cv             Curvedness sqrt(0.5*(k1*k1+k2*k2))
   -si             Shape index atan((k1+k2)/(k2-k1))
   -sd | -depth    Sulcal depth-like estimator
 
-  -be             Bending energy k1*k1 + k2*k2
+  -be | bi        Bending energy k1*k1 + k2*k2
   -sh             Sharpness (k1 - k2)^2
   -fi             Folding index |k1|*(|k1| - |k2|)
   -min-curv       Minimum curvature k2
   -max-curv       Maximum curvature k1
-  -dp <N>         depth potential with alpha = 1/curvtype (recommended value curvtype=650)
+  -dp             depth potential with alpha = 1/curvtype (curvtype=650)
 
   -h | --help     Show this help and exit
 
