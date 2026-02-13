@@ -3,7 +3,7 @@
 # PURPOSE:
 #   Compute curvature-based parameters from surface files and write them to
 #   text (or GIfTI) files. This is a T1Prep wrapper around CAT_SurfCurvature
-#   and is functionally aligned with CAT_DumpCurv_ui.
+#   CAT_SurfFractalDimension, CAT_SurfArea, CAT_SurfRatio, and CAT_SurfSulcusDepth.
 #
 #   If a left hemisphere file (lh.*) is provided, the corresponding right
 #   hemisphere file (rh.*) is automatically processed as well (if present).
@@ -130,13 +130,18 @@ main()
       2) cmd_argv+=("-cv") ;;
       3) cmd_argv+=("-si") ;;
       4) cmd_argv+=("-mc") ;;
-      5) cmd_argv+=("-sd") ;;
       6) cmd_argv+=("-be") ;;
       7) cmd_argv+=("-sh") ;;
       8) cmd_argv+=("-fi") ;;
       9) cmd_argv+=("-min-curv") ;;
       10) cmd_argv+=("-max-curv") ;;
       11) cmd_argv+=("-dp") ;;
+      12) cmd_argv+=("-depth") ;;
+      13) cmd_argv+=("-sqrt-depth") ;;
+      14) cmd_argv+=("-fd") ;;
+      15) cmd_argv+=("-sr") ;;
+      16) cmd_argv+=("-sra") ;;
+      17) cmd_argv+=("-area") ;;
     esac
 
     local command_str=""
@@ -219,9 +224,6 @@ parse_args()
     --mc | -mc | --curv | -curv)
       method=4
       ;;
-    --sd | -sd | --depth | -depth)
-      method=5
-      ;;
     --b* | -b*)
       method=6
       ;;
@@ -239,6 +241,24 @@ parse_args()
       ;;
     --dp | -dp)
       method=11
+      ;;
+    --depth | -depth)
+      method=12
+      ;;
+    --sqrt-depth | -sqrt-depth)
+      method=13
+      ;;
+    --fd | -fd | --frac* | -frac*)
+      method=14
+      ;;
+    --sra | -sra | --tGIa | -tGIa)
+      method=16
+      ;;
+    --sr | -sr | --tGI | -tGI)
+      method=15
+      ;;
+    --area | -area)
+      method=17
       ;;
     -h | --help | --h | -v | --version | -V)
       help
@@ -284,13 +304,18 @@ get_outputname()
     2) str='curvedness' ;;
     3) str='shape-index' ;;
     4) str='curv' ;;
-    5) str='depth' ;;
     6) str='bending-energy' ;;
     7) str='sharpness' ;;
     8) str='folding-index' ;;
     9) str='min-curv' ;;
     10) str='max-curv' ;;
     11) str="depth-potential" ;;
+    12) str="depth" ;;
+    13) str="sqrtdepth" ;;
+    14) str="fractaldimension" ;;
+    15) str="toroGI20mm" ;;
+    16) str="toroGIa" ;;
+    17) str="area" ;;
   esac
 
   if [[ "$use_absolute" -eq 1 ]]; then
@@ -301,6 +326,8 @@ get_outputname()
   if [[ "$bn1" == "lh" || "$bn1" == "rh" ]]; then
     # FreeSurfer-like naming: collapse "lh.central.SUBJ" -> "lh.SUBJ"
     bn=${bn//h.central/h}
+    bn=${bn//h.white/h}
+    bn=${bn//h.pial/h}
     if [[ -n "$removestr" ]]; then
       bn=${bn//${removestr}/}
     fi
@@ -308,7 +335,7 @@ get_outputname()
     bn=${bn//rh./}
     outputname="${dn}/${bn1}.${str}.${bn}"
   else
-    outputname="${dn}/${str}_${bn}.txt"
+    outputname="${dn}/${str}_${bn}"
   fi
 
   if [[ "$gifti" -eq 1 ]]; then
@@ -370,11 +397,27 @@ process()
       echo "${outputname} will not be overwritten. Do not use -noclobber if you want to overwrite." >&2
       continue
     fi
+    sphere=${infile//central/sphere}
+    sphere=${sphere//pial/sphere}
+    sphere=${sphere//white/sphere}
+    
     echo "calculating ${outputname}"
-    if [ "${method}" -eq 11 ]; then
-      "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" 650 0 "$use_absolute"
-    elif [ "${method}" -lt 11 ]; then
+    if [ "${method}" -lt 11 ]; then
       "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" "$method" 0 "$use_absolute"
+    elif [ "${method}" -eq 11 ]; then
+      "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" 650 0 "$use_absolute"
+    elif [ "${method}" -eq 12 ]; then
+      "${bin_dir}/CAT_SurfSulcusDepth" "$infile" "$sphere" "$outputname"
+    elif [ "${method}" -eq 13 ]; then
+      "${bin_dir}/CAT_SurfSulcusDepth" "$infile" "$sphere" "$outputname" -sqrt
+    elif [ "${method}" -eq 14 ]; then
+      "${bin_dir}/CAT_SurfFractalDimension" -sphere "$sphere" -nosmooth "$infile" "$outputname"
+    elif [ "${method}" -eq 15 ]; then
+      "${bin_dir}/CAT_SurfRatio" "$infile" "$outputname" 20 -no_normalization
+    elif [ "${method}" -eq 16 ]; then
+      "${bin_dir}/CAT_SurfRatio" "$infile" "$outputname" -1 -no_normalization
+    elif [ "${method}" -eq 17 ]; then
+      "${bin_dir}/CAT_SurfArea" "$infile" "$outputname"
     fi
   done
 }
@@ -393,8 +436,8 @@ ${BOLD}USAGE:${NC}
   ${GREEN}$0 [options] <filename(s)>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
-Compute curvature-based parameters from surface files using CAT_SurfCurvature.
-
+Compute surface-based parameters from surface files using CAT_SurfCurvature,
+CAT_SurfFractalDimension, CAT_SurfArea, CAT_SurfRatio, and CAT_SurfSulcusDepth.
 If an input file is named like "lh.*", the corresponding "rh.*" file is also
 processed automatically (if present).
 
@@ -408,17 +451,20 @@ ${BOLD}OPTIONS:${NC}
 
   -gy             Gyrification based on absolute mean curvature abs(k1+k2)/2 [default]
   -mc | -curv     Mean curvature (in radians) (k1+k2)/2
+  -be | bi        Bending energy k1*k1 + k2*k2
   -gc             Gaussian curvature k1*k2
   -cv             Curvedness sqrt(0.5*(k1*k1+k2*k2))
   -si             Shape index atan((k1+k2)/(k2-k1))
-  -sd | -depth    Sulcal depth-like estimator
-
-  -be | bi        Bending energy k1*k1 + k2*k2
   -sh             Sharpness (k1 - k2)^2
   -fi             Folding index |k1|*(|k1| - |k2|)
   -min-curv       Minimum curvature k2
   -max-curv       Maximum curvature k1
-  -dp             depth potential with alpha = 1/curvtype (curvtype=650)
+  -dp             Depth potential with alpha = 1/curvtype (curvtype=650)
+  -depth          Sulcal depth (using convex hull)
+  -sqrt-depth     Sqrt-transformed sulcal depth (more normally distributed)
+  -fd  | -frac    Fractal dimension
+  -sr  | -tGI     Surface ratio with radius=20mm (Toro et al. 2008)
+  -sra | -tGIa    Surface ratio with adaptive radius estimation (Toro et al. 2008)
 
   -h | --help     Show this help and exit
 
@@ -432,6 +478,10 @@ ${BOLD}OUTPUT:${NC}
 
 ${BOLD}Dependencies:${NC}
   CAT_SurfCurvature
+  CAT_SurfFractalDimension
+  CAT_SurfSulcusDepth
+  CAT_SurfRatio
+  CAT_SurfArea
   ${script_dir}/parallelize
 
 ${BOLD}Author:${NC}
