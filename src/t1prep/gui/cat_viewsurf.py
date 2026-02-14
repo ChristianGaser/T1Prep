@@ -578,8 +578,87 @@ def is_gifti_mesh_file(filename: str) -> bool:
         return False
 
 
+def discover_spm_overlays(directory: str) -> List[str]:
+    """Find all SPM surface analysis overlay files in *directory*.
+
+    Looks for known SPM result patterns (spmT_*.gii, spmF_*.gii,
+    con_*.gii, beta_*.gii, etc.) in a directory that contains an
+    SPM.mat file.  Returns a sorted list of absolute paths.
+
+    Args:
+        directory: Path to an SPM analysis directory.
+
+    Returns:
+        Sorted list of SPM overlay .gii files found in the directory.
+    """
+    d = Path(directory)
+    if not d.is_dir():
+        return []
+    spm_mat = d / 'SPM.mat'
+    if not spm_mat.exists():
+        return []
+    spm_patterns = [
+        'spmT_*.gii', 'spmF_*.gii', 'con_*.gii',
+        'ess_*.gii', 'beta_*.gii', 'ResMS.gii', 'RPV.gii',
+    ]
+    found: List[str] = []
+    for pat in spm_patterns:
+        found.extend(str(p) for p in sorted(d.glob(pat)))
+    # Also include any other .gii files with a .dat companion
+    for gii in sorted(d.glob('*.gii')):
+        if str(gii) not in found and gii.with_suffix('.dat').exists():
+            found.append(str(gii))
+    return found
+
+
+def _read_spm_overlay(filename: str) -> vtkDoubleArray:
+    """Read scalar data from an SPM surface analysis overlay (.gii/.dat pair).
+
+    SPM stores surface analysis results as GIFTI files with
+    ExternalFileBinary encoding, where the actual numeric data lives in
+    a companion ``.dat`` file.  nibabel handles this transparently.
+
+    This function is used instead of the generic VTK GIFTI reader path
+    because ``vtkGIFTIReader`` may not support ExternalFileBinary
+    encoding.
+
+    Args:
+        filename: Path to the ``.gii`` file.
+
+    Returns:
+        vtkDoubleArray with one scalar value per surface vertex.
+    """
+    import nibabel as nib
+    g = nib.load(filename)
+    data_arr = None
+    for d in g.darrays:
+        code = int(getattr(d, 'intent', getattr(d, 'intent_code', -1)) or -1)
+        if code in (1008, 1009):  # POINTSET / TRIANGLE – skip geometry
+            continue
+        if d.data.ndim == 1:
+            data_arr = d.data.astype(float)
+            break
+        if d.data.ndim == 2 and 1 in d.data.shape:
+            data_arr = d.data.reshape(-1).astype(float)
+            break
+    if data_arr is None:
+        raise RuntimeError(f"No scalar data found in SPM overlay {filename}")
+    data_arr = np.nan_to_num(data_arr, nan=0.0)
+    out = vtkDoubleArray()
+    out.SetNumberOfTuples(len(data_arr))
+    for i, v in enumerate(data_arr):
+        out.SetValue(i, float(v))
+    return out
+
+
 def read_scalars(filename: str) -> vtkDoubleArray:
     ext = Path(filename).suffix.lower()
+
+    # --- SPM surface analysis overlays (.gii with .dat companion) ---
+    # Always use nibabel for these; vtkGIFTIReader may not support
+    # the ExternalFileBinary encoding used by SPM.
+    if ext == ".gii" and is_spm_surface_overlay(filename):
+        return _read_spm_overlay(filename)
 
     # --- Case 1: GIFTI overlays ---
     if ext == ".gii":
@@ -1532,6 +1611,10 @@ class Viewer(QtWidgets.QMainWindow):
             self.overlay_list = opts.overlays
         elif opts.overlay:
             self.overlay_list = [opts.overlay]
+        # Auto-discover sibling SPM overlays when the initial overlay
+        # is from an SPM analysis directory.
+        if self.overlay_list:
+            self.overlay_list = self._expand_spm_overlays(self.overlay_list)
         # Enforce initial fix scaling policy based on overlay count
         self._enforce_fix_scaling_policy()
         
@@ -2331,6 +2414,8 @@ class Viewer(QtWidgets.QMainWindow):
             paths = dlg.selectedFiles()
             if not paths:
                 return
+            # If the user picked an SPM overlay, auto-discover siblings
+            paths = self._expand_spm_overlays(paths)
             # Update overlay list with selected files
             self.overlay_list = list(paths)
             self.current_overlay_index = 0
@@ -2345,6 +2430,42 @@ class Viewer(QtWidgets.QMainWindow):
             # Load the first selection immediately
             first = self.overlay_list[0]
             self._set_overlay_from_path(first)
+
+    def _expand_spm_overlays(self, paths: List[str]) -> List[str]:
+        """If any selected path is an SPM analysis overlay, expand the list
+        to include all sibling SPM overlays from the same directory.
+
+        The initially selected files are placed first, followed by any
+        additional discoveries not already in the list.
+
+        Args:
+            paths: Overlay paths chosen by the user.
+
+        Returns:
+            Expanded (and deduplicated) overlay list.
+        """
+        seen: set = set()
+        result: List[str] = []
+        for p in paths:
+            rp = str(Path(p).resolve())
+            if rp not in seen:
+                seen.add(rp)
+                result.append(p)
+        dirs_checked: set = set()
+        for p in list(paths):
+            pp = Path(p)
+            parent = str(pp.parent.resolve())
+            if parent in dirs_checked:
+                continue
+            dirs_checked.add(parent)
+            if is_spm_surface_overlay(p):
+                siblings = discover_spm_overlays(str(pp.parent))
+                for s in siblings:
+                    rs = str(Path(s).resolve())
+                    if rs not in seen:
+                        seen.add(rs)
+                        result.append(s)
+        return result
 
     def _on_overlay_combo_changed(self, _idx: int):
         path = self.ctrl.overlay_combo.currentText().strip()
