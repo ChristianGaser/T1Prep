@@ -462,6 +462,7 @@ ${BOLD}OPTIONS:${NC}
   -dp             Depth potential with alpha = 1/curvtype (curvtype=650)
   -depth          Sulcal depth (using convex hull)
   -sqrt-depth     Sqrt-transformed sulcal depth (more normally distributed)
+  -area           Surface area
   -fd  | -frac    Fractal dimension
   -sr  | -tGI     Surface ratio with radius=20mm (Toro et al. 2008)
   -sra | -tGIa    Surface ratio with adaptive radius estimation (Toro et al. 2008)

@@ -31,7 +31,8 @@
 fwhm=12
 ext="dat"
 res="32k"
-areal=""
+areal=0
+areal_str=""
 
 # defaults
 os_type=$(uname -s) # Determine OS type
@@ -77,6 +78,8 @@ main()
       m=${b#*.}; m=${m%%.*}
       if [[ "$m" == "area" ]]; then
         has_area=1
+        areal_str="--areal"
+        areal=1
       else
         has_other=1
       fi
@@ -88,6 +91,9 @@ main()
 
     local -a cmd_argv
     cmd_argv=("$0" "--no-parallel" "--res" "$res" "--ext" "$ext" "--trg-sphere" "$lh_fsavg_sphere" "--mask" "$lh_fsavg_mask" "--fwhm" "$fwhm")
+    if [[ "$has_area" -eq 1 ]]; then
+      cmd_argv+=("--areal")
+    fi    
 
     if [[ -n "${out:-}" ]]; then
       cmd_argv+=("--out" "$out")
@@ -139,6 +145,10 @@ parse_args()
         ;;
       --no-parallel)
         parallel=0
+        ;;
+      --areal)
+        areal=1
+        areal_str="-areal"
         ;;
       --jobs|--processes|-p)
         exit_if_empty "$optname" "$optarg"
@@ -218,7 +228,8 @@ process_file() {
   if [[ "$bname" == lh.* ]]; then
     measure=${bname#*.}; measure=${measure%%.*}
     if [[ "$measure" == "area" ]]; then
-      areal="-areal"
+      areal_str="-areal"
+      areal=1
     fi
     sphere_reg=".sphere.reg"
     rh_bname="${bname/lh./rh.}"
@@ -296,12 +307,12 @@ process()
     fi
     
     "${bin_dir}/CAT_SurfResampleMulti" \
+      "${areal_str}" \
       -fwhm "${fwhm}" \
       -res "${res}" \
       -out  "${OUT_ARRAY[$i]}" \
       -unit "${LH_ARRAY[$i]}" \
-      -unit "${RH_ARRAY[$i]}" \
-      ${areal} 2>&1
+      -unit "${RH_ARRAY[$i]}" 2>&1
       
     exit_code=$?
     pids=($!)
