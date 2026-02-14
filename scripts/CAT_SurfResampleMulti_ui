@@ -31,6 +31,7 @@
 fwhm=12
 ext="dat"
 res="32k"
+areal=""
 
 # defaults
 os_type=$(uname -s) # Determine OS type
@@ -68,6 +69,23 @@ main()
 
   # Optional parallel execution: delegate one input per process via scripts/parallelize
   if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
+    # Check that area measure is not mixed with other measures
+    local has_area=0 has_other=0
+    for f in "${FILES[@]}"; do
+      local b m
+      b=$(basename "$f")
+      m=${b#*.}; m=${m%%.*}
+      if [[ "$m" == "area" ]]; then
+        has_area=1
+      else
+        has_other=1
+      fi
+    done
+    if [[ "$has_area" -eq 1 && "$has_other" -eq 1 ]]; then
+      echo -e "${RED}Cannot mix 'area' measure with other measures when using parallelization because here we have to use areal interpolation exclusively for surface area.${NC}" >&2
+      exit 1
+    fi
+
     local -a cmd_argv
     cmd_argv=("$0" "--no-parallel" "--res" "$res" "--ext" "$ext" "--trg-sphere" "$lh_fsavg_sphere" "--mask" "$lh_fsavg_mask" "--fwhm" "$fwhm")
 
@@ -199,6 +217,9 @@ process_file() {
   # only lh.* supported for now
   if [[ "$bname" == lh.* ]]; then
     measure=${bname#*.}; measure=${measure%%.*}
+    if [[ "$measure" == "area" ]]; then
+      areal="-areal"
+    fi
     sphere_reg=".sphere.reg"
     rh_bname="${bname/lh./rh.}"
     
@@ -279,7 +300,8 @@ process()
       -res "${res}" \
       -out  "${OUT_ARRAY[$i]}" \
       -unit "${LH_ARRAY[$i]}" \
-      -unit "${RH_ARRAY[$i]}" 2>&1
+      -unit "${RH_ARRAY[$i]}" \
+      ${areal} 2>&1
       
     exit_code=$?
     pids=($!)
