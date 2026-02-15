@@ -3595,6 +3595,7 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
             res.SetInputConnection(self._wl.GetOutputPort())
             res.SetInterpolationModeToLinear()
             res.SetOutputDimensionality(2)
+            res.SetBackgroundLevel(0.0)
             axes = vtkMatrix4x4()
             # Start as identity
             for i in range(4):
@@ -3603,17 +3604,20 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
             if orientation == 'axial':
                 # Output X->input X, Output Y->input Y, normal->input Z
                 axes.SetElement(2, 3, float(index))  # translate along input Z
+                res.SetOutputExtent(x0, x1, y0, y1, 0, 0)
             elif orientation == 'coronal':
                 # Output X->input X, Output Y->input Z, normal->input Y
                 axes.SetElement(1, 1, 0.0); axes.SetElement(2, 2, 0.0)
                 axes.SetElement(1, 2, 1.0); axes.SetElement(2, 1, 1.0)
                 axes.SetElement(1, 3, float(index))  # translate along input Y
+                res.SetOutputExtent(x0, x1, z0, z1, 0, 0)
             elif orientation == 'sagittal':
                 # Output X->input Y, Output Y->input Z, normal->input X
-                axes.SetElement(0, 0, 0.0); axes.SetElement(1, 1, 0.0)
+                axes.SetElement(0, 0, 0.0); axes.SetElement(1, 1, 0.0); axes.SetElement(2, 2, 0.0)
                 axes.SetElement(0, 1, 1.0); axes.SetElement(1, 2, 1.0)
                 axes.SetElement(2, 0, 1.0)
                 axes.SetElement(0, 3, float(index))  # translate along input X
+                res.SetOutputExtent(y0, y1, z0, z1, 0, 0)
             res.SetResliceAxes(axes)
             res.Update()
             return res, axes
@@ -3636,8 +3640,6 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
             actor = vtkImageActor(); actor.SetInputData(out_img)
             ren.AddActor(actor)
             ren.ResetCamera(); rw.Render()
-            # Center camera on this slice view after initial image is ready
-            self._center_view(name)
 
             # Store view components
             self._views[name] = {
@@ -3649,6 +3651,9 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
                 'actor': actor,
                 'extent': extent_out,
             }
+
+            # Center camera on this slice view after registration
+            self._center_view(name)
 
             # Click picking: update slices to picked world position
             picker = vtkPropPicker()
@@ -3718,20 +3723,24 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
         dist = max(dx, dy, dz) * 2.0 + 1.0
-        if name == 'axial':
-            cam.SetFocalPoint(cx, cy, cz)
-            cam.SetPosition(cx, cy, cz + dist)
-            cam.SetViewUp(0, 1, 0)
-        elif name == 'coronal':
-            cam.SetFocalPoint(cx, cy, cz)
-            cam.SetPosition(cx, cy + dist, cz)
-            cam.SetViewUp(0, 0, 1)
-        else:  # sagittal
-            cam.SetFocalPoint(cx, cy, cz)
-            cam.SetPosition(cx + dist, cy, cz)
-            cam.SetViewUp(0, 0, 1)
+        # Important: all vtkImageReslice outputs are displayed as 2D images in
+        # their own XY output plane (z ~= constant). Therefore all three views
+        # must be viewed along +Z. Orientation differences are already encoded
+        # in each view's reslice matrix, not in the camera direction.
+        cam.SetFocalPoint(cx, cy, cz)
+        cam.SetPosition(cx, cy, cz + dist)
+        cam.SetViewUp(0, 1, 0)
         try:
-            cam.SetParallelScale(0.5*max(dx, dy))
+            # ParallelScale is half the visible height. To avoid horizontal
+            # clipping in narrow/tall panes, include renderer aspect ratio.
+            try:
+                aspect = float(ren.GetTiledAspectRatio())
+            except Exception:
+                aspect = 1.0
+            if aspect <= 1e-6:
+                aspect = 1.0
+            needed_half_height = 0.5 * max(dy, dx / aspect)
+            cam.SetParallelScale(needed_half_height)
         except Exception:
             pass
         ren.ResetCameraClippingRange()
@@ -3797,6 +3806,9 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
             axes = v['sagittal']['axes']; axes.SetElement(0, 3, float(ix))
             v['sagittal']['reslice'].SetResliceAxes(axes); v['sagittal']['reslice'].Update()
             v['sagittal']['actor'].SetInputData(v['sagittal']['reslice'].GetOutput())
+        # Keep each pane centered and clipping stable after updates
+        for name in ('axial', 'coronal', 'sagittal'):
+            self._center_view(name)
         # Update crosshair lines per view
         self._update_crosshair_for_view('axial')
         self._update_crosshair_for_view('coronal')
@@ -3817,28 +3829,27 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
         lh, ah = v.get('cross_h', (None, None))
         if lv is None or lh is None:
             return
-        # Helper: IJK -> world (using sform/qform if available)
-        def ijk_to_world(i: float, j: float, k: float):
-            M = getattr(self, '_M_ijk_to_world', None)
-            if M is None:
-                return float(i), float(j), float(k)
-            vec = [float(i), float(j), float(k), 1.0]
-            out = [0.0, 0.0, 0.0, 1.0]
-            for r in range(4):
-                out[r] = sum(M.GetElement(r, c) * vec[c] for c in range(4))
-            return out[0], out[1], out[2]
-        x0, x1, y0, y1, z0, z1 = self._iex
+        # Draw in reslice output coordinates (the same frame shown by vtkImageActor).
+        out_img = v['reslice'].GetOutput()
+        ox0, ox1, oy0, oy1, _oz0, _oz1 = out_img.GetExtent()
         ix, iy, iz = self._cx, self._cy, self._cz
-        # Build endpoints per orientation in world coords
+        zc = 0.01
+        # Build endpoints per orientation in output coords
         if name == 'axial':
-            p1 = ijk_to_world(ix, y0, iz); p2 = ijk_to_world(ix, y1, iz)  # vertical (Y)
-            q1 = ijk_to_world(x0, iy, iz); q2 = ijk_to_world(x1, iy, iz)  # horizontal (X)
+            p1 = (float(ix), float(oy0), zc)
+            p2 = (float(ix), float(oy1), zc)
+            q1 = (float(ox0), float(iy), zc)
+            q2 = (float(ox1), float(iy), zc)
         elif name == 'coronal':
-            p1 = ijk_to_world(ix, iy, z0); p2 = ijk_to_world(ix, iy, z1)  # vertical (Z)
-            q1 = ijk_to_world(x0, iy, iz); q2 = ijk_to_world(x1, iy, iz)  # horizontal (X)
+            p1 = (float(ix), float(oy0), zc)
+            p2 = (float(ix), float(oy1), zc)
+            q1 = (float(ox0), float(iz), zc)
+            q2 = (float(ox1), float(iz), zc)
         else:  # sagittal
-            p1 = ijk_to_world(ix, y0, iz); p2 = ijk_to_world(ix, y1, iz)  # vertical (Y)
-            q1 = ijk_to_world(ix, iy, z0); q2 = ijk_to_world(ix, iy, z1)  # horizontal (Z)
+            p1 = (float(iy), float(oy0), zc)
+            p2 = (float(iy), float(oy1), zc)
+            q1 = (float(ox0), float(iz), zc)
+            q2 = (float(ox1), float(iz), zc)
         lv.SetPoint1(*p1); lv.SetPoint2(*p2)
         lh.SetPoint1(*q1); lh.SetPoint2(*q2)
         try:
