@@ -230,6 +230,10 @@ process_file() {
     if [[ "$measure" == "area" ]]; then
       areal_str="-areal"
       areal=1
+    else
+      # Reset areal flags for non-area measures to prevent carry-over from previous files
+      areal_str=""
+      areal=0
     fi
     sphere_reg=".sphere.reg"
     rh_bname="${bname/lh./rh.}"
@@ -271,6 +275,23 @@ process_file() {
 process()
 {  
   n="${#FILES[@]}"
+  
+  # Check for mixed area/non-area measures in serial mode (same as parallel check)
+  local has_area=0 has_other=0
+  for f in "${FILES[@]}"; do
+    local b m
+    b=$(basename "$f")
+    m=${b#*.}; m=${m%%.*}
+    if [[ "$m" == "area" ]]; then
+      has_area=1
+    else
+      has_other=1
+    fi
+  done
+  if [[ "$has_area" -eq 1 && "$has_other" -eq 1 ]]; then
+    echo -e "${RED}Cannot mix 'area' measure with other measures because we have to use areal interpolation exclusively for surface area.${NC}" >&2
+    exit 1
+  fi
   
   for f in "${FILES[@]}"; do
     if [[ ! -f "$f" && ! -L "$f" ]]; then
