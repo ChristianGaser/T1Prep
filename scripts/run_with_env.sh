@@ -41,7 +41,7 @@ fi
 
 # On macOS, remove quarantine attributes to prevent Gatekeeper blocking
 if [[ "$(uname)" == "Darwin" ]]; then
-    echo xattr -dr com.apple.quarantine "$ENV_DIR" 2>/dev/null || true
+    xattr -dr com.apple.quarantine "$ENV_DIR""$ENV_DIR"/lib/python*/site-packages/PySide6 2>/dev/null || true
 fi
 
 # Run the script
