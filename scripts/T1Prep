@@ -485,6 +485,10 @@ surface_estimation()
     cmd="CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
     run_cmd_log "${report_log}" "$cmd"
 
+    # Remove self-intersections
+    cmd="CAT_SurfRemoveIntersections ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
+    run_cmd_log "${report_log}" "$cmd"
+
     # Updates progress
     ((count++))
     if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Map thickness values           "; fi
@@ -1297,6 +1301,7 @@ ${BOLD}Used Functions:${NC}
   CAT_SurfCorrectThicknessFolding
   CAT_SurfReduce
   CAT_SurfResample
+  CAT_SurfRemoveIntersections
   segment.py
   progress_bar_multi.sh
   parallelize
