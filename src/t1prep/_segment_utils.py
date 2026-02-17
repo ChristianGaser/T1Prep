@@ -227,10 +227,55 @@ def _compute_sulcal_depth_weight(
     return depth_weight.astype(np.float32)
 
 
+def _remove_isolated_wm_components(
+    gm,
+    wm,
+    csf,
+    wm_core,
+    min_island_voxels=64,
+):
+    """Move small isolated WM islands (outside core) from WM to CSF.
+
+    WM islands are defined on a hard WM map (argmax over CSF/GM/WM). Components
+    touching ``wm_core`` are preserved, while detached components smaller than
+    ``min_island_voxels`` are treated as vessel-like outliers.
+    """
+    if min_island_voxels <= 0:
+        return gm, wm, csf
+
+    wm_hard = (wm > gm) & (wm > csf)
+    if not np.any(wm_hard):
+        return gm, wm, csf
+
+    labels, n_labels = label_image(wm_hard, generate_binary_structure(3, 3))
+    if n_labels == 0:
+        return gm, wm, csf
+
+    sizes = np.bincount(labels.ravel())
+    remove_mask = np.zeros_like(wm_hard)
+
+    for idx in range(1, len(sizes)):
+        if sizes[idx] >= min_island_voxels:
+           continue
+        comp = labels == idx
+        if np.any(comp & wm_core):
+            continue
+        remove_mask |= comp
+
+    if np.any(remove_mask):
+        tissue_mass = csf[remove_mask] + gm[remove_mask] + wm[remove_mask]
+        csf[remove_mask] = tissue_mass
+        gm[remove_mask] = 0
+        wm[remove_mask] = 0
+
+    return gm, wm, csf
+
+
 def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
                     csf_TPM=None, vessel_TPM=None, intensity=None,
                     csf_shrink_iters=1, sulcal_min_depth_mm=0.4,
-                    sulcal_full_depth_mm=1.2, sulcal_gate=0.2):
+                    sulcal_full_depth_mm=1.2, sulcal_gate=0.2,
+                    wm_close_iters=1, wm_min_island_voxels=64):
     """Clean/regularize CSF, GM, and WM probability maps by removing vessel-like
     misclassifications in CSF spaces *outside the cerebellum*, while preserving
     cortical/cerebellar parenchyma.
@@ -239,14 +284,16 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
 
     **Stage A – Morphological cleanup** (always runs):
 
-    1) WM core: Threshold WM and keep only the largest connected component, then
-       dilate once (26-connectivity) to obtain a robust parenchyma core.
+     1) WM core: Threshold WM, optionally apply initial closing to preserve thin
+         WM continuity, keep the largest connected component, then dilate once
+         (26-connectivity) to obtain a robust parenchyma core.
     2) Vessel-targeting mask: Voxels that are (a) outside the WM core,
        (b) outside the cerebellum (if provided), and (c) likely CSF per a TPM
        (> 2.5% on a 0-255 scale, if provided).
     3) WM->GM inside that mask: Collapse thin/high-intensity vessel fragments
        that were misclassified as WM in CSF spaces.
-    4) Identify vessels by assuming that they are surrounded by CSF or GM
+     4) Remove small isolated WM islands (detached from WM core), then identify
+         vessels by assuming that they are surrounded by CSF or GM
        (checked by filling) and are estimated as WM. Vessels are moved into
        CSF.
     5) Parenchyma support: Grayscale opening of (GM+WM) to remove narrow
@@ -305,6 +352,12 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     sulcal_gate : float, optional
         Minimum sulcal-depth weight required for aggressive cleanup in CSF-TMP-
         guided mode (default: 0.2).
+    wm_close_iters : int, optional
+        Number of initial binary closing iterations on WM>threshold mask before
+        extracting the WM core (default: 1). Helps preserve thin WM continuity.
+    wm_min_island_voxels : int, optional
+        Minimum voxel size for detached WM components to be kept (default: 64).
+        Smaller detached islands are moved from WM to CSF.
 
     Returns
     -------
@@ -339,7 +392,12 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     # ================================================================
 
     # 1) Robust WM core from the largest component, slightly dilated.
-    wm_morph = find_largest_cluster(wm > threshold_wm)
+    wm_seed = wm > threshold_wm
+    if wm_close_iters > 0:
+        wm_seed = binary_closing(
+            wm_seed, generate_binary_structure(3, 3), wm_close_iters
+        )
+    wm_morph = find_largest_cluster(wm_seed)
     wm_morph = binary_dilation(wm_morph, generate_binary_structure(3, 3), 1)
 
     # 2) Vessel-targeting mask: outside WM core, outside cerebellum, and
@@ -365,7 +423,16 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     gm[mask] += wm[mask]
     wm[mask] = 0
 
-    # 4) Fill-based vessel detection: WM voxels surrounded by CSF/GM -> CSF.
+    # 4) Remove isolated WM islands and then run fill-based vessel detection:
+    #    WM voxels surrounded by CSF/GM -> CSF.
+    gm, wm, csf = _remove_isolated_wm_components(
+        gm,
+        wm,
+        csf,
+        wm_morph,
+        min_island_voxels=wm_min_island_voxels,
+    )
+
     lbl = np.argmax(np.stack([csf, gm, wm], axis=0), axis=0)
     csf_label = lbl == 0
     gm_label = lbl == 1
