@@ -293,9 +293,9 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     3) WM->GM inside that mask: Collapse thin/high-intensity vessel fragments
        that were misclassified as WM in CSF spaces.
      4) Remove small isolated WM islands (detached from WM core), then identify
-         vessels by assuming that they are surrounded by CSF or GM
-       (checked by filling) and are estimated as WM. Vessels are moved into
-       CSF.
+         vessels estimated as WM and reassign them by neighborhood context:
+         vessels fully surrounded by GM are moved to GM, all other vessel voxels
+         are moved to CSF.
     5) Parenchyma support: Grayscale opening of (GM+WM) to remove narrow
        bridges (e.g., vessels), then keep the largest component and union
        with the cerebellum mask (if provided).
@@ -390,7 +390,6 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     # ================================================================
     # Stage A – Morphological cleanup (original pipeline, unchanged)
     # ================================================================
-
     # 1) Robust WM core from the largest component, slightly dilated.
     wm_seed = wm > threshold_wm
     if wm_close_iters > 0:
@@ -400,6 +399,7 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     wm_morph = find_largest_cluster(wm_seed)
     wm_morph = binary_dilation(wm_morph, generate_binary_structure(3, 3), 1)
 
+    """
     # 2) Vessel-targeting mask: outside WM core, outside cerebellum, and
     #    (optionally) CSF-like.
     mask = ~wm_morph
@@ -422,9 +422,10 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     # 3) Collapse WM vessels in CSF spaces to GM.
     gm[mask] += wm[mask]
     wm[mask] = 0
+    """
 
-    # 4) Remove isolated WM islands and then run fill-based vessel detection:
-    #    WM voxels surrounded by CSF/GM -> CSF.
+    # 4) Remove isolated WM islands and then run fill-based vessel detection.
+    #    Reassignment rule: fully GM-surrounded vessels -> GM, else -> CSF.
     gm, wm, csf = _remove_isolated_wm_components(
         gm,
         wm,
@@ -442,8 +443,16 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     vessels = wm_label & binary_dilation(
         gm_filled & csf_filled, generate_binary_structure(3, 3), 1
     )
-    csf[vessels] += wm[vessels]
-    wm[vessels] = 0
+    gm_surrounded = vessels & binary_erosion(
+        gm_filled, generate_binary_structure(3, 3), 1
+    )
+    not_gm_surrounded = vessels & ~gm_surrounded
+
+    gm[gm_surrounded] += wm[gm_surrounded]
+    wm[gm_surrounded] = 0
+
+    csf[not_gm_surrounded] += wm[not_gm_surrounded]
+    wm[not_gm_surrounded] = 0
 
     # 5) Build parenchyma support via grayscale opening and largest component.
     gm_wm = grey_opening(gm + wm, size=[3, 3, 3])
