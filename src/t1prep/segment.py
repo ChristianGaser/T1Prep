@@ -69,7 +69,6 @@ from _segment_utils import (
     get_atlas,
     get_partition,
     cleanup_vessels,
-    cleanup_vessels,
     get_regions_mask,
     correct_label_map,
     apply_LAS,
@@ -1087,17 +1086,31 @@ def run_segment():
             is_label_atlas=False,
         )
         vessel_TPM = atlas.get_fdata().copy()
+
+        atlas = get_atlas(
+            t1,
+            affine,
+            p0_large.header,
+            p0_large.affine,
+            "csf_TPM",
+            None,
+            device,
+            is_label_atlas=False,
+        )
+        csf_TPM = atlas.get_fdata().copy()
+
         # Only modify label image for surface processing
         if vessel > 0:
             p0_large, _, _, _ = cleanup_vessels(
-                p1_large, p2_large, p3_large, vessel, None, None, vessel_TPM
+                p1_large, p2_large, p3_large, vessel, None, csf_TPM,
+                vessel_TPM, brain_large
             )
         # This is a hidden feature for testing since vessel removal for VBM was 
         # not ending in better accuracy
         else:
             p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
-                p1_large, p2_large, p3_large, np.abs(vessel), None, None, 
-                vessel_TPM
+                p1_large, p2_large, p3_large, np.abs(vessel), None, None,
+                vessel_TPM, brain_large
             )
     else:
         gm = p1_large.get_fdata()
