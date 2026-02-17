@@ -11,6 +11,7 @@ from scipy.ndimage import (
     binary_dilation,
     binary_closing,
     binary_erosion,
+    distance_transform_edt,
     generate_binary_structure,
     gaussian_laplace,
     grey_opening,
@@ -193,8 +194,43 @@ def _compute_vessel_score(
     return score.astype(np.float32)
 
 
+def _compute_sulcal_depth_weight(
+    csf_TPM,
+    spacing,
+    csf_threshold=0.1 * 255,
+    shrink_iters=1,
+    min_depth_mm=0.4,
+    full_depth_mm=1.2,
+):
+    """Return a CSF depth weight that downweights gyral crowns.
+
+    The weight is 0 near the outer CSF boundary (crown-adjacent voxels) and
+    approaches 1 toward deeper CSF voxels (sulcal bottoms / CSF cores).
+    """
+    bin_struct3 = generate_binary_structure(3, 3)
+    csf_mask = csf_TPM >= csf_threshold
+    if not np.any(csf_mask):
+        return np.zeros_like(csf_TPM, dtype=np.float32)
+
+    depth_mm = distance_transform_edt(csf_mask, sampling=spacing)
+    depth_weight = np.clip(
+        (depth_mm - min_depth_mm) / max(full_depth_mm - min_depth_mm, 1e-10),
+        0,
+        1,
+    )
+
+    # Optional TPM shrinkage to suppress outer CSF shell (crown-adjacent).
+    if shrink_iters > 0:
+        inner = binary_erosion(csf_mask, bin_struct3, shrink_iters)
+        depth_weight[inner] = np.maximum(depth_weight[inner], 0.5)
+
+    return depth_weight.astype(np.float32)
+
+
 def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
-                    csf_TPM=None, vessel_TPM=None, intensity=None):
+                    csf_TPM=None, vessel_TPM=None, intensity=None,
+                    csf_shrink_iters=1, sulcal_min_depth_mm=0.4,
+                    sulcal_full_depth_mm=1.2, sulcal_gate=0.2):
     """Clean/regularize CSF, GM, and WM probability maps by removing vessel-like
     misclassifications in CSF spaces *outside the cerebellum*, while preserving
     cortical/cerebellar parenchyma.
@@ -259,6 +295,16 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
         spatial priors) as a second pass after the morphological cleanup.
         Percentile normalisation is applied internally, so the image can be
         piecewise-linear scaled or raw bias-corrected.
+    csf_shrink_iters : int, optional
+        Number of erosions applied to CSF TPM support when building sulcal-depth
+        weighting (default: 1). Higher values suppress crown-adjacent cleanup.
+    sulcal_min_depth_mm : float, optional
+        Depth in mm below which CSF voxels get weight 0 (default: 0.4).
+    sulcal_full_depth_mm : float, optional
+        Depth in mm above which CSF voxels get weight 1 (default: 1.2).
+    sulcal_gate : float, optional
+        Minimum sulcal-depth weight required for aggressive cleanup in CSF-TMP-
+        guided mode (default: 0.2).
 
     Returns
     -------
@@ -286,6 +332,7 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     wm = wm0.get_fdata().copy()
     csf = csf0.get_fdata().copy()
     spacing = np.array(gm0.header.get_zooms()[:3])
+    csf_depth_weight = None
 
     # ================================================================
     # Stage A – Morphological cleanup (original pipeline, unchanged)
@@ -301,7 +348,16 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
     if cerebellum is not None:
         mask = mask & (cerebellum == 0)
     if csf_TPM is not None:
+        csf_depth_weight = _compute_sulcal_depth_weight(
+            csf_TPM,
+            spacing,
+            csf_threshold=0.1 * 255,
+            shrink_iters=csf_shrink_iters,
+            min_depth_mm=sulcal_min_depth_mm,
+            full_depth_mm=sulcal_full_depth_mm,
+        )
         mask = mask & (csf_TPM >= 0.1 * 255)
+        mask = mask & (csf_depth_weight >= sulcal_gate)
     if vessel_TPM is not None:
         mask = mask & (vessel_TPM >= 0.05 * 255)
 
@@ -347,10 +403,14 @@ def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
         vessel_score = _compute_vessel_score(
             img, wm_morph, spacing, csf_TPM, vessel_TPM
         )
+        if csf_depth_weight is not None:
+            vessel_score *= csf_depth_weight
 
         # 8) Reclassify voxels that survived Stage A but score high as
         #    vessels.  Use a conservative threshold so cortical GM is safe.
         candidate = (vessel_score > 0.15) & ~wm_morph
+        if csf_depth_weight is not None:
+            candidate &= csf_depth_weight >= sulcal_gate
         if cerebellum is not None:
             candidate &= cerebellum == 0
 
