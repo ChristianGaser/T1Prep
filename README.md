@@ -176,7 +176,7 @@ To prevent auto-opening a browser window:
 ```
 
 Uploaded files are stored under `webui_uploads/` and per-job logs under
-`/tmp/webui_jobs/`.
+`webui_jobs/`.
 
 ## Docker
 
