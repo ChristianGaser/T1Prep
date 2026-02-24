@@ -14,11 +14,11 @@ set +u
 source "$SCRIPT_DIR/utils.sh"
 set -u
 
-T1PREP_VERSION=0.2.4
 USE_AMAP=0
 
 OUT_DIR=""
 DRY_RUN=0
+DEBUG=0
 
 declare -a T1PREP_ARGS=()
 declare -a TIMEPOINT_ORDER=()
@@ -89,6 +89,9 @@ parse_args() {
                 ;;
             --dry-run)
                 DRY_RUN=1
+                ;;
+            --debug)
+                DEBUG=1
                 ;;
             -h|--help)
                 print_usage
@@ -179,6 +182,9 @@ run_step() {
     if (( DRY_RUN )); then
         echo "DRY-RUN: $*"
     else
+        if (( DEBUG )); then
+            echo "$@"
+        fi
         "$@"
     fi
 }

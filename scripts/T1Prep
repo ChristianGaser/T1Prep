@@ -28,7 +28,6 @@
 # ----------------------------------------------------------------------
 
 # Defaults
-version=0.3.0
 # Resolve this script's directory robustly (works even if invoked via symlink)
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -813,7 +812,7 @@ process()
 
     # Save all output in log-file
     report_log=${report_dir}/${Log_file}
-    echo "T1Prep version ${version}" > "${report_log}"
+    echo "T1Prep version ${T1PREP_VERSION}" > "${report_log}"
     date >> "${report_log}"
     echo "${os_type}" >> "${report_log}"
     cuda=$(${python} -c "import torch; print(torch.cuda.is_available())" 2>/dev/null)
@@ -1121,9 +1120,9 @@ ${BOLD}${GREEN}Save Options:${NC}
       Examples:
         Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
         Default output (no --out-dir):
-            /data/study/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+            /data/study/derivatives/T1Prep-v${T1PREP_VERSION}/sub-01/ses-1/anat/
         With --out-dir /results:
-            /results/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
+            /results/derivatives/T1Prep-v${T1PREP_VERSION}/sub-01/ses-1/anat/
 
         Input: /data/T1_images/subject01.nii.gz
         Default output (no --out-dir):

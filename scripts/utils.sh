@@ -23,7 +23,9 @@
 # ______________________________________________________________________
 
 # defaults
+T1PREP_VERSION=0.3.0
 os_type=$(uname -s) # Determine OS type
+
 # Directory of this utils.sh file (robust when sourced)
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root_dir="$(cd "${script_dir}/.." && pwd)"
