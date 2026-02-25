@@ -23,6 +23,7 @@
 - [Docker](#docker)
 - [Output Folder Structure and Naming Conventions](#output-folder-structure-and-naming-conventions)
 - [Usage](#usage)
+- [Helper Scripts](#helper-scripts)
 - [Python API](#python-api)
 - [Options](#options)
 - [Output folders structure](#output-folders-structure)
@@ -261,6 +262,94 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
 ## Usage
 ```bash
 ./scripts/T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
+```
+
+## Helper Scripts
+
+In addition to `./scripts/T1Prep`, the following wrappers provide convenient
+entry points for Web UI and CAT-Surface post-processing.
+
+### `./scripts/T1Prep_ui`
+
+Launches the Flask Web UI (same tool described in the [Web UI (Flask)](#web-ui-flask) section).
+
+```bash
+./scripts/T1Prep_ui
+./scripts/T1Prep_ui 5500
+./scripts/T1Prep_ui --no-browser
+```
+
+- Default port: `5050`
+- Optional positional port argument (e.g., `5500`)
+- `--no-browser` disables auto-launching a browser/app window
+
+### `./scripts/CAT_SurfResampleMulti_ui`
+
+Resamples LH/RH surface values to target spheres and writes a combined output
+per LH input using `CAT_SurfResampleMulti`.
+
+```bash
+./scripts/CAT_SurfResampleMulti_ui [options] lh.thickness.subject.gii
+```
+
+Common options:
+- `--out <DIR>` output directory
+- `--res <STR>` output surface resolution (`32k` or `4k`)
+- `--fwhm <FLOAT>` smoothing FWHM
+- `--trg-sphere <FILE>` target LH sphere
+- `--mask <FILE>` target LH mask
+- `--jobs <N>` parallel worker count
+
+Input expectations:
+- Supports `lh.*` naming and auto-derives RH counterparts
+- BIDS-style `*_left*` naming is currently not implemented
+
+### `./scripts/CAT_SurfParameters_ui`
+
+Computes surface parameters from mesh files using CAT-Surface binaries
+(`CAT_SurfCurvature`, `CAT_SurfFractalDimension`, `CAT_SurfArea`,
+`CAT_SurfRatio`, `CAT_SurfSulcusDepth`).
+
+```bash
+./scripts/CAT_SurfParameters_ui [options] lh.central.gii
+```
+
+Common options:
+- `-gy`, `-mc`, `-gc`, `-cv`, `-si`, `-sh`, `-fi`, `-area`, `-fd`, `-sr`, `-sra`
+- `-depth`, `-sqrt-depth`, `-min-curv`, `-max-curv`, `-dp`
+- `-gifti` write GIfTI output
+- `-noclobber` do not overwrite existing files
+- `--jobs <N>` / `--no-parallel` parallel control
+
+Input expectations:
+- Accepts `.obj` and `.gii`
+- For `lh.*` files, matching `rh.*` is processed automatically when available
+
+### `./scripts/CAT_Surf2ROIMulti_ui`
+
+Extracts ROI-wise values from surface value files using `CAT_Surf2ROIMulti`.
+For each LH input, RH files are derived automatically.
+
+```bash
+./scripts/CAT_Surf2ROIMulti_ui [options] lh.thickness.subject.gii
+```
+
+Common options:
+- `--out <DIR>` output directory
+- `--res <STR>` surface/atlas resolution (default `32k`)
+- `--trg-sphere <FILE>` target LH sphere
+- `--annot <NAMES>` one or multiple atlas names
+- `--jobs <N>` / `--no-parallel` parallel control
+
+Atlas names for `--annot` are resolved as:
+- `src/t1prep/data/atlases_surfaces_<res>/lh.<name>.annot`
+- `src/t1prep/data/atlases_surfaces_<res>/rh.<name>.annot`
+
+Multi-atlas examples:
+
+```bash
+./scripts/CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'" lh.thickness.subject.gii
+./scripts/CAT_Surf2ROIMulti_ui --annot "aparc_DK40.freesurfer,aparc_a2009s.freesurfer" lh.thickness.subject.gii
 ```
 
 ## Python API
