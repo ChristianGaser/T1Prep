@@ -352,7 +352,7 @@ surface_estimation()
   fshemi="${fshemi/right/rh}"
   Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
   Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
-  Fsavgatlas=${atlas_templates_dir}/${fshemi}
+  Fsavgatlas=${atlas_templates_dir}
 
   # BIDS dependent parameters for coding hemispheres and column in Names.tsv
   if [[ $use_bids_naming -eq 1 ]]; then
@@ -565,18 +565,14 @@ surface_estimation()
       run_cmd_log "${report_log}" "$cmd"
       
       # Resamples atlases to individual surface space
-      cmd=()  # reset to avoid re-running CAT_SurfWarp when appending
       code="ATLAS_label"
       pattern=$(get_pattern "$code" "$name_columns")
-      # Create dynamic variables for filenames
-      for atl in ${atlas_surf}; do
-        value=$(substitute_pattern "$pattern" "$hemi" "" "" "$atl")
-        # Use eval to assign the result to a variable named after the code
-        eval "${code}=\"\$value\""
-
-        cmd+=( "CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgatlas}.${atl}.annot ${surf_dir}/${ATLAS_label}" )
+      for atl in ${atlas_surf//,/ }; do
+        # Create dynamic variables for filenames
+        value=$(substitute_pattern "$pattern" "$hemi" "" "" "${atl//\'/}")
+        cmd=( "CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgatlas}/${hemi}.${atl//\'/}.annot ${surf_dir}/${value}" )
+        run_cmd_log "${report_log}" "${cmd[@]}"
       done
-      run_cmd_log "${report_log}" "${cmd[@]}"
     fi
 
     # remove temporary files if not debugging
