@@ -1,0 +1,413 @@
+#!/usr/bin/env bash
+#
+# PURPOSE:
+#   Extract ROI-wise values from left (and optional right) hemisphere surface
+#   value files using CAT_Surf2ROIMulti.
+#
+# USAGE:
+#   CAT_Surf2ROIMulti_ui [options] <lh_input_value_file> [<lh_input_value_file> ...]
+#
+# INPUT:
+#   Left hemisphere value files (e.g. lh.thickness.gii or lh.thickness.dat).
+#   The script auto-derives corresponding sphere.reg files and right hemisphere
+#   counterparts by name.
+#
+# OUTPUT:
+#   One ROI table file (JSON by default) per left input file.
+# ______________________________________________________________________
+#
+# Christian Gaser
+# Structural Brain Mapping Group (https://neuro-jena.github.io)
+# Departments of Neurology and Psychiatry
+# Jena University Hospital
+# ______________________________________________________________________
+
+# ----------------------------------------------------------------------
+# global parameters
+# ----------------------------------------------------------------------
+
+# Parameters
+res="32k"
+
+# defaults
+os_type=$(uname -s) # Determine OS type
+
+script_dir=$(dirname "$0")
+root_dir=$(dirname "$script_dir")
+surf_templates_dir=${root_dir}/src/t1prep/data/templates_surfaces_${res}
+atlas_templates_dir=${root_dir}/src/t1prep/data/atlases_surfaces_${res}
+
+source "${script_dir}/utils.sh"
+
+JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
+PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
+
+lh_trg_sphere=${surf_templates_dir}/lh.sphere.freesurfer.gii
+lh_annot=${atlas_templates_dir}/lh.aparc_DK40.freesurfer.annot
+
+# Parallelization (via scripts/parallelize)
+parallel=1
+jobs=""
+
+declare -a FILES=()
+declare -a ATLAS_NAMES=()
+declare -a LH_ARRAY=()
+declare -a RH_ARRAY=()
+declare -a OUT_ARRAY=()
+
+# ----------------------------------------------------------------------
+# run main
+# ----------------------------------------------------------------------
+
+main()
+{
+  parse_args ${1+"$@"}
+  get_OS
+
+  # Optional parallel execution: delegate one input per process via scripts/parallelize
+  if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
+    local -a cmd_argv
+    local atlas_names_joined
+    atlas_names_joined=$(IFS=,; echo "${ATLAS_NAMES[*]}")
+    cmd_argv=("$0" "--no-parallel" "--res" "$res" "--trg-sphere" "$lh_trg_sphere" "--annot" "$atlas_names_joined")
+
+    if [[ -n "$rh_trg_sphere" ]]; then
+      cmd_argv+=("--trg-sphere-rh" "$rh_trg_sphere")
+    fi
+    if [[ -n "${out:-}" ]]; then
+      cmd_argv+=("--out" "$out")
+    fi
+
+    local command_str=""
+    local arg
+    for arg in "${cmd_argv[@]}"; do
+      command_str+="$(printf '%q ' "$arg")"
+    done
+    command_str=${command_str% }
+
+    if [[ -n "$jobs" ]]; then
+      "${script_dir}/parallelize" -p "$jobs" -c "$command_str" "${FILES[@]}"
+    else
+      "${script_dir}/parallelize" -c "$command_str" "${FILES[@]}"
+    fi
+    exit $?
+  fi
+
+  process
+
+  exit 0
+}
+
+# ----------------------------------------------------------------------
+# check arguments and files
+# ----------------------------------------------------------------------
+
+parse_args()
+{
+  local optname optarg
+
+  ATLAS_NAMES=("aparc_DK40.freesurfer")
+
+  if [ $# -lt 1 ]; then
+    help
+    exit 1
+  fi
+
+  count=0
+  while [ $# -gt 0 ]; do
+    optname="${1%%=*}"
+    optarg="${2:-}"
+
+    case "$1" in
+      --out)
+        exit_if_empty "$optname" "$optarg"
+        out=$optarg
+        shift
+        ;;
+      --no-parallel)
+        parallel=0
+        ;;
+      --jobs|--processes|-p)
+        exit_if_empty "$optname" "$optarg"
+        jobs=$optarg
+        shift
+        ;;
+      --res)
+        exit_if_empty "$optname" "$optarg"
+        res=$optarg
+        shift
+        ;;
+      --trg-sphere)
+        exit_if_empty "$optname" "$optarg"
+        lh_trg_sphere=$optarg
+        shift
+        ;;
+      --trg-sphere-rh)
+        exit_if_empty "$optname" "$optarg"
+        rh_trg_sphere=$optarg
+        shift
+        ;;
+      --annot)
+        exit_if_empty "$optname" "$optarg"
+        ATLAS_NAMES=()
+        local annot_list annot_item annot_clean
+        annot_list="$optarg"
+        IFS=',' read -r -a annot_items <<< "$annot_list"
+        for annot_item in "${annot_items[@]}"; do
+          annot_clean=$(echo "$annot_item" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//;s/^'//;s/'$//;s/^\"//;s/\"$//")
+          if [[ -n "$annot_clean" ]]; then
+            ATLAS_NAMES+=("$annot_clean")
+          fi
+        done
+        if [[ "${#ATLAS_NAMES[@]}" -eq 0 ]]; then
+          echo "${RED}No valid atlas names provided for --annot.${NC}" >&2
+          exit 1
+        fi
+        shift
+        ;;
+      -h | --help | --h | -v | --version | -V)
+        help
+        exit 1
+        ;;
+      -*)
+        echo "basename $0: ERROR: Unrecognized option \"$1\"" >&2
+        exit 1
+        ;;
+      *)
+        if [ ! -f "$1" ]; then
+          if [ ! -L "$1" ]; then
+            echo "${RED}File $1 was not found and will be skipped.${NC}" >&2
+          fi
+        else
+          FILES[$count]=$1
+          ((count++))
+        fi
+        ;;
+    esac
+    shift
+  done
+
+  # refresh default paths after --res change if defaults are still selected
+  local default_lh_trg
+  surf_templates_dir="${root_dir}/src/t1prep/data/templates_surfaces_${res}"
+  atlas_templates_dir="${root_dir}/src/t1prep/data/atlases_surfaces_${res}"
+  default_lh_trg="${root_dir}/src/t1prep/data/templates_surfaces_${res}/lh.sphere.freesurfer.gii"
+  if [[ "$lh_trg_sphere" == */templates_surfaces_*/lh.sphere.freesurfer.gii ]]; then
+    lh_trg_sphere="$default_lh_trg"
+  fi
+
+  # RH hemisphere fallback
+  if [[ -z "$rh_trg_sphere" ]]; then
+    rh_trg_sphere="${lh_trg_sphere/lh./rh.}"
+    rh_trg_sphere="${rh_trg_sphere/left_/right_}"
+  fi
+}
+
+# ----------------------------------------------------------------------
+# per-file processing
+# ----------------------------------------------------------------------
+process_file() {
+  local infile="$1"
+
+  local dname bname measure lh_sphere_reg rh_bname rh_sphere_reg
+  dname=$(dirname "$infile")
+  bname=$(basename "$infile")
+  
+  # write in label instead of surf
+  dname_label=$(basename "$dname")
+  if [ "$dname_label" == "surf" ]; then
+    dname_label="${dname_label//surf/label}"
+  fi
+
+  # only lh.* supported for now
+  if [[ "$bname" == lh.* ]]; then
+    measure=${bname#*.}; measure=${measure%%.*}
+    rh_bname="${bname/lh./rh.}"
+
+    lh_sphere_reg="${dname}/${bname/.$measure/.sphere.reg}.gii"
+    rh_sphere_reg="${dname}/${rh_bname/.$measure/.sphere.reg}.gii"
+
+  elif [[ "$bname" == *_left* ]]; then
+    echo -e "${RED}BIDS format not yet implemented (${bname}).${NC}" >&2
+    return 1
+  else
+    echo -e "${RED}File '$infile' should be left hemisphere data (lh.*).${NC}" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$lh_sphere_reg" && ! -L "$lh_sphere_reg" ]]; then
+    echo -e "${RED}Missing file '$lh_sphere_reg' – skipping '$infile'.${NC}" >&2
+    return 1
+  fi
+  if [[ ! -f "${dname}/${rh_bname}" && ! -L "${dname}/${rh_bname}" ]]; then
+    echo -e "${RED}Missing file '${dname}/${rh_bname}' – skipping '$infile'.${NC}" >&2
+    return 1
+  fi
+  if [[ ! -f "$rh_sphere_reg" && ! -L "$rh_sphere_reg" ]]; then
+    echo -e "${RED}Missing file '$rh_sphere_reg' – skipping '$infile'.${NC}" >&2
+    return 1
+  fi
+
+  local atlas_name lh_annot_path rh_annot_path lh_unit rh_unit out_name
+  for atlas_name in "${ATLAS_NAMES[@]}"; do
+    lh_annot_path="${atlas_templates_dir}/lh.${atlas_name}.annot"
+    rh_annot_path="${atlas_templates_dir}/rh.${atlas_name}.annot"
+
+    if [[ ! -f "$lh_annot_path" && ! -L "$lh_annot_path" ]]; then
+      echo -e "${RED}Missing atlas '$lh_annot_path' – skipping atlas '${atlas_name}'.${NC}" >&2
+      continue
+    fi
+    if [[ ! -f "$rh_annot_path" && ! -L "$rh_annot_path" ]]; then
+      echo -e "${RED}Missing atlas '$rh_annot_path' – skipping atlas '${atlas_name}'.${NC}" >&2
+      continue
+    fi
+
+    # default output naming
+    if [[ -n "${out}" ]]; then
+      out_name="${out}/${bname/lh./ROI.}.json"
+    else
+      out_name="${dname_label}/${bname/lh./ROI.}.json"
+    fi
+    out_name="${out_name/.$measure/.${measure}.${atlas_name}_${res}}"
+
+    # build units for CAT_Surf2ROIMulti
+    lh_unit="src_sphere=${lh_trg_sphere},trg_sphere=${lh_sphere_reg},annot=${lh_annot_path},vals=${dname}/${bname},hemi=lh"
+    rh_unit="src_sphere=${rh_trg_sphere},trg_sphere=${rh_sphere_reg},annot=${rh_annot_path},vals=${dname}/${rh_bname},hemi=rh"
+
+    LH_ARRAY+=("$lh_unit")
+    RH_ARRAY+=("$rh_unit")
+    OUT_ARRAY+=("$out_name")
+  done
+}
+
+
+# ----------------------------------------------------------------------
+# process data
+# ----------------------------------------------------------------------
+
+process()
+{
+  n="${#FILES[@]}"
+
+  for f in "${FILES[@]}"; do
+    if [[ ! -f "$f" && ! -L "$f" ]]; then
+      echo -e "${RED}File '$f' not found – skipping.${NC}" >&2
+      continue
+    fi
+    process_file "$f"
+  done
+
+  # Use the actual number of queued jobs (some inputs might have been skipped)
+  n="${#OUT_ARRAY[@]}"
+  if [ "$n" -lt 1 ]; then
+    echo -e "${RED}No valid input files to process.${NC}" >&2
+    exit 1
+  fi
+
+  # serial
+  if [ ${n} -gt 1 ]; then
+    mkdir -p "$PROGRESS_DIR"
+    rm -f "$PROGRESS_DIR"/*.progress
+    ${script_dir}/progress_bar_multi.sh 1 "$PROGRESS_DIR" 40 2 "CAT_Surf2ROIMulti" &
+    progress_pid=$!
+
+    # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
+    trap cleanup INT TERM
+  fi
+
+  j=1
+  for ((i=0; i<${n}; i++)); do
+    mkdir -p "$(dirname "${OUT_ARRAY[$i]}")"
+
+    if [ ${n} -gt 1 ]; then
+      echo "$j/$n" > "$PROGRESS_DIR/job0.progress"
+      ((j++))
+      echo 0 > "$PROGRESS_DIR/job0.status"
+    fi
+
+    echo "${bin_dir}/CAT_Surf2ROIMulti" \
+      -out "${OUT_ARRAY[$i]}" \
+      -unit "${LH_ARRAY[$i]}" \
+      -unit "${RH_ARRAY[$i]}"
+
+    "${bin_dir}/CAT_Surf2ROIMulti" \
+      -out "${OUT_ARRAY[$i]}" \
+      -unit "${LH_ARRAY[$i]}" \
+      -unit "${RH_ARRAY[$i]}" 2>&1
+
+    exit_code=$?
+    pids=($!)
+
+    if [[ ${n} -gt 1 && $exit_code -ne 0 ]]; then
+      echo 1 > "$PROGRESS_DIR/job0.status"
+    fi
+  done
+
+  if [ ${n} -gt 1 ]; then
+    wait $progress_pid
+    rm -r "$PROGRESS_DIR"
+  fi
+  exit $?
+}
+
+
+# ----------------------------------------------------------------------
+# help
+# ----------------------------------------------------------------------
+
+help() {
+cat << EOM
+${BOLD}${BLUE}$0
+---------------------------------------------${NC}
+
+${BOLD}USAGE:${NC}
+  ${GREEN}$0 [options] <filename(s)>${NC}
+
+${BOLD}DESCRIPTION:${NC}
+Extract ROI-wise values from left/right hemisphere value files using CAT_Surf2ROIMulti.
+For each left-hemisphere input file (lh.*), the matching right-hemisphere file is derived
+automatically by replacing lh. with rh.
+
+${BOLD}OPTIONS:${NC}
+  --out <DIR>                  Output directory (default: same as input file dir)
+  --no-parallel                Disable parallelization via ${script_dir}/parallelize
+  --jobs <N>                   Number of parallel processes (passed to parallelize -p)
+  --res <STR>                  Surface/atlas resolution (32k or 4k, default: $res)
+  --trg-sphere <FILE>          Target sphere for the left hemisphere
+  --trg-sphere-rh <FILE>       Target sphere for the right hemisphere
+  --annot <NAMES>              Atlas name(s), e.g. aparc_a2009s.freesurfer
+                               or 'aparc_a2009s.freesurfer,aparc_DK40.freesurfer'
+                               files resolved as ${atlas_templates_dir}/lh.<name>.annot
+                               and ${atlas_templates_dir}/rh.<name>.annot
+  -h | --help                  Show this help and exit
+
+${BOLD}INPUT NAMING EXPECTATIONS:${NC}
+  lh.* case (supported now)
+    lh.<measure>.something.gii|dat
+    Will look for:
+      lh.sphere.reg.gii            (same base, measure replaced by "sphere.reg")
+      rh.<measure>.something.gii|dat
+      rh.sphere.reg.gii accordingly
+
+  *_left* (BIDS) not yet implemented → the script exits with an error.
+
+${BOLD}OUTPUT:${NC}
+  For each LH input file, writes one ROI table output file (JSON by default).
+
+${BOLD}Dependencies:${NC}
+  CAT_Surf2ROIMulti
+  ${script_dir}/progress_bar_multi.sh
+  ${script_dir}/parallelize
+
+${BOLD}Author:${NC}
+  Christian Gaser (christian.gaser@uni-jena.de)
+
+EOM
+
+}
+
+# ----------------------------------------------------------------------
+# call main program
+# ----------------------------------------------------------------------
+
+main "${@}"
