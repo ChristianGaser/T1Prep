@@ -371,6 +371,7 @@ substitute_pattern() {
   pattern="${pattern//\{desc\}/$desc}"
   pattern="${pattern//\{atlas\}/$atlas_surf}"
   pattern="${pattern//\{nii_ext\}/$nii_ext}"
+  pattern="${pattern//\../.}"
   echo $pattern
 }
 
