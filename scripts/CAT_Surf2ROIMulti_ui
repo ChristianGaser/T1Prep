@@ -37,13 +37,14 @@ root_dir=$(dirname "$script_dir")
 surf_templates_dir=${root_dir}/src/t1prep/data/templates_surfaces_${res}
 atlas_templates_dir=${root_dir}/src/t1prep/data/atlases_surfaces_${res}
 
+DEFAULT_ANNOT="'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'"
+
 source "${script_dir}/utils.sh"
 
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
 PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
 
 lh_trg_sphere=${surf_templates_dir}/lh.sphere.freesurfer.gii
-lh_annot=${atlas_templates_dir}/lh.aparc_DK40.freesurfer.annot
 
 # Parallelization (via scripts/parallelize)
 parallel=1
@@ -54,6 +55,34 @@ declare -a ATLAS_NAMES=()
 declare -a LH_ARRAY=()
 declare -a RH_ARRAY=()
 declare -a OUT_ARRAY=()
+
+# ----------------------------------------------------------------------
+# helpers
+# ----------------------------------------------------------------------
+
+parse_atlas_names()
+{
+  local annot_input="$1"
+  local annot_item annot_clean
+  local -a annot_items=()
+
+  ATLAS_NAMES=()
+
+  annot_input=$(echo "$annot_input" | sed "s/,/ /g")
+  read -r -a annot_items <<< "$annot_input"
+
+  for annot_item in "${annot_items[@]}"; do
+    annot_clean=$(echo "$annot_item" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//;s/^'//;s/'$//;s/^\"//;s/\"$//")
+    if [[ -n "$annot_clean" ]]; then
+      ATLAS_NAMES+=("$annot_clean")
+    fi
+  done
+
+  if [[ "${#ATLAS_NAMES[@]}" -eq 0 ]]; then
+    echo "${RED}No valid atlas names provided for --annot.${NC}" >&2
+    exit 1
+  fi
+}
 
 # ----------------------------------------------------------------------
 # run main
@@ -104,9 +133,9 @@ main()
 
 parse_args()
 {
-  local optname optarg
+  parse_atlas_names "$DEFAULT_ANNOT"
 
-  ATLAS_NAMES=("aparc_DK40.freesurfer")
+  local optname optarg
 
   if [ $# -lt 1 ]; then
     help
@@ -142,27 +171,9 @@ parse_args()
         lh_trg_sphere=$optarg
         shift
         ;;
-      --trg-sphere-rh)
-        exit_if_empty "$optname" "$optarg"
-        rh_trg_sphere=$optarg
-        shift
-        ;;
       --annot)
         exit_if_empty "$optname" "$optarg"
-        ATLAS_NAMES=()
-        local annot_list annot_item annot_clean
-        annot_list="$optarg"
-        IFS=',' read -r -a annot_items <<< "$annot_list"
-        for annot_item in "${annot_items[@]}"; do
-          annot_clean=$(echo "$annot_item" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//;s/^'//;s/'$//;s/^\"//;s/\"$//")
-          if [[ -n "$annot_clean" ]]; then
-            ATLAS_NAMES+=("$annot_clean")
-          fi
-        done
-        if [[ "${#ATLAS_NAMES[@]}" -eq 0 ]]; then
-          echo "${RED}No valid atlas names provided for --annot.${NC}" >&2
-          exit 1
-        fi
+        parse_atlas_names "$optarg"
         shift
         ;;
       -h | --help | --h | -v | --version | -V)
@@ -325,11 +336,6 @@ process()
       echo 0 > "$PROGRESS_DIR/job0.status"
     fi
 
-    echo "${bin_dir}/CAT_Surf2ROIMulti" \
-      -out "${OUT_ARRAY[$i]}" \
-      -unit "${LH_ARRAY[$i]}" \
-      -unit "${RH_ARRAY[$i]}"
-
     "${bin_dir}/CAT_Surf2ROIMulti" \
       -out "${OUT_ARRAY[$i]}" \
       -unit "${LH_ARRAY[$i]}" \
@@ -372,11 +378,11 @@ ${BOLD}OPTIONS:${NC}
   --out <DIR>                  Output directory (default: same as input file dir)
   --no-parallel                Disable parallelization via ${script_dir}/parallelize
   --jobs <N>                   Number of parallel processes (passed to parallelize -p)
-  --res <STR>                  Surface/atlas resolution (32k or 4k, default: $res)
+  --res <STR>                  Surface/atlas resolution (default: $res)
   --trg-sphere <FILE>          Target sphere for the left hemisphere
-  --trg-sphere-rh <FILE>       Target sphere for the right hemisphere
   --annot <NAMES>              Atlas name(s), e.g. aparc_a2009s.freesurfer
-                               or 'aparc_a2009s.freesurfer,aparc_DK40.freesurfer'
+                               or "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'"
+                               or "aparc_DK40.freesurfer,aparc_a2009s.freesurfer"
                                files resolved as ${atlas_templates_dir}/lh.<name>.annot
                                and ${atlas_templates_dir}/rh.<name>.annot
   -h | --help                  Show this help and exit
