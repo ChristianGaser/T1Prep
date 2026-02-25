@@ -366,7 +366,7 @@ surface_estimation()
   fi
 
   # Create dynamic variables for filenames
-  for code in "PBT_shape" "GMT_shape" "Hemi_volume" "mT1_volume" "PPM_volume" "GMT_volume" "Mid_surface" "Pial_surface" "WM_surface" "Sphere_surface" "Spherereg_surface" "Intensity_Mid" "Intensity_Pial" "Intensity_WM"; do
+  for code in "PBT_shape" "Area_shape" "GMT_shape" "Hemi_volume" "mT1_volume" "PPM_volume" "GMT_volume" "Mid_surface" "Pial_surface" "WM_surface" "Sphere_surface" "Spherereg_surface" "Intensity_Mid" "Intensity_Pial" "Intensity_WM"; do
     pattern=$(get_pattern "$code" "$name_columns")
     value=$(substitute_pattern "$pattern" "$hemi" "" "")
     # Use eval to assign the result to a variable named after the code
@@ -547,6 +547,10 @@ surface_estimation()
       fi
       run_cmd_log "${report_log}" "${cmd[@]}"
     fi
+
+    # Estimate local surface area
+    cmd="CAT_SurfArea ${surf_dir}/${Mid_surface} ${surf_dir}/${Area_shape}"
+    run_cmd_log "${report_log}" "$cmd"
   
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
     if [ "${estimate_spherereg}" -eq 1 ]; then
@@ -570,8 +574,8 @@ surface_estimation()
       for atl in ${atlas_surf//,/ }; do
         # Create dynamic variables for filenames
         value=$(substitute_pattern "$pattern" "$hemi" "" "" "${atl//\'/}")
-        cmd=( "CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgatlas}/${hemi}.${atl//\'/}.annot ${surf_dir}/${value}" )
-        run_cmd_log "${report_log}" "${cmd[@]}"
+        cmd="CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgatlas}/${hemi}.${atl//\'/}.annot ${surf_dir}/${value}"
+        run_cmd_log "${report_log}" "${cmd[@]}"        
       done
     fi
 
@@ -1282,21 +1286,22 @@ ${BOLD}Output:${NC}
   Produces segmented images and surface extractions.
 
 ${BOLD}Used Functions:${NC}
+  CAT_Vol2Surf
   CAT_VolAmap
   CAT_VolSanlm
   CAT_VolThicknessPbt
   CAT_VolMarchingCubes
-  CAT_Vol2Surf
-  CAT_SurfAverage
   CAT_Surf2PialWhite
-  CAT_SurfDistance
-  CAT_SurfWarp
   CAT_Surf2Sphere
-  CAT_SurfDeform
+  CAT_SurfArea
+  CAT_SurfAverage
   CAT_SurfCorrectThicknessFolding
+  CAT_SurfDistance
+  CAT_SurfDeform
   CAT_SurfReduce
-  CAT_SurfResample
   CAT_SurfRemoveIntersections
+  CAT_SurfResample
+  CAT_SurfWarp
   segment.py
   progress_bar_multi.sh
   parallelize

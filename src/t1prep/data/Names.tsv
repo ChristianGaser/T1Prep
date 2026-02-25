@@ -18,6 +18,7 @@ Discrepance_volume {space}pd{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-D
 Mid_surface {side}.central.{bname}.gii {bname}_hemi-{side}{space}{desc}_midthickness.surf.gii
 Pial_surface {side}.pial.{bname}.gii {bname}_hemi-{side}{space}{desc}_pial.surf.gii
 WM_surface {side}.white.{bname}.gii {bname}_hemi-{side}{space}{desc}_wm.surf.gii
+Area_shape {side}.area.{bname} {bname}_hemi-{side}{space}{desc}_area.shape.gii
 GMT_shape {side}.thickness.{bname} {bname}_hemi-{side}{space}{desc}_thickness.shape.gii
 PBT_shape {side}.pbt.{bname} {bname}_hemi-{side}{space}{desc}_pbt.shape.gii
 ATLAS_label {side}.{atlas}.{bname}.annot {bname}_hemi-{side}{space}{desc}_{atlas}.label.gii
