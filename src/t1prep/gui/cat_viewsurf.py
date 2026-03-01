@@ -3372,8 +3372,8 @@ class Viewer(QtWidgets.QMainWindow):
             data = data[np.isfinite(data)] if data.size else data
             # Determine range: prefer overlay_range if valid
             rng = None
-            if self.overlay_range[1] > self.overlay_range[0]:
-                rng = (float(self.overlay_range[0]), float(self.overlay_range[1]))
+            if (self.overlay_range[1] - 1.0) > (self.overlay_range[0] + 0.5):
+                rng = (float(self.overlay_range[0]) + 0.5, float(self.overlay_range[1]) - 1.0)
             hw.set_data(data, rng)
         except Exception:
             pass
