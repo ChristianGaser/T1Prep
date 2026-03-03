@@ -1,5 +1,6 @@
 import math
 import torch
+import os
 import numpy as np
 import nibabel as nib
 import torch.nn.functional as F
@@ -11,6 +12,7 @@ from scipy.ndimage import (
     binary_dilation,
     binary_closing,
     binary_erosion,
+    convolve,
     distance_transform_edt,
     generate_binary_structure,
     gaussian_laplace,
@@ -103,430 +105,156 @@ def normalize_to_sum1(
         wrap_nifti(norm3, nifti3),
     )
 
-def _compute_vessel_score(
-    intensity,
-    wm_core,
-    spacing,
-    csf_TPM=None,
-    vessel_TPM=None,
-    sigma_range=(0.5, 1.0, 2.0),
-):
-    """Compute per-voxel vessel likelihood via LoG ridge detection and brightness.
 
-    Vessels on T1-weighted images appear as thin bright (WM-like) structures
-    running through dark CSF spaces.  This helper quantifies how likely each
-    voxel is to be a vessel by combining three independent cues:
+def _inpaint_vessel_pve(Yp0, vessel_mask, max_iters=200):
+    """Iteratively inpaint vessel voxels using mean of valid neighbours.
 
-    1. **Multi-scale Laplacian of Gaussian (LoG)** – bright ridges / blobs
-       give a strong *negative* LoG response.  Using several Gaussian scales
-       captures both thin (~0.5 mm) and wider (~2 mm) vessels.  Responses are
-       normalised by sigma^2 for scale-invariance (Lindeberg, 1998).
-    2. **Brightness** – above the approximate GM level.  Evaluated using
-       percentile normalisation so the function is robust to different
-       intensity scalings (LAS-normalised *or* raw bias-corrected images).
-    3. **Spatial priors** – CSF TPM and / or vessel TPM constrain the
-       detection to anatomically plausible regions.
+    Fills vessel voxels layer by layer from the boundary inward.  At each
+    iteration the mean of already-filled 3x3x3 neighbours is written into
+    the outermost unfilled layer.  Falls back to nearest-value propagation
+    for any voxels that remain unfilled after *max_iters*.
+
+    This is a Python equivalent of the iterative masked-median inpainting
+    used in ``blood_vessel_correction_pve_float`` (CAT_Vol.c).
 
     Parameters
     ----------
-    intensity : np.ndarray
-        Bias-corrected T1 intensity image (3-D).
-    wm_core : np.ndarray of bool
-        Robust WM core mask; vessel detection is suppressed inside.
-    spacing : array-like of float
-        Voxel sizes in mm (e.g. ``header.get_zooms()[:3]``).
-    csf_TPM : np.ndarray or None, optional
-        CSF tissue-probability map scaled 0-255.
-    vessel_TPM : np.ndarray or None, optional
-        Blood-vessel probability map scaled 0-255.
-    sigma_range : tuple of float, optional
-        Gaussian sigma values (mm) for multi-scale LoG
-        (default ``(0.5, 1.0, 2.0)``).
+    Yp0 : np.ndarray (float32)
+        PVE label map (CSF=1, GM=2, WM=3 with partial volumes).
+    vessel_mask : np.ndarray of bool
+        Voxels to inpaint (True = vessel).
+    max_iters : int, optional
+        Maximum number of fill iterations (default 200).
 
     Returns
     -------
     np.ndarray (float32)
-        Vessel likelihood in [0, 1] per voxel.
+        Inpainted PVE label map.
     """
-    img = intensity.astype(np.float64)
+    result = Yp0.copy().astype(np.float64)
+    result[vessel_mask] = 0.0
 
-    # --- Multi-scale LoG ridge detection ---
-    # At each scale bright ridges give a negative LoG.  Normalise by
-    # sigma^2 so that responses are comparable across scales.
-    ridge_max = np.zeros_like(img)
-    for sigma_mm in sigma_range:
-        sigma_vox = [sigma_mm / s for s in spacing]
-        log_resp = gaussian_laplace(img, sigma=sigma_vox)
-        ridge = np.clip(-log_resp * sigma_mm ** 2, 0, None)
-        ridge_max = np.maximum(ridge_max, ridge)
+    valid = (~vessel_mask).astype(np.float64)
+    remaining = vessel_mask.copy()
+    kernel = np.ones((3, 3, 3), dtype=np.float64)
 
-    pos = ridge_max > 0
-    if pos.any():
-        p99 = np.percentile(ridge_max[pos], 99)
-        ridge_score = np.clip(ridge_max / max(p99, 1e-10), 0, 1)
-    else:
-        ridge_score = ridge_max  # all zeros
+    for _ in range(max_iters):
+        if not np.any(remaining):
+            break
 
-    # --- Brightness (above ~GM level, percentile-normalised) ---
-    tissue = img > 0
-    if tissue.any():
-        p50 = np.percentile(img[tissue], 50)  # ~ GM
-        p90 = np.percentile(img[tissue], 90)  # ~ WM
-    else:
-        p50, p90 = 0.5, 1.0
-    bright_score = np.clip(
-        (img - p50) / max(p90 - p50, 1e-10), 0, 1
-    )
+        val_sum = convolve(result * valid, kernel, mode="nearest")
+        val_count = convolve(valid, kernel, mode="nearest")
 
-    # --- Vessel score = ridge x brightness ---
-    score = ridge_score * bright_score
+        border = remaining & (val_count > 0.5)
+        if not np.any(border):
+            break
 
-    # --- Spatial-prior weighting ---
-    if csf_TPM is not None or vessel_TPM is not None:
-        loc = np.zeros_like(img)
-        if csf_TPM is not None:
-            loc = np.maximum(loc, np.clip(csf_TPM / (0.05 * 255), 0, 1))
-        if vessel_TPM is not None:
-            loc = np.maximum(loc, np.clip(vessel_TPM / (0.1 * 255), 0, 1))
-        score *= loc
+        result[border] = val_sum[border] / val_count[border]
+        valid[border] = 1.0
+        remaining[border] = False
 
-    score[wm_core] = 0
-    return score.astype(np.float32)
+    # Fallback: nearest-value propagation for remaining voxels.
+    if np.any(remaining):
+        _, nearest_idx = distance_transform_edt(
+            remaining, return_indices=True
+        )
+        result[remaining] = result[tuple(nearest_idx[:, remaining])]
+
+    return result.astype(np.float32)
 
 
-def _compute_sulcal_depth_weight(
-    csf_TPM,
-    spacing,
-    csf_threshold=0.1 * 255,
-    shrink_iters=1,
-    min_depth_mm=0.4,
-    full_depth_mm=1.2,
+def cleanup_vessels(
+    gm0: nib.Nifti1Image,
+    wm0: nib.Nifti1Image,
+    csf0: nib.Nifti1Image,
+    bin_dir: str,
+    mri_dir: str,
+    out_name: str,
+    ext: str,
+    cerebellum=None,
 ):
-    """Return a CSF depth weight that downweights gyral crowns.
+    """Blood vessel correction for PVE-based tissue probability maps.
 
-    The weight is 0 near the outer CSF boundary (crown-adjacent voxels) and
-    approaches 1 toward deeper CSF voxels (sulcal bottoms / CSF cores).
-    """
-    bin_struct3 = generate_binary_structure(3, 3)
-    csf_mask = csf_TPM >= csf_threshold
-    if not np.any(csf_mask):
-        return np.zeros_like(csf_TPM, dtype=np.float32)
-
-    depth_mm = distance_transform_edt(csf_mask, sampling=spacing)
-    depth_weight = np.clip(
-        (depth_mm - min_depth_mm) / max(full_depth_mm - min_depth_mm, 1e-10),
-        0,
-        1,
-    )
-
-    # Optional TPM shrinkage to suppress outer CSF shell (crown-adjacent).
-    if shrink_iters > 0:
-        inner = binary_erosion(csf_mask, bin_struct3, shrink_iters)
-        depth_weight[inner] = np.maximum(depth_weight[inner], 0.5)
-
-    return depth_weight.astype(np.float32)
-
-
-def _remove_isolated_wm_components(
-    gm,
-    wm,
-    csf,
-    wm_core,
-    min_island_voxels=64,
-):
-    """Move small isolated WM islands (outside core) from WM to CSF.
-
-    WM islands are defined on a hard WM map (argmax over CSF/GM/WM). Components
-    touching ``wm_core`` are preserved, while detached components smaller than
-    ``min_island_voxels`` are treated as vessel-like outliers.
-    """
-    if min_island_voxels <= 0:
-        return gm, wm, csf
-
-    wm_hard = (wm > gm) & (wm > csf)
-    if not np.any(wm_hard):
-        return gm, wm, csf
-
-    labels, n_labels = label_image(wm_hard, generate_binary_structure(3, 3))
-    if n_labels == 0:
-        return gm, wm, csf
-
-    sizes = np.bincount(labels.ravel())
-    remove_mask = np.zeros_like(wm_hard)
-
-    for idx in range(1, len(sizes)):
-        if sizes[idx] >= min_island_voxels:
-           continue
-        comp = labels == idx
-        if np.any(comp & wm_core):
-            continue
-        remove_mask |= comp
-
-    if np.any(remove_mask):
-        tissue_mass = csf[remove_mask] + gm[remove_mask] + wm[remove_mask]
-        csf[remove_mask] = tissue_mass
-        gm[remove_mask] = 0
-        wm[remove_mask] = 0
-
-    return gm, wm, csf
-
-
-def cleanup_vessels(gm0, wm0, csf0, threshold_wm=0.4, cerebellum=None,
-                    csf_TPM=None, vessel_TPM=None, intensity=None,
-                    csf_shrink_iters=1, sulcal_min_depth_mm=0.4,
-                    sulcal_full_depth_mm=1.2, sulcal_gate=0.2,
-                    wm_close_iters=1, wm_min_island_voxels=64):
-    """Clean/regularize CSF, GM, and WM probability maps by removing vessel-like
-    misclassifications in CSF spaces *outside the cerebellum*, while preserving
-    cortical/cerebellar parenchyma.
-
-    The function runs in two stages:
-
-    **Stage A – Morphological cleanup** (always runs):
-
-     1) WM core: Threshold WM, optionally apply initial closing to preserve thin
-         WM continuity, keep the largest connected component, then dilate once
-         (26-connectivity) to obtain a robust parenchyma core.
-    2) Vessel-targeting mask: Voxels that are (a) outside the WM core,
-       (b) outside the cerebellum (if provided), and (c) likely CSF per a TPM
-       (> 2.5% on a 0-255 scale, if provided).
-    3) WM->GM inside that mask: Collapse thin/high-intensity vessel fragments
-       that were misclassified as WM in CSF spaces.
-     4) Remove small isolated WM islands (detached from WM core), then identify
-         vessels estimated as WM and reassign them by neighborhood context:
-         vessels fully surrounded by GM are moved to GM, all other vessel voxels
-         are moved to CSF.
-    5) Parenchyma support: Grayscale opening of (GM+WM) to remove narrow
-       bridges (e.g., vessels), then keep the largest component and union
-       with the cerebellum mask (if provided).
-    6) GM->CSF outside the parenchyma support: This removes remaining GM vessel
-       fragments in CSF spaces; prior WM->GM reassignment ensures WM vessels are
-       also absorbed.
-    7) Renormalize probabilities to sum to 1 per voxel.
-
-    **Stage B – Intensity-based refinement** (only when *intensity* is given):
-
-    8) Compute a per-voxel vessel score from multi-scale Laplacian-of-Gaussian
-       ridge detection, brightness, and spatial priors.
-    9) Among voxels that survived Stage A as GM or WM, reclassify high-scoring
-       vessel candidates (outside WM core & cerebellum) to CSF.
-    10) Rebuild parenchyma support with vessel-score suppression to break
-        remaining gyri-bridging artifacts, then re-apply largest-component
-        selection.
-    11) Final renormalization and packaging.
+    Detects and corrects blood vessel misclassifications using the PVE
+    label map approach from ``blood_vessel_correction_pve_float``
+    (CAT_Vol.c).  Optional a cerebellum mask can refine the detection.
 
     Parameters
     ----------
     gm0, wm0, csf0 : nib.Nifti1Image
-        Input gray matter, white matter, and CSF *probability* maps (same shape,
-        affine, and header). Values are expected in [0, 1].
-    threshold_wm : float, optional
-        WM threshold used to build the robust WM core (default: 0.4).
-        Higher values make the core more conservative.
+        GM, WM, CSF probability maps (values in [0, 1]).
+    strength : float, optional
+        Correction strength (default 1).  Higher values increase the
+        opening radii and lower the vessel-detection threshold.
     cerebellum : np.ndarray or None, optional
-        Binary (0/1) array in the same space, where >0 denotes cerebellum voxels.
-        When provided, cleanup avoids acting *inside* the cerebellum and later
-        explicitly keeps cerebellar voxels as parenchyma.
-    csf_TPM : np.ndarray or None, optional
-        CSF tissue probability map in the same space, *scaled 0-255* (e.g., SPM).
-        If provided, vessel cleanup is restricted to voxels with CSF probability
-        >= 2.5% (i.e., >= 0.025 * 255). Omit to apply outside-WM-core everywhere
-        outside the cerebellum.
-    vessel_TPM : np.ndarray or None, optional
-        Blood vessel tissue probability map in the same space, *scaled 0-255*
-        (e.g., SPM). If provided, vessel cleanup is restricted to voxels with
-        vessel probability >= 10% (i.e., >= 0.1 * 255).
-    intensity : nib.Nifti1Image or np.ndarray or None, optional
-        Bias-corrected T1 intensity image in the same space.
-        When provided, enables Stage B (LoG ridge detection + brightness +
-        spatial priors) as a second pass after the morphological cleanup.
-        Percentile normalisation is applied internally, so the image can be
-        piecewise-linear scaled or raw bias-corrected.
-    csf_shrink_iters : int, optional
-        Number of erosions applied to CSF TPM support when building sulcal-depth
-        weighting (default: 1). Higher values suppress crown-adjacent cleanup.
-    sulcal_min_depth_mm : float, optional
-        Depth in mm below which CSF voxels get weight 0 (default: 0.4).
-    sulcal_full_depth_mm : float, optional
-        Depth in mm above which CSF voxels get weight 1 (default: 1.2).
-    sulcal_gate : float, optional
-        Minimum sulcal-depth weight required for aggressive cleanup in CSF-TMP-
-        guided mode (default: 0.2).
-    wm_close_iters : int, optional
-        Number of initial binary closing iterations on WM>threshold mask before
-        extracting the WM core (default: 1). Helps preserve thin WM continuity.
-    wm_min_island_voxels : int, optional
-        Minimum voxel size for detached WM components to be kept (default: 64).
-        Smaller detached islands are moved from WM to CSF.
+        Binary cerebellum mask in the same space.  Vessel detection is
+        suppressed inside the cerebellum and cerebellar WM voxels are
+        added to the seed region.
 
     Returns
     -------
     label : nib.Nifti1Image
-        Soft-encoded label image (csf + 2*gm + 3*wm). This is NOT a hard label;
-        use argmax over (csf, gm, wm) if a discrete map is required.
+        Soft PVE label map (``csf + 2*gm + 3*wm``).
     gm, wm, csf : nib.Nifti1Image
-        Cleaned GM, WM, and CSF probability maps, renormalized to sum to 1
-        per voxel.
-
-    Notes
-    -----
-    - Connectivity: ``find_largest_cluster`` is assumed to use 26-connectivity
-      in 3D.
-    - Morphology: ``binary_dilation`` uses a full 3x3x3 structuring element
-      (``generate_binary_structure(3, 3)``) for one iteration.
-    - Grayscale opening: ``grey_opening(gm + wm, size=[3,3,3])`` suppresses
-      thin vessel-like bridges/spurs prior to component selection.
-    - When *intensity* is ``None`` the function runs Stage A only (identical
-      to the original purely morphological pipeline).
-    - Assumes gm0/wm0/csf0 share shape/affine/header. No resampling is
-      performed.
+        Corrected tissue probability maps.
     """
-    gm = gm0.get_fdata().copy()
-    wm = wm0.get_fdata().copy()
-    csf = csf0.get_fdata().copy()
-    spacing = np.array(gm0.header.get_zooms()[:3])
-    csf_depth_weight = None
+    gm = gm0.get_fdata().copy().astype(np.float32)
+    wm = wm0.get_fdata().copy().astype(np.float32)
+    csf = csf0.get_fdata().copy().astype(np.float32)
 
-    # ================================================================
-    # Stage A – Morphological cleanup (original pipeline, unchanged)
-    # ================================================================
-    # 1) Robust WM core from the largest component, slightly dilated.
-    wm_seed = wm > threshold_wm
-    if wm_close_iters > 0:
-        wm_seed = binary_closing(
-            wm_seed, generate_binary_structure(3, 3), wm_close_iters
-        )
-    wm_morph = find_largest_cluster(wm_seed)
-    wm_morph = binary_dilation(wm_morph, generate_binary_structure(3, 3), 1)
+    # Normalise probabilities.
+    total = gm + wm + csf
+    total[total == 0] = 1.0
+    gm /= total
+    wm /= total
+    csf /= total
 
-    """
-    # 2) Vessel-targeting mask: outside WM core, outside cerebellum, and
-    #    (optionally) CSF-like.
-    mask = ~wm_morph
+    # PVE label map (CSF=1, GM=2, WM=3 with partial volumes).
+    label_in = (csf + 2.0 * gm + 3.0 * wm).astype(np.float32)
+    mask = label_in > 0
+
+    pre_name = f"{mri_dir}/{out_name}_p0_large_pre_vessel_cleanup_tmp.{ext}"
+    post_name = f"{mri_dir}/{out_name}_p0_large_post_vessel_cleanup_tmp.{ext}"
+    nib.save(nib.Nifti1Image(label_in, gm0.affine, gm0.header), pre_name)
+
+    # Call blood vessel correction from CAT
+    cmd = (
+        os.path.join(bin_dir, "CAT_VolBloodVesselCorrection")
+        + " "
+        + pre_name
+        + " "
+        + post_name
+    )
+    os.system(cmd)
+
+    label = nib.load(post_name)
+    label_out = label.get_fdata().copy().astype(np.float32)
+
     if cerebellum is not None:
         mask = mask & (cerebellum == 0)
-    if csf_TPM is not None:
-        csf_depth_weight = _compute_sulcal_depth_weight(
-            csf_TPM,
-            spacing,
-            csf_threshold=0.1 * 255,
-            shrink_iters=csf_shrink_iters,
-            min_depth_mm=sulcal_min_depth_mm,
-            full_depth_mm=sulcal_full_depth_mm,
-        )
-        mask = mask & (csf_TPM >= 0.1 * 255)
-        mask = mask & (csf_depth_weight >= sulcal_gate)
-    if vessel_TPM is not None:
-        mask = mask & (vessel_TPM >= 0.05 * 255)
 
-    # 3) Collapse WM vessels in CSF spaces to GM.
-    gm[mask] += wm[mask]
-    wm[mask] = 0
-    """
+    # Rescue original label values outside mask
+    label_out[~mask] = label_in[~mask]
 
-    # 4) Remove isolated WM islands and then run fill-based vessel detection.
-    #    Reassignment rule: fully GM-surrounded vessels -> GM, else -> CSF.
-    gm, wm, csf = _remove_isolated_wm_components(
-        gm,
-        wm,
-        csf,
-        wm_morph,
-        min_island_voxels=wm_min_island_voxels,
+    # Get single tissue segmentations
+    csf_new = 1 - np.minimum(1, np.abs(label_out - 1))
+    gm_new = 1 - np.minimum(1, np.abs(label_out - 2))
+    wm_new = 1 - np.minimum(1, np.abs(label_out - 3))
+
+    # Rescue original tissue segmentations outside mask
+    csf_new[~mask] = csf[~mask]
+    gm_new[~mask] = gm[~mask]
+    wm_new[~mask] = wm[~mask]
+    
+    gm_new, wm_new, csf_new = normalize_to_sum1(gm_new, wm_new, csf_new)
+    label_out = (csf_new + 2.0 * gm_new + 3.0 * wm_new).astype(np.float32)
+
+    return (
+        nib.Nifti1Image(label_out, gm0.affine, gm0.header),
+        nib.Nifti1Image(gm_new, gm0.affine, gm0.header),
+        nib.Nifti1Image(wm_new, wm0.affine, wm0.header),
+        nib.Nifti1Image(csf_new, csf0.affine, csf0.header),
     )
-
-    lbl = np.argmax(np.stack([csf, gm, wm], axis=0), axis=0)
-    csf_label = lbl == 0
-    gm_label = lbl == 1
-    wm_label = lbl == 2
-    csf_filled = binary_closing(csf_label, generate_binary_structure(3, 3), 2)
-    gm_filled = binary_closing(gm_label, generate_binary_structure(3, 3), 2)
-    vessels = wm_label & binary_dilation(
-        gm_filled & csf_filled, generate_binary_structure(3, 3), 1
-    )
-    gm_surrounded = vessels & binary_erosion(
-        gm_filled, generate_binary_structure(3, 3), 1
-    )
-    not_gm_surrounded = vessels & ~gm_surrounded
-
-    gm[gm_surrounded] += wm[gm_surrounded]
-    wm[gm_surrounded] = 0
-
-    csf[not_gm_surrounded] += wm[not_gm_surrounded]
-    wm[not_gm_surrounded] = 0
-
-    # 5) Build parenchyma support via grayscale opening and largest component.
-    gm_wm = grey_opening(gm + wm, size=[3, 3, 3])
-    gm_wm = find_largest_cluster(gm_wm > 0.5)
-    if cerebellum is not None:
-        gm_wm = gm_wm | (cerebellum > 0)
-
-    # 6) Move GM outside parenchyma support into CSF.
-    csf[~gm_wm] += gm[~gm_wm]
-    gm[~gm_wm] = 0
-
-    # 7) Renormalize after Stage A.
-    gm, wm, csf = normalize_to_sum1(gm, wm, csf)
-
-    # ================================================================
-    # Stage B – Intensity-based refinement (only when intensity given)
-    # ================================================================
-    if intensity is not None:
-        img = (
-            intensity.get_fdata().copy()
-            if hasattr(intensity, "get_fdata")
-            else intensity.copy()
-        )
-        vessel_score = _compute_vessel_score(
-            img, wm_morph, spacing, csf_TPM, vessel_TPM
-        )
-        if csf_depth_weight is not None:
-            vessel_score *= csf_depth_weight
-
-        # 8) Reclassify voxels that survived Stage A but score high as
-        #    vessels.  Use a conservative threshold so cortical GM is safe.
-        candidate = (vessel_score > 0.15) & ~wm_morph
-        if csf_depth_weight is not None:
-            candidate &= csf_depth_weight >= sulcal_gate
-        if cerebellum is not None:
-            candidate &= cerebellum == 0
-
-        # Move WM -> CSF for strong detections.
-        wm_vessel = candidate & (wm > gm) & (wm > csf)
-        csf[wm_vessel] += wm[wm_vessel]
-        wm[wm_vessel] = 0
-
-        # Move GM -> CSF for strong detections.
-        gm_vessel = candidate & (gm > wm) & (gm > csf)
-        csf[gm_vessel] += gm[gm_vessel]
-        gm[gm_vessel] = 0
-
-        # 9) Rebuild parenchyma support with vessel suppression to break
-        #    gyri-bridging artifacts that the morphological pass missed.
-        gm_wm_sum = gm + wm
-        gm_wm_sum *= np.clip(1.0 - vessel_score, 0, 1)
-        gm_wm2 = grey_opening(gm_wm_sum, size=[3, 3, 3])
-        gm_wm2 = find_largest_cluster(gm_wm2 > 0.5)
-        if cerebellum is not None:
-            gm_wm2 = gm_wm2 | (cerebellum > 0)
-
-        # 10) Move tissue outside refined parenchyma support into CSF.
-        outside = ~gm_wm2
-        csf[outside] += gm[outside] + wm[outside]
-        gm[outside] = 0
-        wm[outside] = 0
-
-        # 11) Final renormalization.
-        gm, wm, csf = normalize_to_sum1(gm, wm, csf)
-
-    # Package outputs.
-    label = csf + 2 * gm + 3 * wm
-
-    gm = nib.Nifti1Image(gm, gm0.affine, gm0.header)
-    wm = nib.Nifti1Image(wm, wm0.affine, wm0.header)
-    csf = nib.Nifti1Image(csf, csf0.affine, csf0.header)
-    label = nib.Nifti1Image(label, gm0.affine, gm0.header)
-
-    return label, gm, wm, csf
 
 
 def laplacian_3d(f, spacing=(1.0, 1.0, 1.0)):
