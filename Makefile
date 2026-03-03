@@ -5,10 +5,13 @@ VERSION="0.3.0"
 
 ZIPFILE=T1Prep_${VERSION}.zip
 
+BIN ?= CAT*
+
 # print available commands
 help:
 	-@echo Available commands:
 	-@echo clean zip cp_binaries
+	-@echo "cp_binaries usage: make cp_binaries [BIN=CAT_MyBinary]"
 
 # remove .DS_Store files and correct file permissions
 clean:
@@ -32,8 +35,8 @@ release: clean
 
 # copy binaries after cross-compiling
 cp_binaries: 
-	-@echo copy binaries
-	-@for i in src/t1prep/bin/Linux/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` src/t1prep/bin/Linux/ ; done
-	-@for i in src/t1prep/bin/Windows/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-w64-mingw32/Progs/`basename $${i}` src/t1prep/bin/Windows/ ; done
-	-@for i in src/t1prep/bin/MacOS/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` src/t1prep/bin/MacOS/ ; done
-	-@for i in src/t1prep/bin/LinuxARM64/CAT*; do cp ~/Dropbox/GitHub/CAT-Surface/build-aarch64-non-elf/Progs/`basename $${i}` src/t1prep/bin/LinuxARM64/ ; done
+	-@echo copy binaries matching $(BIN)
+	-@for i in src/t1prep/bin/Linux/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` src/t1prep/bin/Linux/ ; done
+	-@for i in src/t1prep/bin/Windows/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-w64-mingw32/Progs/`basename $${i}` src/t1prep/bin/Windows/ ; done
+	-@for i in src/t1prep/bin/MacOS/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` src/t1prep/bin/MacOS/ ; done
+	-@for i in src/t1prep/bin/LinuxARM64/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-aarch64-non-elf/Progs/`basename $${i}` src/t1prep/bin/LinuxARM64/ ; done
