@@ -242,6 +242,7 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--bin_dir",
+        required=True,
         type=str,
         default="",
         help="Folder with CAT/AMAP binaries (required for --amap or --lesions)",
@@ -329,9 +330,10 @@ def setup_device() -> tuple[torch.device, bool]:
 
     if torch.cuda.is_available():
         return torch.device("cuda"), False
-    if torch.backends.mps.is_available() and False:  # not yet fully supported
+    elif torch.backends.mps.is_available() and False:  # not yet fully supported
         return torch.device("mps"), False
-    return torch.device("cpu"), True
+    else:
+        return torch.device("cpu"), True
 
 
 def prepare_model_files() -> None:
@@ -1074,44 +1076,34 @@ def run_segment():
 
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) 
     # to refine segmentation
-    if vessel != 0:
+    if vessel > 0:
         atlas = get_atlas(
             t1,
             affine,
             p0_large.header,
             p0_large.affine,
-            "cat_bloodvessels",
+            "neuromorphometrics",
             None,
             device,
-            is_label_atlas=False,
+            is_label_atlas=True,
         )
-        vessel_TPM = atlas.get_fdata().copy()
-
-        atlas = get_atlas(
-            t1,
-            affine,
-            p0_large.header,
-            p0_large.affine,
-            "csf_TPM",
-            None,
-            device,
-            is_label_atlas=False,
+        
+        cerebellum = get_regions_mask(atlas, "Neuromorphometrics",
+            [
+                "Left Cerebellum White Matter",
+                "Right Cerebellum White Matter",
+                "Left Cerebellum Exterior",
+                "Right Cerebellum Exterior",
+                "Cerebellar Vermal Lobules I-V",
+                "Cerebellar Vermal Lobules VI-VII",
+                "Cerebellar Vermal Lobules VIII-X",
+                "4th Ventricle",
+            ],
         )
-        csf_TPM = atlas.get_fdata().copy()
-
-        # Only modify label image for surface processing
-        if vessel > 0:
-            p0_large, _, _, _ = cleanup_vessels(
-                p1_large, p2_large, p3_large, vessel, None, csf_TPM,
-                vessel_TPM, brain_large
-            )
-        # This is a hidden feature for testing since vessel removal for VBM was 
-        # not ending in better accuracy
-        else:
-            p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
-                p1_large, p2_large, p3_large, np.abs(vessel), None, None,
-                vessel_TPM, brain_large
-            )
+        
+        p0_large, p1_cleanup, p2_cleanup, p3_cleanup = cleanup_vessels(
+            p1_large, p2_large, p3_large, bin_dir, mri_dir, out_name, ext, 
+            cerebellum)
     else:
         gm = p1_large.get_fdata()
         wm = p2_large.get_fdata()
