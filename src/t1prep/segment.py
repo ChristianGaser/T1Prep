@@ -292,8 +292,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--vessel",
         type=float,
-        default=0.4,
-        help="Initial threshold to isolate WM for vessel removal",
+        default=1.0,
+        help="Use vessel removal",
     )
 
     skullstrip_group = parser.add_mutually_exclusive_group()
@@ -1101,7 +1101,7 @@ def run_segment():
             ],
         )
         
-        p0_large, p1_cleanup, p2_cleanup, p3_cleanup = cleanup_vessels(
+        p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
             p1_large, p2_large, p3_large, bin_dir, mri_dir, out_name, ext, 
             cerebellum)
     else:
