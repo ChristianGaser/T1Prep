@@ -1282,23 +1282,24 @@ ${BOLD}Input:${NC}
 ${BOLD}Output:${NC}
   Produces segmented images and surface extractions.
 
-${BOLD}Used Functions:${NC}
-  CAT_Vol2Surf
-  CAT_VolAmap
-  CAT_VolSanlm
-  CAT_VolThicknessPbt
-  CAT_VolMarchingCubes
+${BOLD}Used Functions:${NC}  
   CAT_Surf2PialWhite
   CAT_Surf2Sphere
   CAT_SurfArea
   CAT_SurfAverage
   CAT_SurfCorrectThicknessFolding
-  CAT_SurfDistance
   CAT_SurfDeform
+  CAT_SurfDistance
   CAT_SurfReduce
   CAT_SurfRemoveIntersections
   CAT_SurfResample
   CAT_SurfWarp
+  CAT_Vol2Surf
+  CAT_VolAmap
+  CAT_VolBloodVesselCorrection
+  CAT_VolMarchingCubes
+  CAT_VolSanlm
+  CAT_VolThicknessPbt
   segment.py
   progress_bar_multi.sh
   parallelize
