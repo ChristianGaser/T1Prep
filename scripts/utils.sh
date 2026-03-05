@@ -23,7 +23,7 @@
 # ______________________________________________________________________
 
 # defaults
-T1PREP_VERSION=0.3.0
+T1PREP_VERSION=0.3.1
 os_type=$(uname -s) # Determine OS type
 
 # Directory of this utils.sh file (robust when sourced)
@@ -339,7 +339,7 @@ logo() {
     local head="${art%$last}"
 
     # append version to the last line (stay in TEXT_COLOR)
-    last+="${TEXT_COLOR} version ${version}"
+    last+="${TEXT_COLOR} version ${T1PREP_VERSION}"
 
     # print
     printf "%b%s%b\n" "$TEXT_COLOR" "$head$last" "$NC"
