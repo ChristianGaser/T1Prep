@@ -153,6 +153,9 @@ parse_args()
       --no-vessel*)
         vessel=0
         ;;
+      --no-bvc*)
+        vessel=0
+        ;;
       --bin-dir| --bindir)
         exit_if_empty "$optname" "$optarg"
         bin_dir=$optarg
@@ -1302,6 +1305,7 @@ ${BOLD}Used Functions:${NC}
   CAT_VolThicknessPbt
   segment.py
   progress_bar_multi.sh
+  utils.sh
   parallelize
 
 ${BOLD}Author:${NC}

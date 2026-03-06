@@ -106,63 +106,6 @@ def normalize_to_sum1(
     )
 
 
-def _inpaint_vessel_pve(Yp0, vessel_mask, max_iters=200):
-    """Iteratively inpaint vessel voxels using mean of valid neighbours.
-
-    Fills vessel voxels layer by layer from the boundary inward.  At each
-    iteration the mean of already-filled 3x3x3 neighbours is written into
-    the outermost unfilled layer.  Falls back to nearest-value propagation
-    for any voxels that remain unfilled after *max_iters*.
-
-    This is a Python equivalent of the iterative masked-median inpainting
-    used in ``blood_vessel_correction_pve_float`` (CAT_Vol.c).
-
-    Parameters
-    ----------
-    Yp0 : np.ndarray (float32)
-        PVE label map (CSF=1, GM=2, WM=3 with partial volumes).
-    vessel_mask : np.ndarray of bool
-        Voxels to inpaint (True = vessel).
-    max_iters : int, optional
-        Maximum number of fill iterations (default 200).
-
-    Returns
-    -------
-    np.ndarray (float32)
-        Inpainted PVE label map.
-    """
-    result = Yp0.copy().astype(np.float64)
-    result[vessel_mask] = 0.0
-
-    valid = (~vessel_mask).astype(np.float64)
-    remaining = vessel_mask.copy()
-    kernel = np.ones((3, 3, 3), dtype=np.float64)
-
-    for _ in range(max_iters):
-        if not np.any(remaining):
-            break
-
-        val_sum = convolve(result * valid, kernel, mode="nearest")
-        val_count = convolve(valid, kernel, mode="nearest")
-
-        border = remaining & (val_count > 0.5)
-        if not np.any(border):
-            break
-
-        result[border] = val_sum[border] / val_count[border]
-        valid[border] = 1.0
-        remaining[border] = False
-
-    # Fallback: nearest-value propagation for remaining voxels.
-    if np.any(remaining):
-        _, nearest_idx = distance_transform_edt(
-            remaining, return_indices=True
-        )
-        result[remaining] = result[tuple(nearest_idx[:, remaining])]
-
-    return result.astype(np.float32)
-
-
 def cleanup_vessels(
     gm0: nib.Nifti1Image,
     wm0: nib.Nifti1Image,
@@ -171,6 +114,7 @@ def cleanup_vessels(
     mri_dir: str,
     out_name: str,
     ext: str,
+    debug:bool,
     cerebellum=None,
 ):
     """Blood vessel correction for PVE-based tissue probability maps.
@@ -229,7 +173,7 @@ def cleanup_vessels(
 
     label = nib.load(post_name)
     label_out = label.get_fdata().copy().astype(np.float32)
-
+    
     if cerebellum is not None:
         mask = mask & (cerebellum == 0)
 
@@ -248,6 +192,12 @@ def cleanup_vessels(
     
     gm_new, wm_new, csf_new = normalize_to_sum1(gm_new, wm_new, csf_new)
     label_out = (csf_new + 2.0 * gm_new + 3.0 * wm_new).astype(np.float32)
+
+    if not debug:
+        remove_file(pre_name)
+        remove_file(post_name)
+    else:
+        nib.save(nib.Nifti1Image(label_out, gm0.affine, gm0.header), post_name)
 
     return (
         nib.Nifti1Image(label_out, gm0.affine, gm0.header),

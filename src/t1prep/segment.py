@@ -1101,9 +1101,10 @@ def run_segment():
             ],
         )
         
+        p0_value_original = p0_large.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
             p1_large, p2_large, p3_large, bin_dir, mri_dir, out_name, ext, 
-            cerebellum)
+            debug, cerebellum)
     else:
         gm = p1_large.get_fdata()
         wm = p2_large.get_fdata()
@@ -1117,6 +1118,11 @@ def run_segment():
     p0_value[mask_large_value == 0] = 0
     p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
+    if debug and (vessel > 0):
+        p0_value = p0_value_original - p0_value
+        nib.save(nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header), 
+            f"{mri_dir}/{out_name}_vessels_large.{ext}")
+        
     if use_amap or save_lesions:
         p0_value = p0_large.get_fdata().copy()
         np.clip(p0_value, 0, 3)
