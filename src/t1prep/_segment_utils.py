@@ -19,13 +19,22 @@ from scipy.ndimage import (
     grey_opening,
     median_filter,
 )
+from utils import (
+    DATA_PATH_T1PREP,
+    TEMPLATE_PATH_T1PREP, 
+    find_largest_cluster, 
+    remove_file,
+)
+from SplineSmooth3D.SplineSmooth3D import (
+    SplineSmooth3D, 
+    SplineSmooth3DUnregularized,
+)
 from scipy.ndimage import label as label_image
 from nxbc.filter import *
-from SplineSmooth3D.SplineSmooth3D import SplineSmooth3D, SplineSmooth3DUnregularized
+
 from torchreg.utils import smooth_kernel
 from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
-from utils import DATA_PATH_T1PREP, TEMPLATE_PATH_T1PREP, find_largest_cluster
 from typing import Union, Tuple
 
 
