@@ -540,7 +540,7 @@ surface_estimation()
     
     # Correct cortical thickness that is influenced by folding
     if [ "${correct_folding}" -eq 1 ]; then
-      cmd="CAT_SurfCorrectThicknessFolding -max 6.0 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${surf_dir}/${GMT_shape}"
+      cmd="CAT_SurfCorrectThicknessFolding -slope 1.0 -max 6.0 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${surf_dir}/${GMT_shape}"
       run_cmd_log "${report_log}" "$cmd"
     fi
 

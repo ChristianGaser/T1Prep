@@ -504,6 +504,9 @@ def final_cleanup(
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
 
+    if not use_amap and not debug:
+        remove_file(f"{mri_dir}/{out_name}_brain_large.{ext}")
+
 
 def save_results(
     prep: CustomPreprocess,
