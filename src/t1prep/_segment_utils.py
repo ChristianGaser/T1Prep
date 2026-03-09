@@ -189,7 +189,7 @@ def cleanup_vessels(
     csf_new[~mask] = csf[~mask]
     gm_new[~mask] = gm[~mask]
     wm_new[~mask] = wm[~mask]
-    
+
     gm_new, wm_new, csf_new = normalize_to_sum1(gm_new, wm_new, csf_new)
     label_out = (csf_new + 2.0 * gm_new + 3.0 * wm_new).astype(np.float32)
 

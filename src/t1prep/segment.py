@@ -49,6 +49,7 @@ from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from scipy.ndimage import (
     binary_closing,
+    binary_dilation,
     generate_binary_structure,
 )
 from utils import (
@@ -1088,7 +1089,8 @@ def run_segment():
             is_label_atlas=True,
         )
         
-        cerebellum = get_regions_mask(atlas, "Neuromorphometrics",
+        # Exclude cerebellum + subcortical areas + hippocampus + amygdala
+        excl_regions = get_regions_mask(atlas, "Neuromorphometrics",
             [
                 "Left Cerebellum White Matter",
                 "Right Cerebellum White Matter",
@@ -1098,13 +1100,40 @@ def run_segment():
                 "Cerebellar Vermal Lobules VI-VII",
                 "Cerebellar Vermal Lobules VIII-X",
                 "4th Ventricle",
+                "Left Amygdala",
+                "Right Amygdala",
+                "Left Caudate",
+                "Right Caudate",
+                "Left Hippocampus",
+                "Right Hippocampus",
+                "Left Pallidum",
+                "Right Pallidum",
+                "Left Putamen",
+                "Right Putamen",
+                "Left Thalamus Proper",
+                "Right Thalamus Proper",
+                "Left Ventral DC",
+                "Right Ventral DC",
             ],
         )
-        
+        excl_regions = binary_dilation(excl_regions, generate_binary_structure(3, 3), 2)
+
+        excl_ventricle = get_regions_mask(atlas, "Neuromorphometrics",
+            [
+                "Left Inf Lat Vent",
+                "Right Inf Lat Vent",
+                "Left Lateral Ventricle",
+                "Right Lateral Ventricle",
+                "Brain Stem",
+            ],
+        )
+        excl_ventricle = binary_dilation(excl_ventricle, generate_binary_structure(3, 3), 5)
+        excl_regions |= excl_ventricle
+
         p0_value_original = p0_large.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
             p1_large, p2_large, p3_large, bin_dir, mri_dir, out_name, ext, 
-            debug, cerebellum)
+            debug, excl_regions)
     else:
         gm = p1_large.get_fdata()
         wm = p2_large.get_fdata()
