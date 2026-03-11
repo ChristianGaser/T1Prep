@@ -58,7 +58,7 @@ main()
   if ! [[ "${estimate_seg}" =~ ^[0-9]+$ ]]; then estimate_seg=1; fi
   if ! [[ "${estimate_surf}" =~ ^[0-9]+$ ]]; then estimate_surf=1; fi
   if ! [[ "${estimate_spherereg}" =~ ^[0-9]+$ ]]; then estimate_spherereg=1; fi
-  if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=0; fi
+  if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=1; fi
   if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
   if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
   if ! [[ "${use_bids_naming}" =~ ^[0-9]+$ ]]; then use_bids_naming=0; fi
@@ -227,8 +227,8 @@ parse_args()
       --no-sphere*)
         estimate_spherereg=0
         ;;
-      --pial*)
-        save_pial_white=1
+      --no-pial*)
+        save_pial_white=0
         ;;
       --lesion*)
         save_lesions=1
@@ -344,7 +344,7 @@ surface_estimation()
   # Guard local numeric variables for arithmetic checks
   if ! [[ "${estimate_spherereg}" =~ ^[0-9]+$ ]]; then estimate_spherereg=1; fi
   if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
-  if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=0; fi
+  if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=1; fi
   if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
   if ! [[ "${multi}" =~ ^-?[0-9]+$ ]]; then multi=-1; fi
 
@@ -475,11 +475,14 @@ surface_estimation()
       cmd="CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}"
       run_cmd_log "${report_log}" "$cmd"
   
-      # Reduce surface mesh to smaller size:
-      # - '-ratio' defines target triangle ratio in (0,1], e.g., 0.5 keeps ~50% of faces (default 0.25)
-      # - '-aggr' defines aggressiveness of simplification (default 7)
-      cmd="CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
-      run_cmd_log "${report_log}" "$cmd"
+      # Only reduce mesh if no downsampling is defined
+      if awk -v x="${downsample}" 'BEGIN {exit !(x+0 == 0)}'; then
+        # Reduce surface mesh to smaller size:
+        # - '-ratio' defines target triangle ratio in (0,1], e.g., 0.5 keeps ~50% of faces (default 0.25)
+        # - '-aggr' defines aggressiveness of simplification (default 7)
+        cmd="CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
+        run_cmd_log "${report_log}" "$cmd"
+      fi
     fi
 
     # Updates progress
@@ -1167,8 +1170,8 @@ ${BOLD}${GREEN}Save Options:${NC}
   --no-atlas                
       Skip estimation of volumetric atlases.
 
-  --pial-white                
-      Additionally estimate pial and white matter surfaces during surface processing.
+  --no-pial-white                
+      Skip estimating pial and white matter surfaces during surface processing.
 
   --hemi, --hemisphere
       Save hemispheric (lh/rh) partitions of the segmentation.
@@ -1231,7 +1234,8 @@ ${BOLD}${GREEN}Expert Options:${NC}
       for surface estimation (default: $median_filter).
 
   --fast                      
-      Skip spherical registration, atlas estimation, and warped segmentation steps.
+      Skip spherical registration, atlas estimation, estimation of pial and white
+      surface and warped segmentation steps.
   
 ${BOLD}${GREEN}Examples:${NC}
 ${BLUE}${root_dir}/T1Prep --out-dir test_folder sTRIO*.nii${NC}

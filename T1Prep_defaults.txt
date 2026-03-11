@@ -17,7 +17,7 @@ nii_ext='nii'         # Define extension (nii.gz or nii)
 estimate_surf=1       # Run surface and thickness estimation
 estimate_seg=1        # Run segmentation processing
 estimate_spherereg=1  # Run spherical surface registration
-save_pial_white=0     # Additionally estimate pial and white matter surface 
+save_pial_white=1     # Additionally estimate pial and white matter surface 
                       # during surface estimatio
 save_lesions=0        # Additionally save WMH lesions
 save_hemi=0           # Additionally save hemispheric partitions of the segmentation
