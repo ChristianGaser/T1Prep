@@ -767,6 +767,17 @@ def read_scalars(filename: str) -> vtkDoubleArray:
     for i, v in enumerate(data_np): out.SetValue(i, float(v))
     return out
 
+# ---- Title helper ----
+def _title_from_path(path: str, max_chars: int = 80) -> str:
+    """Return a window-title string from *path*, trimmed to the last *max_chars* characters.
+
+    The .gii and .txt suffixes are stripped, then the rightmost *max_chars*
+    characters of the result are returned (no ellipsis prefix).
+    """
+    s = str(path).replace('.gii', '').replace('.txt', '')
+    return s[-max_chars:] if len(s) > max_chars else s
+
+
 # ---- Stats ----
 def get_mean(arr: vtkDoubleArray) -> float: return float(np.nanmean(vtk_to_numpy(arr)))
 def get_median(arr: vtkDoubleArray) -> float: return float(np.nanmedian(vtk_to_numpy(arr)))
@@ -1431,8 +1442,7 @@ class Viewer(QtWidgets.QMainWindow):
         self.mesh_list: List[str] = list(self.opts.meshes or [])
         self.current_mesh_index: int = 0
         # Use the original input file for the window title
-        name_part = Path(self.opts.mesh_left).name
-        self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
+        self.setWindowTitle(self.opts.title or _title_from_path(self.opts.mesh_left))
         self.resize(*opts.size)
 
         # central widget with VTK view
@@ -2542,7 +2552,7 @@ class Viewer(QtWidgets.QMainWindow):
             self._enforce_fix_scaling_policy()
             # Update title to current overlay
             try:
-                self.setWindowTitle(Path(new_overlay).name)
+                self.setWindowTitle(_title_from_path(new_overlay))
             except Exception:
                 pass
             return
@@ -2573,8 +2583,7 @@ class Viewer(QtWidgets.QMainWindow):
             self._enforce_fix_scaling_policy()
             # Revert window title to mesh name when overlay cleared
             try:
-                name_part = Path(self.opts.mesh_left).name
-                self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
+                self.setWindowTitle(self.opts.title or _title_from_path(self.opts.mesh_left))
             except Exception:
                 pass
             self.rw.Render()
@@ -2620,7 +2629,7 @@ class Viewer(QtWidgets.QMainWindow):
             except Exception:
                 pass
             # Update window title to show current overlay
-            overlay_name = Path(current_overlay).name
+            overlay_name = _title_from_path(current_overlay)
             if len(self.overlay_list) > 1:
                 self.setWindowTitle(f"{overlay_name} ({self.current_overlay_index + 1}/{len(self.overlay_list)})")
             else:
@@ -2638,7 +2647,7 @@ class Viewer(QtWidgets.QMainWindow):
                     self.ctrl.overlay_combo.setCurrentText(path)
                 except Exception:
                     pass
-                self.setWindowTitle(Path(path).name)
+                self.setWindowTitle(_title_from_path(path))
 
     # --- Mesh navigation (when no overlay) ---
     def _switch_mesh(self, new_mesh_path: str):
@@ -2705,8 +2714,7 @@ class Viewer(QtWidgets.QMainWindow):
         # Update window title to mesh name if no overlay is active
         if not self.opts.overlay:
             try:
-                name_part = Path(new_mesh_path).name
-                self.setWindowTitle((self.opts.title or name_part).replace('.gii','').replace('.txt',''))
+                self.setWindowTitle(self.opts.title or _title_from_path(new_mesh_path))
             except Exception:
                 pass
         # Update stored mesh_left
@@ -3552,7 +3560,7 @@ class OrthoVolumeWindow(QtWidgets.QMainWindow):
     """Orthogonal slice viewer for a 3D NIfTI volume with three views in one row."""
     def __init__(self, volume_path: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Volume: {Path(volume_path).name}")
+        self.setWindowTitle(f"Volume: {_title_from_path(volume_path)}")
         self.resize(1200, 420)
 
         # Central layout with three VTK widgets
