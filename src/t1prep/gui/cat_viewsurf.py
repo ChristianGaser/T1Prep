@@ -351,6 +351,40 @@ def detect_overlay_kind(filename: str) -> Optional[str]:
     return None
 
 
+def _is_gifti_mesh_by_name(filename: str) -> bool:
+    """Return True when the filename alone indicates a surface mesh file.
+
+    Uses naming conventions instead of reading file contents, so it is fast
+    and avoids the expensive I/O of :func:`is_gifti_mesh_file` for common
+    FreeSurfer / CAT12 and BIDS mesh filenames.
+
+    Recognised patterns
+    -------------------
+    * ``lh.central.<subject>.gii``, ``rh.pial.<subject>.gii``, etc.
+      (``lh.``/``rh.`` prefix followed by a mesh-type token)
+    * ``*.surf.gii``  (BIDS surface files)
+
+    Args:
+        filename: Path or basename to inspect.
+
+    Returns:
+        bool: True if the name suggests a mesh file.
+    """
+    name = Path(filename).name.lower()
+    # BIDS surface files always end with .surf.gii
+    if name.endswith('.surf.gii'):
+        return True
+    if not name.endswith('.gii'):
+        return False
+    stem = name[:-4]  # strip .gii
+    parts = stem.split('.')
+    mesh_types = {'central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc'}
+    # FreeSurfer / CAT12: lh.<mesh_type>[.<subject>]
+    if len(parts) >= 2 and parts[0] in ('lh', 'rh') and parts[1] in mesh_types:
+        return True
+    return False
+
+
 def _get_template_surface_dir() -> Path:
     """Return the path to the templates_surfaces_32k directory."""
     return Path(__file__).resolve().parent.parent / 'data' / 'templates_surfaces_32k'
@@ -1008,7 +1042,9 @@ def parse_args(argv: List[str]) -> Options:
             except Exception:
                 mesh_left_resolved = single
             overlay_single_from_pos = single
-        elif str(single).lower().endswith('.gii') and is_gifti_mesh_file(single):
+        elif _is_gifti_mesh_by_name(single) or (
+            str(single).lower().endswith('.gii') and is_gifti_mesh_file(single)
+        ):
             mesh_left_resolved = single
             overlay_single_from_pos = None
         elif is_overlay_file(single):
@@ -1026,7 +1062,11 @@ def parse_args(argv: List[str]) -> Options:
         mesh_candidates: List[str] = []
         non_mesh_inputs: List[str] = []
         for pth in pos_inputs:
-            if str(pth).lower().endswith('.gii') and is_gifti_mesh_file(pth):
+            # Use fast name-based heuristic first to avoid reading every file.
+            # Fall back to content inspection only when the name is ambiguous.
+            if _is_gifti_mesh_by_name(pth) or (
+                str(pth).lower().endswith('.gii') and is_gifti_mesh_file(pth)
+            ):
                 mesh_candidates.append(pth)
             else:
                 non_mesh_inputs.append(pth)
