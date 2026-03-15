@@ -74,7 +74,38 @@ def write_t1prep_report(
         with open(report_json_path, "r") as fh:
             vol_data = json.load(fh)
 
-    # --- Build report ---
+    # --- Build report (handle both flat and already-structured formats) ---
+    if "subjectmeasures" in vol_data:
+        # Already in report format (from a previous write_t1prep_report call)
+        subjectmeasures = vol_data["subjectmeasures"]
+        qualitymeasures = vol_data.get("qualitymeasures", {})
+    else:
+        # Flat format written by save_results()
+        subjectmeasures = {
+            "vol_TIV": {
+                "value": vol_data.get("vol_tiv", {}).get("value"),
+                "desc": "Total intracranial volume in mL (CSF+GM+WM incl. WMH)",
+            },
+            "vol_abs_CGW": {
+                "value": vol_data.get("vol_CGW", {}).get("value"),
+                "desc": "Absolute tissue volumes in mL [CSF, GM, WM incl. WMH]",
+            },
+            "vol_rel_CGW": {
+                "value": vol_data.get("vol_rel_CGW", {}).get("value"),
+                "desc": "Relative tissue volumes (fraction of TIV) "
+                "[CSF, GM, WM incl. WMH]",
+            },
+            "vol_WMH": {
+                "value": vol_data.get("vol_WMH", {}).get("value", 0.0),
+                "desc": "WMH volume in mL",
+            },
+            "vol_rel_WMH": {
+                "value": vol_data.get("WMH_rel_WM", {}).get("value", 0.0),
+                "desc": "WMH volume relative to WM (incl. WMH)",
+            },
+        }
+        qualitymeasures = vol_data.get("qualitymeasures", {})
+
     report = {
         "filedata": {
             "path": str(Path(input_fname).parent),
@@ -87,38 +118,18 @@ def write_t1prep_report(
             "date": datetime.now().strftime("%Y%m%d-%H%M%S"),
             "system": system_str,
         },
-        "subjectmeasures": {
-            "vol_TIV": {
-                "value": vol_data.get("vol_tiv", {}).get("value"),
-                "desc": "Total intracranial volume in mL (CSF+GM+WM incl. WMH)",
-            },
-            "vol_abs_CGW": {
-                "value": vol_data.get("vol_CGW", {}).get("value"),
-                "desc": "Absolute tissue volumes in mL [CSF, GM, WM incl. WMH]",
-            },
-            "vol_rel_CGW": {
-                "value": vol_data.get("vol_rel_CGW", {}).get("value"),
-                "desc": "Relative tissue volumes (fraction of TIV) [CSF, GM, WM incl. WMH]",
-            },
-            "vol_WMH": {
-                "value": vol_data.get("vol_WMH", {}).get("value", 0.0),
-                "desc": "WMH volume in mL",
-            },
-            "vol_rel_WMH": {
-                "value": vol_data.get("WMH_rel_WM", {}).get("value", 0.0),
-                "desc": "WMH volume relative to WM (incl. WMH)",
-            },
-        },
-        "qualitymeasures": {
-            "topo_defects_voxels_changed": {
-                "value": changed_voxels_total,
-                "desc": (
-                    "Total voxels changed to fix surface topology defects "
-                    "(sum across all surfaces; lower is better; 0 if surface "
-                    "pipeline has not yet run)"
-                ),
-            },
-        },
+        "subjectmeasures": subjectmeasures,
+        "qualitymeasures": qualitymeasures,
+    }
+
+    # Always include topology defect count (overwrite/add)
+    report["qualitymeasures"]["topo_defects_voxels_changed"] = {
+        "value": changed_voxels_total,
+        "desc": (
+            "Total voxels changed to fix surface topology defects "
+            "(sum across all surfaces; lower is better; 0 if surface "
+            "pipeline has not yet run)"
+        ),
     }
 
     with open(report_json_path, "w") as fh:

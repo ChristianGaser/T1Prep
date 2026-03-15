@@ -53,6 +53,7 @@ from scipy.ndimage import (
     generate_binary_structure,
 )
 from report import write_t1prep_report
+from qa import estimate_qa
 from utils import (
     smart_round,
     progress_bar,
@@ -700,6 +701,16 @@ def save_results(
         mask_label = np.round(p0_large.get_fdata()) == label
         mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
 
+    # Estimate image quality measures
+    vx_vol_orig = np.array(t1.header.get_zooms()[:3], dtype=np.float64)
+    vx_vol_data = np.array(p0_large.header.get_zooms()[:3], dtype=np.float64)
+    qa_result = estimate_qa(
+        p0_large.get_fdata(),
+        brain_large.get_fdata(),
+        vx_vol_data,
+        vx_vol_orig,
+    )
+
     # Prepare dictionary
     summary = {
         "vol_CGW": {
@@ -733,6 +744,7 @@ def save_results(
         }
 
     # Write to JSON file
+    summary |= qa_result
     report_name = code_vars.get("Report_file", "")
     with open(f"{report_dir}/{report_name}", "w") as f:
         json.dump(summary, f, indent=2)
