@@ -946,7 +946,18 @@ process()
       runtime=$((end_surf - start_surf))
       echo "" >> "${report_log}"
       echo "Execution time surface pipeline: ${runtime}s" >> "${report_log}"
-      
+
+      # Update T1Prep report JSON with topology quality measures from log
+      export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
+      bids_py="False"
+      [ "${use_bids_naming}" -eq 1 ] && bids_py="True"
+      "${python}" - <<EOF 2>/dev/null || true
+import sys, os
+sys.path.insert(0, os.path.join("${root_dir}", "src", "t1prep"))
+from report import write_t1prep_report
+write_t1prep_report("${report_dir}", "${bname}", ${bids_py}, "${f}")
+EOF
+
     fi # estimate_surf
 
     # Print execution time per data set

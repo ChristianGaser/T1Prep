@@ -52,6 +52,7 @@ from scipy.ndimage import (
     binary_dilation,
     generate_binary_structure,
 )
+from report import write_t1prep_report
 from utils import (
     smart_round,
     progress_bar,
@@ -1216,6 +1217,8 @@ def run_segment():
     log_name = code_vars.get("Log_file", "")
     with open(f"{report_dir}/{log_name}", "a") as f:
         f.write(text)
+
+    write_t1prep_report(report_dir, out_name, use_bids, t1_name)
 
 
 if __name__ == "__main__":
