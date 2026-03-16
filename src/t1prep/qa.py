@@ -291,19 +291,24 @@ def estimate_noise(
 
     Follows CAT12 ``cat_vol_qa201901x`` / ``estimateNoiseLevel``:
 
-    1. Downsample the WM-masked image to **2 mm** isotropic via
-       ``torch.nn.functional.grid_sample`` (matching CAT12
-       ``cat_vol_resize(..., 'reduceV', vx_vol, 2, ..., 'meanm')``).
-    2. Compute masked local SD in the 3×3×3 neighbourhood via
-       ``_masked_local_sd`` (fast uniform-filter approximation of
-       ``cat_vol_localstat(Ym, YM, 1, 4)``).  For an exact match to
-       the C implementation use ``_masked_local_sd_exact`` instead,
-       which is correct but slower.
-    3. Median of the per-voxel SDs within WM, normalised by absolute
+    0. WM normalisation via a large-sigma (~20 mm) Gaussian field estimated
+       from WM voxels (approximating CAT12's ``cat_vol_approx``), so that
+       WM≈1 everywhere.  This removes WM T1 heterogeneity (corpus callosum
+       vs subcortical WM etc.) before the noise estimate.
+    1. Gaussian pre-smoothing (sigma = 0.8 + 0.5/vx_mm voxels) filling
+       non-WM with WM mean, matching CAT12's ``Ymx`` computation.
+    2. Downsample to **2.3 mm** isotropic via mean pooling (``adaptive_avg_pool3d``),
+       matching CAT12 ``cat_vol_resize(..., 'reduceV', vx_vol, 2.3, ..., 'meanm')``.
+    3. Compute masked local SD in the 3×3×3 neighbourhood via
+       ``_masked_local_sd_exact`` (matching ``cat_vol_localstat(Ym, YM, 1, 4)``).
+    4. Median of the per-voxel SDs within WM, normalised by absolute
        tissue contrast.
 
     Args:
-        intensity: Bias-corrected intensity image.
+        intensity: Original (uncorrected) intensity image in native space.
+            CAT12 reads the raw file (``varargin{2}``) and normalises to
+            WM≈1 via ``cat_vol_approx``; the bias-corrected branch is
+            permanently disabled with ``if 0`` in ``cat_vol_qa201901x``.
         wm_mask: Binary white-matter mask.
         vx_vol: Voxel dimensions in mm (length-3 array).
         contrast: Absolute tissue contrast (WM median − GM median).
@@ -314,13 +319,30 @@ def estimate_noise(
     if contrast < 1e-6 or np.sum(wm_mask) < 100:
         return float("nan")
 
+    # Step 0: WM normalisation matching CAT12's cat_vol_approx.
+    # CAT12: Yb = cat_vol_approx(Ym.*Yw + Yw.*min(Ym)) - min(Ym)
+    #        Yb = Yb / median(Ym[Yw]);  Ym = Ym ./ max(eps, Yb)
+    # This removes both scanner bias AND WM T1 heterogeneity (corpus callosum
+    # vs subcortical WM etc.) so that the local-SD step measures only noise.
+    # Approximated with a large-sigma Gaussian (≈20 mm) propagated from WM voxels.
+    vx = np.asarray(vx_vol, dtype=np.float64)
+    sigma_large = 20.0 / float(np.mean(vx))  # ~20 mm in voxels
+    wm_f = wm_mask.astype(np.float64)
+    wm_int = intensity.astype(np.float64) * wm_f
+    smooth_num = gaussian_filter(wm_int, sigma=sigma_large)
+    smooth_den = gaussian_filter(wm_f, sigma=sigma_large)
+    yb = smooth_num / np.maximum(smooth_den, 1e-6)
+    yb_median = float(np.median(yb[wm_mask]))
+    intensity_norm = (
+        intensity.astype(np.float64) / np.maximum(yb, 1e-6) * yb_median
+    ).astype(np.float32)
+
     # Step 1: Gaussian pre-smoothing matching CAT12's Ymx computation.
     # CAT12: Yos = Ymx.*Ywm + (1-Ywm).*T1th(3); spm_smooth(Yos,Yos,.8+.5./vx_vol)
     # Fill non-WM with WM mean, smooth, then restore WM values only.
-    vx = np.asarray(vx_vol, dtype=np.float64)
     sigma_vox = 0.8 + 0.5 / float(np.mean(vx))  # sigma in voxels
-    wm_mean = float(np.mean(intensity[wm_mask]))
-    im_padded = np.where(wm_mask, intensity.astype(np.float32), wm_mean)
+    wm_mean = float(np.mean(intensity_norm[wm_mask]))
+    im_padded = np.where(wm_mask, intensity_norm, wm_mean)
     im_smoothed = gaussian_filter(im_padded, sigma=sigma_vox).astype(np.float32)
     # Only use smoothed values inside WM (matching Ymx(Ywm>0) = Yos(Ywm>0))
     im_for_noise = np.where(wm_mask, im_smoothed, 0.0).astype(np.float32)
