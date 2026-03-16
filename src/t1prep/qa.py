@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.ndimage import (
-    gaussian_filter,
+    generic_filter,
     sobel,
     uniform_filter,
     zoom,
@@ -36,11 +36,11 @@ from scipy.ndimage import (
 # A value equal to *best* → mark 1 (excellent), equal to *worst* → mark 6.
 # Bounds from CAT12 cat_stat_marks.m (rev 2577).
 _RATING_BOUNDS: dict[str, tuple[float, float]] = {
-    "NCR": (0.0466, 0.3949),
-    "ICR": (0.2178, 2.2338),          # cat_stat_marks: 1.1169 * 2
-    "contrastr": (1.0 / 3.0, 0.0),
-    "res_RMS": (0.50, 3.00),
-    "res_ECR": (0.125, 1.00),
+    "NCR":      (0.0183, 0.0868),   # cat_vol_qa201901x: ndef.noise
+    "ICR":      (0.2270, 1.3949),   # cat_vol_qa201901x: ndef.bias
+    "contrastr": (1.0 / 3.0, 0.0), # cat_stat_marks default: CM=[1/3 0]
+    "res_RMS":  (0.50, 3.00),       # cat_stat_marks default
+    "res_ECR":  (0.0202, 0.1003),   # cat_vol_qa201901x: ndef.ECR
 }
 
 
@@ -153,15 +153,72 @@ def _tissue_masks(p0: np.ndarray):
     return csf, gm, wm, brain
 
 
+def _downsample_volume(
+    volume: np.ndarray,
+    mask: np.ndarray,
+    vx_vol: np.ndarray,
+    target_res: float = 2.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Downsample *volume* to *target_res* mm using PyTorch grid_sample.
+
+    Computes mean-of-masked voxels per downsampled cell (matching CAT12
+    ``cat_vol_resize(..., 'meanm')``): the masked image and mask are both
+    resampled with trilinear interpolation, then the image is divided by
+    the mask weight so boundary bias from zero-padded non-WM voxels is
+    removed.
+
+    An identity affine with a smaller output size produces uniform
+    downsampling over the full input extent (``align_corners=True``).
+
+    Args:
+        volume: 3-D intensity image (WM-masked, zeros outside WM).
+        mask: Binary WM mask (same shape as *volume*).
+        vx_vol: Current voxel dimensions in mm (length-3).
+        target_res: Target isotropic resolution in mm (default 2.0).
+
+    Returns:
+        Tuple ``(vol_ds, mask_ds)`` — downsampled intensity and binary
+        mask at *target_res* mm resolution.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    vx = np.asarray(vx_vol, dtype=np.float64)
+    out_shape = np.maximum(2, np.round(np.array(volume.shape) * vx / target_res).astype(int))
+
+    mask_f = mask.astype(np.float32)
+    vol_masked = (volume * mask_f).astype(np.float32)
+
+    def _gs(arr: np.ndarray) -> np.ndarray:
+        t = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)  # (1,1,D,H,W)
+        theta = torch.eye(3, 4, dtype=torch.float32).unsqueeze(0)
+        size = [1, 1, int(out_shape[0]), int(out_shape[1]), int(out_shape[2])]
+        grid = F.affine_grid(theta, size, align_corners=True)
+        return F.grid_sample(
+            t, grid, mode="bilinear", padding_mode="zeros", align_corners=True
+        ).squeeze().numpy()
+
+    vol_ds = _gs(vol_masked)
+    mask_ds = _gs(mask_f)
+
+    # Recover per-cell mean of masked values (remove zero-padding bias)
+    valid = mask_ds > 0.5
+    vol_ds[valid] /= mask_ds[valid]
+    vol_ds[~valid] = 0.0
+
+    return vol_ds, valid
+
+
 def _masked_local_sd(
     intensity: np.ndarray,
     mask: np.ndarray,
     radius: int = 1,
 ) -> np.ndarray:
-    """Compute local standard deviation using only masked voxels.
+    """Fast masked local SD via uniform_filter (approximation).
 
-    Mirrors CAT12 ``cat_vol_localstat(Ym, mask, nb, 4)`` where only
-    voxels inside *mask* contribute to the neighbourhood statistics.
+    Uses the identity ``Var = E[x²] − E[x]²`` with masked uniform
+    filters — equivalent to ``cat_vol_localstat(Ym, mask, nb, 4)``
+    for interior mask voxels.  Very fast (O(N) C-level convolutions).
 
     Args:
         intensity: Input image.
@@ -169,22 +226,59 @@ def _masked_local_sd(
         radius: Neighbourhood half-width in voxels (CAT12 uses nb=1).
 
     Returns:
-        Array of per-voxel local SD (non-masked voxels are 0).
+        Array of per-voxel local SD; zero outside mask.
     """
     size = 2 * radius + 1
     mask_f = mask.astype(np.float64)
     im = intensity.astype(np.float64) * mask_f
 
-    # Number of masked neighbours (fraction → count via kernel volume)
     count = uniform_filter(mask_f, size=size, mode="constant")
     count = np.maximum(count, 1e-10)
 
     local_mean = uniform_filter(im, size=size, mode="constant") / count
-    local_sq_mean = (
-        uniform_filter(im ** 2, size=size, mode="constant") / count
-    )
+    local_sq_mean = uniform_filter(im ** 2, size=size, mode="constant") / count
     local_var = np.maximum(local_sq_mean - local_mean ** 2, 0.0)
     return np.sqrt(local_var)
+
+
+def _masked_local_sd_exact(
+    intensity: np.ndarray,
+    mask: np.ndarray,
+) -> np.ndarray:
+    """Exact masked local SD matching ``localstat_double`` (CAT_Vol.c).
+
+    Replicates ``cat_vol_localstat(Ym, mask, 1, F_STD)`` exactly:
+
+    * 3×3×3 block neighbourhood (no Euclidean restriction, dist=1).
+    * Only mask voxels contribute; non-mask voxels are treated as NaN.
+    * Sample standard deviation (``ddof=1``), matching ``get_std_double``
+      in ``CAT_Math.c`` which divides by ``n-1``.
+    * Returns 0 (not NaN) for voxels with ≤1 valid neighbours so that
+      the subsequent median step can filter them with ``sd > 0``.
+
+    This uses ``scipy.ndimage.generic_filter`` with a Python callback,
+    which is correct but **~100× slower** than ``_masked_local_sd`` at
+    native resolution.  Prefer this only on 2 mm downsampled data where
+    volume sizes are small (~640 K voxels).
+
+    Args:
+        intensity: Input image (non-mask voxels should be 0 or NaN).
+        mask: Binary mask.
+
+    Returns:
+        Array of per-voxel sample SD; zero outside mask.
+    """
+    masked_vol = np.where(mask, intensity.astype(np.float32), np.nan)
+
+    def _local_std(values: np.ndarray) -> float:
+        v = values[np.isfinite(values)]
+        return float(np.std(v, ddof=1)) if len(v) > 1 else 0.0
+
+    result = generic_filter(
+        masked_vol, _local_std, size=3, mode="constant", cval=np.nan
+    )
+    result[~mask] = 0.0
+    return result
 
 
 def estimate_noise(
@@ -195,10 +289,18 @@ def estimate_noise(
 ) -> float:
     """Estimate Noise-to-Contrast Ratio (NCR).
 
-    Computes the masked local standard deviation within white matter
-    (only WM neighbours contribute) and normalises by the tissue
-    contrast, following the CAT12 ``cat_vol_localstat`` approach with
-    ``nb=1``.
+    Follows CAT12 ``cat_vol_qa201901x`` / ``estimateNoiseLevel``:
+
+    1. Downsample the WM-masked image to **2 mm** isotropic via
+       ``torch.nn.functional.grid_sample`` (matching CAT12
+       ``cat_vol_resize(..., 'reduceV', vx_vol, 2, ..., 'meanm')``).
+    2. Compute masked local SD in the 3×3×3 neighbourhood via
+       ``_masked_local_sd`` (fast uniform-filter approximation of
+       ``cat_vol_localstat(Ym, YM, 1, 4)``).  For an exact match to
+       the C implementation use ``_masked_local_sd_exact`` instead,
+       which is correct but slower.
+    3. Median of the per-voxel SDs within WM, normalised by absolute
+       tissue contrast.
 
     Args:
         intensity: Bias-corrected intensity image.
@@ -212,11 +314,17 @@ def estimate_noise(
     if contrast < 1e-6 or np.sum(wm_mask) < 100:
         return float("nan")
 
-    # Masked local SD with radius=1 voxel (matching CAT12 nb=1)
-    local_sd = _masked_local_sd(intensity, wm_mask, radius=1)
+    # Step 1: downsample WM image to 2 mm (CAT12: cat_vol_resize reduceV 2mm)
+    im_2mm, mask_2mm = _downsample_volume(intensity, wm_mask, vx_vol, target_res=2.0)
 
-    # Median of local SD within WM (only where local_sd > 0)
-    sd_vals = local_sd[wm_mask]
+    if np.sum(mask_2mm) < 20:
+        return float("nan")
+
+    # Step 2: masked local SD at 2 mm (cat_vol_localstat(Ym, YM, 1, 4))
+    local_sd = _masked_local_sd_exact(im_2mm, mask_2mm)
+
+    # Step 3: median within WM / absolute contrast
+    sd_vals = local_sd[mask_2mm]
     sd_vals = sd_vals[sd_vals > 0]
     if len(sd_vals) == 0:
         return float("nan")
@@ -228,25 +336,26 @@ def estimate_bias(
     intensity: np.ndarray,
     wm_mask: np.ndarray,
     vx_vol: np.ndarray,
-    contrast: float,
+    contrastr: float,
 ) -> float:
     """Estimate Inhomogeneity-to-Contrast Ratio (ICR).
 
     Measures the spatial variation of white-matter intensities after
     low-pass filtering to isolate the bias-field component from noise.
     Following CAT12, the WM map is downsampled to ~4 mm resolution
-    before computing the standard deviation.
+    before computing the standard deviation, divided by the *relative*
+    tissue contrast (CAT12: ``ICRw = std(Ywb) / contrastr``).
 
     Args:
         intensity: Bias-corrected intensity image.
         wm_mask: Binary white-matter mask.
         vx_vol: Voxel dimensions in mm (length-3 array).
-        contrast: Absolute tissue contrast (WM median − GM median).
+        contrastr: Relative tissue contrast ratio (dimensionless, 0–1).
 
     Returns:
         ICR value (lower is better).
     """
-    if contrast < 1e-6 or np.sum(wm_mask) < 100:
+    if contrastr < 1e-6 or np.sum(wm_mask) < 100:
         return float("nan")
 
     # CAT12: downsample WM intensities to ~4 mm to remove noise,
@@ -274,7 +383,7 @@ def estimate_bias(
     if len(vals) < 20:
         return float("nan")
 
-    return float(np.std(vals) / contrast)
+    return float(np.std(vals) / contrastr)
 
 
 def _masked_local_mean(
@@ -345,8 +454,8 @@ def estimate_contrast(
     contrast_rel = (
         min(abs(wm_med - gm_med), abs(gm_med - csf_med)) / signal
     )
-    # Avoid over-optimisation (CAT12: contrast + min(0, 13/36 - c) * 1.2)
-    contrast_rel = contrast_rel + min(0.0, 13.0 / 36.0 - contrast_rel) * 1.2
+    # Avoid over-optimisation (CAT12: contrastr + min(0, 1/3 - c) * 1.1)
+    contrast_rel = contrast_rel + min(0.0, 1.0 / 3.0 - contrast_rel) * 1.1
 
     contrast_abs = contrast_rel * signal
     return contrast_abs, max(0.0, contrast_rel)
@@ -416,8 +525,11 @@ def estimate_res_ecr(
 
     ecr0 = float(np.median(grad[wm_boundary]))
 
-    # CAT12 transform: res_ECR = abs(2.5 - ecr0 * 10)
-    return abs(2.5 - ecr0 * 10.0)
+    # CAT12 formula (cat_vol_qa201901x, estimateECR0old):
+    #   res_ECR = max(0, 1/4 - ecr0)
+    # High boundary gradient (sharp GM/WM edge) → ecr0 ≈ 0.25 → res_ECR ≈ 0
+    # Low gradient (blurry edge) → ecr0 ≈ 0 → res_ECR ≈ 0.25
+    return float(max(0.0, 0.25 - ecr0))
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +563,7 @@ def estimate_qa(
                     "res_RMS":  {"value": …, "mark": …, "desc": "…"},
                     "res_ECR":  {"value": …, "mark": …, "desc": "…"},
                     "IQR":      {"value": …, "grade": "…", "desc": "…"},
+                    "SIQR":     {"value": …, "grade": "…", "desc": "…"},
                 },
             }
     """
@@ -472,8 +585,8 @@ def estimate_qa(
     # Noise (masked local SD, nb=1)
     ncr = estimate_noise(intensity, wm_mask, vx, contrast_abs)
 
-    # Bias / inhomogeneity (downsampled to ~4 mm)
-    icr = estimate_bias(intensity, wm_mask, vx, contrast_abs)
+    # Bias / inhomogeneity (downsampled to ~4 mm, using relative contrast)
+    icr = estimate_bias(intensity, wm_mask, vx, contrastr)
 
     # Resolution (uses original acquisition voxel dims)
     res_rms = estimate_res_rms(vx_orig)
@@ -493,11 +606,16 @@ def estimate_qa(
         best, worst = _RATING_BOUNDS[name]
         marks[name] = _mark(value, best, worst)
 
-    # Overall IQR — CAT12 uses only NCR + res_RMS with power 8
-    iqr_value = _iqr(
-        [marks["NCR"], marks["res_RMS"]], power=8
-    )
+    # IQR — CAT12: power mean of NCR + res_RMS with power 8
+    iqr_value = _iqr([marks["NCR"], marks["res_RMS"]], power=8)
     iqr_grade = mark_to_grade(iqr_value)
+
+    # SIQR — CAT12: power mean of NCR + res_RMS + res_ECR (+ FEC) with power 4
+    # FEC (Fast Euler Characteristic) is not computed here
+    siqr_value = _iqr(
+        [marks["NCR"], marks["res_RMS"], marks["res_ECR"]], power=4
+    )
+    siqr_grade = mark_to_grade(siqr_value)
 
     # Descriptions
     descs = {
@@ -506,7 +624,8 @@ def estimate_qa(
         "contrastr": "Tissue contrast ratio (closer to 0.33 is better)",
         "res_RMS": "RMS voxel dimension in mm (lower is better)",
         "res_ECR": "Effective Contrast Resolution (lower is better)",
-        "IQR": "Overall Image Quality Rating (1=excellent, 6=poor)",
+        "IQR": "Image Quality Rating: NCR+res_RMS, power 8 (1=excellent, 6=poor)",
+        "SIQR": "Structural IQR: NCR+res_RMS+res_ECR, power 4 (no FEC)",
     }
 
     result: dict = {}
@@ -527,6 +646,12 @@ def estimate_qa(
         "value": round(iqr_value, 2) if np.isfinite(iqr_value) else None,
         "grade": iqr_grade,
         "desc": descs["IQR"],
+    }
+
+    result["SIQR"] = {
+        "value": round(siqr_value, 2) if np.isfinite(siqr_value) else None,
+        "grade": siqr_grade,
+        "desc": descs["SIQR"],
     }
 
     return {"qualitymeasures": result}

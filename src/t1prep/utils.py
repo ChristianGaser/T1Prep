@@ -10,9 +10,7 @@ warnings.filterwarnings("ignore")
 from deepbet.utils import reoriented_nifti
 from deepmriprep.utils import nifti_to_tensor
 from torchreg.utils import INTERP_KWARGS
-from scipy.ndimage import (
-    label,
-)
+from scipy.ndimage import label
 from pathlib import Path
 from typing import Optional
 try:
