@@ -547,7 +547,7 @@ def estimate_qa(
     Args:
         p0: Segmentation label map (0=BG, 1=CSF, 2=GM, 3=WM).  Can be a
             continuous map (values in [0, 3]).
-        intensity: Bias-corrected intensity image (same shape as *p0*).
+        intensity: Original (uncorrected) intensity image (same shape as *p0*).
         vx_vol: Voxel dimensions in mm of the data arrays (length-3).
         vx_vol_orig: Original acquisition voxel dimensions in mm.  Used
             only for ``res_RMS``.  Falls back to *vx_vol* if not given.

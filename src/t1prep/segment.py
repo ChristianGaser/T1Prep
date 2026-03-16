@@ -701,13 +701,18 @@ def save_results(
         mask_label = np.round(p0_large.get_fdata()) == label
         mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
 
-    # Estimate image quality measures
+    # Estimate image quality measures using original (uncorrected) image in native space
     vx_vol_orig = np.array(t1.header.get_zooms()[:3], dtype=np.float64)
-    vx_vol_data = np.array(p0_large.header.get_zooms()[:3], dtype=np.float64)
+    # Resample p0_large to native space (same pattern as save_results / resample_and_save_nifti)
+    p0_native = F.grid_sample(
+        nifti_to_tensor(p0_large)[None, None],
+        grid_native,
+        align_corners=INTERP_KWARGS["align_corners"],
+    )[0, 0].numpy()
     qa_result = estimate_qa(
-        p0_large.get_fdata(),
-        brain_large.get_fdata(),
-        vx_vol_data,
+        p0_native,
+        t1.get_fdata().astype(np.float32),
+        vx_vol_orig,
         vx_vol_orig,
     )
 
