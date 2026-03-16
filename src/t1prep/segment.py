@@ -701,17 +701,24 @@ def save_results(
         mask_label = np.round(p0_large.get_fdata()) == label
         mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
 
-    # Estimate image quality measures using original (uncorrected) image in native space
+    # Estimate image quality measures at native acquisition resolution.
+    # CAT12 reads the ORIGINAL file (varargin{2}) and normalises to WM≈1 via
+    # cat_vol_approx (lines 293-298 of cat_vol_qa201901x.m; the branch that
+    # would use the bias-corrected image is permanently disabled with "if 0").
+    # Resample p0 to native space; pass t1 (original) as the intensity image.
     vx_vol_orig = np.array(t1.header.get_zooms()[:3], dtype=np.float64)
-    # Resample p0_large to native space (same pattern as save_results / resample_and_save_nifti)
     p0_native = F.grid_sample(
         nifti_to_tensor(p0_large)[None, None],
         grid_native,
         align_corners=INTERP_KWARGS["align_corners"],
     )[0, 0].numpy()
+    # t1 has negative-diagonal affine after align_brain (do_flip=0); grid_native
+    # produces p0_native in as_closest_canonical space (positive/RAS axes).
+    # Must canonicalise t1 the same way so tissue masks align with intensities.
+    t1_canonical = nib.as_closest_canonical(t1).get_fdata().astype(np.float32)
     qa_result = estimate_qa(
         p0_native,
-        t1.get_fdata().astype(np.float32),
+        t1_canonical,
         vx_vol_orig,
         vx_vol_orig,
     )

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.ndimage import (
+    gaussian_filter,
     generic_filter,
     sobel,
     uniform_filter,
@@ -184,24 +185,23 @@ def _downsample_volume(
     import torch.nn.functional as F
 
     vx = np.asarray(vx_vol, dtype=np.float64)
-    out_shape = np.maximum(2, np.round(np.array(volume.shape) * vx / target_res).astype(int))
+    out_d = int(max(2, round(volume.shape[0] * vx[0] / target_res)))
+    out_h = int(max(2, round(volume.shape[1] * vx[1] / target_res)))
+    out_w = int(max(2, round(volume.shape[2] * vx[2] / target_res)))
+    out_shape = (out_d, out_h, out_w)
 
     mask_f = mask.astype(np.float32)
     vol_masked = (volume * mask_f).astype(np.float32)
 
-    def _gs(arr: np.ndarray) -> np.ndarray:
+    def _pool(arr: np.ndarray) -> np.ndarray:
+        # adaptive_avg_pool3d = mean pooling, matching CAT12 cat_vol_resize 'meanm'
         t = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)  # (1,1,D,H,W)
-        theta = torch.eye(3, 4, dtype=torch.float32).unsqueeze(0)
-        size = [1, 1, int(out_shape[0]), int(out_shape[1]), int(out_shape[2])]
-        grid = F.affine_grid(theta, size, align_corners=True)
-        return F.grid_sample(
-            t, grid, mode="bilinear", padding_mode="zeros", align_corners=True
-        ).squeeze().numpy()
+        return F.adaptive_avg_pool3d(t, out_shape).squeeze().numpy()
 
-    vol_ds = _gs(vol_masked)
-    mask_ds = _gs(mask_f)
+    vol_ds = _pool(vol_masked)
+    mask_ds = _pool(mask_f)
 
-    # Recover per-cell mean of masked values (remove zero-padding bias)
+    # Recover per-cell mean of masked values (matching CAT12 'meanm' with masking)
     valid = mask_ds > 0.5
     vol_ds[valid] /= mask_ds[valid]
     vol_ds[~valid] = 0.0
@@ -314,17 +314,29 @@ def estimate_noise(
     if contrast < 1e-6 or np.sum(wm_mask) < 100:
         return float("nan")
 
-    # Step 1: downsample WM image to 2 mm (CAT12: cat_vol_resize reduceV 2mm)
-    im_2mm, mask_2mm = _downsample_volume(intensity, wm_mask, vx_vol, target_res=2.0)
+    # Step 1: Gaussian pre-smoothing matching CAT12's Ymx computation.
+    # CAT12: Yos = Ymx.*Ywm + (1-Ywm).*T1th(3); spm_smooth(Yos,Yos,.8+.5./vx_vol)
+    # Fill non-WM with WM mean, smooth, then restore WM values only.
+    vx = np.asarray(vx_vol, dtype=np.float64)
+    sigma_vox = 0.8 + 0.5 / float(np.mean(vx))  # sigma in voxels
+    wm_mean = float(np.mean(intensity[wm_mask]))
+    im_padded = np.where(wm_mask, intensity.astype(np.float32), wm_mean)
+    im_smoothed = gaussian_filter(im_padded, sigma=sigma_vox).astype(np.float32)
+    # Only use smoothed values inside WM (matching Ymx(Ywm>0) = Yos(Ywm>0))
+    im_for_noise = np.where(wm_mask, im_smoothed, 0.0).astype(np.float32)
 
-    if np.sum(mask_2mm) < 20:
+    # Step 2: downsample to 2.3 mm using mean pooling (CAT12: reduceV 2.3mm 'meanm').
+    # The subsequent reduceV to 2mm is a no-op since 2.3 > 2.0.
+    im_ds, mask_ds = _downsample_volume(im_for_noise, wm_mask, vx_vol, target_res=2.3)
+
+    if np.sum(mask_ds) < 20:
         return float("nan")
 
-    # Step 2: masked local SD at 2 mm (cat_vol_localstat(Ym, YM, 1, 4))
-    local_sd = _masked_local_sd_exact(im_2mm, mask_2mm)
+    # Step 3: masked local SD at 2.3 mm (cat_vol_localstat(Ym, YM, 1, 4))
+    local_sd = _masked_local_sd_exact(im_ds, mask_ds)
 
-    # Step 3: median within WM / absolute contrast
-    sd_vals = local_sd[mask_2mm]
+    # Step 4: median within WM / absolute contrast
+    sd_vals = local_sd[mask_ds]
     sd_vals = sd_vals[sd_vals > 0]
     if len(sd_vals) == 0:
         return float("nan")
@@ -548,6 +560,9 @@ def estimate_qa(
         p0: Segmentation label map (0=BG, 1=CSF, 2=GM, 3=WM).  Can be a
             continuous map (values in [0, 3]).
         intensity: Original (uncorrected) intensity image (same shape as *p0*).
+            CAT12 reads the raw file and normalises to WM≈1 via
+            ``cat_vol_approx``; any consistent scaling is acceptable here
+            since all QA measures use ratios.
         vx_vol: Voxel dimensions in mm of the data arrays (length-3).
         vx_vol_orig: Original acquisition voxel dimensions in mm.  Used
             only for ``res_RMS``.  Falls back to *vx_vol* if not given.
