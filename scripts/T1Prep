@@ -445,7 +445,7 @@ surface_estimation()
     else 
       str=""
     fi
-    cmd="CAT_VolThicknessPbt ${verbose} ${str} -correct-voxelsize -0.75 -median-filter ${median_filter} -downsample ${downsample} -n-avgs 2 -range 0.45 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
+    cmd="CAT_VolThicknessPbt ${verbose} ${str} -median-subsample 2 -correct-voxelsize -0.75 -median-filter ${median_filter} -downsample ${downsample} -n-avgs 2 -range 0.45 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
     run_cmd_log "${report_log}" "$cmd"
     
     # Exit if nothing was saved from 1st command
@@ -474,7 +474,7 @@ surface_estimation()
       # - '-local-smoothing' applies additional local smoothing to the mesh.
       cmd="CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface}"
       run_cmd_log "${report_log}" "$cmd"
-  
+
       # Only reduce mesh if no downsampling is defined
       if awk -v x="${downsample}" 'BEGIN {exit !(x+0 == 0)}'; then
         # Reduce surface mesh to smaller size:
