@@ -41,7 +41,7 @@ thickness_method=3    # Set the thickness method
 correct_folding=1     # Correct for cortical thickness by folding effects
 pre_fwhm=2            # Set the pre-smoothing FWHM size in CAT_VolMarchingCubes
 vessel=1              # Use vessel removal
-median_filter=2       # Set the number of median filter applications to reduce 
+median_filter=1       # Set the number of median filter applications to reduce 
                       # topology artefacts
 downsample=0.0        # Downsample image to defined resolution
 fast=0                # Skip spherical registration and estimating atlases and 
