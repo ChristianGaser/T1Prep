@@ -1,6 +1,6 @@
 # Scripts
 
-This directory contains the shell scripts that make up the T1Prep command-line interface, environment helpers, processing utilities, and CAT12 surface/volume tools. All scripts automatically activate the project virtual environment (`env/`) when needed.
+This directory contains the shell scripts that make up the T1Prep command-line interface, environment helpers, processing utilities, and CAT surface/volume tools. All scripts automatically activate the project virtual environment (`env/`) when needed.
 
 ---
 
@@ -10,7 +10,7 @@ This directory contains the shell scripts that make up the T1Prep command-line i
 - [Environment & Installation](#environment--installation)
 - [Longitudinal Processing](#longitudinal-processing)
 - [Evaluation](#evaluation)
-- [CAT12 Surface & Volume Tools](#cat12-surface--volume-tools)
+- [CAT Surface & Volume Tools](#cat-surface--volume-tools)
 - [Internal Utilities](#internal-utilities)
 
 ---
@@ -42,7 +42,7 @@ The primary CLI entry point for the entire T1Prep pipeline. It performs preproce
 - Bias-field correction, skull-stripping, tissue segmentation, lesion detection
 - Cortical surface reconstruction and thickness estimation
 - Automatic parallelization across multiple files (`--multi`)
-- Supports both CAT12-style and BIDS derivatives naming (`--bids`)
+- Supports both CAT-style and BIDS derivatives naming (`--bids`)
 - Configurable via `T1Prep_defaults.txt`
 
 ### `T1Prep_ui`
@@ -172,7 +172,7 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 ---
 
-## CAT12 Surface & Volume Tools
+## CAT Surface & Volume Tools
 
 These scripts provide user-friendly wrappers around the compiled CAT-Surface binaries in `src/t1prep/bin/`. They support batch processing with built-in parallelization via `parallelize`.
 
