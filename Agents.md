@@ -23,12 +23,24 @@ T1Prep/
 │       │   └── atlases_surfaces_32k/           # Surface atlases + .txt descriptions
 │       └── gui/                    # PySide6/VTK visualization tools
 ├── scripts/
+│   ├── README.md                   # Comprehensive script documentation
 │   ├── T1Prep                      # Main CLI entry point (bash)
-│   ├── T1Prep_ui                   # GUI launcher
-│   ├── install.sh                  # Installation script
-│   ├── parallelize                 # Parallel processing helper
-│   ├── utils.sh                    # Bash utility functions
-│   └── ...                         # Other utility scripts
+│   ├── T1Prep_ui                   # Web UI launcher (Flask)
+│   ├── activate_env.sh             # Source to activate the venv
+│   ├── run_with_env.sh             # Run any Python script with venv
+│   ├── install.sh                  # Download & install a release
+│   ├── cat_viewsurf.sh             # Interactive 3D surface viewer
+│   ├── dice.sh                     # Dice similarity metric wrapper
+│   ├── process_longitudinal.sh     # Batch longitudinal processing
+│   ├── realign_longitudinal.sh     # Longitudinal rigid realignment
+│   ├── CAT_GrepJson                # Extract fields from JSON reports
+│   ├── CAT_Surf2ROIMulti_ui        # Surface ROI extraction
+│   ├── CAT_SurfParameters_ui       # Curvature-based surface parameters
+│   ├── CAT_SurfResampleMulti_ui    # Surface resampling & smoothing
+│   ├── CAT_VolSmooth_ui            # Volumetric Gaussian smoothing
+│   ├── parallelize                 # Generic job parallelization engine
+│   ├── progress_bar_multi.sh       # Multi-job progress bars with ETA
+│   └── utils.sh                    # Shared bash utility functions
 ├── webui/
 │   ├── app.py                      # Flask application
 │   ├── templates/index.html        # Main web interface
@@ -59,6 +71,7 @@ T1Prep/
 | CLI options in `scripts/T1Prep` | `webui/app.py` -> form handling and defaults |
 | `src/t1prep/t1prep.py` API | `README.md` -> Python API section |
 | Default values | `T1Prep_defaults.txt` |
+| Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` -> Project Structure, `CLAUDE.md` |
 | Atlas files in `src/t1prep/data/` | Add corresponding `.txt` description file |
 | Installation process | `README.md` -> Installation section |
 | Installation process | `scripts/install.sh` |

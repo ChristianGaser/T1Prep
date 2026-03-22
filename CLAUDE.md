@@ -69,6 +69,7 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 | `pyproject.toml` dependencies | `requirements.txt` |
 | CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py`, `webui/app.py`, `webui/templates/index.html`, `T1Prep_defaults.txt`, `README.md` |
 | `src/t1prep/t1prep.py` API | `README.md` → Python API section |
+| Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` → Project Structure, `CLAUDE.md` |
 | Installation process | `README.md`, `scripts/install.sh` |
 | Docker configuration | `README.md`, `Dockerfile` |
 | Version number | `pyproject.toml`, `Makefile`, README badges |
