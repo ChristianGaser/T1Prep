@@ -6,7 +6,7 @@
 #   CAT_SurfResampleMulti.
 #
 # USAGE:
-#   SurfResample.sh [options] <lh_input_value_file> [<lh_input_value_file> ...]
+#   CAT_SurfResampleMulti_ui [options] <lh_input_value_file> [<lh_input_value_file> ...]
 #
 # INPUT:
 #   Left hemisphere value files (e.g. lh.thickness.gii or lh.thickness.dat).
