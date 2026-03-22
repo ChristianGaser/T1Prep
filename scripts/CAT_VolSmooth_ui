@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+#
+# PURPOSE:
+#   Smooth volumetric data with a Gaussian kernel using CAT_VolSmooth.
+#
+# USAGE:
+#   CAT_VolSmooth_ui [options] <volume_file> [<volume_file> ...]
+#
+# INPUT:
+#   Nifti 3D data.
+#
+# OUTPUT:
+#   Smoothed 3D data.
+# ______________________________________________________________________
+#
+# Christian Gaser
+# Structural Brain Mapping Group (https://neuro-jena.github.io)
+# Departments of Neurology and Psychiatry
+# Jena University Hospital
+# ______________________________________________________________________
+
+# ----------------------------------------------------------------------
+# global parameters
+# ----------------------------------------------------------------------
+
+# Parameters
+fwhm=6
+
+# defaults
+os_type=$(uname -s) # Determine OS type
+
+script_dir=$(dirname "$0")
+root_dir=$(dirname $script_dir)
+name_file=${root_dir}/src/t1prep/data/Names.tsv
+
+source "${script_dir}/utils.sh"
+
+JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
+PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
+
+# Parallelization (via scripts/parallelize)
+parallel=1
+jobs=""
+
+declare -a FILES=()
+declare -a OUT_ARRAY=()
+
+# ----------------------------------------------------------------------
+# run main
+# ----------------------------------------------------------------------
+
+main()
+{
+  parse_args ${1+"$@"}
+  get_OS
+
+  # Optional parallel execution: delegate one input per process via scripts/parallelize
+  if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
+    # Check that area measure is not mixed with other measures
+    local has_area=0 has_other=0
+    for f in "${FILES[@]}"; do
+      local b m
+      b=$(basename "$f")
+      m=${b#*.}; m=${m%%.*}
+    done
+
+    local -a cmd_argv
+    cmd_argv=("$0" "--no-parallel" "--fwhm" "$fwhm")
+
+    local command_str=""
+    local arg
+    for arg in "${cmd_argv[@]}"; do
+      command_str+="$(printf '%q ' "$arg")"
+    done
+    command_str=${command_str% }
+
+    if [[ -n "$jobs" ]]; then
+      "${script_dir}/parallelize" -p "$jobs" -c "$command_str" "${FILES[@]}"
+    else
+      "${script_dir}/parallelize" -c "$command_str" "${FILES[@]}"
+    fi
+    exit $?
+  fi
+  
+  process "$@"
+
+  exit 0
+}
+
+# ----------------------------------------------------------------------
+# check arguments and files
+# ----------------------------------------------------------------------
+
+parse_args()
+{
+  local optname optarg
+  
+  if [ $# -lt 1 ]; then
+    help
+    exit 1
+  fi
+
+  count=0
+  while [ $# -gt 0 ]; do
+    optname="${1%%=*}"
+    optarg="${2:-}"
+
+    case "$1" in
+      --no-parallel)
+        parallel=0
+        ;;
+      --jobs|--processes|-p)
+        exit_if_empty "$optname" "$optarg"
+        jobs=$optarg
+        shift
+        ;;
+      --fwhm)
+        exit_if_empty "$optname" "$optarg"
+        fwhm=$optarg
+        shift
+        ;;
+      -h | --help | --h | -v | --version | -V)
+        help
+        exit 1
+        ;;
+      -*)
+        echo "basename $0: ERROR: Unrecognized option \"$1\"" >&2
+        exit 1
+        ;;
+      *)
+        if [ ! -f "$1" ]; then
+          if [ ! -L "$1" ]; then
+            echo "${RED}File $1 was not found and will be skipped.${NC}" >&2
+          fi
+        else
+          FILES[$count]=$1
+          ((count++))
+        fi
+        ;;
+    esac
+    shift
+  done
+
+}
+
+# ----------------------------------------------------------------------
+# per-file processing
+# ----------------------------------------------------------------------
+process_file() {
+  local infile="$1"
+  local dname bname out_name
+
+  dname=$(dirname "$infile")
+  bname=$(basename "$infile")
+
+  # Generate output name by prepending s{fwhm} to the basename
+  # e.g., file.nii.gz -> s6file.nii.gz (with fwhm=6)
+  out_name="${dname}/s${fwhm}${bname}"
+
+  FILES_IN+=("$infile")
+  OUT_ARRAY+=("$out_name")
+}
+
+# ----------------------------------------------------------------------
+# cleanup function for signal handling
+# ----------------------------------------------------------------------
+cleanup() {
+  if [[ -n "$progress_pid" ]]; then
+    kill $progress_pid 2>/dev/null || true
+  fi
+  rm -rf "$PROGRESS_DIR" 2>/dev/null || true
+  exit 130
+}
+
+# ----------------------------------------------------------------------
+# process data
+# ----------------------------------------------------------------------
+
+process()
+{  
+  n="${#FILES[@]}"
+  
+  declare -a FILES_IN=()
+  
+  for f in "${FILES[@]}"; do
+    if [[ ! -f "$f" && ! -L "$f" ]]; then
+      echo -e "${RED}File '$f' not found – skipping.${NC}" >&2
+      continue
+    fi
+    process_file "$f"
+  done
+
+  # Use the actual number of queued jobs (some inputs might have been skipped)
+  n="${#OUT_ARRAY[@]}"
+  if [ "$n" -lt 1 ]; then
+    echo -e "${RED}No valid input files to process.${NC}" >&2
+    exit 1
+  fi
+ 
+  # serial
+  if [  ${n} -gt 1 ]; then
+    mkdir -p "$PROGRESS_DIR"
+    rm -f "$PROGRESS_DIR"/*.progress
+    ${script_dir}/progress_bar_multi.sh 1 "$PROGRESS_DIR" 40 2 "CAT_VolSmooth" &
+    progress_pid=$!
+
+    # Trap signals: Ctrl+C (INT), termination (TERM), or exit (EXIT)
+    trap cleanup INT TERM
+  fi 
+   
+  j=1
+  for ((i=0; i<${n}; i++)); do
+    if [  ${n} -gt 1 ]; then
+      echo "$j/$n" > "$PROGRESS_DIR/job0.progress"
+      ((j++))
+      echo 0 > "$PROGRESS_DIR/job0.status"
+    fi
+    
+    "${bin_dir}/CAT_VolSmooth" \
+      -fwhm "${fwhm}" \
+      "${FILES_IN[$i]}" \
+      "${OUT_ARRAY[$i]}" 2>&1
+      
+    exit_code=$?
+    pids=($!)
+
+    if [[ ${n} -gt 1  &&  $exit_code -ne 0 ]]; then
+      echo 1 > "$PROGRESS_DIR/job0.status"
+    fi
+  done
+  
+  if [  ${n} -gt 1 ]; then
+    wait $progress_pid
+    rm -r "$PROGRESS_DIR"
+  fi
+  exit $?
+}
+
+
+# ----------------------------------------------------------------------
+# help
+# ----------------------------------------------------------------------
+
+help() {
+cat << EOM
+${BOLD}${BLUE}$0
+---------------------------------------------${NC}
+
+${BOLD}USAGE:${NC}
+  ${GREEN}$0 [options] <filename(s)>${NC}
+
+${BOLD}DESCRIPTION:${NC}
+Smooth volumetric 3D data with a Gaussian kernel using CAT_VolSmooth.
+Processes one or more Nifti images in parallel or serially.
+
+${BOLD}OPTIONS:${NC}
+  --no-parallel                Disable parallelization via ${script_dir}/parallelize
+  --jobs <N>                   Number of parallel processes (passed to parallelize -p)
+  --fwhm <FLOAT>               Smoothing kernel FWHM in mm (default: $fwhm)
+  -h | --help                  Show this help and exit
+
+${BOLD}INPUT:${NC}
+  Nifti 3D volume files (*.nii, *.nii.gz, etc.)
+
+${BOLD}OUTPUT:${NC}
+  For each input file, writes a smoothed volume with filename prepended by s{fwhm}
+  (e.g., input.nii.gz -> s6input.nii.gz with default fwhm=6)
+
+${BOLD}Dependencies:${NC}
+  CAT_VolSmooth
+  ${script_dir}/progress_bar_multi.sh
+  ${script_dir}/parallelize
+
+${BOLD}Author:${NC}
+  Christian Gaser (christian.gaser@uni-jena.de)
+
+EOM
+
+}
+
+# ----------------------------------------------------------------------
+# call main program
+# ----------------------------------------------------------------------
+
+main "${@}"
