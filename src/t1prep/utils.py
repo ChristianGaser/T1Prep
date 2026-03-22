@@ -232,7 +232,7 @@ def get_filenames(use_bids_naming, bname, side, desc, space, nii_ext):
 
 def progress_bar(elapsed, total, name):
     """
-    Displays a progress bar.
+    Displays a progress bar with ETA.
 
     Args:
         elapsed (int): Elapsed progress count.
@@ -245,6 +245,12 @@ def progress_bar(elapsed, total, name):
     Returns:
         int: Elapsed progress count increased by 1.
     """
+    import time
+
+    # Initialize start time on first call (elapsed == 1)
+    if elapsed <= 1:
+        progress_bar._start_time = time.time()
+
     # Create the progress bar
     prog = "█" * elapsed
     remaining = " " * (total - elapsed)
@@ -252,8 +258,19 @@ def progress_bar(elapsed, total, name):
     # Format the name with padding
     name = name.ljust(50)
 
-    # Print the progress bar with percentage and name
-    print(f"{prog}{remaining} {elapsed}/{total} {name}\r", end="")
+    # Calculate ETA
+    eta_str = ""
+    if elapsed > 0 and elapsed < total and hasattr(progress_bar, '_start_time'):
+        elapsed_time = time.time() - progress_bar._start_time
+        if elapsed_time > 0 and elapsed > 1:
+            remaining_time = elapsed_time * (total - elapsed) / (elapsed - 1)
+            h = int(remaining_time // 3600)
+            m = int((remaining_time % 3600) // 60)
+            s = int(remaining_time % 60)
+            eta_str = f" ETA {h:02d}:{m:02d}:{s:02d}"
+
+    # Print the progress bar with percentage, name, and ETA
+    print(f"{prog}{remaining} {elapsed}/{total} {name}{eta_str}\r", end="")
 
     if elapsed == total:
         spaces = " " * 100
