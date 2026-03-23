@@ -18,7 +18,8 @@ import sys
 import platform
 
 if sys.platform == "darwin":
-    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"        # CPU Fallback for MPS
+    os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0" # More GPU memory
 
 import torch
 import argparse
@@ -104,22 +105,52 @@ class CustomBrainSegmentation(BrainSegmentation):
     prevents negative values due to sinc-interpolation
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # deepmriprep and deepbet can disagree on device selection on macOS,
+        # which may leave scripted model tensors on CPU while inputs are on MPS.
+        self.inference_device = (
+            torch.device("mps")
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+            else self.device
+        )
+
     def __call__(self, x, mask):
+        x = x.to(device=self.inference_device)
         x = x[:, :, 1:-2, 15:-12, :-3]
         x = scale_intensity(x)
-        p0 = self.run_model(x)  # Skip self.run_patch_models(x, p0)
+        p0 = self.run_model(x)
+        p0 = self.run_patch_models(x, p0)
         if self.fill_holes:
-            mask = p0[0, 0].cpu().numpy() > 0.9
-            mask_filled = fill_voids.fill(mask)
-            filled = (mask == 0) & (mask_filled == 1)
-            p0[0, 0][filled] = 1.0
-        return F.pad(p0, (0, 3, 15, 12, 1, 2))
+            mask_np = p0[0, 0].detach().cpu().numpy() > 0.9
+            mask_filled = fill_voids.fill(mask_np)
+            filled = (mask_np == 0) & (mask_filled == 1)
+            if np.any(filled):
+                filled_t = torch.from_numpy(filled).to(p0.device)
+                p0[0, 0][filled_t] = 1.0
+        # Keep return device aligned with caller tensors used in downstream indexing.
+        return F.pad(p0, (0, 3, 15, 12, 1, 2)).to(mask.device)
+
+    def run_patch_models(self, x, p0):
+        x = x.to(device=self.inference_device)
+        p0 = p0.to(device=self.inference_device)
+        patch_p0 = torch.zeros(
+            x.shape, device=self.inference_device
+        )
+        for i, (patch, weight) in enumerate(zip(self.patch_slices, self.patch_weights)):
+            patch_inp = torch.cat([x[patch], p0[patch]], dim=1)
+            patch_inp = patch_inp.flip(2) if i >= 18 else patch_inp
+            with torch.no_grad():
+                p0_patch = self.patch_models[i % 18](patch_inp)
+            p0_patch = p0_patch.flip(2) if i >= 18 else p0_patch
+            patch_p0[patch] += p0_patch * weight.to(self.inference_device)
+        return patch_p0
 
     def run_model(self, x, scale_factor=1.5):
+        x = x.to(device=self.inference_device)
         with torch.no_grad():
             p0 = self.model(
-                F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS)
-            )
+                F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
         return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
 
 
@@ -333,7 +364,7 @@ def setup_device() -> tuple[torch.device, bool]:
 
     if torch.cuda.is_available():
         return torch.device("cuda"), False
-    elif torch.backends.mps.is_available() and False:  # not yet fully supported
+    elif torch.backends.mps.is_available():
         return torch.device("mps"), False
     else:
         return torch.device("cpu"), True
@@ -361,14 +392,12 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
         vol, t1.affine, t1.header, np.eye(4), do_flip=0
     )
     t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
-    prep = CustomPreprocess(no_gpu)
+    prep = CustomPreprocess(no_gpu=no_gpu)
 
     # This is a bit faster since for initial segmentation the sinc-interpolation
     # of the segmentations does not help and is slower
-    # Furthermore, skip self.run_patch_models(x, p0) which takes a lot of time
-    # and is not needed for Amap segmentation.
-    if use_amap:
-        prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
+    # Furthermore, CustomBrainSegmentation supports mps device
+    prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
 
     return t1, prep, ras_affine
 
