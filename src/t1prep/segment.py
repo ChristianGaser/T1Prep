@@ -79,6 +79,7 @@ from _segment_utils import (
     handle_lesions,
     normalize_to_sum1,
 )
+from spline_resize import resize
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
@@ -99,8 +100,6 @@ MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
 class CustomBrainSegmentation(BrainSegmentation):
     """
     Custom class to override BrainSegmentation
-    Skip self.run_patch_models(x, p0) which takes a lot of time and is not needed
-    for Amap segmentation.
     Furthermore use run_model function with linear interpolation for p0, which
     prevents negative values due to sinc-interpolation
     """
@@ -148,10 +147,15 @@ class CustomBrainSegmentation(BrainSegmentation):
 
     def run_model(self, x, scale_factor=1.5):
         x = x.to(device=self.inference_device)
+        """
         with torch.no_grad():
             p0 = self.model(
                 F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
         return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
+        """
+        with torch.no_grad():
+            p0 = self.model(resize(x, scale_factor=1 / scale_factor, align_corners=INTERP_KWARGS['align_corners'], mask_value=0))
+        return resize(p0, scale_factor=scale_factor, align_corners=INTERP_KWARGS['align_corners'], mask_value=0)
 
 
 class CustomPreprocess(Preprocess):
