@@ -33,7 +33,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 seed=0
 count=0
-end_count=0
+end_count=1
 
 # Load additional defaults
 cfg="${script_dir}/../T1Prep_defaults.txt"
@@ -267,6 +267,7 @@ parse_args()
         debug=1
         ;;
       --fast)
+        save_pial_white=0
         estimate_spherereg=0
         save_mwp=0
         save_hemi=0
@@ -851,13 +852,15 @@ process()
     fi
 
     # Change number of commands if spherical registration is disabled
-    if [ "${estimate_spherereg}" -eq 1 ]; then
-      ((end_count=8))
-    else
-      ((end_count=6))
-    fi
-    if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
-      ((end_count++))
+    if [ "${estimate_surf}" -eq 1 ]; then
+      if [ "${estimate_spherereg}" -eq 1 ]; then
+        ((end_count+=7))
+      else
+        ((end_count+=5))
+      fi
+      if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
+        ((end_count++))
+      fi
     fi
 
     # Number of end counts for progress_bar for volume segmentation
@@ -990,8 +993,10 @@ EOF
 
     fi # estimate_surf
 
-    ((count++))
-    if [ "$multi" -ne 2 ]; then ${progress_bar} 1 "" $count $end_count "                     "; fi
+    if [ "$multi" -ne 2 ]; 
+      ((count++))
+      then ${progress_bar} 1 "" $count $end_count "                     "; 
+    fi
 
     # Print execution time per data set
     end=$(date +%s)
