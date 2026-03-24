@@ -32,6 +32,7 @@ import fill_voids
 import json
 import random
 import time
+import subprocess
 import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
@@ -48,16 +49,16 @@ from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import get_volumes, shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
+from spline_resize import resize
+from report import write_t1prep_report
+from qa import estimate_qa
 from scipy.ndimage import (
     binary_closing,
     binary_dilation,
     generate_binary_structure,
 )
-from report import write_t1prep_report
-from qa import estimate_qa
 from utils import (
     smart_round,
-    progress_bar,
     remove_file,
     resample_and_save_nifti,
     get_resampled_header,
@@ -79,7 +80,6 @@ from _segment_utils import (
     handle_lesions,
     normalize_to_sum1,
 )
-from spline_resize import resize
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
@@ -96,6 +96,12 @@ MODEL_FILES = (
 MODEL_ZIP_URL = "https://github.com/ChristianGaser/T1Prep/releases/download/v0.2.0-beta/T1Prep_Models.zip"
 MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
 
+def shell_progress(count, end_count, label, failed=0):
+    script = ROOT_PATH / "scripts" / "progress_bar_multi.sh"
+    subprocess.run(
+        [str(script), "1", "", str(count), str(end_count), label, "40", str(failed)],
+        check=False)
+    return count + 1
 
 class CustomBrainSegmentation(BrainSegmentation):
     """
@@ -147,15 +153,17 @@ class CustomBrainSegmentation(BrainSegmentation):
 
     def run_model(self, x, scale_factor=1.5):
         x = x.to(device=self.inference_device)
-        """
-        with torch.no_grad():
-            p0 = self.model(
-                F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
-        return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
-        """
-        with torch.no_grad():
-            p0 = self.model(resize(x, scale_factor=1 / scale_factor, align_corners=INTERP_KWARGS['align_corners'], mask_value=0))
-        return resize(p0, scale_factor=scale_factor, align_corners=INTERP_KWARGS['align_corners'], mask_value=0)
+        
+        # Linear interpolation
+        if False:
+            with torch.no_grad():
+                p0 = self.model(
+                    F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
+            return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
+        else: # Sinc interpolation
+            with torch.no_grad():
+                p0 = self.model(resize(x, scale_factor=1 / scale_factor, align_corners=INTERP_KWARGS['align_corners'], mask_value=0))
+            return resize(p0, scale_factor=scale_factor, align_corners=INTERP_KWARGS['align_corners'], mask_value=0)
 
 
 class CustomPreprocess(Preprocess):
@@ -360,6 +368,12 @@ def parse_arguments() -> argparse.Namespace:
         default=0,
         help="Seed for random number generators",
     )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=0,
+        help="End count for progress bar",
+    )
     return parser.parse_args()
 
 
@@ -416,7 +430,7 @@ def skull_strip(
     """Run skull stripping and return brain and mask images."""
 
     if verbose:
-        count = progress_bar(count, end_count, "Skull-stripping               ")
+        count = shell_progress(count, end_count, "Skull-stripping           ")
     output = prep.run_bet(t1)
     return output["brain"], output["mask"], count
 
@@ -463,7 +477,7 @@ def affine_register(
     """Perform affine registration of the brain."""
 
     if verbose:
-        count = progress_bar(count, end_count, "Affine registration           ")
+        count = shell_progress(count, end_count, "Affine registration           ")
     output = prep.run_affine_register(brain, mask)
     return (
         output["affine"],
@@ -797,7 +811,7 @@ def save_results(
     # Save non-linear registered data
     if save_hemilabel or save_mwp or save_wp or (atlas_list is not None):
         if verbose:
-            count = progress_bar(count, end_count, "Warping           ")
+            count = shell_progress(count, end_count, "Warping                         ")
         output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
         warp_yx = output_reg["warp_yx"]
         warp_xy = output_reg["warp_xy"]
@@ -851,7 +865,7 @@ def save_results(
         # Save hemispheric partition for surface estimation
         if save_hemilabel:
             if verbose:
-                count = progress_bar(count, end_count, "Atlas creation     ")
+                count = shell_progress(count, end_count, "Atlas creation     ")
             atlas = get_atlas(
                 t1,
                 affine,
@@ -865,7 +879,7 @@ def save_results(
             lh, rh = get_partition(p0_large, atlas)
 
             if verbose:
-                count = progress_bar(count, end_count, "Resampling         ")
+                count = shell_progress(count, end_count, "Resampling         ")
 
             hemileft_name = code_vars_left.get("Hemi_volume", "")
             hemiright_name = code_vars_right.get("Hemi_volume", "")
@@ -934,13 +948,7 @@ def run_segment():
     # Set processing parameters
     target_res = np.array([0.5] * 3)  # Target resolution for resampling
     count = 1
-    end_count = 4
-    if save_mwp:
-        end_count += 1
-    if save_hemilabel:
-        end_count += 2
-    if save_lesions:
-        end_count += 1
+    end_count = args.count
 
     if save_gz:
         ext = "nii.gz"
@@ -972,7 +980,7 @@ def run_segment():
     # Step 1: Skull-stripping (or skip)
     if skip_skullstrip:
         if verbose:
-            count = progress_bar(count, end_count, "Skull-stripping (skipped)      ")
+            count = shell_progress(count, end_count, "Skull-stripping (skipped)      ")
         brain = t1
         mask = mask_from_skullstripped(brain)
     else:
@@ -1018,7 +1026,7 @@ def run_segment():
 
     # Step 4: Segmentation
     if verbose:
-        count = progress_bar(
+        count = shell_progress(
             count, end_count, "DeepMriPrep segmentation                  "
         )
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
@@ -1061,7 +1069,7 @@ def run_segment():
 
     if use_amap:
         if verbose:
-            count = progress_bar(count, end_count, "Amap segmentation        ")
+            count = shell_progress(count, end_count, "Amap segmentation        ")
         brain_large, p0_large = run_amap_segmentation(
             bin_dir,
             p0_large,
@@ -1087,7 +1095,7 @@ def run_segment():
     else:
         # Call deepmriprep refinement of deepmriprep label
         if verbose:
-            count = progress_bar(
+            count = shell_progress(
                 count, end_count, "Fine DeepMriPrep segmentation         "
             )
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
