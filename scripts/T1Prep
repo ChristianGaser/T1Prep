@@ -852,9 +852,9 @@ process()
 
     # Change number of commands if spherical registration is disabled
     if [ "${estimate_spherereg}" -eq 1 ]; then
-      ((end_count=7))
+      ((end_count=8))
     else
-      ((end_count=5))
+      ((end_count=6))
     fi
     if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
       ((end_count++))
@@ -926,7 +926,7 @@ process()
       if [ "$seg_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
           # Use 1/1 so the single job bar renders without relying on end_count
-          ${script_dir}/progress_bar_multi.sh 1 "" 1 1 "Segmentation failed" 40 1
+          ${progress_bar} 1 "" 1 1 "Segmentation failed"
         fi
         ((i++))
         ((errors++))
@@ -966,7 +966,7 @@ process()
       if [ "$surf_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
           # Use 1/1 so the single job bar renders without relying on end_count
-          ${script_dir}/progress_bar_multi.sh 1 "" 1 1 "Surface estimation failed" 40 1
+          ${progress_bar} 1 "" 1 1 "Surface estimation failed"
         fi
         ((errors++))
         echo "Error in ${bname}"
@@ -989,6 +989,9 @@ write_t1prep_report("${report_dir}", "${bname}", ${bids_py}, "${f}")
 EOF
 
     fi # estimate_surf
+
+    ((count++))
+    if [ "$multi" -ne 2 ]; then ${progress_bar} 1 "" $count $end_count "                     "; fi
 
     # Print execution time per data set
     end=$(date +%s)
