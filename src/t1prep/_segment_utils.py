@@ -932,3 +932,66 @@ def get_partition(p0_large, atlas):
     rh[~mask] = 1
 
     return lh, rh
+
+
+def compute_euler_number(vol, threshold=2.5):
+    """Compute the Euler number of a 3D volume at a given threshold.
+
+    Thresholds the volume at the given level (default 2.5, the GM/WM
+    boundary) and computes the Euler characteristic of the resulting
+    binary cubical cell complex using the formula:
+
+        chi = V - E + F - C
+
+    where V = foreground voxels, E = foreground edges (6-connected
+    adjacent pairs), F = foreground faces (2x2 blocks), and C =
+    foreground cubes (2x2x2 blocks).
+
+    For a topologically perfect hemisphere (single connected component,
+    no handles), chi = 1.  Each topological defect (handle/tunnel)
+    decreases chi by 1.
+
+    Parameters
+    ----------
+    vol : np.ndarray
+        3-D label or probability array (e.g. from ``get_partition``).
+    threshold : float, optional
+        Iso-level that separates foreground from background (default 2.5).
+
+    Returns
+    -------
+    int
+        Euler characteristic of the binary volume.
+    """
+    b = vol >= threshold
+
+    # Vertices (foreground voxels)
+    V = int(np.count_nonzero(b))
+
+    # Edges along each axis
+    ex = int(np.count_nonzero(b[:-1] & b[1:]))
+    ey = int(np.count_nonzero(b[:, :-1] & b[:, 1:]))
+    ez = int(np.count_nonzero(b[:, :, :-1] & b[:, :, 1:]))
+    E = ex + ey + ez
+
+    # Faces (2x2 blocks in each plane)
+    fxy = int(np.count_nonzero(
+        b[:-1, :-1] & b[1:, :-1] & b[:-1, 1:] & b[1:, 1:]
+    ))
+    fxz = int(np.count_nonzero(
+        b[:-1, :, :-1] & b[1:, :, :-1] & b[:-1, :, 1:] & b[1:, :, 1:]
+    ))
+    fyz = int(np.count_nonzero(
+        b[:, :-1, :-1] & b[:, 1:, :-1] & b[:, :-1, 1:] & b[:, 1:, 1:]
+    ))
+    F = fxy + fxz + fyz
+
+    # Cubes (2x2x2 blocks)
+    C = int(np.count_nonzero(
+        b[:-1, :-1, :-1] & b[1:, :-1, :-1]
+        & b[:-1, 1:, :-1] & b[1:, 1:, :-1]
+        & b[:-1, :-1, 1:] & b[1:, :-1, 1:]
+        & b[:-1, 1:, 1:] & b[1:, 1:, 1:]
+    ))
+
+    return V - E + F - C
