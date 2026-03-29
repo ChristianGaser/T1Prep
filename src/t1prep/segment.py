@@ -73,6 +73,7 @@ from _segment_utils import (
     unsmooth_kernel,
     get_atlas,
     get_partition,
+    compute_euler_number,
     cleanup_vessels,
     get_regions_mask,
     correct_label_map,
@@ -877,6 +878,36 @@ def save_results(
                 is_label_atlas=True,
             )
             lh, rh = get_partition(p0_large, atlas)
+
+            # Compute Euler numbers at GM/WM boundary for QA
+            euler_lh = compute_euler_number(lh, threshold=2.5)
+            euler_rh = compute_euler_number(rh, threshold=2.5)
+
+            # Append to existing JSON report
+            report_name = code_vars.get("Report_file", "")
+            report_path = f"{report_dir}/{report_name}"
+            if os.path.exists(report_path):
+                with open(report_path, "r") as f:
+                    report_data = json.load(f)
+            else:
+                report_data = {}
+            qa = report_data.setdefault("qualitymeasures", {})
+            qa["euler_lh"] = {
+                "value": euler_lh,
+                "desc": (
+                    "Euler number of left hemisphere at GM/WM boundary "
+                    "(ideal = 1; lower values indicate more topological defects)"
+                ),
+            }
+            qa["euler_rh"] = {
+                "value": euler_rh,
+                "desc": (
+                    "Euler number of right hemisphere at GM/WM boundary "
+                    "(ideal = 1; lower values indicate more topological defects)"
+                ),
+            }
+            with open(report_path, "w") as f:
+                json.dump(report_data, f, indent=2)
 
             if verbose:
                 count = shell_progress(count, end_count, "Resampling         ")

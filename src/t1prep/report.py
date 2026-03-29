@@ -122,15 +122,5 @@ def write_t1prep_report(
         "qualitymeasures": qualitymeasures,
     }
 
-    # Always include topology defect count (overwrite/add)
-    report["qualitymeasures"]["topo_defects_voxels_changed"] = {
-        "value": changed_voxels_total,
-        "desc": (
-            "Total voxels changed to fix surface topology defects "
-            "(sum across all surfaces; lower is better; 0 if surface "
-            "pipeline has not yet run)"
-        ),
-    }
-
     with open(report_json_path, "w") as fh:
         json.dump(report, fh, indent=2)
