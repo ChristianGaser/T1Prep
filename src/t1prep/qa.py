@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.ndimage import (
+    generate_binary_structure,
+    binary_erosion,
     gaussian_filter,
     generic_filter,
     sobel,
@@ -613,6 +615,7 @@ def estimate_qa(
 
     # Tissue masks
     csf_mask, gm_mask, wm_mask, brain_mask = _tissue_masks(p0)
+    wm_mask = binary_erosion(wm_mask, generate_binary_structure(3, 3), 2)
 
     # Contrast
     contrast_abs, contrastr = estimate_contrast(

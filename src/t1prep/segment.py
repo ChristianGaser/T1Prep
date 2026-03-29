@@ -895,15 +895,15 @@ def save_results(
             qa["euler_lh"] = {
                 "value": euler_lh,
                 "desc": (
-                    "Euler number of left hemisphere at GM/WM boundary "
-                    "(ideal = 1; lower values indicate more topological defects)"
+                    "Euler number of left hemisphere "
+                    "(ideal = 2; lower values indicate more topological defects)"
                 ),
             }
             qa["euler_rh"] = {
                 "value": euler_rh,
                 "desc": (
-                    "Euler number of right hemisphere at GM/WM boundary "
-                    "(ideal = 1; lower values indicate more topological defects)"
+                    "Euler number of right hemisphere "
+                    "(ideal = 2; lower values indicate more topological defects)"
                 ),
             }
             with open(report_path, "w") as f:
