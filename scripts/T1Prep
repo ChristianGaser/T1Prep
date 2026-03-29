@@ -113,7 +113,7 @@ parse_args()
     exit 1
   fi
 
-  count=0
+  i=0
   while [ $# -gt 0 ]; do
     optname="${1%%=*}"
     optarg="${2:-}"
@@ -289,8 +289,8 @@ parse_args()
           fi
         else
           FILE="$1"
-          ARRAY[$count]="$FILE"
-          ((count++))
+          ARRAY[$i]="$FILE"
+          ((i++))
         fi
         ;;
     esac
@@ -859,11 +859,14 @@ process()
     # Change number of commands if spherical registration is disabled
     if [ "${estimate_surf}" -eq 1 ]; then
       if [ "${estimate_spherereg}" -eq 1 ]; then
-        ((end_count+=7))
+        ((end_count+=6))
       else
-        ((end_count+=5))
+        ((end_count+=4))
       fi
       if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
+        ((end_count++))
+      fi
+      if [ "${thickness_method}" -eq 2 ]; then
         ((end_count++))
       fi
     fi
@@ -872,17 +875,13 @@ process()
     if [ "${estimate_seg}" -eq 1 ]; then
       ((end_count+=4))
       ((count+=4))
-      if [ "${save_mwp}" -eq 1 ]; then
-        ((end_count++))
-        ((count++))
-      fi
-      if [ "${estimate_surf}" -eq 1 ]; then
-        ((end_count+=2))
-        ((count+=2))
-      fi
-      if [ "${save_lesions}" -eq 1 ]; then
-        ((end_count++))
-        ((count++))
+      # Warping + Atlas creation + Resampling are triggered whenever
+      # --surf is passed to segment.py (i.e. save_hemilabel is true).
+      if [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] || \
+         [ "${save_mwp}" -eq 1 ] || [ "${save_wp}" -eq 1 ] || \
+         [ -n "${atlas_vol}" ]; then
+        ((end_count+=3))
+        ((count+=3))
       fi
     fi
     
