@@ -285,7 +285,7 @@ def _masked_local_sd_exact(
 
 def estimate_noise(
     intensity: np.ndarray,
-    wm_mask: np.ndarray,
+    tissue_mask: np.ndarray,
     vx_vol: np.ndarray,
     contrast: float,
 ) -> float:
@@ -294,48 +294,47 @@ def estimate_noise(
     Follows CAT12 ``cat_vol_qa201901x`` / ``estimateNoiseLevel``:
 
     1. Gaussian pre-smoothing (sigma = 0.8 + 0.5/vx_mm voxels) filling
-       non-WM with WM mean, matching CAT12's ``Ymx`` computation.
-    2. Downsample to **2.3 mm** isotropic via mean pooling (``adaptive_avg_pool3d``),
-       matching CAT12 ``cat_vol_resize(..., 'reduceV', vx_vol, 2.3, ..., 'meanm')``.
+       non-tissue with tissue mean, matching CAT12's ``Ymx`` computation.
+    2. Downsample to **2 mm** isotropic via mean pooling (``adaptive_avg_pool3d``),
+       matching CAT12 ``cat_vol_resize(..., 'reduceV', vx_vol, 2, ..., 'meanm')``.
     3. Compute masked local SD in the 3×3×3 neighbourhood via
        ``_masked_local_sd_exact`` (matching ``cat_vol_localstat(Ym, YM, 1, 4)``).
-    4. Median of the per-voxel SDs within WM, normalised by absolute
+    4. Median of the per-voxel SDs within tissue, normalised by absolute
        tissue contrast.
 
     Args:
         intensity: Bias-corrected T1w image in native space.
-        wm_mask: Binary white-matter mask.
+        tissue_mask: Binary tissue mask.
         vx_vol: Voxel dimensions in mm (length-3 array).
-        contrast: Absolute tissue contrast (WM median − GM median).
+        contrast: Absolute tissue contrast (i.e. tissue median − GM median).
 
     Returns:
         NCR value (lower is better).
     """
-    if contrast < 1e-6 or np.sum(wm_mask) < 100:
+    if contrast < 1e-6 or np.sum(tissue_mask) < 100:
         return float("nan")
 
     # Step 1: Gaussian pre-smoothing matching CAT12's Ymx computation.
     # CAT12: Yos = Ymx.*Ywm + (1-Ywm).*T1th(3); spm_smooth(Yos,Yos,.8+.5./vx_vol)
-    # Fill non-WM with WM mean, smooth, then restore WM values only.
+    # Fill non-tissue with tissue mean, smooth, then restore tissue values only.
     vx = np.asarray(vx_vol, dtype=np.float64)
     sigma_vox = 0.8 + 0.5 / float(np.mean(vx))  # sigma in voxels
-    wm_mean = float(np.mean(intensity[wm_mask]))
-    im_padded = np.where(wm_mask, intensity, wm_mean)
+    tissue_mean = float(np.mean(intensity[tissue_mask]))
+    im_padded = np.where(tissue_mask, intensity, tissue_mean)
     im_smoothed = gaussian_filter(im_padded, sigma=sigma_vox).astype(np.float32)
-    # Only use smoothed values inside WM (matching Ymx(Ywm>0) = Yos(Ywm>0))
-    im_for_noise = np.where(wm_mask, im_smoothed, 0.0).astype(np.float32)
+    # Only use smoothed values inside tissue (matching Ymx(Ywm>0) = Yos(Ywm>0))
+    im_for_noise = np.where(tissue_mask, im_smoothed, 0.0).astype(np.float32)
 
-    # Step 2: downsample to 2.3 mm using mean pooling (CAT12: reduceV 2.3mm 'meanm').
-    # The subsequent reduceV to 2mm is a no-op since 2.3 > 2.0.
-    im_ds, mask_ds = _downsample_volume(im_for_noise, wm_mask, vx_vol, target_res=2.3)
+    # Step 2: downsample to 1 mm using mean pooling (CAT12: reduceV 2mm 'meanm').
+    im_ds, mask_ds = _downsample_volume(im_for_noise, tissue_mask, vx_vol, target_res=2)
 
     if np.sum(mask_ds) < 20:
         return float("nan")
 
-    # Step 3: masked local SD at 2.3 mm (cat_vol_localstat(Ym, YM, 1, 4))
+    # Step 3: masked local SD at 2 mm (cat_vol_localstat(Ym, YM, 1, 4))
     local_sd = _masked_local_sd_exact(im_ds, mask_ds)
 
-    # Step 4: median within WM / absolute contrast
+    # Step 4: median within tissue / absolute contrast
     sd_vals = local_sd[mask_ds]
     sd_vals = sd_vals[sd_vals > 0]
     if len(sd_vals) == 0:
@@ -537,15 +536,23 @@ def estimate_qa(
 
     # Tissue masks
     csf_mask, gm_mask, wm_mask, brain_mask = _tissue_masks(p0)
+
+    # Erode masks for WM and CSF
     wm_mask = binary_erosion(wm_mask, generate_binary_structure(3, 3), 2)
+    csf_mask = binary_erosion(csf_mask, generate_binary_structure(3, 3), 1)
 
     # Contrast
     contrast_abs, contrastr = estimate_contrast(
         intensity, csf_mask, gm_mask, wm_mask
     )
 
-    # Noise (masked local SD, nb=1)
-    ncr = estimate_noise(intensity, wm_mask, vx, contrast_abs)
+    # Noise-to-Contrast Ratio in WM and CSF
+    ncr_wm = estimate_noise(intensity, wm_mask, vx, contrast_abs)
+    ncr_csf = estimate_noise(intensity, csf_mask, vx, contrast_abs)
+        
+    # Finally use the smaller values since noise can be overestimated sometime in
+    # WM due to WMHs
+    ncr = min(ncr_wm, ncr_csf)
 
     # Resolution (uses original acquisition voxel dims)
     res_rms = estimate_res_rms(vx_orig)
@@ -569,8 +576,7 @@ def estimate_qa(
     iqr_value = _iqr([marks["NCR"], marks["res_RMS"]], power=8)
     iqr_grade = mark_to_grade(iqr_value)
 
-    # SIQR — CAT12: power mean of NCR + res_RMS + res_ECR (+ FEC) with power 4
-    # FEC (Fast Euler Characteristic) is not computed here
+    # SIQR — CAT12: power mean of NCR + res_RMS + res_ECR with power 4
     siqr_value = _iqr(
         [marks["NCR"], marks["res_RMS"], marks["res_ECR"]], power=4
     )
