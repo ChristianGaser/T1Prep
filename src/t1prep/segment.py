@@ -886,6 +886,7 @@ def save_results(
             # Compute Euler numbers at GM/WM boundary for QA
             euler_lh = compute_euler_number(lh, threshold=2.5)
             euler_rh = compute_euler_number(rh, threshold=2.5)
+            abs_euler = abs(euler_lh - 2) + abs(euler_rh - 2)
 
             # Append to existing JSON report
             report_name = code_vars.get("Report_file", "")
@@ -900,14 +901,21 @@ def save_results(
                 "value": euler_lh,
                 "desc": (
                     "Euler number of left hemisphere "
-                    "(ideal = 2; lower values indicate more topological defects)"
+                    "(ideal = 2; values closer to 2 indicate less topological defects)"
                 ),
             }
             qa["euler_rh"] = {
                 "value": euler_rh,
                 "desc": (
                     "Euler number of right hemisphere "
-                    "(ideal = 2; lower values indicate more topological defects)"
+                    "(ideal = 2; values closer to 2 indicate less topological defects)"
+                ),
+            }
+            qa["abs_euler"] = {
+                "value": abs_euler,
+                "desc": (
+                    "Absolute Euler number for both hemispheres "
+                    "(absolute difference to ideal Euler number of 2; ideal = 0;larger values indicate more topological defects)"
                 ),
             }
             with open(report_path, "w") as f:
