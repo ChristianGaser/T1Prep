@@ -431,7 +431,8 @@ def skull_strip(
     """Run skull stripping and return brain and mask images."""
 
     if verbose:
-        count = shell_progress(count, end_count, "Skull-stripping           ")
+        count = shell_progress(count, end_count, 
+            "Skull-stripping              ")
     output = prep.run_bet(t1)
     return output["brain"], output["mask"], count
 
@@ -478,7 +479,8 @@ def affine_register(
     """Perform affine registration of the brain."""
 
     if verbose:
-        count = shell_progress(count, end_count, "Affine registration           ")
+        count = shell_progress(count, end_count, 
+            "Affine registration          ")
     output = prep.run_affine_register(brain, mask)
     return (
         output["affine"],
@@ -812,7 +814,8 @@ def save_results(
     # Save non-linear registered data
     if save_hemilabel or save_mwp or save_wp or (atlas_list is not None):
         if verbose:
-            count = shell_progress(count, end_count, "Warping                         ")
+            count = shell_progress(count, end_count, 
+                "Warping                      ")
         output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
         warp_yx = output_reg["warp_yx"]
         warp_xy = output_reg["warp_xy"]
@@ -866,7 +869,8 @@ def save_results(
         # Save hemispheric partition for surface estimation
         if save_hemilabel:
             if verbose:
-                count = shell_progress(count, end_count, "Atlas creation     ")
+                count = shell_progress(count, end_count, 
+                    "Atlas creation               ")
             atlas = get_atlas(
                 t1,
                 affine,
@@ -910,7 +914,8 @@ def save_results(
                 json.dump(report_data, f, indent=2)
 
             if verbose:
-                count = shell_progress(count, end_count, "Resampling         ")
+                count = shell_progress(count, end_count, 
+                    "Resampling                   ")
 
             hemileft_name = code_vars_left.get("Hemi_volume", "")
             hemiright_name = code_vars_right.get("Hemi_volume", "")
@@ -1011,7 +1016,8 @@ def run_segment():
     # Step 1: Skull-stripping (or skip)
     if skip_skullstrip:
         if verbose:
-            count = shell_progress(count, end_count, "Skull-stripping (skipped)      ")
+            count = shell_progress(count, end_count, 
+                "Skull-stripping              ")
         brain = t1
         mask = mask_from_skullstripped(brain)
     else:
@@ -1058,8 +1064,7 @@ def run_segment():
     # Step 4: Segmentation
     if verbose:
         count = shell_progress(
-            count, end_count, "DeepMriPrep segmentation                  "
-        )
+            count, end_count, "DeepMriPrep segmentation     ")
     output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg["p0_large"]
 
@@ -1100,7 +1105,8 @@ def run_segment():
 
     if use_amap:
         if verbose:
-            count = shell_progress(count, end_count, "Amap segmentation        ")
+            count = shell_progress(count, end_count, 
+                "Amap segmentation            ")
         brain_large, p0_large = run_amap_segmentation(
             bin_dir,
             p0_large,
@@ -1127,7 +1133,8 @@ def run_segment():
         # Call deepmriprep refinement of deepmriprep label
         if verbose:
             count = shell_progress(
-                count, end_count, "Fine DeepMriPrep segmentation         "
+                count, end_count, 
+                    "Fine DeepMriPrep segmentation"
             )
         output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 

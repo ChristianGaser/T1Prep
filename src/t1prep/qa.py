@@ -40,7 +40,7 @@ from scipy.ndimage import (
 # Bounds from CAT12 cat_stat_marks.m (rev 2577).
 _RATING_BOUNDS: dict[str, tuple[float, float]] = {
     "NCR":      (0.0183, 0.0868),   # cat_vol_qa201901x: ndef.noise
-    "ICR":      (0.2270, 1.3949),   # cat_vol_qa201901x: ndef.bias
+    "CNR":      (0.0183, 0.0868),   # cat_vol_qa201901x: ndef.noise
     "contrastr": (1.0 / 3.0, 0.0), # cat_stat_marks default: CM=[1/3 0]
     "res_RMS":  (0.50, 3.00),       # cat_stat_marks default
     "res_ECR":  (0.0202, 0.1003),   # cat_vol_qa201901x: ndef.ECR
@@ -293,10 +293,6 @@ def estimate_noise(
 
     Follows CAT12 ``cat_vol_qa201901x`` / ``estimateNoiseLevel``:
 
-    0. WM normalisation via a large-sigma (~20 mm) Gaussian field estimated
-       from WM voxels (approximating CAT12's ``cat_vol_approx``), so that
-       WM≈1 everywhere.  This removes WM T1 heterogeneity (corpus callosum
-       vs subcortical WM etc.) before the noise estimate.
     1. Gaussian pre-smoothing (sigma = 0.8 + 0.5/vx_mm voxels) filling
        non-WM with WM mean, matching CAT12's ``Ymx`` computation.
     2. Downsample to **2.3 mm** isotropic via mean pooling (``adaptive_avg_pool3d``),
@@ -307,10 +303,7 @@ def estimate_noise(
        tissue contrast.
 
     Args:
-        intensity: Original (uncorrected) intensity image in native space.
-            CAT12 reads the raw file (``varargin{2}``) and normalises to
-            WM≈1 via ``cat_vol_approx``; the bias-corrected branch is
-            permanently disabled with ``if 0`` in ``cat_vol_qa201901x``.
+        intensity: Bias-corrected T1w image in native space.
         wm_mask: Binary white-matter mask.
         vx_vol: Voxel dimensions in mm (length-3 array).
         contrast: Absolute tissue contrast (WM median − GM median).
@@ -321,30 +314,13 @@ def estimate_noise(
     if contrast < 1e-6 or np.sum(wm_mask) < 100:
         return float("nan")
 
-    # Step 0: WM normalisation matching CAT12's cat_vol_approx.
-    # CAT12: Yb = cat_vol_approx(Ym.*Yw + Yw.*min(Ym)) - min(Ym)
-    #        Yb = Yb / median(Ym[Yw]);  Ym = Ym ./ max(eps, Yb)
-    # This removes both scanner bias AND WM T1 heterogeneity (corpus callosum
-    # vs subcortical WM etc.) so that the local-SD step measures only noise.
-    # Approximated with a large-sigma Gaussian (≈20 mm) propagated from WM voxels.
-    vx = np.asarray(vx_vol, dtype=np.float64)
-    sigma_large = 20.0 / float(np.mean(vx))  # ~20 mm in voxels
-    wm_f = wm_mask.astype(np.float64)
-    wm_int = intensity.astype(np.float64) * wm_f
-    smooth_num = gaussian_filter(wm_int, sigma=sigma_large)
-    smooth_den = gaussian_filter(wm_f, sigma=sigma_large)
-    yb = smooth_num / np.maximum(smooth_den, 1e-6)
-    yb_median = float(np.median(yb[wm_mask]))
-    intensity_norm = (
-        intensity.astype(np.float64) / np.maximum(yb, 1e-6) * yb_median
-    ).astype(np.float32)
-
     # Step 1: Gaussian pre-smoothing matching CAT12's Ymx computation.
     # CAT12: Yos = Ymx.*Ywm + (1-Ywm).*T1th(3); spm_smooth(Yos,Yos,.8+.5./vx_vol)
     # Fill non-WM with WM mean, smooth, then restore WM values only.
+    vx = np.asarray(vx_vol, dtype=np.float64)
     sigma_vox = 0.8 + 0.5 / float(np.mean(vx))  # sigma in voxels
-    wm_mean = float(np.mean(intensity_norm[wm_mask]))
-    im_padded = np.where(wm_mask, intensity_norm, wm_mean)
+    wm_mean = float(np.mean(intensity[wm_mask]))
+    im_padded = np.where(wm_mask, intensity, wm_mean)
     im_smoothed = gaussian_filter(im_padded, sigma=sigma_vox).astype(np.float32)
     # Only use smoothed values inside WM (matching Ymx(Ywm>0) = Yos(Ywm>0))
     im_for_noise = np.where(wm_mask, im_smoothed, 0.0).astype(np.float32)
@@ -366,60 +342,6 @@ def estimate_noise(
         return float("nan")
     noise = float(np.median(sd_vals))
     return noise / contrast
-
-
-def estimate_bias(
-    intensity: np.ndarray,
-    wm_mask: np.ndarray,
-    vx_vol: np.ndarray,
-    contrastr: float,
-) -> float:
-    """Estimate Inhomogeneity-to-Contrast Ratio (ICR).
-
-    Measures the spatial variation of white-matter intensities after
-    low-pass filtering to isolate the bias-field component from noise.
-    Following CAT12, the WM map is downsampled to ~4 mm resolution
-    before computing the standard deviation, divided by the *relative*
-    tissue contrast (CAT12: ``ICRw = std(Ywb) / contrastr``).
-
-    Args:
-        intensity: Bias-corrected intensity image.
-        wm_mask: Binary white-matter mask.
-        vx_vol: Voxel dimensions in mm (length-3 array).
-        contrastr: Relative tissue contrast ratio (dimensionless, 0–1).
-
-    Returns:
-        ICR value (lower is better).
-    """
-    if contrastr < 1e-6 or np.sum(wm_mask) < 100:
-        return float("nan")
-
-    # CAT12: downsample WM intensities to ~4 mm to remove noise,
-    # keeping only the slowly-varying bias field.
-    target_res = 4.0
-    vx = np.asarray(vx_vol, dtype=np.float64)
-    zoom_factor = vx / target_res  # < 1 → shrink
-
-    wm_f = wm_mask.astype(np.float64)
-    im_wm = intensity.astype(np.float64) * wm_f
-
-    # Downsample using order=1 (bilinear)
-    im_ds = zoom(im_wm, zoom_factor, order=1)
-    mask_ds = zoom(wm_f, zoom_factor, order=1)
-
-    # Recover WM-only mean values (avoid PVE division-by-zero)
-    valid = mask_ds > 0.5
-    if np.sum(valid) < 20:
-        return float("nan")
-    im_ds[valid] /= mask_ds[valid]
-
-    # One pass of local-mean smoothing (CAT12: cat_vol_localstat nb=1)
-    sm = _masked_local_mean(im_ds, valid, radius=1)
-    vals = sm[valid & (sm > 0)]
-    if len(vals) < 20:
-        return float("nan")
-
-    return float(np.std(vals) / contrastr)
 
 
 def _masked_local_mean(
@@ -597,7 +519,7 @@ def estimate_qa(
             {
                 "qualitymeasures": {
                     "NCR":      {"value": …, "mark": …, "desc": "…"},
-                    "ICR":      {"value": …, "mark": …, "desc": "…"},
+                    "CNR":      {"value": …, "mark": …, "desc": "…"},
                     "contrastr": {"value": …, "mark": …, "desc": "…"},
                     "res_RMS":  {"value": …, "mark": …, "desc": "…"},
                     "res_ECR":  {"value": …, "mark": …, "desc": "…"},
@@ -625,9 +547,6 @@ def estimate_qa(
     # Noise (masked local SD, nb=1)
     ncr = estimate_noise(intensity, wm_mask, vx, contrast_abs)
 
-    # Bias / inhomogeneity (downsampled to ~4 mm, using relative contrast)
-    icr = estimate_bias(intensity, wm_mask, vx, contrastr)
-
     # Resolution (uses original acquisition voxel dims)
     res_rms = estimate_res_rms(vx_orig)
 
@@ -638,7 +557,7 @@ def estimate_qa(
     marks: dict[str, float] = {}
     for name, value in [
         ("NCR", ncr),
-        ("ICR", icr),
+        ("CNR", ncr),
         ("contrastr", contrastr),
         ("res_RMS", res_rms),
         ("res_ECR", res_ecr),
@@ -660,7 +579,7 @@ def estimate_qa(
     # Descriptions
     descs = {
         "NCR": "Noise-to-Contrast Ratio (lower is better)",
-        "ICR": "Inhomogeneity-to-Contrast Ratio (lower is better)",
+        "CNR": "Contrast-to-Noise Ratio (inverse of NCR, higher is better)",
         "contrastr": "Tissue contrast ratio (closer to 0.33 is better)",
         "res_RMS": "RMS voxel dimension in mm (lower is better)",
         "res_ECR": "Effective Contrast Resolution (lower is better)",
@@ -671,7 +590,7 @@ def estimate_qa(
     result: dict = {}
     for name, value in [
         ("NCR", ncr),
-        ("ICR", icr),
+        ("CNR", 1/ncr),
         ("contrastr", contrastr),
         ("res_RMS", res_rms),
         ("res_ECR", res_ecr),
