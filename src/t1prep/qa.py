@@ -39,8 +39,8 @@ from scipy.ndimage import (
 # A value equal to *best* → mark 1 (excellent), equal to *worst* → mark 6.
 # Bounds from CAT12 cat_stat_marks.m (rev 2577).
 _RATING_BOUNDS: dict[str, tuple[float, float]] = {
-    "NCR":      (0.0183, 0.0868),   # cat_vol_qa201901x: ndef.noise
-    "CNR":      (0.0183, 0.0868),   # cat_vol_qa201901x: ndef.noise
+    "NCR":      (0.0098, 0.0237),
+    "CNR":      (0.0098, 0.0237),   # cat_vol_qa201901x: ndef.noise
     "contrastr": (1.0 / 3.0, 0.0), # cat_stat_marks default: CM=[1/3 0]
     "res_RMS":  (0.50, 3.00),       # cat_stat_marks default
     "res_ECR":  (0.0202, 0.1003),   # cat_vol_qa201901x: ndef.ECR
