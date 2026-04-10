@@ -53,6 +53,28 @@ single_job_bar() {
   [ -z "$width" ] && width=40
   [ -z "$failed" ] && failed=0
 
+  # Track elapsed time across separate script invocations to estimate ETA.
+  local state_dir="/tmp/t1prep_progress_single"
+  mkdir -p "$state_dir"
+  local state_file="$state_dir/${PPID}.state"
+  local now start prev_total prev_current
+  now=$(date +%s)
+
+  if [[ "$current" -le 1 || ! -f "$state_file" ]]; then
+    start=$now
+    printf "%s,%s,%s\n" "$start" "$total" "$current" > "$state_file"
+  else
+    IFS=',' read -r start prev_total prev_current < "$state_file"
+    [ -z "$start" ] && start=$now
+    [ -z "$prev_total" ] && prev_total=$total
+    [ -z "$prev_current" ] && prev_current=0
+    # Reset timing when a new run starts or total changed.
+    if [[ "$current" -le "$prev_current" || "$total" -ne "$prev_total" ]]; then
+      start=$now
+    fi
+    printf "%s,%s,%s\n" "$start" "$total" "$current" > "$state_file"
+  fi
+
   local percent=$(( current * 100 / total ))
   local filled=$(( width * current / total ))
   local empty=$(( width - filled ))
@@ -60,20 +82,33 @@ single_job_bar() {
   local COLOR=$DEFAULT_COLOR
   [ "$failed" -ne 0 ] && COLOR=$FAIL_COLOR
 
+  local eta=""
+  if [[ "$current" -gt 1 && "$current" -lt "$total" ]]; then
+    local elapsed remaining
+    elapsed=$((now - start))
+    if [[ "$elapsed" -gt 0 ]]; then
+      remaining=$((elapsed * (total - current) / (current - 1)))
+      eta=$(printf "ETA %02d:%02d:%02d" \
+        $((remaining / 3600)) $(((remaining / 60) % 60)) $((remaining % 60)))
+    fi
+  fi
+
   local bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
   bar+=$(printf "%${empty}s")
 
   if [ -t 1 ]; then
-    printf "[${COLOR}%-${width}s${NC}] %3d%% %s\r" "$bar" "$percent" "$label"
+    printf "[${COLOR}%-${width}s${NC}] %3d%% %s %s\r" "$bar" "$percent" "$label" "$eta"
     if [ "$current" -eq "$total" ]; then
+      rm -f "$state_file"
       echo ""  # newline at end
     fi
   elif [ -n "$T1PREP_WEBUI" ]; then
     # Web UI mode: always output progress for tracking
-    echo "[${bar}] ${percent}% $label"
+    echo "[${bar}] ${percent}% $label $eta"
   else
     # Non-TTY: only final output
     if [ "$current" -eq "$total" ]; then
+      rm -f "$state_file"
       echo "[${COLOR}${bar}${NC}] ${percent}% $label"
     fi
   fi
