@@ -450,8 +450,11 @@ t1prep_output_folder_from_input()
   #   outdir0, use_subfolder, bname
   local FILE="$1"
   local outdir_override="${2:-}"
-  local version_arg="${3:-}"
+  local version_arg="${3:-${T1PREP_VERSION:-}}"
   local use_amap_arg="${4:-0}"
+
+  # Keep folder naming stable: T1Prep-v<version> and avoid accidental "vv".
+  version_arg="${version_arg#v}"
 
   # Normalize outdir override to an absolute path so that later `cd` calls
   # (e.g. in surface estimation) do not break relative paths.
@@ -521,7 +524,7 @@ t1prep_output_folder_from_input()
 get_output_folder()
 {
   local FILE=$1
-  t1prep_output_folder_from_input "$FILE" "${outdir:-}" "${version}" "${use_amap}"
+  t1prep_output_folder_from_input "$FILE" "${outdir:-}" "${T1PREP_VERSION}" "${use_amap}"
 } 
 
 
