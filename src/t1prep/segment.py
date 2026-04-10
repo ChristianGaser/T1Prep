@@ -155,16 +155,12 @@ class CustomBrainSegmentation(BrainSegmentation):
     def run_model(self, x, scale_factor=1.5):
         x = x.to(device=self.inference_device)
         
-        # Linear interpolation
-        if False:
-            with torch.no_grad():
-                p0 = self.model(
-                    F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
-            return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
-        else: # Sinc interpolation
-            with torch.no_grad():
-                p0 = self.model(resize(x, scale_factor=1 / scale_factor, align_corners=INTERP_KWARGS['align_corners'], mask_value=0))
-            return resize(p0, scale_factor=scale_factor, align_corners=INTERP_KWARGS['align_corners'], mask_value=0)
+        # Use linear interpolation, since sinc-interpolation caused issues with
+        # negative values in label image and resulted in less accurate segmentations
+        with torch.no_grad():
+            p0 = self.model(
+                F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
+        return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
 
 
 class CustomPreprocess(Preprocess):
