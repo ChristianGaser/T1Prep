@@ -33,6 +33,7 @@ import json
 import random
 import time
 import subprocess
+import tempfile
 import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
@@ -398,19 +399,41 @@ def prepare_model_files() -> None:
                 )
 
 
-def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
-    """Align the input volume and create the preprocessing object."""
+def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool, bin_dir: str):
+    """Denoise and align the input volume and create the preprocessing object."""
 
     vol = t1.get_fdata().copy()
-    vol = np.squeeze(vol)
+    vol = np.squeeze(vol)    
+
     vol, affine_resamp, header_resamp, ras_affine = align_brain(
         vol, t1.affine, t1.header, np.eye(4), do_flip=0
     )
     t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
     prep = CustomPreprocess(no_gpu=no_gpu)
 
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir) / "temp_image.nii"
+        tmp_path_out = Path(tmpdir) / "sanlm_image.nii"
+        nib.save(t1, str(tmp_path))
+        
+        cmd = (
+            os.path.join(bin_dir, "CAT_VolSanlm")
+            + " "
+            + f"{tmp_path}"
+            + " "
+            + f"{tmp_path_out}"
+        )
+        os.system(cmd)
+    
+        # The temporary directory is removed after this block, so we have 
+        # to create a new nifti object
+        t1_sanlm = nib.load(str(tmp_path_out))
+        t1_data = np.asarray(t1_sanlm.dataobj).copy()
+        t1 = nib.Nifti1Image(t1_data, t1_sanlm.affine, t1_sanlm.header.copy())
+ 
+
     # This is a bit faster since for initial segmentation the sinc-interpolation
-    # of the segmentations does not help and is slower
+    # of the segmentations does not help and is slower.
     # Furthermore, CustomBrainSegmentation supports mps device
     prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
 
@@ -505,18 +528,8 @@ def run_amap_segmentation(
     p0_large, brain_large = correct_label_map(brain_large, p0_large)
     brain_large = apply_LAS(brain_large, p0_large)
 
-    nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
+    nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large.{ext}")
     nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
-
-    # Call SANLM filter and rename output to original name
-    cmd = (
-        os.path.join(bin_dir, "CAT_VolSanlm")
-        + " "
-        + f"{mri_dir}/{out_name}_brain_large_tmp.{ext}"
-        + " "
-        + f"{mri_dir}/{out_name}_brain_large.{ext}"
-    )
-    os.system(cmd)
 
     # Call AMAP and write tissue and label maps
     cmd = (
@@ -544,16 +557,12 @@ def final_cleanup(
     """Remove temporary files generated during processing."""
 
     if (use_amap or save_lesions) and not debug:
-        remove_file(f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_seg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large.{ext}")
         remove_file(f"{mri_dir}/{out_name}_seg_large.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-GM_probseg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
-
-    if not use_amap and not debug:
-        remove_file(f"{mri_dir}/{out_name}_brain_large.{ext}")
 
 
 def save_results(
@@ -1015,7 +1024,7 @@ def run_segment():
     prepare_model_files()
 
     # Preprocess volume and create preprocess object
-    t1, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap)
+    t1, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap, bin_dir)
 
     # Step 1: Skull-stripping (or skip)
     if skip_skullstrip:
@@ -1050,20 +1059,6 @@ def run_segment():
         brain_value -= min_brain
     brain_value[~mask_value] = 0
     brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
-
-    # Call SANLM filter for non-Amap approach and rename output to original name
-    if not use_amap:
-        nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
-        cmd = (
-            os.path.join(bin_dir, "CAT_VolSanlm")
-            + " "
-            + f"{mri_dir}/{out_name}_brain_large_tmp.{ext}"
-            + " "
-            + f"{mri_dir}/{out_name}_brain_large.{ext}"
-        )
-        os.system(cmd)
-        brain_large = nib.load(f"{mri_dir}/{out_name}_brain_large.{ext}")
-        remove_file(f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")    
 
     # Step 4: Segmentation
     if verbose:
