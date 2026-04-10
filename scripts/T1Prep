@@ -856,6 +856,10 @@ process()
       input="$FILE"
     fi
 
+    # Reset progress counters for this file
+    count=0
+    end_count=1
+
     # Change number of commands if spherical registration is disabled
     if [ "${estimate_surf}" -eq 1 ]; then
       if [ "${estimate_spherereg}" -eq 1 ]; then
@@ -986,9 +990,9 @@ process()
 
     fi # estimate_surf
 
-    if [ "$multi" -ne 2 ]; 
+    if [ "$multi" -ne -2 ]; then
       ((count++))
-      then ${progress_bar} 1 "" $count $end_count "                     "; 
+      ${progress_bar} 1 "" $count $end_count "                     "
     fi
 
     # Print execution time per data set
