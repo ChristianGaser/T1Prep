@@ -23,7 +23,7 @@
 # ______________________________________________________________________
 
 # defaults
-T1PREP_VERSION=0.3.1
+T1PREP_VERSION=0.3.2
 os_type=$(uname -s) # Determine OS type
 
 # Directory of this utils.sh file (robust when sourced)
