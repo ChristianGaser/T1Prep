@@ -63,6 +63,7 @@ main()
   if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=1; fi
   if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
   if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
+  if ! [[ "${retry}" =~ ^[0-9]+$ ]]; then retry=1; fi
   if ! [[ "${use_bids_naming}" =~ ^[0-9]+$ ]]; then use_bids_naming=0; fi
   if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=24; fi
 
@@ -262,6 +263,9 @@ parse_args()
         ;;
       --no-correct-folding)
         correct_folding=0
+        ;;
+      --no-retry)
+        retry=0
         ;;
       --debug)
         debug=1
@@ -668,6 +672,9 @@ process()
       echo "${BOLD}Volume Segmentation${NC}"
       "${cmd[@]}"
       status=$?
+      if [ "$status" -ne 0 ]; then
+        echo "${RED}ERROR: Volume segmentation failed for one or more subjects (see log above).${NC}" >&2
+      fi
     fi
 
     # Call parallelize with filtered arguments
@@ -935,6 +942,19 @@ process()
           eval "${cmd}" 2>&1 | tee -a "${report_log}"
         fi
         seg_status=$?
+
+        # Retry once on failure if retry is enabled
+        if [[ "$seg_status" -ne 0 && "${retry}" -eq 1 ]]; then
+          echo "Retrying segmentation for ${input}..." >> "${report_log}"
+          if [[ "$multi" -ne -2 ]]; then
+            echo "${YELLOW}Segmentation failed — retrying ${input}...${NC}"
+            eval "${cmd}"
+          else
+            echo "--- Retrying: ${input} ---" 2>&1 | tee -a "${report_log}"
+            eval "${cmd}" 2>&1 | tee -a "${report_log}"
+          fi
+          seg_status=$?
+        fi
       else
         seg_status=0
       fi
@@ -978,6 +998,25 @@ process()
       for pid in "${pids[@]}"; do
         wait "$pid" || surf_status=1
       done
+
+      # Retry once on failure if retry is enabled
+      if [[ "$surf_status" -ne 0 && "${retry}" -eq 1 ]]; then
+        echo "Retrying surface estimation for ${bname}..." >> "${report_log}"
+        if [[ "$multi" -ne -2 ]]; then
+          echo "${YELLOW}Surface estimation failed — retrying ${bname}...${NC}"
+        else
+          echo "--- Retrying surface estimation: ${bname} ---" 2>&1 | tee -a "${report_log}"
+        fi
+        pids=()
+        for side in left right; do
+          surface_estimation $bname $side "${mri_dir}" "${surf_dir}" $estimate_spherereg $multi "${nii_ext}" &
+          pids+=("$!")
+        done
+        surf_status=0
+        for pid in "${pids[@]}"; do
+          wait "$pid" || surf_status=1
+        done
+      fi
 
       if [ "$surf_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
@@ -1135,6 +1174,12 @@ ${BOLD}${GREEN}General Options:${NC}
   --debug
       Enable verbose output, retain all temporary files, and save additional
       debugging information for inspection.
+
+  --no-retry
+      Disable automatic retry of failed processing steps. By default, if
+      segmentation or surface estimation fails for a subject, it is retried
+      once before being reported as an error. Use this flag to disable that
+      behaviour.
 
   --long-data <PATH>
       Use longitudinally realigned images as the actual input data while still

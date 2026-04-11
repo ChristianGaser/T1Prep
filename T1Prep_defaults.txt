@@ -9,6 +9,7 @@ min_memory=24         # Set the minimum memory size in GB for each process to be
                       # parallelized
 debug=0               # Enable verbose output, retain temporary files, and save 
                       # additional debugging information
+retry=1               # Automatically retry failed processing (1=on, 0=off)
 
 # ------------------------------------------------------------------------------
 # Save options
