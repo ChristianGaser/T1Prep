@@ -213,6 +213,7 @@ def build_command(
     add_flag("--p")
     add_flag("--csf")
     add_flag("--lesions")
+    add_flag("--no-retry")
     if atlas_override:
         cmd.extend(["--atlas", atlas_override])
     else:
