@@ -63,6 +63,7 @@ def run_t1prep(
     amap: bool = False,
     bids: bool = False,
     no_correct_folding: bool = False,
+    no_retry: bool = False,
     debug: bool = False,
     fast: bool = False,
     cwd: Optional[Union[str, os.PathLike]] = None,
@@ -89,7 +90,7 @@ def run_t1prep(
     - atlas, atlas_surf: atlas lists; can be a string (passed through) or a sequence
     - no_atlas: clear any default atlas selection (equivalent to --no-atlas)
     - gz, hemisphere, no_surf, no_seg, no_sphere_reg, pial_white, lesions, no_mwp,
-            wp, rp, p, csf, amap, bids, no_correct_folding, debug, fast: boolean flags
+            wp, rp, p, csf, amap, bids, no_correct_folding, no_retry, debug, fast: boolean flags
     - skullstrip_only: run skull stripping only (equivalent to --skullstrip-only)
     - skip_skullstrip: skip skull stripping (equivalent to --no-skullstrip/--skip-skullstrip)
     - cwd, env: working directory and env overrides for the subprocess
@@ -174,6 +175,7 @@ def run_t1prep(
     add_flag("--amap", amap)
     add_flag("--bids", bids)
     add_flag("--no-correct-folding", no_correct_folding)
+    add_flag("--no-retry", no_retry)
     add_flag("--debug", debug)
     add_flag("--fast", fast)
 
