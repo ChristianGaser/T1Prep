@@ -315,6 +315,11 @@ parse_args()
     save_hemi=0
   fi
 
+  # We always need hemispheric maps for surface estimation
+  if [ "$estimate_surf" -eq 1 ]; then
+    save_hemi=1
+  fi
+
 }
 
 # ----------------------------------------------------------------------
