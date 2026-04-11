@@ -385,6 +385,11 @@ Longitudinal / advanced flags:
 - `--long-data <PATH>`: process the volume at `<PATH>` while keeping output naming/folders based on the provided input file.
 - `--no-atlas`: disable atlas labeling (overrides any defaults file atlas selection).
 
+Robustness:
+- `--no-retry`: disable automatic retry of failed processing steps. By default, if
+  segmentation or surface estimation fails for a subject it is retried once before being
+  reported as an error.
+
 ## Output folders structure
 Output folder structure depends on the input dataset type:
 * BIDS datasets (if the upper-level folder of the input files is 'anat'):
