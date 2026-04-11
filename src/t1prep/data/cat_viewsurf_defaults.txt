@@ -3,7 +3,7 @@
 # will be overridden by this file when present.
 
 # Display
-panel=true
+panel=false
 colorbar=true
 title_mode=shape
 fontsize=12
@@ -13,7 +13,7 @@ colormap=JET
 inverse=false
 # Number of discrete color bands; 0 disables discretization
 # Checkbox in UI toggles between 0 and 2
-discrete=0
+discrete=16
 
 # Opacity
 opacity=0.8
