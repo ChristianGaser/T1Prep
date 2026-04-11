@@ -1661,10 +1661,6 @@ class Viewer(QtWidgets.QMainWindow):
             self.overlay_list = opts.overlays
         elif opts.overlay:
             self.overlay_list = [opts.overlay]
-        # Auto-discover sibling SPM overlays when the initial overlay
-        # is from an SPM analysis directory.
-        if self.overlay_list:
-            self.overlay_list = self._expand_spm_overlays(self.overlay_list)
         # Enforce initial fix scaling policy based on overlay count
         self._enforce_fix_scaling_policy()
         
