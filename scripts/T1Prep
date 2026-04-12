@@ -447,7 +447,7 @@ surface_estimation()
     else 
       str=""
     fi
-    cmd="CAT_VolThicknessPbt ${verbose} ${str} -median-subsample 2 -correct-voxelsize -0.75 -median-filter 2 -downsample ${downsample} -n-avgs 2 -range 0.45 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
+    cmd="CAT_VolThicknessPbt ${verbose} ${str} -sulcal-width 5 -median-subsample 2 -correct-voxelsize -0.75 -median-filter 2 -downsample ${downsample} -n-avgs 2 -range 0.45 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
     run_cmd_log "${report_log}" "$cmd"
     
     # Exit if nothing was saved from 1st command

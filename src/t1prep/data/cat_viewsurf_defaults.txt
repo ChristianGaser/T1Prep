@@ -13,7 +13,7 @@ colormap=JET
 inverse=false
 # Number of discrete color bands; 0 disables discretization
 # Checkbox in UI toggles between 0 and 2
-discrete=16
+discrete=0
 
 # Opacity
 opacity=0.8
