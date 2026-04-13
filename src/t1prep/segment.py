@@ -44,7 +44,7 @@ warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
 from deepbet.utils import reoriented_nifti
-from deepmriprep.segment import BrainSegmentation, scale_intensity
+from deepmriprep.segment import BrainSegmentation
 from deepmriprep.preprocess import Preprocess
 from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import get_volumes, shape_from_to
@@ -70,6 +70,7 @@ from utils import (
     TEMPLATE_PATH_T1PREP,
 )
 from _segment_utils import (
+    scale_intensity,
     correct_bias_field,
     unsmooth_kernel,
     get_atlas,

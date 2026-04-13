@@ -37,6 +37,14 @@ from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
 from typing import Union, Tuple
 
+def scale_intensity(x, low=.5, high=99.5):
+    x_nonzero = x[x > 0].cpu()
+    low = np.percentile(x_nonzero, low)
+    high = np.percentile(x_nonzero, high)
+    x = (x - low) / (high - low)
+    x_ind = x > 1
+    x[x_ind] = 1 + torch.log10(x[x_ind])
+    return x
 
 def normalize_to_sum1(
     data1: Union[np.ndarray, nib.Nifti1Image],
