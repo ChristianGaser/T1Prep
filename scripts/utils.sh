@@ -384,6 +384,11 @@ check_python_libraries()
   # Remove T1pre-env if reinstallation is selected
   [[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]] &&  rm -r "${T1prep_env}"
 
+  # Repair broken venv python symlinks (e.g. env synced via Dropbox across systems)
+  if [[ -d "${T1prep_env}" ]] && ! "${T1prep_env}/bin/python" -c "pass" &>/dev/null; then
+    repair_venv
+  fi
+
   if [ ! -d ${T1prep_env} ]; then
     $python -m venv ${T1prep_env}
     install_deepmriprep
@@ -395,6 +400,61 @@ check_python_libraries()
   $python -c "import deepmriprep" &>/dev/null
   if [ $? -gt 0 ]; then
     install_deepmriprep
+  fi
+}
+
+# ----------------------------------------------------------------------
+# Repair a broken venv by re-linking python to the current system interpreter.
+# If the Python major.minor version changed, recreate the venv instead.
+# ----------------------------------------------------------------------
+
+repair_venv()
+{
+  local real_python
+  real_python="$(command -v "$python")"
+  if [[ -z "$real_python" ]]; then
+    echo "${RED}Cannot find system python '${python}' to repair venv.${NC}" >&2
+    return 1
+  fi
+
+  # Resolve to absolute path
+  real_python="$(cd "$(dirname "$real_python")" && pwd)/$(basename "$real_python")"
+
+  # Determine the version of the system python
+  local sys_ver
+  sys_ver="$("$real_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+
+  # Determine the version the venv was built with (from pyvenv.cfg)
+  local venv_ver
+  venv_ver="$(sed -n 's/^version = \([0-9]*\.[0-9]*\).*/\1/p' "${T1prep_env}/pyvenv.cfg" 2>/dev/null || true)"
+
+  if [[ "$sys_ver" != "$venv_ver" ]]; then
+    echo "${YELLOW}Python version changed (${venv_ver} -> ${sys_ver}). Recreating environment...${NC}"
+    rm -rf "${T1prep_env}"
+    return
+  fi
+
+  echo "${YELLOW}Repairing environment symlinks for this system...${NC}"
+  local bin_dir="${T1prep_env}/bin"
+  local real_dir
+  real_dir="$(dirname "$real_python")"
+
+  # Fix the versioned symlink (e.g. python3.9 -> system python)
+  ln -sf "$real_python" "${bin_dir}/python${sys_ver}"
+  # Fix python3 and python -> the versioned symlink
+  ln -sf "python${sys_ver}" "${bin_dir}/python3"
+  ln -sf "python${sys_ver}" "${bin_dir}/python"
+
+  # Update pyvenv.cfg home to the new interpreter directory
+  if [[ -f "${T1prep_env}/pyvenv.cfg" ]]; then
+    sed -i.bak "s|^home = .*|home = ${real_dir}|" "${T1prep_env}/pyvenv.cfg"
+    rm -f "${T1prep_env}/pyvenv.cfg.bak"
+  fi
+
+  # Verify the repair worked
+  if ! "${bin_dir}/python" -c "pass" &>/dev/null; then
+    echo "${YELLOW}Repair failed. Recreating environment...${NC}"
+    rm -rf "${T1prep_env}"
   fi
 }
 
