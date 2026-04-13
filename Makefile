@@ -39,4 +39,4 @@ cp_binaries:
 	-@for i in src/t1prep/bin/Linux/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` src/t1prep/bin/Linux/ ; done
 	-@for i in src/t1prep/bin/Windows/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-w64-mingw32/Progs/`basename $${i}` src/t1prep/bin/Windows/ ; done
 	-@for i in src/t1prep/bin/MacOS/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` src/t1prep/bin/MacOS/ ; done
-	-@for i in src/t1prep/bin/LinuxARM64/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-aarch64-non-elf/Progs/`basename $${i}` src/t1prep/bin/LinuxARM64/ ; done
+	-@for i in src/t1prep/bin/LinuxARM64/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-aarch64-none-elf/Progs/`basename $${i}` src/t1prep/bin/LinuxARM64/ ; done
