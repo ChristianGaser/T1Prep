@@ -132,6 +132,13 @@ get_OS() {
     *) echo "Unknown OS: ${os_type}" >&2; exit 1 ;;
   esac
 
+  # For macOS: check potential quarantine
+  if [[ "$os_type" == Darwin* ]]; then
+    if xattr -p com.apple.quarantine "${bin_dir}/CAT_SurfArea" >/dev/null 2>&1; then
+      xattr -dr com.apple.quarantine "$bin_dir" 2>/dev/null
+    fi
+  fi
+  
   export bin_dir
   export PATH="${bin_dir}:$PATH"
 }
