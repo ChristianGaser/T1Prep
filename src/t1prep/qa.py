@@ -44,7 +44,7 @@ _RATING_BOUNDS: dict[str, tuple[float, float]] = {
     "contrastr": (1.0/3.0, 0.0),     # cat_stat_marks default: CM=[1/3 0]
     "res_RMS":   (0.50, 3.00),       # cat_stat_marks default
     "res_ECR":   (0.0202, 0.1003),   # cat_vol_qa201901x: ndef.ECR
-    "abs_euler": (21.1904, 128.6649),
+    "EC_abs":    (21.1904, 128.6649),
 }
 
 
@@ -523,7 +523,7 @@ def estimate_qa(
                     "contrastr": {"value": …, "mark": …, "desc": "…"},
                     "res_RMS":   {"value": …, "mark": …, "desc": "…"},
                     "res_ECR":   {"value": …, "mark": …, "desc": "…"},
-                    "abs_euler": {"value": …, "mark": …, "desc": "…"},
+                    "EC_abs":    {"value": …, "mark": …, "desc": "…"},
                     "IQR":       {"value": …, "grade": "…", "desc": "…"},
                     "SIQR":      {"value": …, "grade": "…", "desc": "…"},
                 },
@@ -570,7 +570,7 @@ def estimate_qa(
         ("contrastr", contrastr),
         ("res_RMS", res_rms),
         ("res_ECR", res_ecr),
-        ("abs_euler", abs_euler),
+        ("EC_abs", EC_abs),
     ]:
         best, worst = _RATING_BOUNDS[name]
         marks[name] = _mark(value, best, worst)
@@ -594,7 +594,7 @@ def estimate_qa(
         "res_ECR": "Effective Contrast Resolution (lower is better)",
         "IQR": "Image Quality Rating: NCR+res_RMS, power 8 (1=excellent, 6=poor)",
         "SIQR": "Structural IQR: NCR+res_RMS+res_ECR, power 4 (no FEC)",
-        "abs_euler": "Absolute Euler number for both hemispheres",
+        "EC_abs": "Absolute Euler number for both hemispheres",
     }
 
     result: dict = {}
@@ -604,7 +604,7 @@ def estimate_qa(
         ("contrastr", contrastr),
         ("res_RMS", res_rms),
         ("res_ECR", res_ecr),
-        ("abs_euler", abs_euler),
+        ("EC_abs", EC_abs),
     ]:
         result[name] = {
             "value": round(value, 4) if np.isfinite(value) else None,
