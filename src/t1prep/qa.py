@@ -570,7 +570,6 @@ def estimate_qa(
         ("contrastr", contrastr),
         ("res_RMS", res_rms),
         ("res_ECR", res_ecr),
-        ("EC_abs", EC_abs),
     ]:
         best, worst = _RATING_BOUNDS[name]
         marks[name] = _mark(value, best, worst)
@@ -604,7 +603,6 @@ def estimate_qa(
         ("contrastr", contrastr),
         ("res_RMS", res_rms),
         ("res_ECR", res_ecr),
-        ("EC_abs", EC_abs),
     ]:
         result[name] = {
             "value": round(value, 4) if np.isfinite(value) else None,
