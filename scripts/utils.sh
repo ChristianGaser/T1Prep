@@ -110,8 +110,7 @@ check_files()
 # ----------------------------------------------------------------------
 
 get_OS() {
-  local os_type cpu_arch
-  os_type="$(uname -s)"
+  local cpu_arch
   cpu_arch="$(uname -m)"
 
   case "$os_type" in
