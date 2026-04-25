@@ -23,7 +23,7 @@
 # ______________________________________________________________________
 
 # defaults
-T1PREP_VERSION=0.3.3
+T1PREP_VERSION=0.3.4
 os_type=$(uname -s) # Determine OS type
 
 # Directory of this utils.sh file (robust when sourced)
@@ -396,8 +396,18 @@ check_python_libraries()
   fi
 
   if [ ! -d ${T1prep_env} ]; then
-    $python -m venv ${T1prep_env}
+    if ! $python -m venv ${T1prep_env}; then
+      echo "${RED}Failed to create Python virtual environment at ${T1prep_env}." >&2
+      echo "On Debian/Ubuntu try: sudo apt-get install python3-venv" >&2
+      echo "On RHEL/Fedora try:   sudo dnf install python3 (includes venv)${NC}" >&2
+      exit 1
+    fi
     install_deepmriprep
+  fi
+
+  if [ ! -f "${T1prep_env}/bin/activate" ]; then
+    echo "${RED}Virtual environment at ${T1prep_env} is missing the activate script.${NC}" >&2
+    exit 1
   fi
 
   source ${T1prep_env}/bin/activate
@@ -471,7 +481,16 @@ repair_venv()
 install_deepmriprep()
 {
   echo "Install deepmriprep"
-  $python -m venv ${T1prep_env}
+  if ! $python -m venv ${T1prep_env}; then
+    echo "${RED}Failed to create Python virtual environment at ${T1prep_env}." >&2
+    echo "On Debian/Ubuntu try: sudo apt-get install python3-venv" >&2
+    echo "On RHEL/Fedora try:   sudo dnf install python3 (includes venv)${NC}" >&2
+    exit 1
+  fi
+  if [ ! -f "${T1prep_env}/bin/activate" ]; then
+    echo "${RED}Virtual environment at ${T1prep_env} is missing the activate script.${NC}" >&2
+    exit 1
+  fi
   source ${T1prep_env}/bin/activate
 
   $python -m pip install -U pip

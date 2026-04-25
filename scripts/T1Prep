@@ -779,6 +779,10 @@ process()
   start0=$(date +%s)
 
   # Use defined environment
+  if [ ! -f "${T1prep_env}/bin/activate" ]; then
+    echo "${RED}Virtual environment not found at ${T1prep_env}. Run the script once without --no-overwrite to set it up.${NC}" >&2
+    exit 1
+  fi
   source ${T1prep_env}/bin/activate
 
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
