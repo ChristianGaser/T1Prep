@@ -37,6 +37,47 @@ from deepmriprep.utils import DEVICE, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to, AtlasRegistration
 from typing import Union, Tuple
 
+
+def _resolve_template_file(name: str, ext: str) -> str:
+    """Return the full path for *name* + *ext* inside TEMPLATE_PATH_T1PREP.
+
+    Performs an exact lookup first and falls back to a case-insensitive scan
+    of the directory so that callers using different capitalisation (e.g.
+    ``"ibsr"`` vs the on-disk ``"IBSR"``) still resolve correctly.
+
+    Parameters
+    ----------
+    name:
+        Base name without extension (e.g. ``"IBSR"`` or ``"neuromorphometrics"``).
+    ext:
+        File extension including the leading dot (e.g. ``".csv"`` or
+        ``".nii.gz"``).
+
+    Returns
+    -------
+    str
+        Absolute path to the resolved file.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no matching file is found in the template directory.
+    """
+    # Fast exact path
+    candidate = os.path.join(TEMPLATE_PATH_T1PREP, f"{name}{ext}")
+    if os.path.exists(candidate):
+        return candidate
+
+    # Case-insensitive fallback
+    target = f"{name.lower()}{ext.lower()}"
+    for fname in os.listdir(TEMPLATE_PATH_T1PREP):
+        if fname.lower() == target:
+            return os.path.join(TEMPLATE_PATH_T1PREP, fname)
+
+    raise FileNotFoundError(
+        f"Template file '{name}{ext}' not found in {TEMPLATE_PATH_T1PREP}"
+    )
+
 def scale_intensity(x, low=.5, high=99.5):
     x_nonzero = x[x > 0].cpu()
     low = np.percentile(x_nonzero, low)
@@ -771,7 +812,7 @@ def get_atlas(
     transform = target_affine
 
     atlas = nib.as_closest_canonical(
-        nib.load(f"{TEMPLATE_PATH_T1PREP}/{atlas_name}.nii.gz")
+        nib.load(_resolve_template_file(atlas_name, ".nii.gz"))
     )
     atlas_register = AtlasRegistration()
 
@@ -836,7 +877,7 @@ def get_regions_mask(
         regions.
 
     """
-    rois = pd.read_csv(f"{TEMPLATE_PATH_T1PREP}/{atlas_name}.csv", sep=";")[
+    rois = pd.read_csv(_resolve_template_file(atlas_name, ".csv"), sep=";")[
         ["ROIid", "ROIname"]
     ]
     regions = dict(zip(rois.ROIname, rois.ROIid))
@@ -847,7 +888,7 @@ def get_regions_mask(
 
 def get_partition(p0_large, atlas):
     """Partition a segmentation into left and right hemispheres."""
-    rois = pd.read_csv(f"{TEMPLATE_PATH_T1PREP}/ibsr.csv", sep=";")[
+    rois = pd.read_csv(_resolve_template_file("IBSR", ".csv"), sep=";")[
         ["ROIid", "ROIabbr"]
     ]
     regions = dict(zip(rois.ROIabbr, rois.ROIid))
