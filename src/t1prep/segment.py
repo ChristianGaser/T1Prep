@@ -10,7 +10,7 @@ optionally atlas names:
 
     python src/t1prep/segment.py \
         --input sub-01_T1w.nii.gz --mri_dir out/mri --report_dir out/report --label_dir out/label \
-        --bin_dir /path/to/CAT/binaries --atlas "'neuromorphometrics','suit'" --bids
+        --bin_dir /path/to/CAT/binaries --atlas "'Neuromorphometrics','suit'" --bids
 """
 
 import os
@@ -203,6 +203,16 @@ class CustomPreprocess(Preprocess):
             else:
                 atlas_path = f"{TEMPLATE_PATH_T1PREP}/{atl}.nii.gz"
                 base_atl = atl
+                # Case-insensitive fallback: scan the template directory when
+                # the exact filename is not found (e.g. "neuromorphometrics"
+                # vs the on-disk "Neuromorphometrics.nii.gz").
+                if not os.path.exists(atlas_path):
+                    atl_lower = atl.lower()
+                    for fname in os.listdir(TEMPLATE_PATH_T1PREP):
+                        if fname.lower() == f"{atl_lower}.nii.gz":
+                            atlas_path = os.path.join(TEMPLATE_PATH_T1PREP, fname)
+                            base_atl = os.path.splitext(os.path.splitext(fname)[0])[0]
+                            break
             atlas = nib.as_closest_canonical(nib.load(atlas_path))
             header = atlas.header
             shape = tuple(shape_from_to(atlas, warp_yx))
@@ -281,7 +291,7 @@ def parse_arguments() -> argparse.Namespace:
         default="",
         help=(
             "Atlases for ROI estimation (comma-separated). Examples: "
-            "\"neuromorphometrics,suit\" or \"'neuromorphometrics','suit'\". "
+            "\"Neuromorphometrics,SUIT\" or \"'Neuromorphometrics','SUIT'\". "
             "Empty disables ROI export."
         ),
     )
@@ -882,7 +892,7 @@ def save_results(
                 affine,
                 p0_large.header,
                 p0_large.affine,
-                "ibsr",
+                "IBSR",
                 warp_yx,
                 device,
                 is_label_atlas=True,
@@ -1190,7 +1200,7 @@ def run_segment():
             affine,
             p0_large.header,
             p0_large.affine,
-            "neuromorphometrics",
+            "Neuromorphometrics",
             None,
             device,
             is_label_atlas=True,
