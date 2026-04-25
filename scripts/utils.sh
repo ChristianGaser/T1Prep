@@ -516,8 +516,13 @@ install_deepmriprep()
   fi
   source ${T1prep_env}/bin/activate
 
-  $python -m pip install -U pip
-  $python -m pip install -r ${root_dir}/requirements.txt
+  # PYTHONIOENCODING=utf-8: prevents a Python 3.9 crash when sys.stdout.encoding
+  # is None (no locale set) inside pip's error handler.
+  # --no-compile: skips bytecode compilation during install, avoiding pip crashes
+  # on template files (e.g. PySide6's __init__.tmpl.py) that contain Jinja2
+  # syntax and are not valid Python.
+  PYTHONIOENCODING=utf-8 $python -m pip install -U pip
+  PYTHONIOENCODING=utf-8 $python -m pip install --no-compile -r ${root_dir}/requirements.txt
   
   $python -c "import deepmriprep" &>/dev/null
   if [ $? -gt 0 ]; then
