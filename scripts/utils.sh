@@ -382,6 +382,31 @@ substitute_pattern() {
 }
 
 # ----------------------------------------------------------------------
+# Verify that the selected Python can create a venv (ensurepip available).
+# Prints a precise install hint and exits if not.
+# ----------------------------------------------------------------------
+
+check_venv_prerequisites()
+{
+  if $python -m ensurepip --version &>/dev/null; then
+    return 0
+  fi
+
+  # Determine the major.minor version for the precise package name
+  local py_ver
+  py_ver="$($python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'  2>/dev/null || echo "")"
+
+  echo "${RED}Python venv/ensurepip is not available for ${python:-python}.${NC}" >&2
+  if [ -n "$py_ver" ]; then
+    echo "On Debian/Ubuntu run:  sudo apt-get install python${py_ver}-venv" >&2
+  else
+    echo "On Debian/Ubuntu run:  sudo apt-get install python3-venv" >&2
+  fi
+  echo "Then re-run the installer." >&2
+  exit 1
+}
+
+# ----------------------------------------------------------------------
 # Check for python libraries
 # ----------------------------------------------------------------------
 
@@ -396,10 +421,9 @@ check_python_libraries()
   fi
 
   if [ ! -d ${T1prep_env} ]; then
+    check_venv_prerequisites
     if ! $python -m venv ${T1prep_env}; then
-      echo "${RED}Failed to create Python virtual environment at ${T1prep_env}." >&2
-      echo "On Debian/Ubuntu try: sudo apt-get install python3-venv" >&2
-      echo "On RHEL/Fedora try:   sudo dnf install python3 (includes venv)${NC}" >&2
+      echo "${RED}Failed to create Python virtual environment at ${T1prep_env}.${NC}" >&2
       exit 1
     fi
     install_deepmriprep
@@ -481,10 +505,9 @@ repair_venv()
 install_deepmriprep()
 {
   echo "Install deepmriprep"
+  check_venv_prerequisites
   if ! $python -m venv ${T1prep_env}; then
-    echo "${RED}Failed to create Python virtual environment at ${T1prep_env}." >&2
-    echo "On Debian/Ubuntu try: sudo apt-get install python3-venv" >&2
-    echo "On RHEL/Fedora try:   sudo dnf install python3 (includes venv)${NC}" >&2
+    echo "${RED}Failed to create Python virtual environment at ${T1prep_env}.${NC}" >&2
     exit 1
   fi
   if [ ! -f "${T1prep_env}/bin/activate" ]; then
