@@ -34,6 +34,34 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+# ---------------------------------------------------------------------------
+# Headless / software-rendering guard.
+# Must run BEFORE any Qt or VTK import because libGL.so / libEGL.so are
+# loaded as a side-effect of importing those modules.  Setting the env vars
+# afterwards has no effect.
+# The shell wrapper (cat_viewsurf.sh) also sets these before launching Python;
+# the block below is a belt-and-suspenders fallback for direct invocations.
+# ---------------------------------------------------------------------------
+def _x_display_works() -> bool:
+    """Return True only when an X server is actually reachable."""
+    display = os.environ.get("DISPLAY")
+    if not display:
+        return False
+    import subprocess
+    try:
+        return subprocess.run(
+            ["xdpyinfo"], capture_output=True, timeout=2
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+_headless = not _x_display_works() and not os.environ.get("WAYLAND_DISPLAY")
+if _headless:
+    os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+    os.environ.setdefault("MESA_GL_VERSION_OVERRIDE", "3.3")
+    os.environ.setdefault("MESA_GLSL_VERSION_OVERRIDE", "330")
+
 # --- Qt setup (PySide6 only) ---
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer

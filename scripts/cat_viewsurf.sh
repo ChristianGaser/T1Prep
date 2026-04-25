@@ -119,12 +119,55 @@ USAGE
     # Suppress noisy Qt painter warnings
     export QT_LOGGING_RULES="${QT_LOGGING_RULES:qt.gui.painting=false;qt.qpa.*=false}"
 
+    # On headless systems, start a virtual framebuffer so Qt/VTK can open a
+    # window. We test whether the X server is actually reachable (DISPLAY
+    # being set is not enough — SSH sessions often have DISPLAY set but no
+    # working X server). Requires: xvfb (apt install xvfb).
+    XVFB_PID=""
+    _display_ok() {
+        [[ -n "${DISPLAY:-}" ]] && command -v xdpyinfo >/dev/null 2>&1 && xdpyinfo &>/dev/null
+    }
+
+    if ! _display_ok && [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+        if command -v Xvfb >/dev/null 2>&1; then
+            export DISPLAY=":99"
+            Xvfb "$DISPLAY" -screen 0 1280x1024x24 -ac +extension GLX &>/dev/null &
+            XVFB_PID=$!
+            # Wait up to 5 s for the server to become ready
+            for _i in $(seq 1 10); do
+                sleep 0.5
+                xdpyinfo &>/dev/null && break
+            done
+        else
+            echo "⚠ Warning: No working display found and Xvfb is not installed." >&2
+            echo "  Install it with:  sudo apt-get install xvfb" >&2
+            echo "  Or set DISPLAY before running this script." >&2
+        fi
+    fi
+
+    # Force Mesa software renderer when there is no GPU / when the above
+    # Xvfb path is used.  These vars must be exported BEFORE Python starts
+    # because libGL.so is loaded at interpreter start-up.
+    if ! _display_ok && [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+        export LIBGL_ALWAYS_SOFTWARE=1
+        export MESA_GL_VERSION_OVERRIDE=3.3
+        export MESA_GLSL_VERSION_OVERRIDE=330
+    fi
+
     # Run the Python script by absolute path so user-provided relative paths remain relative to caller's CWD
     export ORIGINAL_CWD="$(pwd)"
     PY_SCRIPT="$PROJECT_DIR/src/t1prep/gui/cat_viewsurf.py"
     # Filter noisy QPainter warnings while preserving other stderr output
     "$PYTHON_BIN" "$PY_SCRIPT" "$@" \
         2> >(grep -v "QPainter::begin: Paint device returned engine == 0, type: 1" >&2)
+    local exit_code=$?
+
+    # Clean up the virtual framebuffer we started (if any)
+    if [[ -n "${XVFB_PID:-}" ]]; then
+        kill "$XVFB_PID" 2>/dev/null || true
+    fi
+
+    return $exit_code
 }
 
 # Run main function with all arguments
