@@ -330,6 +330,15 @@ def parse_arguments() -> argparse.Namespace:
         "--lesions", action="store_true", help="Save also WMH lesion maps (if available)."
     )
     parser.add_argument(
+        "--save-def-h5",
+        action="store_true",
+        help=(
+            "Save deformation fields as ANTs/ITK-compatible HDF5 (.h5) files "
+            "in addition to the default NIfTI output. "
+            "Requires the nitransforms package."
+        ),
+    )
+    parser.add_argument(
         "--bids", action="store_true", help="Use BIDS-like naming convention."
     )
     parser.add_argument(
@@ -576,6 +585,31 @@ def final_cleanup(
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
 
 
+def save_deformation_h5(warp_nii: nib.Nifti1Image, out_path: str) -> None:
+    """Save a NIfTI displacement field as an ANTs/ITK-compatible HDF5 file.
+
+    Uses nitransforms to handle the RAS→LPS coordinate-system conversion and
+    the HDF5 group structure expected by ANTs and fMRIPrep.
+
+    Args:
+        warp_nii: NIfTI displacement-field image (shape x,y,z,1,3 or x,y,z,3).
+        out_path: Output file path (should end with ``.h5``).
+
+    Raises:
+        ImportError: If the ``nitransforms`` package is not installed.
+    """
+    try:
+        from nitransforms.nonlinear import DenseFieldTransform
+    except ImportError as exc:
+        raise ImportError(
+            "nitransforms is required to save deformation fields as HDF5. "
+            "Install it with: pip install nitransforms"
+        ) from exc
+
+    xfm = DenseFieldTransform(warp_nii, is_deltas=True)
+    xfm.to_filename(out_path)
+
+
 def save_results(
     prep: CustomPreprocess,
     t1: nib.Nifti1Image,
@@ -599,6 +633,7 @@ def save_results(
     save_hemilabel: bool,
     save_lesions: bool,
     save_csf: bool,
+    save_def_h5: bool,
     verbose: bool,
     count: int,
     end_count: int,
@@ -828,7 +863,7 @@ def save_results(
         json.dump(summary, f, indent=2)
 
     # Save non-linear registered data
-    if save_hemilabel or save_mwp or save_wp or (atlas_list is not None):
+    if save_hemilabel or save_mwp or save_wp or save_def_h5 or (atlas_list is not None):
         if verbose:
             count = shell_progress(count, end_count, 
                 "Warping                      ")
@@ -881,6 +916,14 @@ def save_results(
         nib.save(warp_xy, f"{mri_dir}/{def_name}")
         invdef_name = code_vars.get("invDef_volume", "")
         # nib.save(warp_yx, f"{mri_dir}/{invdef_name}")
+
+        if save_def_h5:
+            def_h5_name = code_vars.get("Def_h5_volume", "")
+            if def_h5_name:
+                save_deformation_h5(warp_xy, f"{mri_dir}/{def_h5_name}")
+            invdef_h5_name = code_vars.get("invDef_h5_volume", "")
+            if invdef_h5_name:
+                save_deformation_h5(warp_yx, f"{mri_dir}/{invdef_h5_name}")
 
         # Save hemispheric partition for surface estimation
         if save_hemilabel:
@@ -1001,6 +1044,7 @@ def run_segment():
     save_gz = args.gz
     save_lesions = args.lesions
     save_hemilabel = args.surf
+    save_def_h5 = args.save_def_h5
 
     # Check for GPU support
     device, no_gpu = setup_device()
@@ -1306,6 +1350,7 @@ def run_segment():
         save_hemilabel,
         save_lesions,
         save_csf,
+        save_def_h5,
         verbose,
         count,
         end_count,

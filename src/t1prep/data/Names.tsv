@@ -4,6 +4,8 @@ Warp_space w _space-MNI152NLin2009cAsym-nonlinear
 Warp_modulated_space mw _space-MNI152NLin2009cAsym-nonlinear-modulated
 Def_volume y_{bname}{desc}.{nii_ext}  {bname}_from-T1w_to_MNI152NLin2009cAsym.{nii_ext}
 invDef_volume iy_{bname}{desc}.{nii_ext} {bname}_from-MNI152NLin2009cAsym_to-T1w.{nii_ext}
+Def_h5_volume y_{bname}{desc}.h5  {bname}_from-T1w_to_MNI152NLin2009cAsym.h5
+invDef_h5_volume iy_{bname}{desc}.h5 {bname}_from-MNI152NLin2009cAsym_to-T1w.h5
 skullstripped_volume m{bname}{desc}.{nii_ext} {bname}{desc}-skullstripped.{nii_ext}
 PPM_volume {side}.ppm.{bname}{desc}.{nii_ext} {bname}_hemi-{side}{desc}_ppm.{nii_ext}
 GMT_volume {side}.thickness.{bname}{desc}.{nii_ext} {bname}_hemi-{side}{desc}_thickness.{nii_ext}

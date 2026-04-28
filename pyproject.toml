@@ -36,7 +36,9 @@ dependencies = [
     "nxbc>=0.2.0",
     "requests",
     "flask>=2.3",
-    "apscheduler>=3.10"
+    "apscheduler>=3.10",
+    "nitransforms>=23.0.1",
+    "h5py>=3.0",
 ]
 
 [project.scripts]

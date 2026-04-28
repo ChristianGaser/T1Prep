@@ -110,6 +110,8 @@ codes = [
     "Warp_modulated_space",
     "Def_volume",
     "invDef_volume",
+    "Def_h5_volume",
+    "invDef_h5_volume",
     "Atlas_ROI",
     "Report_file",
     "Log_file",
