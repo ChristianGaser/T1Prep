@@ -115,6 +115,8 @@ codes = [
     "invDef_volume",
     "Def_h5_volume",
     "invDef_h5_volume",
+    "Affine_txt_volume",
+    "invAffine_txt_volume",
     "Atlas_ROI",
     "Report_file",
     "Log_file",

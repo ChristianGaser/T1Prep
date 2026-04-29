@@ -585,6 +585,31 @@ def final_cleanup(
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
 
 
+def save_affine_itk_txt(affine_ras: np.ndarray, out_path: str) -> None:
+    """Save a 4×4 RAS affine matrix as an ITK/ANTs plain-text transform file.
+
+    Writes the ``#Insight Transform File V1.0`` format used by ANTs, ITK,
+    and fMRIPrep.  Handles the RAS→LPS coordinate-system conversion: the
+    3×3 rotation/scaling block and the translation vector are both negated
+    on their x and y components before writing.
+
+    Args:
+        affine_ras: 4×4 affine matrix in RAS coordinates (e.g. the T1w-to-MNI
+            registration matrix returned by deepmriprep).
+        out_path: Output file path (should end with ``.txt``).
+    """
+    ras2lps = np.diag([-1.0, -1.0, 1.0])
+    M_lps = ras2lps @ affine_ras[:3, :3] @ ras2lps
+    T_lps = ras2lps @ affine_ras[:3, 3]
+    params = np.concatenate([M_lps.ravel(order="C"), T_lps])
+    with open(out_path, "w") as fh:
+        fh.write("#Insight Transform File V1.0\n")
+        fh.write("#Transform 0\n")
+        fh.write("Transform: AffineTransform_float_3_3\n")
+        fh.write("Parameters: " + " ".join(f"{v:.10g}" for v in params) + "\n")
+        fh.write("FixedParameters: 0 0 0\n")
+
+
 def save_deformation_h5(warp_nii: nib.Nifti1Image, out_path: str) -> None:
     """Save a NIfTI displacement field as an ANTs/ITK-compatible HDF5 file.
 
@@ -971,6 +996,15 @@ def save_results(
             save_deformation_h5(warp_xy, f"{mri_dir}/{def_h5_name}")
             invdef_h5_name = code_vars.get("invDef_h5_volume", "")
             save_deformation_h5(warp_yx, f"{mri_dir}/{invdef_h5_name}")
+
+            # Save affine registration transform as ITK plain-text files
+            affine_mat = affine.values if hasattr(affine, "values") else np.asarray(affine)
+            affine_txt_name = code_vars.get("Affine_txt_volume", "")
+            if affine_txt_name:
+                save_affine_itk_txt(affine_mat, f"{mri_dir}/{affine_txt_name}")
+            invaffine_txt_name = code_vars.get("invAffine_txt_volume", "")
+            if invaffine_txt_name:
+                save_affine_itk_txt(np.linalg.inv(affine_mat), f"{mri_dir}/{invaffine_txt_name}")
 
             # Save dseg in native space and reorder tissue class intensities
             dseg_value = np.round(p0_large.get_fdata().copy())
