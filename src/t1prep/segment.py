@@ -993,18 +993,16 @@ def save_results(
         if save_fmriprep:
             # save deformation as fMRIPrep-compatible h5-file
             def_h5_name = code_vars.get("Def_h5_volume", "")
-            save_deformation_h5(warp_xy, f"{mri_dir}/{def_h5_name}")
+            #save_deformation_h5(warp_xy, f"{mri_dir}/{def_h5_name}")
             invdef_h5_name = code_vars.get("invDef_h5_volume", "")
-            save_deformation_h5(warp_yx, f"{mri_dir}/{invdef_h5_name}")
+            #save_deformation_h5(warp_yx, f"{mri_dir}/{invdef_h5_name}")
 
             # Save affine registration transform as ITK plain-text files
             affine_mat = affine.values if hasattr(affine, "values") else np.asarray(affine)
             affine_txt_name = code_vars.get("Affine_txt_volume", "")
-            if affine_txt_name:
-                save_affine_itk_txt(affine_mat, f"{mri_dir}/{affine_txt_name}")
+            #save_affine_itk_txt(affine_mat, f"{mri_dir}/{affine_txt_name}")
             invaffine_txt_name = code_vars.get("invAffine_txt_volume", "")
-            if invaffine_txt_name:
-                save_affine_itk_txt(np.linalg.inv(affine_mat), f"{mri_dir}/{invaffine_txt_name}")
+            #save_affine_itk_txt(np.linalg.inv(affine_mat), f"{mri_dir}/{invaffine_txt_name}")
 
             # Save dseg in native space and reorder tissue class intensities
             dseg_value = np.round(p0_large.get_fdata().copy())
