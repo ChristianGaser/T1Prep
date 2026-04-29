@@ -209,6 +209,12 @@ parse_args()
         long_data=$optarg
         shift
         ;;
+      --fmriprep)
+        fmriprep=1
+        use_bids_naming=1
+        save_csf=1
+        nii_ext='nii.gz'
+        ;;
       --gz)
         nii_ext='nii.gz'
         ;;
@@ -379,7 +385,7 @@ surface_estimation()
   fi
 
   # Create dynamic variables for filenames
-  for code in "PBT_shape" "Area_shape" "GMT_shape" "Hemi_volume" "mT1_volume" "PPM_volume" "GMT_volume" "Mid_surface" "Pial_surface" "WM_surface" "Sphere_surface" "Spherereg_surface" "Intensity_Mid" "Intensity_Pial" "Intensity_WM" "Topochange_volume"; do
+  for code in "PBT_shape" "Area_shape" "Sulc_shape" "GMT_shape" "Hemi_volume" "mT1_volume" "PPM_volume" "GMT_volume" "Mid_surface" "Pial_surface" "WM_surface" "Sphere_surface" "Spherereg_surface" "Intensity_Mid" "Intensity_Pial" "Intensity_WM" "Topochange_volume"; do
     pattern=$(get_pattern "$code" "$name_columns")
     value=$(substitute_pattern "$pattern" "$hemi" "" "")
     # Use eval to assign the result to a variable named after the code
@@ -577,6 +583,11 @@ surface_estimation()
     cmd="CAT_SurfArea ${surf_dir}/${Mid_surface} ${surf_dir}/${Area_shape}"
     run_cmd_log "${report_log}" "$cmd"
   
+    if [ "${fmriprep}" -eq 1 ]; then
+      cmd="CAT_SurfCurvature ${surf_dir}/${Mid_surface} ${surf_dir}/${Sulc_shape} 5"
+      run_cmd_log "${report_log}" "$cmd"
+    fi
+    
     # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
     if [ "${estimate_spherereg}" -eq 1 ]; then
       # Updates progress
@@ -926,6 +937,7 @@ process()
       [ "${save_rp}" -eq 1 ] && cmd+=" --rp"
       [ "${save_p}" -eq 1 ] && cmd+=" --p"
       [ "${nii_ext}" == "nii.gz" ] && cmd+=" --gz"
+      [ "${fmriprep}" -eq 1 ] && cmd+=" --save-fmriprep"
       [ "${save_lesions}" -eq 1 ] && cmd+=" --lesions --amapdir ${bin_dir}"
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
       [ "${multi}" -ne -2 ] && cmd+=" --verbose"
@@ -1246,6 +1258,12 @@ ${BOLD}${GREEN}Save Options:${NC}
   --no-overwrite <STRING>     
       Prevent overwriting existing results by checking for the given filename pattern.
 
+  --fmriprep
+      Save fMRIPrep-compatible results:
+        Save deformation fields as ANTs/ITK-compatible HDF5 (.h5) files
+        Save dseg files
+        Save spatially registered data with 2mm voxel size
+      
   --gz                        
       Save images in compressed NIfTI format (*.nii.gz).
 
