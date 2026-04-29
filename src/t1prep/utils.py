@@ -105,6 +105,9 @@ codes = [
     "Vessel_volume",
     "Discrepance_volume",
     "Label_volume",
+    "mask_volume",
+    "dseg_volume",
+    "ribbon_volume",
     "Affine_space",
     "Warp_space",
     "Warp_modulated_space",
@@ -180,7 +183,7 @@ def substitute_pattern(pattern, bname, side, desc, space, nii_ext):
         return ""
     result = pattern
     replacements = {
-        "bname": bname,
+        "bname": bname.removesuffix("_T1w") if bname else bname,
         "side": side,
         "desc": desc,
         "space": space,
@@ -421,7 +424,9 @@ def crop_nifti_image_with_border(img, border=5, threshold=0):
 
 
 def resample_and_save_nifti(
-    nifti_obj, grid, affine, header, out_name, align=None, crop=None, clip=None
+    nifti_obj, grid, affine, header, out_name, align=False, crop=False, round=False,
+    clip=None,
+    
 ):
     """
     Resamples and saves a NIfTI object.
@@ -448,6 +453,9 @@ def resample_and_save_nifti(
         0, 0
     ]
 
+    if round:
+        tensor = torch.round(tensor)
+        
     if clip is not None:
         if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
             raise ValueError("limit must be a 2-element list or tuple")

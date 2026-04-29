@@ -330,7 +330,7 @@ def parse_arguments() -> argparse.Namespace:
         "--lesions", action="store_true", help="Save also WMH lesion maps (if available)."
     )
     parser.add_argument(
-        "--save-def-h5",
+        "--save-fmriprep",
         action="store_true",
         help=(
             "Save deformation fields as ANTs/ITK-compatible HDF5 (.h5) files "
@@ -588,26 +588,74 @@ def final_cleanup(
 def save_deformation_h5(warp_nii: nib.Nifti1Image, out_path: str) -> None:
     """Save a NIfTI displacement field as an ANTs/ITK-compatible HDF5 file.
 
-    Uses nitransforms to handle the RAS→LPS coordinate-system conversion and
-    the HDF5 group structure expected by ANTs and fMRIPrep.
+    Writes the ITK CompositeTransform HDF5 format that ANTs and fMRIPrep
+    expect.  Handles the RAS→LPS coordinate-system conversion: voxel
+    spacings and grid dimensions are preserved; the x and y components of
+    both the origin and the displacement vectors are negated.
 
     Args:
         warp_nii: NIfTI displacement-field image (shape x,y,z,1,3 or x,y,z,3).
         out_path: Output file path (should end with ``.h5``).
 
     Raises:
-        ImportError: If the ``nitransforms`` package is not installed.
+        ImportError: If ``h5py`` is not installed.
     """
     try:
-        from nitransforms.nonlinear import DenseFieldTransform
+        import h5py
     except ImportError as exc:
         raise ImportError(
-            "nitransforms is required to save deformation fields as HDF5. "
-            "Install it with: pip install nitransforms"
+            "h5py is required to save deformation fields as HDF5. "
+            "Install it with: pip install h5py"
         ) from exc
 
-    xfm = DenseFieldTransform(warp_nii, is_deltas=True)
-    xfm.to_filename(out_path)
+    # Normalise to (x, y, z, 3)
+    data = np.asarray(warp_nii.dataobj, dtype=np.float64)
+    if data.ndim == 5:
+        data = data[:, :, :, 0, :]
+
+    affine = warp_nii.affine
+    shape = data.shape[:3]
+
+    # Voxel spacings = column norms of the rotation/scaling part of the affine
+    spacing = np.sqrt((affine[:3, :3] ** 2).sum(axis=0))
+
+    # Direction cosines in LPS (negate first two rows of the RAS direction matrix)
+    direction_lps = (np.diag([-1.0, -1.0, 1.0]) @ affine[:3, :3]) / spacing
+
+    # Origin in LPS (negate x and y of the RAS origin)
+    origin_lps = np.array([-1.0, -1.0, 1.0]) * affine[:3, 3]
+
+    # TransformFixedParameters: [nx,ny,nz, ox,oy,oz, sx,sy,sz, dir_cosines(9)]
+    fixed_params = np.concatenate([
+        np.array(shape, dtype=np.float64),
+        origin_lps,
+        spacing,
+        direction_lps.ravel(order="C"),
+    ])
+
+    # TransformParameters: displacements in LPS, vector-dim first, Fortran order
+    field_lps = data.copy()
+    field_lps[..., :2] *= -1.0
+    transform_params = np.moveaxis(field_lps, -1, 0).ravel(order="F")
+
+    with h5py.File(out_path, "w") as hf:
+        tg = hf.create_group("TransformGroup")
+        # Group 0: composite-transform header (required by ANTs/ITK)
+        g0 = tg.create_group("0")
+        g0.create_dataset(
+            "TransformType",
+            data=np.array([b"CompositeTransform_double_3_3"]),
+        )
+        g0.create_dataset("TransformFixedParameters", data=np.array([], dtype=np.float64))
+        g0.create_dataset("TransformParameters", data=np.array([], dtype=np.float64))
+        # Group 1: the displacement field transform
+        g1 = tg.create_group("1")
+        g1.create_dataset(
+            "TransformType",
+            data=np.array([b"DisplacementFieldTransform_double_3_3"]),
+        )
+        g1.create_dataset("TransformFixedParameters", data=fixed_params)
+        g1.create_dataset("TransformParameters", data=transform_params)
 
 
 def save_results(
@@ -633,7 +681,7 @@ def save_results(
     save_hemilabel: bool,
     save_lesions: bool,
     save_csf: bool,
-    save_def_h5: bool,
+    save_fmriprep: bool,
     verbose: bool,
     count: int,
     end_count: int,
@@ -717,7 +765,11 @@ def save_results(
         clip=[0, 4],
     )
     resample_and_save_nifti(
-        brain_large, grid_native, mask.affine, mask.header, f"{mri_dir}/{mT1_name}"
+        brain_large, 
+        grid_native, 
+        mask.affine, 
+        mask.header, 
+        f"{mri_dir}/{mT1_name}"
     )
 
     # Save remaining data in native space
@@ -863,7 +915,7 @@ def save_results(
         json.dump(summary, f, indent=2)
 
     # Save non-linear registered data
-    if save_hemilabel or save_mwp or save_wp or save_def_h5 or (atlas_list is not None):
+    if save_hemilabel or save_mwp or save_wp or save_fmriprep or (atlas_list is not None):
         if verbose:
             count = shell_progress(count, end_count, 
                 "Warping                      ")
@@ -912,21 +964,53 @@ def save_results(
                 # wp3 = output_reg["wp3"]
                 # nib.save(wp3, f"{mri_dir}/{csf_name}")
 
-        def_name = code_vars.get("Def_volume", "")
-        nib.save(warp_xy, f"{mri_dir}/{def_name}")
-        invdef_name = code_vars.get("invDef_volume", "")
-        # nib.save(warp_yx, f"{mri_dir}/{invdef_name}")
 
-        if save_def_h5:
+        if save_fmriprep:
+            # save deformation as fMRIPrep-compatible h5-file
             def_h5_name = code_vars.get("Def_h5_volume", "")
-            if def_h5_name:
-                save_deformation_h5(warp_xy, f"{mri_dir}/{def_h5_name}")
+            save_deformation_h5(warp_xy, f"{mri_dir}/{def_h5_name}")
             invdef_h5_name = code_vars.get("invDef_h5_volume", "")
-            if invdef_h5_name:
-                save_deformation_h5(warp_yx, f"{mri_dir}/{invdef_h5_name}")
+            save_deformation_h5(warp_yx, f"{mri_dir}/{invdef_h5_name}")
+
+            # Save dseg in native space and reorder tissue class intensities
+            dseg_value = np.round(p0_large.get_fdata().copy())
+            ind_CSF = dseg_value == 1
+            ind_GM  = dseg_value == 2
+            ind_WM  = dseg_value == 3
+            dseg_value[ind_CSF] = 3
+            dseg_value[ind_GM]  = 1
+            dseg_value[ind_WM]  = 2
+            dseg_large = nib.Nifti1Image(dseg_value, p0_large.affine, p0_large.header)
+            dseg_name = code_vars.get("dseg_volume", "")
+            resample_and_save_nifti(
+                dseg_large,
+                grid_native,
+                mask.affine,
+                mask.header,
+                f"{mri_dir}/{dseg_name}",
+                clip=[0, 4],
+            )
+
+            # simply use the clipped dseg image as mask image
+            mask_name = code_vars.get("mask_volume", "")
+            resample_and_save_nifti(
+                dseg_large,
+                grid_native,
+                mask.affine,
+                mask.header,
+                f"{mri_dir}/{mask_name}",
+                clip=[0, 1],
+            )
+
+        # save deformation as nifti-file
+        else:
+            def_name = code_vars.get("Def_volume", "")
+            nib.save(warp_xy, f"{mri_dir}/{def_name}")
+            invdef_name = code_vars.get("invDef_volume", "")
+            # nib.save(warp_yx, f"{mri_dir}/{invdef_name}")
 
         # Save hemispheric partition for surface estimation
-        if save_hemilabel:
+        if save_hemilabel or save_fmriprep:
             if verbose:
                 count = shell_progress(count, end_count, 
                     "Atlas creation               ")
@@ -940,7 +1024,22 @@ def save_results(
                 device,
                 is_label_atlas=True,
             )
+
+            # Get the ribbon mask using lh and rh and masking GM
             lh, rh = get_partition(p0_large, atlas)
+            ribbon_value = lh + rh
+            ribbon_value = (ribbon_value > 2.5) & (ribbon_value < 3.5)
+            ribbon_large = nib.Nifti1Image(ribbon_value, p0_large.affine, p0_large.header)
+            ribbon_name = code_vars.get("ribbon_volume", "")
+            resample_and_save_nifti(
+                ribbon_large,
+                grid_native,
+                mask.affine,
+                mask.header,
+                f"{mri_dir}/{ribbon_name}",
+                round=True,
+            )
+
 
             # Compute Euler numbers at GM/WM boundary for QA
             euler_lh = compute_euler_number(lh, threshold=2.5)
@@ -1044,7 +1143,7 @@ def run_segment():
     save_gz = args.gz
     save_lesions = args.lesions
     save_hemilabel = args.surf
-    save_def_h5 = args.save_def_h5
+    save_fmriprep = args.save_fmriprep
 
     # Check for GPU support
     device, no_gpu = setup_device()
@@ -1350,7 +1449,7 @@ def run_segment():
         save_hemilabel,
         save_lesions,
         save_csf,
-        save_def_h5,
+        save_fmriprep,
         verbose,
         count,
         end_count,
