@@ -6,8 +6,8 @@ Def_volume y_{bname}{desc}.{nii_ext}  {bname}_from-T1w_to_MNI152NLin2009cAsym.{n
 invDef_volume iy_{bname}{desc}.{nii_ext} {bname}_from-MNI152NLin2009cAsym_to-T1w.{nii_ext}
 Def_h5_volume y_{bname}{desc}.h5  {bname}_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5
 invDef_h5_volume iy_{bname}{desc}.h5 {bname}_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5
-Affine_txt_volume Affine_{bname}{desc}.txt {bname}_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.txt
-invAffine_txt_volume invAffine_{bname}{desc}.txt {bname}_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.txt
+Affine_txt_volume Affine_{bname}{desc}.txt {bname}_from-fsnative_to-T1w_mode-image_xfm.txt
+invAffine_txt_volume invAffine_{bname}{desc}.txt {bname}_from-T1w_to-fsnative_mode-image_xfm.txt
 skullstripped_volume m{bname}{desc}.{nii_ext} {bname}_desc-skullstripped_T1w.{nii_ext}
 mask_volume mask{bname}{desc}.{nii_ext} {bname}_desc-brain_mask.{nii_ext}
 PPM_volume {side}.ppm.{bname}{desc}.{nii_ext} {bname}_hemi-{side}{desc}_ppm.{nii_ext}
