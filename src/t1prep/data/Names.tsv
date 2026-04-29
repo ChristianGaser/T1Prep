@@ -6,8 +6,8 @@ Def_volume y_{bname}{desc}.{nii_ext}  {bname}_from-T1w_to_MNI152NLin2009cAsym.{n
 invDef_volume iy_{bname}{desc}.{nii_ext} {bname}_from-MNI152NLin2009cAsym_to-T1w.{nii_ext}
 Def_h5_volume y_{bname}{desc}.h5  {bname}_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5
 invDef_h5_volume iy_{bname}{desc}.h5 {bname}_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5
-skullstripped_volume m{bname}{desc}.{nii_ext} {bname}{desc}-skullstripped_T1w.{nii_ext}
-mask_volume mask{bname}{desc}.{nii_ext} {bname}{desc}-brain_mask.{nii_ext}
+skullstripped_volume m{bname}{desc}.{nii_ext} {bname}_desc-skullstripped_T1w.{nii_ext}
+mask_volume mask{bname}{desc}.{nii_ext} {bname}_desc-brain_mask.{nii_ext}
 PPM_volume {side}.ppm.{bname}{desc}.{nii_ext} {bname}_hemi-{side}{desc}_ppm.{nii_ext}
 GMT_volume {side}.thickness.{bname}{desc}.{nii_ext} {bname}_hemi-{side}{desc}_thickness.{nii_ext}
 Topochange_volume {side}.topochange.{bname}{desc}.{nii_ext} {bname}_hemi-{side}{desc}_topochange.{nii_ext}
@@ -15,7 +15,7 @@ Hemi_volume {side}.seg.{bname}{desc}.{nii_ext} {bname}_hemi-{side}{desc}_seg.{ni
 mT1_volume {space}m{bname}{desc}.{nii_ext} {bname}{space}{desc}_desc-preproc_T1w.{nii_ext}
 Label_volume {space}p0{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-seg.{nii_ext}
 dseg_volume {space}desg{bname}{desc}.{nii_ext} {bname}{space}{desc}_dseg.{nii_ext}
-ribbon_volume {space}ribbon{bname}{desc}.{nii_ext} {bname}{space}{desc}_ribbon-mask.{nii_ext}
+ribbon_volume {space}ribbon{bname}{desc}.{nii_ext} {bname}{space}_desc-ribbon_mask.{nii_ext}
 GM_volume {space}p1{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-GM_probseg.{nii_ext}
 WM_volume {space}p2{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-WM_probseg.{nii_ext}
 CSF_volume {space}p3{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-CSF_probseg.{nii_ext}
@@ -24,7 +24,7 @@ Vessel_volume {space}p5{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-Vessel
 Discrepance_volume {space}pd{bname}{desc}.{nii_ext} {bname}{space}{desc}_label-Discrepance.{nii_ext}
 Mid_surface {side}.central.{bname}.gii {bname}_hemi-{side}{space}{desc}_midthickness.surf.gii
 Pial_surface {side}.pial.{bname}.gii {bname}_hemi-{side}{space}{desc}_pial.surf.gii
-WM_surface {side}.white.{bname}.gii {bname}_hemi-{side}{space}{desc}_wm.surf.gii
+WM_surface {side}.white.{bname}.gii {bname}_hemi-{side}{space}{desc}_white.surf.gii
 Area_shape {side}.area.{bname} {bname}_hemi-{side}{space}{desc}_area.shape.gii
 Sulc_shape {side}.sulc.{bname} {bname}_hemi-{side}{space}{desc}_sulc.shape.gii
 GMT_shape {side}.thickness.{bname} {bname}_hemi-{side}{space}{desc}_thickness.shape.gii

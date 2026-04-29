@@ -213,6 +213,7 @@ parse_args()
         fmriprep=1
         use_bids_naming=1
         save_csf=1
+        save_p=1
         nii_ext='nii.gz'
         ;;
       --gz)
