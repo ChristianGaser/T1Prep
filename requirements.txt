@@ -11,5 +11,4 @@ vtk>=9.0.0
 requests
 flask>=2.3
 apscheduler>=3.10
-nitransforms>=23.0.1
 h5py>=3.0
