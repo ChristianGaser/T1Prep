@@ -38,6 +38,7 @@ dependencies = [
     "flask>=2.3",
     "apscheduler>=3.10",
     "h5py>=3.0",
+    "sentry-sdk",
 ]
 
 [project.scripts]

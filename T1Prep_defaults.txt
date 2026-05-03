@@ -38,6 +38,7 @@ atlas_surf="'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"
 # ------------------------------------------------------------------------------
 # Expert options
 # ------------------------------------------------------------------------------
+track=1               # Collect telemetry information for T1Prep
 use_amap=0            # Use AMAP instead of DeepMRIPrep for segmentation
 thickness_method=3    # Set the thickness method
 correct_folding=1     # Correct for cortical thickness by folding effects

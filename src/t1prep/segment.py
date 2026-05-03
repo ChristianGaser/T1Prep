@@ -34,6 +34,7 @@ import random
 import time
 import subprocess
 import tempfile
+import sentry_sdk
 import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
@@ -1180,6 +1181,13 @@ def run_segment():
     # Check for GPU support
     device, no_gpu = setup_device()
 
+    sentry_sdk.init(
+        dsn="https://ca6089ed5dc4326c6c69afc3684c5fc1@o4511309449068544.ingest.de.sentry.io/4511309454311504",
+        # Add data like request headers and IP for users,
+        # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+        send_default_pii=False,
+    )
+    
     # Set processing parameters
     target_res = np.array([0.5] * 3)  # Target resolution for resampling
     count = 1
