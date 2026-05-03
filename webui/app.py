@@ -150,9 +150,18 @@ def resolve_folder_pattern_inputs(form: dict) -> list[Path]:
     if not folder_root or not pattern:
         return []
 
-    root = Path(folder_root).expanduser()
-    if not root.is_absolute():
-        root = ROOT_DIR / root
+    candidate = Path(folder_root).expanduser()
+    safe_root = DEFAULT_UPLOAD_ROOT.expanduser().resolve()
+    if candidate.is_absolute():
+        root = candidate.resolve()
+    else:
+        root = (safe_root / candidate).resolve()
+
+    try:
+        root.relative_to(safe_root)
+    except ValueError:
+        return []
+
     if not root.exists() or not root.is_dir():
         return []
 
