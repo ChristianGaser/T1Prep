@@ -7,7 +7,7 @@
 > [!WARNING]
 > This project is **still in development** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/T1Prep/issues)!**
 
-<img src="T1Prep.png" alt="T1Prep logo" width="340"> 
+<img src="T1Prep_logo.svg" alt="T1Prep logo" width="340"> 
 
 # T1Prep: T1 PREProcessing Pipeline (aka PyCAT) 
 
