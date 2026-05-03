@@ -809,10 +809,16 @@ def resolve_dirname():
         return jsonify({"dirname": ""})
 
     safe_root = DEFAULT_UPLOAD_ROOT.resolve()
-    p = Path(raw_path).expanduser()
-    if not p.is_absolute():
-        p = safe_root / p
-    p = p.resolve(strict=False)
+
+    # Sanitize untrusted input before using it in path construction.
+    if "\x00" in raw_path:
+        return jsonify({"dirname": ""})
+    normalized_raw = raw_path.replace("\\", "/").lstrip("/")
+    parts = [part for part in normalized_raw.split("/") if part not in ("", ".")]
+    if any(part == ".." for part in parts):
+        return jsonify({"dirname": ""})
+
+    p = (safe_root / Path(*parts)).resolve(strict=False)
 
     try:
         p.relative_to(safe_root)
