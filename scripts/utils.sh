@@ -110,7 +110,6 @@ check_files()
 # ----------------------------------------------------------------------
 
 get_OS() {
-  local cpu_arch
   cpu_arch="$(uname -m)"
 
   case "$os_type" in
@@ -641,4 +640,48 @@ get_output_folder()
   t1prep_output_folder_from_input "$FILE" "${outdir:-}" "${T1PREP_VERSION}" "${use_amap}"
 } 
 
+send_sentry()
+{
+  # Usage: send_sentry <n_success> <n_errors>
+  # Sends three counter metrics to Sentry Custom Metrics so they appear in
+  # the Sentry Metrics Explorer as time-series charts filterable by version:
+  #   t1prep.calls              – 1 per invocation
+  #   t1prep.files_processed    – number of successfully processed files
+  #   t1prep.errors             – number of failed files
+  local n_success="${1:-0}"
+  local n_errors="${2:-0}"
 
+  local DSN="https://ca6089ed5dc4326c6c69afc3684c5fc1@o4511309449068544.ingest.de.sentry.io/4511309454311504"
+  local HOST
+  HOST=$(echo "$DSN" | sed -E 's#https://[^@]+@([^/]+)/.*#\1#')
+  local PROJECT_ID
+  PROJECT_ID=$(echo "$DSN" | sed -E 's#.*/([0-9]+)$#\1#')
+
+  local EVENT_ID
+  EVENT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')
+  local SENT_AT
+  SENT_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local UNIX_TS
+  UNIX_TS=$(date -u +"%s")
+
+  # Tags applied to every metric – filterable in the Sentry Metrics Explorer
+  local TAGS="version:${T1PREP_VERSION},system:${cpu_arch}"
+
+  # Statsd payload: one metric per line   name:value|c|#tags|Ttimestamp
+  # 'c' = counter (Sentry sums counters over the chosen time window)
+  local payload
+  payload=$(printf \
+    't1prep.calls:1|c|#%s|T%s\nt1prep.files_processed:%s|c|#%s|T%s\nt1prep.errors:%s|c|#%s|T%s\n' \
+    "${TAGS}" "${UNIX_TS}" \
+    "${n_success}" "${TAGS}" "${UNIX_TS}" \
+    "${n_errors}" "${TAGS}" "${UNIX_TS}")
+
+  local payload_len=${#payload}
+
+  # Fire-and-forget (&) so the script does not wait for the HTTP response
+  printf '{"event_id":"%s","dsn":"%s","sent_at":"%s"}\n{"type":"statsd","length":%d}\n%s' \
+    "${EVENT_ID}" "${DSN}" "${SENT_AT}" "${payload_len}" "${payload}" \
+    | curl -sS -o /dev/null -X POST "https://${HOST}/api/${PROJECT_ID}/envelope/" \
+        -H "Content-Type: application/x-sentry-envelope" \
+        --data-binary @- 2>/dev/null &
+}

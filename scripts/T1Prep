@@ -214,6 +214,9 @@ parse_args()
         use_bids_naming=1
         save_csf=1
         save_p=1
+        save_mwp=0
+        save_hemi=0
+        atlas_vol=""
         nii_ext='nii.gz'
         ;;
       --gz)
@@ -273,6 +276,9 @@ parse_args()
         ;;
       --no-retry)
         retry=0
+        ;;
+      --no-track)
+        track=0
         ;;
       --debug)
         debug=1
@@ -928,6 +934,7 @@ process()
 
       # Ensure Python can import the package from repo `src/`
       export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
+      export PYTHONWARNINGS="ignore::urllib3.exceptions.NotOpenSSLWarning"
       # Initialize command string with the segmentation entrypoint
       cmd="${python} ${src_dir}/segment.py"
       
@@ -1082,6 +1089,11 @@ process()
       
     ((i++))
   done
+  
+  # Collect telemetry data
+  if [ "$track" -eq 1 ]; then
+    send_sentry $((SIZE_OF_ARRAY - errors)) $errors
+  fi
   
   # Print overall execution time for more than one data set
   if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
@@ -1265,6 +1277,9 @@ ${BOLD}${GREEN}Save Options:${NC}
         Save dseg files
         Save spatially registered data with 2mm voxel size
       
+  --no-track
+      Do not collect telemetry information for T1Prep.
+
   --gz                        
       Save images in compressed NIfTI format (*.nii.gz).
 
