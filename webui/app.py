@@ -930,4 +930,5 @@ if __name__ == "__main__":
             time.sleep(1.0)
             open_chrome_app_mode(url, width=1100, height=900)
         threading.Thread(target=delayed_open, daemon=True).start()
-    app.run(host=host, port=port, debug=True, use_reloader=False)
+    debug_mode = os.getenv("FLASK_DEBUG", "").lower() in ("1", "true", "yes", "on")
+    app.run(host=host, port=port, debug=debug_mode, use_reloader=False)
