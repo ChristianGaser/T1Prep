@@ -934,7 +934,6 @@ process()
 
       # Ensure Python can import the package from repo `src/`
       export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
-      export PYTHONWARNINGS="ignore::urllib3.exceptions.NotOpenSSLWarning"
       # Initialize command string with the segmentation entrypoint
       cmd="${python} ${src_dir}/segment.py"
       

@@ -15,7 +15,11 @@ optionally atlas names:
 
 import os
 import sys
+import warnings
 import platform
+
+# Suppress urllib3/LibreSSL warning before any transitive imports trigger it
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 if sys.platform == "darwin":
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"        # CPU Fallback for MPS
