@@ -799,9 +799,16 @@ def resolve_dirname():
     if not raw_path:
         return jsonify({"dirname": ""})
 
+    safe_root = DEFAULT_UPLOAD_ROOT.resolve()
     p = Path(raw_path).expanduser()
     if not p.is_absolute():
-        p = ROOT_DIR / p
+        p = safe_root / p
+    p = p.resolve(strict=False)
+
+    try:
+        p.relative_to(safe_root)
+    except ValueError:
+        return jsonify({"dirname": ""})
 
     # If path exists and is a directory, use it directly
     if p.exists() and p.is_dir():
