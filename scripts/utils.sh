@@ -24,6 +24,7 @@
 
 # defaults
 T1PREP_VERSION=0.3.7
+export T1PREP_VERSION
 os_type=$(uname -s) # Determine OS type
 
 # Directory of this utils.sh file (robust when sourced)
@@ -640,14 +641,40 @@ get_output_folder()
   t1prep_output_folder_from_input "$FILE" "${outdir:-}" "${T1PREP_VERSION}" "${use_amap}"
 } 
 
+_send_sentry_event()
+{
+  # Usage: _send_sentry_event <host> <project_id> <dsn> <level> <message> <n_success> <n_errors>
+  # Sends a single Sentry event envelope (feeds issues-timeseries and release tracking).
+  local host="$1" project_id="$2" dsn="$3" level="$4" message="$5"
+  local n_success="$6" n_errors="$7"
+
+  local EVENT_ID
+  EVENT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')
+  local SENT_AT
+  SENT_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  local event
+  event=$(printf \
+    '{"event_id":"%s","timestamp":"%s","platform":"other","release":"%s","level":"%s","logger":"t1prep","message":"%s","tags":[["version","%s"],["system","%s"]],"extra":{"n_success":%d,"n_errors":%d}}' \
+    "${EVENT_ID}" "${SENT_AT}" "${T1PREP_VERSION}" "${level}" "${message}" \
+    "${T1PREP_VERSION}" "${cpu_arch}" "${n_success}" "${n_errors}")
+
+  local event_len=${#event}
+
+  printf '{"event_id":"%s","dsn":"%s","sent_at":"%s"}\n{"type":"event","length":%d}\n%s' \
+    "${EVENT_ID}" "${dsn}" "${SENT_AT}" "${event_len}" "${event}" \
+    | curl -sS -o /dev/null -X POST "https://${host}/api/${project_id}/envelope/" \
+        -H "Content-Type: application/x-sentry-envelope" \
+        --data-binary @- 2>/dev/null &
+}
+
 send_sentry()
 {
   # Usage: send_sentry <n_success> <n_errors>
-  # Sends three counter metrics to Sentry Custom Metrics so they appear in
-  # the Sentry Metrics Explorer as time-series charts filterable by version:
-  #   t1prep.calls              – 1 per invocation
-  #   t1prep.files_processed    – number of successfully processed files
-  #   t1prep.errors             – number of failed files
+  # Sends Sentry events so they appear in the Sentry issues-timeseries dashboard
+  # with per-release/version breakdowns:
+  #   info event  – one per invocation (total calls + processed count)
+  #   error event – only when n_errors > 0 (feeds "Errors Over Time" widget)
   local n_success="${1:-0}"
   local n_errors="${2:-0}"
 
@@ -657,31 +684,15 @@ send_sentry()
   local PROJECT_ID
   PROJECT_ID=$(echo "$DSN" | sed -E 's#.*/([0-9]+)$#\1#')
 
-  local EVENT_ID
-  EVENT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')
-  local SENT_AT
-  SENT_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  local UNIX_TS
-  UNIX_TS=$(date -u +"%s")
+  # Always send a summary info event (counts as a "Total Event" in the dashboard)
+  _send_sentry_event "${HOST}" "${PROJECT_ID}" "${DSN}" \
+    "info" "T1Prep run: ${n_success} succeeded, ${n_errors} failed" \
+    "${n_success}" "${n_errors}"
 
-  # Tags applied to every metric – filterable in the Sentry Metrics Explorer
-  local TAGS="version:${T1PREP_VERSION},system:${cpu_arch}"
-
-  # Statsd payload: one metric per line   name:value|c|#tags|Ttimestamp
-  # 'c' = counter (Sentry sums counters over the chosen time window)
-  local payload
-  payload=$(printf \
-    't1prep.calls:1|c|#%s|T%s\nt1prep.files_processed:%s|c|#%s|T%s\nt1prep.errors:%s|c|#%s|T%s\n' \
-    "${TAGS}" "${UNIX_TS}" \
-    "${n_success}" "${TAGS}" "${UNIX_TS}" \
-    "${n_errors}" "${TAGS}" "${UNIX_TS}")
-
-  local payload_len=${#payload}
-
-  # Fire-and-forget (&) so the script does not wait for the HTTP response
-  printf '{"event_id":"%s","dsn":"%s","sent_at":"%s"}\n{"type":"statsd","length":%d}\n%s' \
-    "${EVENT_ID}" "${DSN}" "${SENT_AT}" "${payload_len}" "${payload}" \
-    | curl -sS -o /dev/null -X POST "https://${HOST}/api/${PROJECT_ID}/envelope/" \
-        -H "Content-Type: application/x-sentry-envelope" \
-        --data-binary @- 2>/dev/null &
+  # Send an error-level event only when there were failures
+  if [ "${n_errors}" -gt 0 ]; then
+    _send_sentry_event "${HOST}" "${PROJECT_ID}" "${DSN}" \
+      "error" "T1Prep: ${n_errors} file(s) failed to process" \
+      "${n_success}" "${n_errors}"
+  fi
 }
