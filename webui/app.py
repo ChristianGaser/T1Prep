@@ -8,7 +8,7 @@ import subprocess
 import threading
 import uuid
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Dict, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -150,12 +150,18 @@ def resolve_folder_pattern_inputs(form: dict) -> list[Path]:
     if not folder_root or not pattern:
         return []
 
-    candidate = Path(folder_root).expanduser()
     safe_root = DEFAULT_UPLOAD_ROOT.expanduser().resolve()
-    if candidate.is_absolute():
-        root = candidate.resolve()
-    else:
-        root = (safe_root / candidate).resolve()
+
+    # Validate untrusted folder_root as a relative path under safe_root.
+    raw_path = PurePath(folder_root)
+    if raw_path.is_absolute():
+        return []
+
+    parts = raw_path.parts
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        return []
+
+    root = safe_root.joinpath(*parts).resolve()
 
     try:
         root.relative_to(safe_root)
