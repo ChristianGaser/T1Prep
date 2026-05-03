@@ -487,6 +487,12 @@ def submit():
     out_dir = Path(out_dir_str)
     if not out_dir.is_absolute():
         out_dir = ROOT_DIR / out_dir
+    out_dir = out_dir.resolve(strict=False)
+    safe_root = ROOT_DIR.resolve(strict=False)
+    try:
+        out_dir.relative_to(safe_root)
+    except ValueError:
+        return "Output directory must be within the application root.", 400
     out_dir.mkdir(parents=True, exist_ok=True)
 
     job_id = uuid.uuid4().hex
