@@ -29,6 +29,10 @@ fi
 # Activate the environment
 echo "🔄 Activating T1Prep virtual environment..."
 source "$ENV_DIR/bin/activate"
+# On macOS, remove quarantine attributes to prevent Gatekeeper blocking
+if [[ "$(uname)" == "Darwin" ]]; then
+    xattr -dr com.apple.quarantine "$ENV_DIR"/lib/python*/site-packages 2>/dev/null || true
+fi
 
 # Verify activation
 if [[ "$VIRTUAL_ENV" == "$ENV_DIR" ]]; then
