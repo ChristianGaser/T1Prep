@@ -283,6 +283,9 @@ do_parallelize ()
     NUM_JOBS=$SIZE_OF_ARRAY
   fi
 
+  # Initialize logging
+  log="${LOGDIR}/parallelize_${HOSTNAME}_${time}.log"
+
   if [ -z "${TEST}" ]; then
     # Extract base command name (first token, basename, strip suffix after '-')
     first_token=$(printf '%s\n' "$COMMAND" | awk '{print $1}')
@@ -344,12 +347,14 @@ do_parallelize ()
       return
   fi
 
+  if [ -z "${TEST}" ]; then
+    echo "${GREEN}Check $log for logging information${NC}"
+    echo > $log
+  fi
+
   BLOCK=$((10000* $SIZE_OF_ARRAY / $NUM_JOBS ))
   i=0
-
-  # Initialize logging
-  log="${LOGDIR}/parallelize_${HOSTNAME}_${time}.log"
-
+  
   # Distribute files into N buckets and write per-job lists to PROGRESS_DIR.
   # Using files avoids word-splitting issues for paths with spaces.
   mkdir -p "$PROGRESS_DIR"
@@ -366,12 +371,6 @@ do_parallelize ()
     ((i++))
   done
 
-  if [ -z "${TEST}" ]; then
-    echo "${GREEN}Check $log for logging information${NC}"
-    echo > $log
-    echo
-  fi
-  
   for ((i=0; i<NUM_JOBS; i++)); do
     list_file="$PROGRESS_DIR/job${i}.list"
     # Skip empty buckets
