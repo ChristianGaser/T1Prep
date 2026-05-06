@@ -485,16 +485,12 @@ def submit():
     if not out_dir_str:
         return "Output directory is required.", 400
 
-    normalized_out_dir = os.path.normpath(out_dir_str)
-    if normalized_out_dir in ("", ".") or normalized_out_dir.startswith(".."):
+    user_out_dir = Path(out_dir_str.strip())
+    if not out_dir_str or user_out_dir.is_absolute() or ".." in user_out_dir.parts:
         return "Output directory must be within the application root.", 400
 
-    out_dir = Path(normalized_out_dir)
-    if not out_dir.is_absolute():
-        out_dir = ROOT_DIR / out_dir
-
     safe_root = ROOT_DIR.resolve(strict=True)
-    out_dir = out_dir.resolve(strict=False)
+    out_dir = (safe_root / user_out_dir).resolve(strict=False)
     try:
         out_dir.relative_to(safe_root)
     except ValueError:
