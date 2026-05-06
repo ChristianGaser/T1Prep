@@ -464,6 +464,17 @@ def atlas_help():
     truncated = len(lines) > 20
 
     return jsonify({"name": name, "text": preview, "truncated": truncated})
+def _resolve_out_dir_within_root(root: Path, user_value: str) -> Path:
+    user_path = Path(user_value.strip())
+    if not user_value or user_path.is_absolute():
+        raise ValueError("Output directory must be within the application root.")
+
+    root_resolved = root.resolve(strict=True)
+    candidate = (root_resolved / user_path).resolve(strict=False)
+    candidate.relative_to(root_resolved)
+    return candidate
+
+
 @app.route("/submit", methods=["POST"])
 def submit():
     ensure_dirs()
@@ -485,14 +496,8 @@ def submit():
     if not out_dir_str:
         return "Output directory is required.", 400
 
-    user_out_dir = Path(out_dir_str.strip())
-    if not out_dir_str or user_out_dir.is_absolute() or ".." in user_out_dir.parts:
-        return "Output directory must be within the application root.", 400
-
-    safe_root = ROOT_DIR.resolve(strict=True)
-    out_dir = (safe_root / user_out_dir).resolve(strict=False)
     try:
-        out_dir.relative_to(safe_root)
+        out_dir = _resolve_out_dir_within_root(ROOT_DIR, out_dir_str)
     except ValueError:
         return "Output directory must be within the application root.", 400
     out_dir.mkdir(parents=True, exist_ok=True)
