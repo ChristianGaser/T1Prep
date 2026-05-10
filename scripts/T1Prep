@@ -413,23 +413,6 @@ surface_estimation()
     show_bar=0
   fi
     
-# Save additionally data for fMRIPrep
-if [ "${fmriprep}" -eq 1 ]; then
-  # Save (inverted) inflation-based sulcal depth (FreeSurfer sulc-style)
-  cmd="CAT_SurfCurvature ${surf_dir}/${Mid_surface} ${surf_dir}/${Sulc_shape} 11 0 0 1"
-  run_cmd_log "${report_log}" "$cmd"
-
-  # Inflates the surface
-  cmd="CAT_Surf2Sphere ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface} 2"
-  run_cmd_log "${report_log}" "$cmd"
-
-  # Save cortex mask
-  cmd="CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgmask} ${surf_dir}/${Mask_label}"
-  run_cmd_log "${report_log}" "${cmd[@]}"
-  exit 
-
-fi
-
   # Check that defined initial surface really exists and adapt to current hemisphere
   if [[ -n "$initial_surface" ]]; then
     # Detect hemisphere marker in initial surface filename and create pattern for substitution
