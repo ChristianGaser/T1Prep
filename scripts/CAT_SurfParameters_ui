@@ -142,6 +142,7 @@ main()
       15) cmd_argv+=("-sr") ;;
       16) cmd_argv+=("-sra") ;;
       17) cmd_argv+=("-area") ;;
+      18) cmd_argv+=("-sulc") ;;
     esac
 
     local command_str=""
@@ -260,6 +261,9 @@ parse_args()
     --area | -area)
       method=17
       ;;
+    --sulc | -sulc)
+      method=18
+      ;;
     -h | --help | --h | -v | --version | -V)
       help
       exit 1
@@ -316,6 +320,7 @@ get_outputname()
     15) str="toroGI20mm" ;;
     16) str="toroGIa" ;;
     17) str="area" ;;
+    18) str="sulc" ;;
   esac
 
   if [[ "$use_absolute" -eq 1 ]]; then
@@ -418,6 +423,8 @@ process()
       "${bin_dir}/CAT_SurfRatio" "$infile" "$outputname" -1 -no_normalization
     elif [ "${method}" -eq 17 ]; then
       "${bin_dir}/CAT_SurfArea" "$infile" "$outputname"
+    elif [ "${method}" -eq 18 ]; then
+      "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" 11 0 "$use_absolute"
     fi
   done
 }
@@ -451,7 +458,7 @@ ${BOLD}OPTIONS:${NC}
 
   -gy             Gyrification based on absolute mean curvature abs(k1+k2)/2 [default]
   -mc | -curv     Mean curvature (in radians) (k1+k2)/2
-  -be | bi        Bending energy k1*k1 + k2*k2
+  -be | -bi       Bending energy k1*k1 + k2*k2
   -gc             Gaussian curvature k1*k2
   -cv             Curvedness sqrt(0.5*(k1*k1+k2*k2))
   -si             Shape index atan((k1+k2)/(k2-k1))
@@ -460,6 +467,7 @@ ${BOLD}OPTIONS:${NC}
   -min-curv       Minimum curvature k2
   -max-curv       Maximum curvature k1
   -dp             Depth potential with alpha = 1/curvtype (curvtype=650)
+  -sulc           Sulcal depth (using inflated surface based on Freesurfer method)
   -depth          Sulcal depth (using convex hull)
   -sqrt-depth     Sqrt-transformed sulcal depth (more normally distributed)
   -area           Surface area
