@@ -5,7 +5,7 @@ instead of the CAT_* command-line binaries.
 
 The function mirrors the bash original step-for-step.  Each former
 ``cmd="CAT_Foo …"; run_cmd_log "$cmd"`` block becomes a call to the
-matching :mod:`cat_surf.cli` shim, wrapped in :func:`_run_step` for
+matching :mod:`cs_cli` shim, wrapped in :func:`_run_step` for
 logging and timing parity with the bash side.
 
 Invocation
@@ -59,16 +59,14 @@ Both fallbacks happen transparently — set the env var
 from __future__ import annotations
 
 import argparse
-import csv
+import contextlib
 import logging
 import os
 import platform
 import shutil
-import subprocess
 import sys
 import time
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -77,55 +75,17 @@ import numpy as np
 # cat_surf imports
 # ---------------------------------------------------------------------------
 import cat_surf
+from cat_surf import cli as cs_cli
+
+# ---------------------------------------------------------------------------
+# Shared utilities (NameTable and ProgressBar live in utils to avoid duplication)
+# ---------------------------------------------------------------------------
+from .utils import NameTable, ProgressBar
 
 
 # ===========================================================================
-# Names.tsv: pattern lookup and substitution
+# Names.tsv / ProgressBar: imported from utils — see utils.py
 # ===========================================================================
-
-class NameTable:
-    """In-memory representation of ``Names.tsv``.
-
-    The file is whitespace-separated: column 0 is a symbolic code,
-    column 1 is the CAT12-style filename pattern, column 2 (if present)
-    is the BIDS-style filename pattern.  Patterns contain placeholders
-    ``{bname}``, ``{side}``, ``{desc}``, ``{space}``, ``{atlas}``,
-    ``{nii_ext}``.
-    """
-
-    def __init__(self, path: str | os.PathLike):
-        self._rows: dict[str, list[str]] = {}
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                self._rows[parts[0]] = parts
-
-    def pattern(self, code: str, column: int) -> str:
-        row = self._rows.get(code)
-        if row is None or column >= len(row):
-            raise KeyError(
-                f"Names.tsv: no pattern for code={code!r} column={column}")
-        return row[column]
-
-    def substitute(self, code: str, column: int, *,
-                   bname: str, hemi: str, desc: str = "",
-                   space: str = "", atlas: str = "",
-                   nii_ext: str = "") -> str:
-        pat = self.pattern(code, column)
-        # Match utils.sh:substitute_pattern — strip _T1w suffix from bname.
-        bname_clean = bname[:-4] if bname.endswith("_T1w") else bname
-        out = (pat
-               .replace("{bname}", bname_clean)
-               .replace("{side}", hemi)
-               .replace("{desc}", desc)
-               .replace("{space}", space)
-               .replace("{atlas}", atlas)
-               .replace("{nii_ext}", nii_ext)
-               .replace("..", "."))
-        return out
-
 
 # ===========================================================================
 # Logging / step timing (mirrors run_cmd_log in utils.sh)
@@ -136,7 +96,8 @@ def _setup_logger(report_log: Optional[str]) -> logging.Logger:
     log.setLevel(logging.INFO)
     log.handlers.clear()
     if report_log:
-        Path(report_log).parent.mkdir(parents=True, exist_ok=True)
+        from pathlib import Path as _Path
+        _Path(report_log).parent.mkdir(parents=True, exist_ok=True)
         h = logging.FileHandler(report_log, mode="a", encoding="utf-8")
         h.setFormatter(logging.Formatter("%(message)s"))
         log.addHandler(h)
@@ -149,56 +110,49 @@ def _setup_logger(report_log: Optional[str]) -> logging.Logger:
 
 
 @contextmanager
-def _run_step(log: logging.Logger, description: str):
-    """Mimic ``run_cmd_log`` — log description + runtime."""
-    log.info(description)
-    t0 = time.monotonic()
+def _no_stdout():
+    """Redirect C-level stdout (fd 1) to /dev/null.
+
+    Used to silence C-extension output (e.g. "Euler characteristics…")
+    when not running in verbose/debug mode.
+    """
+    sys.stdout.flush()
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        saved = os.dup(1)
+    except OSError:
+        yield
+        return
+    os.dup2(devnull, 1)
+    os.close(devnull)
     try:
         yield
+    finally:
+        sys.stdout.flush()
+        os.dup2(saved, 1)
+        os.close(saved)
+
+
+@contextmanager
+def _run_step(log: logging.Logger, description: str, verbose: bool = False):
+    """Mimic ``run_cmd_log`` — log description + runtime.
+
+    When *verbose* is False the C-level stdout is redirected to
+    /dev/null so that internal C-extension messages (e.g. Euler
+    characteristics) do not appear on the console.
+    """
+    log.info(description)
+    t0 = time.monotonic()
+    ctx = contextlib.nullcontext() if verbose else _no_stdout()
+    try:
+        with ctx:
+            yield
     except Exception:
         log.exception("FAILED: %s", description)
         raise
     finally:
         runtime = int(time.monotonic() - t0)
         log.info("Execution time: %ds", runtime)
-
-
-# ===========================================================================
-# Progress-bar bridge
-# ===========================================================================
-
-class ProgressBar:
-    """Drives the same ``progress_bar_multi.sh`` script T1Prep uses.
-
-    A persistent count file is shared between hemispheres (T1Prep runs
-    one ``surface_estimation`` per hemisphere in parallel).  We
-    increment it atomically and invoke the bash bar with the new value.
-    """
-
-    def __init__(self, bar_script: Optional[str], end_count: int,
-                 count_file: Optional[str], show: bool):
-        self.bar_script = bar_script
-        self.end_count = end_count
-        self.count_file = count_file
-        self.show = bool(show and bar_script and count_file)
-
-    def step(self, label: str) -> None:
-        if not self.show:
-            return
-        try:
-            with open(self.count_file, "r+", encoding="utf-8") as fh:
-                cur = int(fh.read().strip() or "0") + 1
-                fh.seek(0)
-                fh.truncate()
-                fh.write(str(cur))
-        except FileNotFoundError:
-            cur = 1
-            Path(self.count_file).write_text(str(cur))
-        subprocess.run(
-            [self.bar_script, "1", "", str(cur), str(self.end_count),
-             f"{label:<31}"],
-            check=False,
-        )
 
 
 # ===========================================================================
@@ -348,7 +302,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # =====================================================================
     bar.step("Calculate thickness")
     with _run_step(log, f"CAT_VolThicknessPbt -> {p(mri, 'GMT_volume')}, "
-                        f"{p(mri, 'PPM_volume')}"):
+                        f"{p(mri, 'PPM_volume')}", verbose=verbose):
         import nibabel as nib
         img = nib.load(hemi_vol)
         vol = img.get_fdata().astype(np.float32)
@@ -397,7 +351,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
         # Note: change-map output (3rd positional arg of CAT_VolMarchingCubes)
         # is debug-only and currently not surfaced through cat_surf — skip.
         with _run_step(log, f"CAT_VolMarchingCubes -> "
-                            f"{p(surf, 'Mid_surface')}"):
+                            f"{p(surf, 'Mid_surface')}", verbose=verbose):
             v, fcs = cat_surf.vol_marching_cubes(
                 p(mri, "PPM_volume"),
                 label=p(mri, "Hemi_volume"),
@@ -414,7 +368,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
 
         if downsample == 0:
             bar_label = "Reduce mesh"
-            with _run_step(log, "CAT_SurfReduce ratio=0.25 aggr=7"):
+            with _run_step(log, "CAT_SurfReduce ratio=0.25 aggr=7", verbose=verbose):
                 v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
                 target = int(round(0.25 * fcs.shape[0]))
                 v, fcs = cat_surf.reduce_mesh(
@@ -427,7 +381,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # 3) Refine central surface with SurfDeform
     # =====================================================================
     bar.step("Refine central surface")
-    with _run_step(log, "CAT_SurfDeform"):
+    with _run_step(log, "CAT_SurfDeform", verbose=verbose):
         v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
         v, fcs = cat_surf.surf_deform(
             v, fcs, p(mri, "PPM_volume"),
@@ -440,7 +394,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # Self-intersection cleanup (not supported on Windows)
     if platform.system() not in ("Windows",) and not sys.platform.startswith(
             ("cygwin", "msys")):
-        with _run_step(log, "CAT_SurfRemoveIntersections"):
+        with _run_step(log, "CAT_SurfRemoveIntersections", verbose=verbose):
             v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
             v, fcs = cat_surf.remove_intersections(v, fcs, verbose=verbose)
             cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
@@ -449,7 +403,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # 4) Map thickness values onto the surface (CAT_Vol2Surf)
     # =====================================================================
     bar.step("Map thickness values")
-    with _run_step(log, "CAT_Vol2Surf -weighted-avg -start -0.4 -end 0.4 -steps 5"):
+    with _run_step(log, "CAT_Vol2Surf -weighted-avg -start -0.4 -end 0.4 -steps 5", verbose=verbose):
         v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
         values, _grid = cat_surf.vol2surf(
             p(mri, "GMT_volume"), v, fcs,
@@ -461,8 +415,8 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     if thickness_method == 3:
         shutil.copy(p(surf, "PBT_shape"), p(surf, "GMT_shape"))
     else:
-        with _run_step(log, "CAT_SurfDistance -thickness -mean -max 6.0"):
-            cat_surf.cli.surf_distance(
+        with _run_step(log, "CAT_SurfDistance -thickness -mean -max 6.0", verbose=verbose):
+            cs_cli.surf_distance(
                 p(surf, "Mid_surface"), None,
                 p(surf, "GMT_shape"),
                 thickness_file=p(surf, "PBT_shape"),
@@ -475,7 +429,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # =====================================================================
     if save_pial_white or thickness_method == 2:
         bar.step("Estimate pial and white surface")
-        with _run_step(log, "CAT_Surf2PialWhite method=2"):
+        with _run_step(log, "CAT_Surf2PialWhite method=2", verbose=verbose):
             v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
             t = cat_surf.read_values(p(surf, "GMT_shape"))
             pv, pf, wv, wf = cat_surf.surf_to_pial_white(
@@ -486,8 +440,8 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             )
             cat_surf.write_surface(p(surf, "Pial_surface"), pv, pf)
             cat_surf.write_surface(p(surf, "WM_surface"), wv, wf)
-        with _run_step(log, "CAT_SurfAverage (pial+white -> central)"):
-            cat_surf.cli.surf_average(
+        with _run_step(log, "CAT_SurfAverage (pial+white -> central)", verbose=verbose):
+            cs_cli.surf_average(
                 p(surf, "Mid_surface"),
                 p(surf, "Pial_surface"), p(surf, "WM_surface"),
             )
@@ -497,7 +451,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # =====================================================================
     if thickness_method == 2:
         bar.step("Refine thickness")
-        with _run_step(log, "CAT_SurfDistance pial vs white -max 6.0 -mean"):
+        with _run_step(log, "CAT_SurfDistance pial vs white -max 6.0 -mean", verbose=verbose):
             v1, f1 = cat_surf.read_surface(p(surf, "Pial_surface"))
             v2, f2 = cat_surf.read_surface(p(surf, "WM_surface"))
             d, _ = cat_surf.point_distance_mean(v1, f1, v2, f2,
@@ -509,7 +463,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # 7) Folding-based thickness correction
     # =====================================================================
     if correct_folding:
-        with _run_step(log, "CAT_SurfCorrectThicknessFolding -slope 1 -max 6"):
+        with _run_step(log, "CAT_SurfCorrectThicknessFolding -slope 1 -max 6", verbose=verbose):
             v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
             t = cat_surf.read_values(p(surf, "GMT_shape"))
             t = cat_surf.correct_thickness_folding(
@@ -520,7 +474,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # 8) Debug intensity mapping
     # =====================================================================
     if debug and os.path.exists(p(mri, "mT1_volume")):
-        with _run_step(log, "CAT_Vol2Surf debug intensity mapping"):
+        with _run_step(log, "CAT_Vol2Surf debug intensity mapping", verbose=verbose):
             for surf_name, out_key in [
                 ("Mid_surface", "Intensity_Mid"),
                 ("Pial_surface", "Intensity_Pial"),
@@ -539,7 +493,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # =====================================================================
     # 9) Surface area
     # =====================================================================
-    with _run_step(log, "CAT_SurfArea"):
+    with _run_step(log, "CAT_SurfArea", verbose=verbose):
         v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
         area, _total = cat_surf.get_area(v, fcs)
         cat_surf.write_values(p(surf, "Area_shape"), area)
@@ -549,15 +503,15 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # =====================================================================
     if estimate_spherereg:
         bar.step("Spherical inflation")
-        with _run_step(log, "CAT_Surf2Sphere stop_at=6"):
+        with _run_step(log, "CAT_Surf2Sphere stop_at=6", verbose=verbose):
             v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
             sv, sf = cat_surf.surf_to_sphere(v, fcs, stop_at=6,
                                              verbose=verbose)
             cat_surf.write_surface(p(surf, "Sphere_surface"), sv, sf)
 
         bar.step("Spherical registration")
-        with _run_step(log, "CAT_SurfWarp -steps 2 -avg"):
-            cat_surf.cli.surf_warp(
+        with _run_step(log, "CAT_SurfWarp -steps 2 -avg", verbose=verbose):
+            cs_cli.surf_warp(
                 source_file=p(surf, "Mid_surface"),
                 source_sphere_file=p(surf, "Sphere_surface"),
                 target_file=Fsavg,
@@ -568,15 +522,15 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 verbose=verbose,
             )
 
-        # Atlas annot resampling — in-process via cat_surf.cli.
+        # Atlas annot resampling — in-process via cs_cli.
         for atl in [a.strip().strip("'") for a in atlas_surf.split(",") if a.strip()]:
             value = names.substitute("ATLAS_label", name_columns,
                                      bname=bname, hemi=hemi,
                                      atlas=atl, nii_ext=nii_ext)
             annot_in = os.path.join(atlas_templates_dir,
                                     f"{hemi}.{atl}.annot")
-            with _run_step(log, f"CAT_SurfResample -label {atl}"):
-                cat_surf.cli.surf_resample_annot(
+            with _run_step(log, f"CAT_SurfResample -label {atl}", verbose=verbose):
+                cs_cli.surf_resample_annot(
                     source_surface_file=Fsavg,
                     source_sphere_file=Fsavgsphere,
                     target_sphere_file=p(surf, "Spherereg_surface"),
@@ -586,13 +540,13 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
 
     # =====================================================================
     # 11) fmriprep additions (CAT_SurfCurvature + extra Surf2Sphere + mask
-    #     resampling) — fully in-process via cat_surf.cli.
+    #     resampling) — fully in-process via cs_cli.
     # =====================================================================
     if fmriprep:
-        with _run_step(log, "CAT_SurfCurvature (curvtype=11, invert)"):
+        with _run_step(log, "CAT_SurfCurvature (curvtype=11, invert)", verbose=verbose):
             # CAT_SurfCurvature <surf> <out> 11 0 0 1 in the legacy CLI is:
             #   curvtype=11, fwhm=0, use_abs_values=0, invert_values=1
-            cat_surf.cli.surf_curvature(
+            cs_cli.surf_curvature(
                 surface_file=p(surf, "Mid_surface"),
                 output_values_file=p(surf, "Sulc_shape"),
                 curvtype=11,
@@ -600,17 +554,17 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 use_abs_values=False,
                 invert_values=True,
             )
-        with _run_step(log, "CAT_Surf2Sphere stop_at=2"):
-            cat_surf.cli.surf2sphere(
+        with _run_step(log, "CAT_Surf2Sphere stop_at=2", verbose=verbose):
+            cs_cli.surf2sphere(
                 surface_file=p(surf, "Mid_surface"),
                 output_file=p(surf, "Mid_surface"),
                 stop_at=2,
                 verbose=verbose,
             )
-        with _run_step(log, "CAT_SurfResample -label Fsavgmask"):
+        with _run_step(log, "CAT_SurfResample -label Fsavgmask", verbose=verbose):
             # Fsavgmask is a per-vertex label file (not .annot) -- routed
             # through the values resampler with label_interpolation=True.
-            cat_surf.cli.surf_resample(
+            cs_cli.surf_resample(
                 surface_file_or_None=Fsavg,
                 sphere_file_or_None=Fsavgsphere,
                 target_sphere_file=p(surf, "Spherereg_surface"),

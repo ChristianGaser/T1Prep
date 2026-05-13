@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import os
+import subprocess
 import warnings
 import nibabel as nib
 import numpy as np
@@ -47,6 +50,91 @@ def _resolve_names_tsv() -> Path:
     return DATA_PATH_T1PREP / "Names.tsv"
 
 name_file = _resolve_names_tsv()
+
+
+# ===========================================================================
+# Names.tsv: pattern lookup and substitution (shared with surface_estimation)
+# ===========================================================================
+
+class NameTable:
+    """In-memory representation of ``Names.tsv``.
+
+    The file is whitespace-separated: column 0 is a symbolic code,
+    column 1 is the CAT12-style filename pattern, column 2 (if present)
+    is the BIDS-style filename pattern.  Patterns contain placeholders
+    ``{bname}``, ``{side}``, ``{desc}``, ``{space}``, ``{atlas}``,
+    ``{nii_ext}``.
+    """
+
+    def __init__(self, path: str | os.PathLike):
+        self._rows: dict[str, list[str]] = {}
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                self._rows[parts[0]] = parts
+
+    def pattern(self, code: str, column: int) -> str:
+        row = self._rows.get(code)
+        if row is None or column >= len(row):
+            raise KeyError(
+                f"Names.tsv: no pattern for code={code!r} column={column}")
+        return row[column]
+
+    def substitute(self, code: str, column: int, *,
+                   bname: str, hemi: str, desc: str = "",
+                   space: str = "", atlas: str = "",
+                   nii_ext: str = "") -> str:
+        pat = self.pattern(code, column)
+        bname_clean = bname[:-4] if bname.endswith("_T1w") else bname
+        out = (pat
+               .replace("{bname}", bname_clean)
+               .replace("{side}", hemi)
+               .replace("{desc}", desc)
+               .replace("{space}", space)
+               .replace("{atlas}", atlas)
+               .replace("{nii_ext}", nii_ext)
+               .replace("..", "."))
+        return out
+
+
+# ===========================================================================
+# Progress-bar bridge (shared with surface_estimation)
+# ===========================================================================
+
+class ProgressBar:
+    """Drives ``progress_bar_multi.sh`` from Python.
+
+    A persistent count file is shared between parallel processes (e.g.
+    two hemispheres).  We increment it atomically and invoke the bash
+    bar with the new value.
+    """
+
+    def __init__(self, bar_script: Optional[str], end_count: int,
+                 count_file: Optional[str], show: bool):
+        self.bar_script = bar_script
+        self.end_count = end_count
+        self.count_file = count_file
+        self.show = bool(show and bar_script and count_file)
+
+    def step(self, label: str) -> None:
+        if not self.show:
+            return
+        try:
+            with open(self.count_file, "r+", encoding="utf-8") as fh:
+                cur = int(fh.read().strip() or "0") + 1
+                fh.seek(0)
+                fh.truncate()
+                fh.write(str(cur))
+        except FileNotFoundError:
+            cur = 1
+            Path(self.count_file).write_text(str(cur))
+        subprocess.run(
+            [self.bar_script, "1", "", str(cur), str(self.end_count),
+             f"{label:<31}", "40"],
+            check=False,
+        )
 
 
 def get_packaged_data_path(rel: str) -> Path:
