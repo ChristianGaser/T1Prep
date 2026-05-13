@@ -169,7 +169,6 @@ def cleanup_vessels(
     gm0: nib.Nifti1Image,
     wm0: nib.Nifti1Image,
     csf0: nib.Nifti1Image,
-    bin_dir: str,
     mri_dir: str,
     out_name: str,
     ext: str,

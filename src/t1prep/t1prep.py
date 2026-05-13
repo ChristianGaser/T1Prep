@@ -37,7 +37,6 @@ def run_t1prep(
     downsample: Optional[Union[int, float]] = None,
     median_filter: Optional[int] = None,
     vessel: Optional[Union[int, float]] = None,
-    bin_dir: Optional[Union[str, os.PathLike]] = None,
     no_overwrite: Optional[str] = None,
     thickness_method: Optional[int] = None,
     multi: Optional[Union[int, float]] = None,
@@ -84,7 +83,6 @@ def run_t1prep(
     - initial_surf: initial surface for longitudinal processing (equivalent to --initial-surf)
     - long_data: longitudinal data path (equivalent to --long-data)
     - pre_fwhm, downsample, median_filter, vessel, thickness_method: numeric options
-    - bin_dir: path to CAT/Cortex tool binaries (equivalent to --bin-dir)
     - no_overwrite: filename pattern to skip existing results (equivalent to --no-overwrite)
     - multi, seed, min_memory: parallelization and reproducibility options
     - atlas, atlas_surf: atlas lists; can be a string (passed through) or a sequence
@@ -141,8 +139,6 @@ def run_t1prep(
     add_opt("--downsample", downsample)
     add_opt("--median-filter", median_filter)
     add_opt("--vessel", vessel)
-    # The bash script accepts --bin-dir or --bindir
-    add_opt("--bin-dir", bin_dir)
     add_opt("--no-overwrite", no_overwrite)
     add_opt("--thickness-method", thickness_method)
     add_opt("--multi", multi)

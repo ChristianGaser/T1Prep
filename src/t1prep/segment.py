@@ -10,7 +10,7 @@ optionally atlas names:
 
     python src/t1prep/segment.py \
         --input sub-01_T1w.nii.gz --mri_dir out/mri --report_dir out/report --label_dir out/label \
-        --bin_dir /path/to/CAT/binaries --atlas "'Neuromorphometrics','suit'" --bids
+        --atlas "'Neuromorphometrics','suit'" --bids
 """
 
 import os
@@ -302,13 +302,6 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--bin_dir",
-        required=True,
-        type=str,
-        default="",
-        help="Folder with CAT/AMAP binaries (required for --amap or --lesions)",
-    )
-    parser.add_argument(
         "--surf",
         action="store_true",
         help="Save partitioned segmentation maps for surface estimation.",
@@ -351,7 +344,7 @@ def parse_arguments() -> argparse.Namespace:
         "--gz", action="store_true", help="Save compressed NIfTI outputs (.nii.gz)."
     )
     parser.add_argument(
-        "--amap", action="store_true", help="Use AMAP segmentation (requires --bin_dir)."
+        "--amap", action="store_true", help="Use AMAP segmentation."
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Print progress output."
@@ -425,7 +418,7 @@ def prepare_model_files() -> None:
                 )
 
 
-def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool, bin_dir: str):
+def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     """Denoise and align the input volume and create the preprocessing object."""
 
     vol = t1.get_fdata().copy()
@@ -520,7 +513,6 @@ def affine_register(
 
 
 def run_amap_segmentation(
-    bin_dir: str,
     p0_large: nib.Nifti1Image,
     brain_large: nib.Nifti1Image,
     mri_dir: str,
@@ -1161,7 +1153,6 @@ def run_segment():
     mri_dir = args.mri_dir
     report_dir = args.report_dir
     label_dir = args.label_dir
-    bin_dir = args.bin_dir
     atlas = args.atlas
 
     # Processing options
@@ -1224,7 +1215,7 @@ def run_segment():
     prepare_model_files()
 
     # Preprocess volume and create preprocess object
-    t1, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap, bin_dir)
+    t1, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap)
 
     # Step 1: Skull-stripping (or skip)
     if skip_skullstrip:
@@ -1307,7 +1298,6 @@ def run_segment():
             count = shell_progress(count, end_count, 
                 "Amap segmentation            ")
         brain_large, p0_large = run_amap_segmentation(
-            bin_dir,
             p0_large,
             brain_large,
             mri_dir,
@@ -1438,7 +1428,7 @@ def run_segment():
 
         p0_value_original = p0_large.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
-            p1_large, p2_large, p3_large, bin_dir, mri_dir, out_name, ext, 
+            p1_large, p2_large, p3_large, mri_dir, out_name, ext, 
             debug, excl_regions)
     else:
         gm = p1_large.get_fdata()
