@@ -1,6 +1,7 @@
 import math
 import torch
 import os
+import cat_surf
 import numpy as np
 import nibabel as nib
 import torch.nn.functional as F
@@ -215,23 +216,10 @@ def cleanup_vessels(
     label_in = (csf + 2.0 * gm + 3.0 * wm).astype(np.float32)
     mask = label_in > 0
 
-    pre_name = f"{mri_dir}/{out_name}_p0_large_pre_vessel_cleanup_tmp.{ext}"
-    post_name = f"{mri_dir}/{out_name}_p0_large_post_vessel_cleanup_tmp.{ext}"
-    nib.save(nib.Nifti1Image(label_in, gm0.affine, gm0.header), pre_name)
+    # Blood vessel correction via cat_surf Python binding (in-process)
+    vx = gm0.header.get_zooms()[:3]
+    label_out = cat_surf.vol_blood_vessel_correction(label_in, voxelsize=vx)
 
-    # Call blood vessel correction from CAT
-    cmd = (
-        os.path.join(bin_dir, "CAT_VolBloodVesselCorrection")
-        + " "
-        + pre_name
-        + " "
-        + post_name
-    )
-    os.system(cmd)
-
-    label = nib.load(post_name)
-    label_out = label.get_fdata().copy().astype(np.float32)
-    
     if cerebellum is not None:
         mask = mask & (cerebellum == 0)
 
@@ -251,10 +239,8 @@ def cleanup_vessels(
     gm_new, wm_new, csf_new = normalize_to_sum1(gm_new, wm_new, csf_new)
     label_out = (csf_new + 2.0 * gm_new + 3.0 * wm_new).astype(np.float32)
 
-    if not debug:
-        remove_file(pre_name)
-        remove_file(post_name)
-    else:
+    if debug:
+        post_name = f"{mri_dir}/{out_name}_p0_large_post_vessel_cleanup_tmp.{ext}"
         nib.save(nib.Nifti1Image(label_out, gm0.affine, gm0.header), post_name)
 
     return (

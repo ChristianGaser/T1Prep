@@ -25,6 +25,7 @@ if sys.platform == "darwin":
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"        # CPU Fallback for MPS
     os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0" # More GPU memory
 
+import cat_surf
 import torch
 import argparse
 import warnings
@@ -436,25 +437,8 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool, bin_dir:
     t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
     prep = CustomPreprocess(no_gpu=no_gpu)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir) / "temp_image.nii"
-        tmp_path_out = Path(tmpdir) / "sanlm_image.nii"
-        nib.save(t1, str(tmp_path))
-        
-        cmd = (
-            os.path.join(bin_dir, "CAT_VolSanlm")
-            + " "
-            + f"{tmp_path}"
-            + " "
-            + f"{tmp_path_out}"
-        )
-        os.system(cmd)
-    
-        # The temporary directory is removed after this block, so we have 
-        # to create a new nifti object
-        t1_sanlm = nib.load(str(tmp_path_out))
-        t1_data = np.asarray(t1_sanlm.dataobj).copy()
-        t1 = nib.Nifti1Image(t1_data, t1_sanlm.affine, t1_sanlm.header.copy())
+    denoised = cat_surf.vol_sanlm(t1.get_fdata().astype(np.float32))
+    t1 = nib.Nifti1Image(denoised, t1.affine, t1.header)
  
 
     # This is a bit faster since for initial segmentation the sinc-interpolation
@@ -556,18 +540,36 @@ def run_amap_segmentation(
     nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large.{ext}")
     nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
 
-    # Call AMAP and write tissue and label maps
-    cmd = (
-        os.path.join(bin_dir, "CAT_VolAmap")
-        + f" -nowrite-corr -bias-fwhm 0 -cleanup 1 -mrf 0 "
-        + "-h-ornlm 0.0 -multistep -write-seg 1 1 1 -sub 64 -label "
-        + f"{mri_dir}/{out_name}_seg_large.{ext}"
-        + " "
-        + f"{mri_dir}/{out_name}_brain_large.{ext}"
+    vol = brain_large.get_fdata().astype(np.float32)
+    lab = np.round(p0_large.get_fdata()).astype(np.uint8)
+    vx = brain_large.header.get_zooms()[:3]
+    prob, _lab_out, _mean = cat_surf.vol_amap(
+        vol,
+        lab,
+        voxelsize=vx,
+        weight_mrf=0.0,
+        sub=64,
+        use_multistep=True,
+        pve=False,
+        verbose=bool(verbose and debug),
     )
-    if verbose and debug:
-        cmd += " -verbose"
-    os.system(cmd)
+
+    # prob shape: (X, Y, Z, 3), uint8 in [0, 255]; order: 0=CSF, 1=GM, 2=WM
+    p_gm  = prob[:, :, :, 1].astype(np.float32) / 255.0
+    p_wm  = prob[:, :, :, 2].astype(np.float32) / 255.0
+    p_csf = prob[:, :, :, 0].astype(np.float32) / 255.0
+    nib.save(
+        nib.Nifti1Image(p_gm, brain_large.affine, brain_large.header),
+        f"{mri_dir}/{out_name}_brain_large_label-GM_probseg.{ext}",
+    )
+    nib.save(
+        nib.Nifti1Image(p_wm, brain_large.affine, brain_large.header),
+        f"{mri_dir}/{out_name}_brain_large_label-WM_probseg.{ext}",
+    )
+    nib.save(
+        nib.Nifti1Image(p_csf, brain_large.affine, brain_large.header),
+        f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}",
+    )
     return brain_large, p0_large
 
 
