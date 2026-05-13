@@ -1,3 +1,4 @@
+cat-surf>=1.0.8
 scipy>=1.10.1
 torch>=1.11.0
 deepmriprep>=0.3.0
