@@ -174,7 +174,7 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 ## CAT Surface & Volume Tools
 
-These scripts provide user-friendly wrappers around the compiled CAT-Surface binaries in `src/t1prep/bin/`. They support batch processing with built-in parallelization via `parallelize`.
+These scripts provide user-friendly wrappers around the compiled CAT-Surface binaries in `src/t1prep/bin/` for post-processing tasks (surface parameters, resampling, ROI extraction, volume smoothing). The main T1Prep pipeline uses the `cat-surf` Python package instead of these binaries. They support batch processing with built-in parallelization via `parallelize`.
 
 ### `cat_viewsurf.sh`
 

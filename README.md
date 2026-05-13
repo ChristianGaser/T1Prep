@@ -43,7 +43,7 @@ Lukas Fisch et al., "deepmriprep: Voxel-based Morphometry (VBM) Preprocessing vi
 
 An alternative approach uses DeepMriPrep for bias field correction, lesion detection, and also serves as an initial estimate for the subsequent AMAP segmentation from CAT12. 
 
-Cortical surface reconstruction and thickness estimation are performed using [Cortex Analysis Tools for Surface](https://github.com/ChristianGaser/CAT-Surface), a core component of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12).
+Cortical surface reconstruction and thickness estimation use the algorithms from [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (a core component of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12)) via the [`cat-surf`](https://pypi.org/project/cat-surf/) Python package, which provides pure Python bindings to the CAT-Surface C library — no platform-specific compiled binaries are required.
 
 It is designed for both single-subject and batch processing, with optional parallelization and flexible output naming conventions. The naming patterns are compatible with both 
 CAT12 folder structures and the BIDS derivatives standard.
@@ -52,7 +52,7 @@ CAT12 folder structures and the BIDS derivatives standard.
  [Python 3.9-3.12](https://www.python.org/downloads/) is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
 
 ## Main Differences to CAT12
-- Implemented entirely in Python and C, eliminating the need for a Matlab license.
+- Implemented entirely in Python, eliminating the need for a Matlab license or platform-specific compiled binaries.
 - Newly developed pipeline to estimate cortical surface and thickness.
 - Skull-stripping, segmentation and non-linear spatial registration uses DeepMriPrep
 - Does not yet support longitudinal pipelines.
@@ -308,7 +308,7 @@ Input expectations:
 
 Computes surface parameters from mesh files using CAT-Surface binaries
 (`CAT_SurfCurvature`, `CAT_SurfFractalDimension`, `CAT_SurfArea`,
-`CAT_SurfRatio`, `CAT_SurfSulcusDepth`).
+`CAT_SurfRatio`, `CAT_SurfSulcusDepth`) bundled in `src/t1prep/bin/`.
 
 ```bash
 ./scripts/CAT_SurfParameters_ui [options] lh.central.gii

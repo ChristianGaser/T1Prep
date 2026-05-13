@@ -85,13 +85,18 @@ T1Prep/
 scripts/T1Prep (CLI)
        |
        v calls
-src/t1prep/segment.py, utils.py, etc.
+src/t1prep/segment.py, surface_estimation.py, utils.py, etc.
        |
        v loads
 src/t1prep/data/* (templates, atlases)
        |
-       v calls
-src/t1prep/bin/* (CAT-Surface binaries)
+       v uses
+cat_surf (Python package — C-extension bindings to CAT-Surface algorithms)
+
+scripts/CAT_Surf*_ui, scripts/CAT_VolSmooth_ui (post-processing helpers)
+       |
+       v call
+src/t1prep/bin/* (compiled CAT-Surface binaries, used only by helper scripts)
 
 webui/app.py (Web UI)
        |
