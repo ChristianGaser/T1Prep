@@ -77,7 +77,6 @@ import numpy as np
 # cat_surf imports
 # ---------------------------------------------------------------------------
 import cat_surf
-from cat_surf import cli as cs_cli
 
 
 # ===========================================================================
@@ -200,22 +199,6 @@ class ProgressBar:
              f"{label:<31}"],
             check=False,
         )
-
-
-# ===========================================================================
-# Optional binary fallbacks
-# ===========================================================================
-
-_FALLBACK_DISABLED = os.environ.get("T1PREP_DISABLE_FALLBACK") == "1"
-
-
-def _bin_fallback(argv: list[str], log: logging.Logger) -> None:
-    """Run a CAT_* binary as subprocess (used for steps not yet wrapped)."""
-    if _FALLBACK_DISABLED:
-        raise RuntimeError(
-            f"binary fallback disabled but step requires {argv[0]}")
-    log.info("[fallback to binary] " + " ".join(argv))
-    subprocess.run(argv, check=True)
 
 
 # ===========================================================================
@@ -479,7 +462,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
         shutil.copy(p(surf, "PBT_shape"), p(surf, "GMT_shape"))
     else:
         with _run_step(log, "CAT_SurfDistance -thickness -mean -max 6.0"):
-            cs_cli.surf_distance(
+            cat_surf.cli.surf_distance(
                 p(surf, "Mid_surface"), None,
                 p(surf, "GMT_shape"),
                 thickness_file=p(surf, "PBT_shape"),
@@ -504,7 +487,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             cat_surf.write_surface(p(surf, "Pial_surface"), pv, pf)
             cat_surf.write_surface(p(surf, "WM_surface"), wv, wf)
         with _run_step(log, "CAT_SurfAverage (pial+white -> central)"):
-            cs_cli.surf_average(
+            cat_surf.cli.surf_average(
                 p(surf, "Mid_surface"),
                 p(surf, "Pial_surface"), p(surf, "WM_surface"),
             )
@@ -574,7 +557,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
 
         bar.step("Spherical registration")
         with _run_step(log, "CAT_SurfWarp -steps 2 -avg"):
-            cs_cli.surf_warp(
+            cat_surf.cli.surf_warp(
                 source_file=p(surf, "Mid_surface"),
                 source_sphere_file=p(surf, "Sphere_surface"),
                 target_file=Fsavg,
@@ -593,7 +576,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             annot_in = os.path.join(atlas_templates_dir,
                                     f"{hemi}.{atl}.annot")
             with _run_step(log, f"CAT_SurfResample -label {atl}"):
-                cs_cli.surf_resample_annot(
+                cat_surf.cli.surf_resample_annot(
                     source_surface_file=Fsavg,
                     source_sphere_file=Fsavgsphere,
                     target_sphere_file=p(surf, "Spherereg_surface"),
@@ -609,7 +592,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
         with _run_step(log, "CAT_SurfCurvature (curvtype=11, invert)"):
             # CAT_SurfCurvature <surf> <out> 11 0 0 1 in the legacy CLI is:
             #   curvtype=11, fwhm=0, use_abs_values=0, invert_values=1
-            cs_cli.surf_curvature(
+            cat_surf.cli.surf_curvature(
                 surface_file=p(surf, "Mid_surface"),
                 output_values_file=p(surf, "Sulc_shape"),
                 curvtype=11,
@@ -618,7 +601,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 invert_values=True,
             )
         with _run_step(log, "CAT_Surf2Sphere stop_at=2"):
-            cs_cli.surf2sphere(
+            cat_surf.cli.surf2sphere(
                 surface_file=p(surf, "Mid_surface"),
                 output_file=p(surf, "Mid_surface"),
                 stop_at=2,
@@ -627,7 +610,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
         with _run_step(log, "CAT_SurfResample -label Fsavgmask"):
             # Fsavgmask is a per-vertex label file (not .annot) -- routed
             # through the values resampler with label_interpolation=True.
-            cs_cli.surf_resample(
+            cat_surf.cli.surf_resample(
                 surface_file_or_None=Fsavg,
                 sphere_file_or_None=Fsavgsphere,
                 target_sphere_file=p(surf, "Spherereg_surface"),
