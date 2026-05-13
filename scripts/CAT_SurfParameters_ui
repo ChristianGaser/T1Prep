@@ -73,7 +73,11 @@ array_contains()
 main()
 {
   parse_args ${1+"$@"}
-  get_OS
+
+  # Activate Python virtual environment
+  if [[ -f "${root_dir}/env/bin/activate" ]]; then
+    source "${root_dir}/env/bin/activate"
+  fi
 
   # Optional parallel execution: delegate one input per process via scripts/parallelize
   if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
@@ -407,25 +411,32 @@ process()
     sphere=${sphere//white/sphere}
     
     echo "calculating ${outputname}"
-    if [ "${method}" -lt 11 ]; then
-      "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" "$method" 0 "$use_absolute"
-    elif [ "${method}" -eq 11 ]; then
-      "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" 650 0 "$use_absolute"
-    elif [ "${method}" -eq 12 ]; then
-      "${bin_dir}/CAT_SurfSulcusDepth" "$infile" "$sphere" "$outputname"
-    elif [ "${method}" -eq 13 ]; then
-      "${bin_dir}/CAT_SurfSulcusDepth" "$infile" "$sphere" "$outputname" -sqrt
-    elif [ "${method}" -eq 14 ]; then
-      "${bin_dir}/CAT_SurfFractalDimension" -sphere "$sphere" -nosmooth "$infile" "$outputname"
-    elif [ "${method}" -eq 15 ]; then
-      "${bin_dir}/CAT_SurfRatio" "$infile" "$outputname" 20 -no_normalization
-    elif [ "${method}" -eq 16 ]; then
-      "${bin_dir}/CAT_SurfRatio" "$infile" "$outputname" -1 -no_normalization
-    elif [ "${method}" -eq 17 ]; then
-      "${bin_dir}/CAT_SurfArea" "$infile" "$outputname"
-    elif [ "${method}" -eq 18 ]; then
-      "${bin_dir}/CAT_SurfCurvature" "$infile" "$outputname" 11 0 "$use_absolute"
-    fi
+    IN="$infile" OUT="$outputname" SPHERE="$sphere" python3 - <<PYEOF 2>&1
+import os, cat_surf.cli as cli
+infile     = os.environ['IN']
+outputname = os.environ['OUT']
+sphere     = os.environ.get('SPHERE', '')
+method      = ${method}
+use_absolute = bool(${use_absolute})
+if method < 11:
+    cli.surf_curvature(infile, outputname, curvtype=method, use_abs_values=use_absolute)
+elif method == 11:
+    cli.surf_curvature(infile, outputname, curvtype=650, use_abs_values=use_absolute)
+elif method == 12:
+    cli.surf_sulcus_depth(infile, sphere, outputname)
+elif method == 13:
+    cli.surf_sulcus_depth(infile, sphere, outputname, sqrt_transform=True)
+elif method == 14:
+    cli.surf_fractal_dimension(infile, sphere, outputname, smooth=False)
+elif method == 15:
+    cli.surf_ratio(infile, outputname, radius=20.0, normalize=False)
+elif method == 16:
+    cli.surf_ratio(infile, outputname, radius=-1.0, normalize=False)
+elif method == 17:
+    cli.surf_area(infile, output_values_file=outputname)
+elif method == 18:
+    cli.surf_curvature(infile, outputname, curvtype=11, use_abs_values=use_absolute)
+PYEOF
   done
 }
 

@@ -91,7 +91,11 @@ parse_atlas_names()
 main()
 {
   parse_args ${1+"$@"}
-  get_OS
+
+  # Activate Python virtual environment
+  if [[ -f "${root_dir}/env/bin/activate" ]]; then
+    source "${root_dir}/env/bin/activate"
+  fi
 
   # Optional parallel execution: delegate one input per process via scripts/parallelize
   if [[ "$parallel" -eq 1 && "${#FILES[@]}" -gt 1 ]]; then
@@ -336,10 +340,19 @@ process()
       echo 0 > "$PROGRESS_DIR/job0.status"
     fi
 
-    "${bin_dir}/CAT_Surf2ROIMulti" \
-      -out "${OUT_ARRAY[$i]}" \
-      -unit "${LH_ARRAY[$i]}" \
-      -unit "${RH_ARRAY[$i]}" 2>&1
+    LH_UNIT="${LH_ARRAY[$i]}" RH_UNIT="${RH_ARRAY[$i]}" OUT_FILE="${OUT_ARRAY[$i]}" python3 - <<PYEOF 2>&1
+import os, cat_surf.cli as cli
+def parse_unit(s):
+    d = {}
+    for tok in s.split(','):
+        k, _, v = tok.partition('=')
+        d[k.strip()] = v.strip()
+    return d
+cli.surf2roi_multi(
+    [parse_unit(os.environ['LH_UNIT']), parse_unit(os.environ['RH_UNIT'])],
+    os.environ['OUT_FILE'],
+)
+PYEOF
 
     exit_code=$?
     pids=($!)
