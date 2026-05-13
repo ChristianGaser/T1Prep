@@ -275,7 +275,6 @@ These scripts are used internally by the pipeline and typically not called direc
 Shared bash utility functions sourced by most other scripts. Provides:
 - `exit_if_empty` — Argument validation
 - `check_python_cmd` / `check_python_module` / `check_python_libraries` — Python environment checks
-- `get_OS` — OS and binary directory detection
 - `check_files` — Input file validation
 - `run_cmd_log` — Command execution with logging
 - `filter_arguments` — Argument filtering

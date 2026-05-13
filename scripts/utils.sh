@@ -7,7 +7,6 @@
 # - check_python: Checks if the specified Python command is available.
 # - check_python_module: Checks for python modules.
 # - check_python_libraries: Checks for python libraries.
-# - get_OS: Identifies operations system and folder of binaries.
 # - get_pattern: Get the pattern from the desired column in namefile
 # - substitute_pattern: Substitute variables in the pattern
 # - check_files: Checks if the input files exist.
@@ -104,42 +103,6 @@ check_files()
     ((i++))
   done
 
-}
-
-# ----------------------------------------------------------------------
-# get operation system
-# ----------------------------------------------------------------------
-
-get_OS() {
-  cpu_arch="$(uname -m)"
-
-  case "$os_type" in
-    Linux*)
-      case "$cpu_arch" in
-        x86_64) bin_dir="${src_dir}/bin/Linux" ;;
-        aarch64|arm64) bin_dir="${src_dir}/bin/LinuxARM64" ;;
-        *) echo "Unsupported Linux arch: ${cpu_arch}" >&2; exit 1 ;;
-      esac
-      ;;
-    Darwin*)
-      case "$cpu_arch" in
-        arm64) bin_dir="${src_dir}/bin/MacOS" ;;
-        *) echo "macOS Intel not supported anymore" >&2; exit 1 ;;
-      esac
-      ;;
-    CYGWIN*|MINGW*|MSYS*) bin_dir="${src_dir}/bin/Windows" ;;
-    *) echo "Unknown OS: ${os_type}" >&2; exit 1 ;;
-  esac
-
-  # For macOS: check potential quarantine
-  if [[ "$os_type" == Darwin* ]]; then
-    if xattr -p com.apple.quarantine "${bin_dir}/CAT_SurfArea" >/dev/null 2>&1; then
-      xattr -dr com.apple.quarantine "$bin_dir" 2>/dev/null
-    fi
-  fi
-  
-  export bin_dir
-  export PATH="${bin_dir}:$PATH"
 }
 
 # ----------------------------------------------------------------------
