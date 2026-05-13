@@ -1,5 +1,5 @@
 [build-system]
-requires      = ["setuptools"]
+requires      = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,7 +9,7 @@ description = "T1 PREProcessing Pipeline (aka PyCAT)"
 authors = [
     { name = "Christian Gaser", email = "christian.gaser@uni-jena.de" },
 ]
-license = {text = "Apache License Version 2.0"}
+license = {file = "LICENSE"}
 requires-python = ">=3.9,<3.13"
 readme = "README.md"
 
@@ -22,11 +22,15 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Intended Audience :: Science/Research"
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "License :: OSI Approved :: Apache Software License",
 ]
 
 dependencies = [
     "cat-surf>=1.0.8",
+    "nibabel>=3.2",
+    "numpy>=1.20",
     "scipy>=1.10.1",
     "torch>=1.11.0",
     "deepmriprep>=0.3.0",
@@ -49,11 +53,13 @@ cat-viewsurf = "t1prep.gui.cat_viewsurf:main"
 gui = [
     "PySide6>=6.5",
     "vtk>=9.0.0",
-    "nibabel>=3.2",
 ]
 
 [project.urls]
+"Homepage" = "https://github.com/ChristianGaser/T1Prep"
 "Repository" = "https://github.com/ChristianGaser/T1Prep"
+"Bug Tracker" = "https://github.com/ChristianGaser/T1Prep/issues"
+"Changelog" = "https://github.com/ChristianGaser/T1Prep/releases"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -62,6 +68,9 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["t1prep*"]
 exclude = ["tests*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "t1prep.__version__"}
 
 [tool.setuptools.package-data]
 t1prep = ["data/**", "bin/**"]

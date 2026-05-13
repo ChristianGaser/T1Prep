@@ -66,6 +66,44 @@ jobs:
             exit 1
           fi
 
+      - name: Update version in scripts/utils.sh
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.get_version.outputs.version }}'
+          FILE='scripts/utils.sh'
+
+          if [ ! -f "$FILE" ]; then
+            echo "::error::File $FILE not found" >&2
+            exit 1
+          fi
+
+          echo "Updating $FILE to version $VERSION"
+          sed -i -E "s/^T1PREP_VERSION=[0-9]+\.[0-9]+\.[0-9]+/T1PREP_VERSION=${VERSION}/" "$FILE"
+
+          if ! grep -qE "^T1PREP_VERSION=${VERSION}" "$FILE"; then
+            echo "::error::Failed to set T1PREP_VERSION to ${VERSION} in $FILE" >&2
+            exit 1
+          fi
+
+      - name: Update version in src/t1prep/__init__.py
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.get_version.outputs.version }}'
+          FILE='src/t1prep/__init__.py'
+
+          if [ ! -f "$FILE" ]; then
+            echo "::error::File $FILE not found" >&2
+            exit 1
+          fi
+
+          echo "Updating $FILE to version $VERSION"
+          sed -i -E "s/^__version__ = \"[^\"]*\"/__version__ = \"${VERSION}\"/" "$FILE"
+
+          if ! grep -qE "^__version__ = \"${VERSION}\"" "$FILE"; then
+            echo "::error::Failed to set __version__ to ${VERSION} in $FILE" >&2
+            exit 1
+          fi
+
       - name: Update version in Makefile and Dockerfile
         run: |
           set -euo pipefail
@@ -98,6 +136,6 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/T1Prep Makefile Dockerfile
+          git add scripts/T1Prep scripts/utils.sh src/t1prep/__init__.py Makefile Dockerfile
           git commit -m "chore: bump T1Prep version to ${VERSION}"
           git push origin HEAD:main

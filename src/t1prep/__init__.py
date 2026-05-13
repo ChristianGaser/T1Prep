@@ -1,3 +1,5 @@
+__version__ = "0.3.8"
+
 from .t1prep import run_t1prep
 from .utils import (
     progress_bar,

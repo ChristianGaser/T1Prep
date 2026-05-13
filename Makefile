@@ -1,7 +1,7 @@
 .PHONY: help release clean zip cp_binaries
 .DEFAULT: help
 
-VERSION="0.3.3"
+VERSION="0.3.8"
 
 ZIPFILE=T1Prep_${VERSION}.zip
 
@@ -31,6 +31,8 @@ zip: release
 # prepare a release
 release: clean
 	-@sed -i "" "s/version=.*/version=${VERSION}/" scripts/T1Prep
+	-@sed -i "" "s/^T1PREP_VERSION=.*/T1PREP_VERSION=${VERSION}/" scripts/utils.sh
+	-@sed -i "" "s/^__version__ = \".*\"/__version__ = \"${VERSION}\"/" src/t1prep/__init__.py
 	-@sed -i "" "s/T1PREP_VERSION=.*/T1PREP_VERSION=v${VERSION}/" Dockerfile
 
 # copy binaries after cross-compiling
