@@ -52,7 +52,6 @@ main()
   check_python_cmd
   parse_args ${1+"$@"}
   check_python_cmd
-  get_OS
 
   # Normalize and default numeric options to prevent integer comparison errors
   # multi: -2 (quiet), 0 (single), >0 (explicit parallel), -1 (auto)
@@ -158,11 +157,6 @@ parse_args()
         ;;
       --no-bvc*)
         vessel=0
-        ;;
-      --bin-dir| --bindir)
-        exit_if_empty "$optname" "$optarg"
-        bin_dir=$optarg
-        shift
         ;;
       --no-overwrite*)
         exit_if_empty "$optname" "$optarg"
@@ -284,6 +278,9 @@ parse_args()
       --debug)
         debug=1
         ;;
+      --verbose)
+        verbose=1
+        ;;
       --fast)
         save_pial_white=0
         estimate_spherereg=0
@@ -353,305 +350,39 @@ surface_estimation()
   local estimate_spherereg=$5
   local multi=$6
   local nii_ext=$7
-  
-  # In order to prevent issues with white spaces in directory names it's easier
-  # to change into the that directory and run all commands from here
-  if [ "${mri_dir}" == "${surf_dir}" ]; then
-    base_dir="${mri_dir}"
-    mri_dir="."
-    surf_dir="."
-  else
-    base_dir=$(dirname "${mri_dir}")
-    mri_dir="mri"
-    surf_dir="surf"
-  fi
-  cd "${base_dir}"
 
-  # Guard local numeric variables for arithmetic checks
-  if ! [[ "${estimate_spherereg}" =~ ^[0-9]+$ ]]; then estimate_spherereg=1; fi
-  if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
-  if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=1; fi
-  if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
-  if ! [[ "${multi}" =~ ^-?[0-9]+$ ]]; then multi=-1; fi
-
-  # Freesurfer templates
-  fshemi="${side/left/lh}"
-  fshemi="${fshemi/right/rh}"
-  Fsavg=${surf_templates_dir}/${fshemi}.central.freesurfer.gii
-  Fsavgsphere=${surf_templates_dir}/${fshemi}.sphere.freesurfer.gii
-  Fsavgatlas=${atlas_templates_dir}
-  Fsavgmask=${surf_templates_dir}/${fshemi}.mask
-
-  # BIDS dependent parameters for coding hemispheres and column in Names.tsv
-  if [[ $use_bids_naming -eq 1 ]]; then
-    name_columns=3  # 3rd column in Names.tsv
-    hemi="${side/left/L}"
-    hemi="${hemi/right/R}"
-  else
-    name_columns=2  # 2nd column in Names.tsv
-    hemi="${side/left/lh}"
-    hemi="${hemi/right/rh}"
-  fi
-
-  # Create dynamic variables for filenames
-  for code in "PBT_shape" "Area_shape" "Sulc_shape" "GMT_shape" "Mask_label" "Hemi_volume" "mT1_volume" "PPM_volume" "GMT_volume" "Mid_surface" "Pial_surface" "WM_surface" "Sphere_surface" "Spherereg_surface" "Inflated_surface" "Intensity_Mid" "Intensity_Pial" "Intensity_WM" "Topochange_volume"; do
-    pattern=$(get_pattern "$code" "$name_columns")
-    value=$(substitute_pattern "$pattern" "$hemi" "" "")
-    # Use eval to assign the result to a variable named after the code
-    eval "${code}=\"\$value\""
-  done
-
-  if [ "${debug}" -eq 0 ]; then
-    verbose=""
-  else 
-    verbose=" -verbose "
-  fi
-
-  if [[ "$multi" -ne -2 && "$side" == "left" ]]; then
-    show_bar=1
-  else
-    show_bar=0
-  fi
-    
-  # Check that defined initial surface really exists and adapt to current hemisphere
-  if [[ -n "$initial_surface" ]]; then
-    # Detect hemisphere marker in initial surface filename and create pattern for substitution
-    local surface_pattern="$initial_surface"
-    local adapted_surface=""
-    
-    # Try to replace FreeSurfer (lh/rh) or BIDS (L/R) hemisphere markers with $side pattern
-    if [[ "$surface_pattern" == *"lh"* ]]; then
-      # FreeSurfer style: create pattern from detected marker
-      surface_pattern="${surface_pattern//lh/$side}"
-      # Use substitute_pattern with FreeSurfer hemisphere notation
-      adapted_surface=$(substitute_pattern "$surface_pattern" "$fshemi" "" "")
-    elif [["$surface_pattern" == *"-L"* ]]; then
-      # BIDS style: create pattern from detected marker
-      surface_pattern="${surface_pattern//-L/-$side}"
-      # Use substitute_pattern with BIDS hemisphere notation
-      adapted_surface=$(substitute_pattern "$surface_pattern" "$hemi" "" "")
-    else
-      # No hemisphere marker found, assume it's for left hemisphere
-      adapted_surface="$initial_surface"
-    fi
-    
-    # Check if the adapted surface exists
-    if [[ ! -f "$adapted_surface" ]]; then
-      echo "Surface ${initial_surface} adapted for ${side} hemisphere not found (tried: ${adapted_surface}). Skip use of initial surface" >> "${report_log}"    
-      adapted_surface=""
-    fi
-    
-    initial_surface="$adapted_surface"
-  fi
-  
-  # This section of the script checks if a specific hemisphere file exists within a given directory.
-  if [ -f "${mri_dir}/${Hemi_volume}" ]; then
-
-    # Progress indication
-    ((count++))
-    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Calculate thickness            "; fi
-  
-    # Executes the 'CAT_VolThicknessPbt' tool with various options:
-    # - ${verbose} toggles verbose output.
-    # - '-n-avgs' sets the number of averages for distance estimation.
-    # - '-range' extends range for masking of euclidean distance estimation.
-    # - '-correct-voxelsize' sets amount of thickness correction for voxel-size.
-    # - '-median-filter' sets number of median filter iterations to high-gradient areas
-    if [ "${vessel}" -eq 0 ]; then
-      str=" -no-bvc "
-    else 
-      str=""
-    fi
-    cmd="CAT_VolThicknessPbt ${verbose} ${str} -sulcal-width 5 -median-subsample 2 -correct-voxelsize -0.75 -median-filter 2 -downsample ${downsample} -n-avgs 2 -range 0.45 ${mri_dir}/${Hemi_volume} ${mri_dir}/${GMT_volume} ${mri_dir}/${PPM_volume}"
-    run_cmd_log "${report_log}" "$cmd"
-    
-    # Exit if nothing was saved from 1st command
-    if [[ ! -f "${mri_dir}/${PPM_volume}" ]]; then
-      echo "${RED}ERROR: Surface estimation for $side hemisphere failed because an error occurred in CAT_VolThicknessPbt.${NC}" >&2
-      return 1
-    fi
-
-    # Use initial surface and skip Marching Cubes for longitudinal processing
-    if [ -n "$initial_surface" ]; then
-      cp "${initial_surface}" "${surf_dir}/${Mid_surface}"
-      echo "Use ${initial_surface} as initial surface" >> "${report_log}"    
-      # Updates progress
-      ((count++))
-      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Use initial surface            "; fi
-    else # Use Marching Cubes and reduce surface mesh
-      # Updates progress
-      ((count++))
-      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Extract surface                "; fi
-    
-      # Executes the 'CAT_VolMarchingCubes' tool to generate a surface mesh from volumetric data:
-      # - '-median-filter' applies a median filter a specified number of times to reduce artifacts.
-      # - '-pre-fwhm' and '-post-fwhm' control pre and post smoothing.
-      # - '-thresh' sets the isovalue for mesh generation.
-      # - '-no-distopen' disables distance-based opening, a form of morphological operation.
-      # - '-local-smoothing' applies additional local smoothing to the mesh.
-      if [ "${debug}" -eq 1 ]; then
-        topochange="${mri_dir}/${Topochange_volume}"
-      fi
-      cmd="CAT_VolMarchingCubes ${verbose} -label ${mri_dir}/${Hemi_volume} -strength-gyrimask 0.1 -median-filter ${median_filter} -pre-fwhm ${pre_fwhm} -iter-laplacian 50 -thresh 0.5 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface} ${topochange}"
-      run_cmd_log "${report_log}" "$cmd"
-
-      # Only reduce mesh if no downsampling is defined
-      if awk -v x="${downsample}" 'BEGIN {exit !(x+0 == 0)}'; then
-        # Reduce surface mesh to smaller size:
-        # - '-ratio' defines target triangle ratio in (0,1], e.g., 0.5 keeps ~50% of faces (default 0.25)
-        # - '-aggr' defines aggressiveness of simplification (default 7)
-        cmd="CAT_SurfReduce ${verbose} -aggr 7 -ratio 0.25 ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
-        run_cmd_log "${report_log}" "$cmd"
-      fi
-    fi
-
-    # Updates progress
-    ((count++))
-    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Refine central surface         "; fi
-
-    # Obtain more accurate central surface by surface deformation to PPM image
-    # - '-w1' sets the internal smoothness weight.
-    # - '-w2' sets the gradient alignment weight.
-    # - '-w3' sets the balloon force weight.
-    # - '-sigma' sets the smoothing size for filtering the displacement field.
-    # - '-iter' sets the number of iterations.
-    # - '-isovalue' sets the isovalue for mesh generation.
-    # - '-remove_intersect' removes self-intersections
-    cmd="CAT_SurfDeform -remove_intersect -isovalue 0.5 -w1 0.1 -w2 0.1 -w3 1.0 -sigma 0.2 ${mri_dir}/${PPM_volume} ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
-    run_cmd_log "${report_log}" "$cmd"
-
-    # Remove self-intersections (not supported on Windows)
-    if [[ "$os_type" != CYGWIN* && "$os_type" != MINGW* && "$os_type" != MSYS* ]]; then
-      cmd="CAT_SurfRemoveIntersections ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface}"
-      run_cmd_log "${report_log}" "$cmd"
-    fi
-
-    # Updates progress
-    ((count++))
-    if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Map thickness values           "; fi
-
-    # Executes 'CAT_Vol2Surf' to map volumetric data to a surface representation.
-    # It uses a weighted average approach for mapping, ranging from -0.4..0.4 of the relative thickness using 5 steps
-    cmd="CAT_Vol2Surf -weighted-avg -start -0.4 -steps 5 -end 0.4 ${surf_dir}/${Mid_surface} ${mri_dir}/${GMT_volume} ${surf_dir}/${PBT_shape}"
-    run_cmd_log "${report_log}" "$cmd"
-    
-    # For thickness_method==3 we use the pure PBT-measure
-    if [ "${thickness_method}" -eq 3 ]; then
-      cp "${surf_dir}/${PBT_shape}" "${surf_dir}/${GMT_shape}"
-    else
-      cmd="CAT_SurfDistance ${verbose} -check_intersect -max 6.0 -mean -thickness ${surf_dir}/${PBT_shape} ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape}"
-      run_cmd_log "${report_log}" "$cmd"
-    fi
-
-    # Executes 'CAT_Surf2PialWhite' to estimate both pial and white matter surfaces.
-    # - '-w1' sets the internal smoothness weight.
-    # - '-w2' sets the gradient alignment weight.
-    # - '-w3' sets the balloon force weight.
-    # - '-sigma' sets the smoothing size for filtering the displacement field.
-    # - '-iter' sets the number of iterations.
-    # - '-giter' sets number of gradient refinement iterations.
-    # - '-method' 0 = deformation, 1 = ADE.
-    # - '-isovalue' sets the isovalue for mesh generation.
-    if [[ "${save_pial_white}" -eq 1 || "${thickness_method}" -eq 2 ]]; then
-      # Updates progress
-      ((count++))
-      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Estimate pial and white surface"; fi
-      cmd=( "CAT_Surf2PialWhite ${verbose} -method 2 -iter 100 -giter 0 -w1 0.05 -w2 0.05 -w3 0.05 -sigma 0.2 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${mri_dir}/${Hemi_volume} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
-
-      # Get central surface by averaging pial and white matter surface
-      cmd+=( "CAT_SurfAverage -avg ${surf_dir}/${Mid_surface} ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface}" )
-      run_cmd_log "${report_log}" "${cmd[@]}"
-    fi
-          
-    # Optionally estimate thickness by using the mean distance (Tfs) between pial and white matter surface and limit to maximum of 6.0
-    if [ "${thickness_method}" -eq 2 ]; then
-      # Updates progress
-      ((count++))
-      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Refine thickness               "; fi
-      cmd="CAT_SurfDistance -max 6.0 -mean ${surf_dir}/${Pial_surface} ${surf_dir}/${WM_surface} ${surf_dir}/${GMT_shape}"
-      run_cmd_log "${report_log}" "$cmd"
-    fi
-    
-    # Correct cortical thickness that is influenced by folding
-    if [ "${correct_folding}" -eq 1 ]; then
-      cmd="CAT_SurfCorrectThicknessFolding -slope 1.0 -max 6.0 ${surf_dir}/${Mid_surface} ${surf_dir}/${GMT_shape} ${surf_dir}/${GMT_shape}"
-      run_cmd_log "${report_log}" "$cmd"
-    fi
-
-    # Map intensity values of bias-corrected image from central, pial, and white surface for debugging
-    if [[ "${debug}" -eq 1 && -f "${mri_dir}/${mT1_volume}" ]]; then
-      cmd=( "CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${Mid_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_Mid}" )
-      if [ "${save_pial_white}" -eq 1 ]; then
-        cmd+=( "CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${Pial_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_Pial}" )
-        cmd+=( "CAT_Vol2Surf -start 0 -steps 1 -end 0 ${surf_dir}/${WM_surface} ${mri_dir}/${mT1_volume} ${surf_dir}/${Intensity_WM}" )
-      fi
-      run_cmd_log "${report_log}" "${cmd[@]}"
-    fi
-
-    # Estimate local surface area
-    cmd="CAT_SurfArea ${surf_dir}/${Mid_surface} ${surf_dir}/${Area_shape}"
-    run_cmd_log "${report_log}" "$cmd"
-  
-    # If estimate_spherereg is enabled, additional steps for spherical inflation and estimate_spherereg are performed.
-    if [ "${estimate_spherereg}" -eq 1 ]; then
-      # Updates progress
-      ((count++))
-      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Spherical inflation            "; fi
-      # Inflates the surface to a sphere with additional areal smoothing.
-      cmd="CAT_Surf2Sphere ${surf_dir}/${Mid_surface} ${surf_dir}/${Sphere_surface} 6"
-      run_cmd_log "${report_log}" "$cmd"
-  
-      # Updates progress
-      ((count++))
-      if [ "$show_bar" -eq 1 ]; then ${progress_bar} 1 "" $count $end_count "Spherical registration         "; fi
-      # Warps the surface to align with a standard sphere template, using specific mapping steps and averaging options.
-      cmd="CAT_SurfWarp ${verbose} -steps 2 -avg -i ${surf_dir}/${Mid_surface} -is ${surf_dir}/${Sphere_surface} -t ${Fsavg} -ts ${Fsavgsphere} -ws ${surf_dir}/${Spherereg_surface}"
-      run_cmd_log "${report_log}" "$cmd"
-      
-      # Resamples atlases to individual surface space
-      code="ATLAS_label"
-      pattern=$(get_pattern "$code" "$name_columns")
-      for atl in ${atlas_surf//,/ }; do
-        # Create dynamic variables for filenames
-        value=$(substitute_pattern "$pattern" "$hemi" "" "" "${atl//\'/}")
-        cmd="CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgatlas}/${hemi}.${atl//\'/}.annot ${surf_dir}/${value}"
-        run_cmd_log "${report_log}" "${cmd[@]}"        
-      done
-    fi
-
-    # Save additionally data for fMRIPrep
-    if [ "${fmriprep}" -eq 1 ]; then
-      # Save (inverted) inflation-based sulcal depth (FreeSurfer sulc-style)
-      cmd="CAT_SurfCurvature ${surf_dir}/${Mid_surface} ${surf_dir}/${Sulc_shape} 11 0 0 1"
-      run_cmd_log "${report_log}" "$cmd"
-
-      # Inflates the surface
-      cmd="CAT_Surf2Sphere ${surf_dir}/${Mid_surface} ${surf_dir}/${Mid_surface} 2"
-      run_cmd_log "${report_log}" "$cmd"
-
-      # Save cortex mask
-      cmd="CAT_SurfResample -label ${Fsavg} ${Fsavgsphere} ${surf_dir}/${Spherereg_surface} NULL ${Fsavgmask} ${surf_dir}/${Mask_label}"
-      run_cmd_log "${report_log}" "${cmd[@]}"        
-
-    fi
-    
-    # remove temporary files if not debugging
-    if [ "${debug}" -eq 0 ]; then
-      for file in "${mri_dir}/${GMT_volume}" "${mri_dir}/${PPM_volume}"; do
-        [ -f "${file}" ] && rm "${file}"
-      done
-    fi
-
-    return 0
-
-  else
-    if [ "${estimate_seg}" -eq 0 ]; then
-      echo "${RED}ERROR: Could not find ${mri_dir}/${Hemi_volume}.${NC}" >&2
-    else
-      echo "${RED}ERROR: Segmentation module (segment) failed.${NC}" >&2
-    fi
-    return 1
-  fi
+  # Share the progress-bar count file between hemispheres
+  local _count_file="${report_log%.log}.count"
+  # File should already have been initialised by the outer loop before the
+  # hemisphere processes were launched; create it here only as a safety fallback.
+  [[ -f "${_count_file}" ]] || echo "${count}" > "${_count_file}"
+  python -m t1prep.surface_estimation \
+      --bname "${bname}" --side "${side}" \
+      --mri-dir "${mri_dir}" --surf-dir "${surf_dir}" \
+      --estimate-spherereg "${estimate_spherereg}" \
+      --thickness-method "${thickness_method}" \
+      --save-pial-white "${save_pial_white}" \
+      --pre-fwhm "${pre_fwhm}" \
+      --median-filter "${median_filter}" \
+      --downsample "${downsample}" \
+      --vessel "${vessel}" \
+      --correct-folding "${correct_folding}" \
+      --debug "${debug}" \
+      --multi "${multi}" \
+      --nii-ext "${nii_ext}" \
+      --names-tsv "${name_file}" \
+      --bids-naming "${use_bids_naming}" \
+      --report-log "${report_log}" \
+      --surf-templates-dir "${surf_templates_dir}" \
+      --atlas-templates-dir "${atlas_templates_dir}" \
+      --atlas-surf "${atlas_surf}" \
+      --initial-surface "${initial_surface:-}" \
+      --fmriprep "${fmriprep:-0}" \
+      --progress-bar "${progress_bar}" \
+      --progress-count-file "${_count_file}" \
+      --progress-end-count "${end_count}" \
+      --progress-start-count "${count}"
+  return $?
 }
 
 # ----------------------------------------------------------------------
@@ -958,7 +689,7 @@ process()
       [ "${save_p}" -eq 1 ] && cmd+=" --p"
       [ "${nii_ext}" == "nii.gz" ] && cmd+=" --gz"
       [ "${fmriprep}" -eq 1 ] && cmd+=" --save-fmriprep"
-      [ "${save_lesions}" -eq 1 ] && cmd+=" --lesions --amapdir ${bin_dir}"
+      [ "${save_lesions}" -eq 1 ] && cmd+=" --lesions"
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
       [ "${multi}" -ne -2 ] && cmd+=" --verbose"
       [ "${debug}" -eq 1 ] && cmd+=" --debug"
@@ -970,7 +701,7 @@ process()
       [ "${skip_skullstrip}" -eq 1 ] && cmd+=" --skip-skullstrip"
 
       cmd+=" --seed ${seed} --vessel \"${vessel}\" --label_dir \"${label_dir}\""
-      cmd+=" --input \"${input}\" --bin_dir \"${bin_dir}\" --mri_dir \"${mri_dir}\""
+      cmd+=" --input \"${input}\" --mri_dir \"${mri_dir}\""
       cmd+=" --report_dir \"${report_dir}\" --atlas \"${atlas_vol}\" --count ${end_count}"
       
       # Execute the command and capture exit code
@@ -1022,6 +753,11 @@ process()
 
       # Set starting time
       start_surf=$(date +%s)
+
+      # Reset count file before launching hemisphere processes so stale values
+      # from previous runs do not corrupt the progress bar percentage.
+      _surf_count_file="${report_log%.log}.count"
+      echo "${count}" > "${_surf_count_file}"
         
       # 2. Estimate thickness and percentage position maps for each hemisphere
       # and extract cortical surface and call it as background process to
@@ -1048,6 +784,8 @@ process()
           echo "--- Retrying surface estimation: ${bname} ---" 2>&1 | tee -a "${report_log}"
         fi
         pids=()
+        # Reset count file before retry
+        echo "${count}" > "${report_log%.log}.count"
         for side in left right; do
           surface_estimation $bname $side "${mri_dir}" "${surf_dir}" $estimate_spherereg $multi "${nii_ext}" &
           pids+=("$!")
@@ -1470,7 +1208,6 @@ ${BOLD}Author:${NC}
 EOM
 
 check_python_cmd
-get_OS
 
 # Check whether local Python environment exists
 if [ ! -d "${T1prep_env}" ]; then
