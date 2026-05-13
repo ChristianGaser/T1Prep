@@ -112,11 +112,18 @@ class ProgressBar:
     """
 
     def __init__(self, bar_script: Optional[str], end_count: int,
-                 count_file: Optional[str], show: bool):
+                 count_file: Optional[str], show: bool,
+                 start_count: int = 0):
         self.bar_script = bar_script
         self.end_count = end_count
-        self.count_file = count_file
+        # Always store an absolute path so os.chdir() in callers cannot
+        # cause the file to resolve to a different location later.
+        self.count_file = os.path.abspath(count_file) if count_file else None
         self.show = bool(show and bar_script and count_file)
+        if self.show:
+            # Unconditionally (re-)initialise the count file so that stale
+            # values from previous runs never corrupt the percentage.
+            Path(self.count_file).write_text(str(start_count))
 
     def step(self, label: str) -> None:
         if not self.show:

@@ -110,40 +110,49 @@ def _setup_logger(report_log: Optional[str]) -> logging.Logger:
 
 
 @contextmanager
-def _no_stdout():
-    """Redirect C-level stdout (fd 1) to /dev/null.
+def _no_output():
+    """Redirect both C-level stdout (fd 1) and stderr (fd 2) to /dev/null.
 
-    Used to silence C-extension output (e.g. "Euler characteristics…")
-    when not running in verbose/debug mode.
+    Used to silence C-extension console output (e.g. "Euler
+    characteristics…") when not running in verbose/debug mode.  Both
+    file descriptors are suppressed because some extensions write to
+    stderr rather than stdout; either one advancing the terminal cursor
+    would break the \\r-based progress-bar overwrite.
     """
     sys.stdout.flush()
+    sys.stderr.flush()
     try:
         devnull = os.open(os.devnull, os.O_WRONLY)
-        saved = os.dup(1)
+        saved1 = os.dup(1)
+        saved2 = os.dup(2)
     except OSError:
         yield
         return
     os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
     os.close(devnull)
     try:
         yield
     finally:
         sys.stdout.flush()
-        os.dup2(saved, 1)
-        os.close(saved)
+        sys.stderr.flush()
+        os.dup2(saved1, 1)
+        os.dup2(saved2, 2)
+        os.close(saved1)
+        os.close(saved2)
 
 
 @contextmanager
 def _run_step(log: logging.Logger, description: str, verbose: bool = False):
     """Mimic ``run_cmd_log`` — log description + runtime.
 
-    When *verbose* is False the C-level stdout is redirected to
-    /dev/null so that internal C-extension messages (e.g. Euler
-    characteristics) do not appear on the console.
+    When *verbose* is False the C-level stdout and stderr are redirected
+    to /dev/null so that internal C-extension messages do not appear on
+    the console and disrupt the progress bar.
     """
     log.info(description)
     t0 = time.monotonic()
-    ctx = contextlib.nullcontext() if verbose else _no_stdout()
+    ctx = contextlib.nullcontext() if verbose else _no_output()
     try:
         with ctx:
             yield
@@ -187,6 +196,7 @@ def surface_estimation(
     progress_bar_script: Optional[str] = None,
     progress_count_file: Optional[str] = None,
     progress_end_count: int = 0,
+    progress_start_count: int = 0,
 ) -> int:
     """Port of ``surface_estimation()`` from T1Prep's bash script.
 
@@ -227,7 +237,8 @@ def surface_estimation(
             fmriprep=fmriprep,
             bar=ProgressBar(progress_bar_script, progress_end_count,
                             progress_count_file,
-                            show=(multi != -2 and side == "left")),
+                            show=(multi != -2 and side == "left"),
+                            start_count=progress_start_count),
         )
     finally:
         os.chdir(cwd_prev)
@@ -621,6 +632,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                     dest="progress_bar_script")
     ap.add_argument("--progress-count-file", default=None)
     ap.add_argument("--progress-end-count", type=int, default=0)
+    ap.add_argument("--progress-start-count", type=int, default=0)
     return ap.parse_args(argv)
 
 
