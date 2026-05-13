@@ -42,19 +42,6 @@ This module is normally driven from the T1Prep bash script::
 The bash side updates a count file in lock-step with the progress
 bar; the Python port increments the same file so the multi-process
 bar across hemispheres still works without code changes in T1Prep.
-
-What this port *does not* replace yet
--------------------------------------
-* The fmriprep branch (``CAT_SurfCurvature``) — no wrapper exists yet
-  in cat_surf.  Pass ``--fmriprep 0``; otherwise it falls back to the
-  binary.
-* The atlas annot resampling (``CAT_SurfResample -label … .annot``).
-  Annot read/write requires libCAT's ``read_annotation_table`` path
-  which isn't surfaced in cat_surf yet.  This step also falls back
-  to the binary.
-
-Both fallbacks happen transparently — set the env var
-``T1PREP_DISABLE_FALLBACK=1`` to make them raise instead.
 """
 from __future__ import annotations
 
