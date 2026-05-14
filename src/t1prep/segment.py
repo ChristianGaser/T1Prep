@@ -31,8 +31,6 @@ import argparse
 import warnings
 import math
 import shutil
-import zipfile
-import urllib.request
 import fill_voids
 import json
 import random
@@ -89,21 +87,15 @@ from _segment_utils import (
     handle_lesions,
     normalize_to_sum1,
 )
+from _models import (
+    MODEL_DIR,
+    MODEL_FILES,
+    all_models_present,
+    prepare_model_files,
+)
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
-MODEL_DIR = Path(DATA_PATH) / "models/"
-MODEL_FILES = (
-    [
-        "brain_extraction_bbox_model.pt",
-        "brain_extraction_model.pt",
-        "segmentation_nogm_model.pt",
-    ]
-    + [f"segmentation_patch_{i}_model.pt" for i in range(18)]
-    + ["segmentation_model.pt", "warp_model.pt"]
-)
-MODEL_ZIP_URL = "https://github.com/ChristianGaser/T1Prep/releases/download/v0.2.0-beta/T1Prep_Models.zip"
-MODEL_ZIP_LOCAL = ROOT_PATH / "T1Prep_Models.zip"
 
 def shell_progress(count, end_count, label, failed=0):
     script = ROOT_PATH / "scripts" / "progress_bar_multi.sh"
@@ -274,12 +266,6 @@ class CustomPreprocess(Preprocess):
         return atlases
 
 
-def all_models_present():
-    """Return ``True`` if all required model files are available."""
-
-    return all((MODEL_DIR / f).exists() for f in MODEL_FILES)
-
-
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments for the segmentation pipeline."""
 
@@ -403,19 +389,6 @@ def setup_device() -> tuple[torch.device, bool]:
         return torch.device("mps"), False
     else:
         return torch.device("cpu"), True
-
-
-def prepare_model_files() -> None:
-    """Ensure required model files are present, downloading if needed."""
-
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    if not all_models_present():
-        print("One or more model files are missing. Copying models...")
-        for file in MODEL_FILES:
-            if not Path(f"{DATA_PATH}/models/{file}").exists():
-                shutil.copy(
-                    f"{DATA_PATH_T1PREP}/models/{file}", f"{DATA_PATH}/models/{file}"
-                )
 
 
 def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):

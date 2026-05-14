@@ -48,6 +48,7 @@ dependencies = [
 
 [project.scripts]
 cat-viewsurf = "t1prep.gui.cat_viewsurf:main"
+t1prep-download-models = "t1prep._models:main"
 
 [project.optional-dependencies]
 gui = [
@@ -73,5 +74,16 @@ exclude = ["tests*"]
 version = {attr = "t1prep.__version__"}
 
 [tool.setuptools.package-data]
-t1prep = ["data/**", "bin/**"]
+# Explicitly list data patterns to exclude the large data/models/ directory
+# (model weights are downloaded at first use via `t1prep-download-models`).
+t1prep = [
+    "data/*.tsv",
+    "data/*.csv",
+    "data/*.txt",
+    "data/*.png",
+    "data/atlases_surfaces_32k/**",
+    "data/templates_MNI152NLin2009cAsym/**",
+    "data/templates_surfaces_32k/**",
+    "data/templates_surfaces_4k/**",
+]
 
