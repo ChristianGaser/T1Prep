@@ -52,7 +52,7 @@ jobs:
       name: ${{ (github.event_name == 'release' || github.event.inputs.test_pypi == 'false') && 'pypi' || 'testpypi' }}
       url: ${{ (github.event_name == 'release' || github.event.inputs.test_pypi == 'false') && 'https://pypi.org/p/T1Prep' || 'https://test.pypi.org/p/T1Prep' }}
     permissions:
-      id-token: write  # Required for trusted publishing (OIDC)
+      id-token: write # Required for trusted publishing (OIDC)
 
     steps:
       - name: Download distribution artifacts
