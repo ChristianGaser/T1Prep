@@ -1,6 +1,27 @@
 """Model file management: location constants, presence checks, and downloading.
 
 Model weights are not bundled in the PyPI wheel (they exceed the 100 MB
+limit).  This module is responsible for locating the model directory,
+checking whether all required files are present, and downloading them from
+the GitHub release asset when they are missing.
+
+The download can be triggered:
+- automatically at first use (called by ``segment.py``)
+- manually by the user via the ``t1prep-download-models`` console script
+
+Console script entry point:  ``t1prep._models:main``
+"""
+
+from __future__ import annotations
+
+import shutil
+import sys
+import tempfile
+import urllib.request
+import zipfile
+from pathlib import Path
+
+from deepmriprep.utils import DATA_PATH
 
 # ---------------------------------------------------------------------------
 # Constants
