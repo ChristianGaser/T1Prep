@@ -229,7 +229,12 @@ class CustomPreprocess(Preprocess):
                     align_corners=False,
                 )
                 warps[shape] = scaled_yx.permute(0, 2, 3, 4, 1)
-            atlas = self.atlas_register(affine, warps[shape], atlas, t1.shape)
+            # AtlasRegistration pins tensors to its own (CPU) device; if
+            # ``self.device`` is MPS/CUDA the warp would land on a different
+            # device than the atlas tensor and grid_sample would error out.
+            atlas = self.atlas_register(
+                affine, warps[shape].to(self.atlas_register.device), atlas, t1.shape
+            )
             if f"{atl}_affine" in atlas_list:
                 atlases[f"{atl}_affine"] = atlas
             atlas_tensor = nifti_to_tensor(atlas).to(self.device)
