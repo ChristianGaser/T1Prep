@@ -382,13 +382,19 @@ def _process_single(
             skip_skullstrip=skip_skullstrip,
             seed=seed,
         )
-        # Ensure the package is importable inside the subprocess when running
-        # from the repository in editable / non-installed mode.
+        # segment.py uses bare sibling imports (from report import ...,
+        # from utils import ...) that require the t1prep package directory
+        # itself on sys.path.  Add both:
+        #   pkg_dir  – the t1prep/ directory (src/t1prep/ from source, or
+        #              site-packages/t1prep/ when installed)
+        #   src_dir  – src/ when running from the repo (harmless when installed)
         seg_env = os.environ.copy()
-        src_path = str(Path(__file__).resolve().parents[2] / "src")
+        pkg_dir = str(Path(__file__).resolve().parent)
+        src_dir = str(Path(__file__).resolve().parents[1])
+        extra = pkg_dir + os.pathsep + src_dir
         existing_pp = seg_env.get("PYTHONPATH", "")
         seg_env["PYTHONPATH"] = (
-            src_path + os.pathsep + existing_pp if existing_pp else src_path
+            extra + os.pathsep + existing_pp if existing_pp else extra
         )
 
         seg_status = subprocess.call(seg_cmd, env=seg_env)

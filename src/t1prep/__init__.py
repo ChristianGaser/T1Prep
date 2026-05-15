@@ -1,4 +1,4 @@
-__version__ = "0.3.9"
+__version__ = "0.4.0"
 
 from . import cat_surf  # noqa: F401 – expose t1prep.cat_surf namespace
 from .t1prep import run_t1prep
