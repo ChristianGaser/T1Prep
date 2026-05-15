@@ -70,6 +70,7 @@ from utils import (
     align_brain,
     get_filenames,
     get_volume_native_space,
+    progress_bar,
     DATA_PATH_T1PREP,
     TEMPLATE_PATH_T1PREP,
 )
@@ -98,6 +99,12 @@ ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
 
 def shell_progress(count, end_count, label, failed=0):
+    # When invoked from the pure-Python API (t1prep.run_t1prep), end_count is
+    # 0 because the bash orchestrator's pre-scan that computes the step total
+    # was bypassed.  Skip the shell renderer in that case to avoid a divide
+    # by zero in progress_bar_multi.sh and stay free of bash dependencies.
+    if end_count <= 0:
+        return progress_bar(count, end_count, label, failed=bool(failed))
     script = ROOT_PATH / "scripts" / "progress_bar_multi.sh"
     subprocess.run(
         [str(script), "1", "", str(count), str(end_count), label, "40", str(failed)],

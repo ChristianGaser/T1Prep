@@ -332,54 +332,63 @@ def get_filenames(use_bids_naming, bname, side, desc, space, nii_ext):
     return code_vars
 
 
-def progress_bar(elapsed, total, name):
+def progress_bar(elapsed, total, name, *, width=40, failed=False):
     """
-    Displays a progress bar with ETA.
+    Display a percentage progress bar with ETA.
+
+    Mirrors the rendering of ``scripts/progress_bar_multi.sh`` so the
+    in-process Python entry point produces visually consistent output
+    without shelling out.  When ``total <= 0`` no bar is drawn and a plain
+    step counter is printed instead, which keeps the function safe for
+    callers that do not know the total step count up front.
 
     Args:
-        elapsed (int): Elapsed progress count.
-        total (int): Total count.
-        name (str): Name of the process.
-
-    Usage:
-        progress_bar(1, 100, "Name")
+        elapsed (int): Current step (1-based).
+        total (int): Total number of steps.  When <= 0, an indeterminate
+            step counter is shown instead of a bar.
+        name (str): Label printed next to the bar.
+        width (int): Bar width in characters (default 40).
+        failed (bool): Render the bar in red to signal a failure.
 
     Returns:
-        int: Elapsed progress count increased by 1.
+        int: ``elapsed + 1`` for convenient reassignment by the caller.
     """
+    import sys
     import time
 
-    # Initialize start time on first call (elapsed == 1)
-    if elapsed <= 1:
+    if elapsed <= 1 or not hasattr(progress_bar, "_start_time"):
         progress_bar._start_time = time.time()
 
-    # Create the progress bar
-    prog = "█" * elapsed
-    remaining = " " * (total - elapsed)
+    is_tty = sys.stdout.isatty()
 
-    # Format the name with padding
-    name = name.ljust(50)
+    if total <= 0:
+        print(f"  [{elapsed}] {name.rstrip()}", flush=True)
+        return elapsed + 1
 
-    # Calculate ETA
-    eta_str = ""
-    if elapsed > 0 and elapsed < total and hasattr(progress_bar, '_start_time'):
+    color = ("\033[31m" if failed else "\033[32m") if is_tty else ""
+    reset = "\033[0m" if is_tty else ""
+
+    percent = int(100 * elapsed / total)
+    filled = int(width * elapsed / total)
+    bar = "█" * filled + " " * (width - filled)
+
+    eta = ""
+    if 1 < elapsed < total:
         elapsed_time = time.time() - progress_bar._start_time
-        if elapsed_time > 0 and elapsed > 1:
+        if elapsed_time > 0:
             remaining_time = elapsed_time * (total - elapsed) / (elapsed - 1)
             h = int(remaining_time // 3600)
             m = int((remaining_time % 3600) // 60)
             s = int(remaining_time % 60)
-            eta_str = f" ETA {h:02d}:{m:02d}:{s:02d}"
+            eta = f"ETA {h:02d}:{m:02d}:{s:02d}"
 
-    # Print the progress bar with percentage, name, and ETA
-    print(f"{prog}{remaining} {elapsed}/{total} {name}{eta_str}\r", end="")
+    line = f"[{color}{bar}{reset}] {percent:3d}% {name.rstrip()} {eta}"
+    print(line, end="\r" if is_tty else "\n", flush=True)
 
-    if elapsed == total:
-        spaces = " " * 100
-        print(f"{spaces}\r", end="")
+    if elapsed >= total:
+        print()
 
-    elapsed += 1
-    return elapsed
+    return elapsed + 1
 
 
 def remove_file(name):

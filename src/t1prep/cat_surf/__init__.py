@@ -26,7 +26,18 @@ import sys as _sys
 # 'import cat_surf' would resolve to this wrapper directory and trigger a
 # circular import.  We temporarily remove every sys.path entry that points
 # to our own parent (src/t1prep/) so importlib finds the installed package.
+#
+# Additionally, if we ourselves were loaded as top-level 'cat_surf' (rather
+# than 't1prep.cat_surf'), sys.modules['cat_surf'] currently points at this
+# partially-initialized wrapper — meaning the inner 'import cat_surf' below
+# would short-circuit to us via sys.modules instead of searching sys.path.
+# Pop the entry so the real package gets loaded; the import machinery will
+# install the real module under 'cat_surf' on completion.
 # ---------------------------------------------------------------------------
+_loaded_as_top_level = (__name__ == "cat_surf")
+if _loaded_as_top_level:
+    _sys.modules.pop("cat_surf", None)
+
 _our_parent = _os.path.realpath(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 _popped: list = []
 _i = 0
@@ -43,7 +54,7 @@ try:
 finally:
     for _idx, _entry in _popped:
         _sys.path.insert(_idx, _entry)
-    del _i, _popped, _our_parent
+    del _i, _popped, _our_parent, _loaded_as_top_level
 
 # Re-export every public symbol from the top-level cat_surf package.
 from cat_surf import (  # noqa: F401
