@@ -1,5 +1,6 @@
 __version__ = "0.3.8"
 
+from . import cat_surf  # noqa: F401 – expose t1prep.cat_surf namespace
 from .t1prep import run_t1prep
 from .utils import (
     progress_bar,
@@ -13,6 +14,7 @@ from .utils import (
 from .metrics import compute_dice_nifti
 
 __all__ = [
+    "cat_surf",
     "run_t1prep",
     "progress_bar",
     "remove_file",
