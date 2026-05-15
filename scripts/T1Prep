@@ -484,13 +484,6 @@ process()
     BLACK=""
   fi
   
-  # Later add string that indicates use of AMAP
-  if [[ "${use_amap}" -eq 1 ]]; then
-    amap_string=""
-  else
-    amap_string="-no-amap"
-  fi
-  
   i=0
   j=0
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
@@ -568,7 +561,7 @@ process()
       # Check if $processed is empty
       if [ -n "$processed" ]; then
         echo Skip processing of "${FILE}"
-        break  # Skip to the next iteration of the loop
+        continue  # Skip to the next iteration of the loop
       fi
     fi
     
@@ -622,7 +615,7 @@ process()
     fi
     
     # Print progress and filename
-    j=$(expr $i + 1)
+    j=$((i + 1))
     if [ "${multi}" -ne -2 ]; then
       echo "${BOLD}----------------------------------------------------------${NC}"
       if [ "${SIZE_OF_ARRAY}" -gt 1 ]; then
@@ -847,7 +840,7 @@ process()
   
   # Print overall execution time for more than one data set
   if [ "$SIZE_OF_ARRAY" -gt 1 ]; then
-    end0=`date +%s`
+    end0=$(date +%s)
     runtime=$((end0-start0))
     runtime="T1Prep finished after $(($runtime / 3600))hrs $((($runtime / 60) % 60))min $(($runtime % 60))s"
     echo "${GREEN}${runtime}${NC}"  
