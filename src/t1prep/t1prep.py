@@ -149,8 +149,13 @@ def _build_segment_cmd(
     seed: int = 0,
     end_count: int = 0,
 ) -> List[str]:
-    """Return the argument list for ``python -m t1prep.segment``."""
-    cmd = [sys.executable, "-m", "t1prep.segment"]
+    """Return the argument list for invoking ``segment.py``."""
+    # Run segment.py by its absolute path rather than via '-m t1prep.segment'.
+    # The '-m' form resolves the 't1prep' package via sys.path, which can pick
+    # up 't1prep.py' (this file) when src/t1prep/ is on PYTHONPATH for sibling
+    # imports, causing '__path__ attribute not found' errors.
+    _segment_script = str(Path(__file__).resolve().parent / "segment.py")
+    cmd = [sys.executable, _segment_script]
 
     def flag(f: str, cond: bool) -> None:
         if cond:
@@ -382,20 +387,11 @@ def _process_single(
             skip_skullstrip=skip_skullstrip,
             seed=seed,
         )
-        # segment.py uses bare sibling imports (from report import ...,
-        # from utils import ...) that require the t1prep package directory
-        # itself on sys.path.  Add both:
-        #   pkg_dir  – the t1prep/ directory (src/t1prep/ from source, or
-        #              site-packages/t1prep/ when installed)
-        #   src_dir  – src/ when running from the repo (harmless when installed)
+        # segment.py's bare sibling imports (from report import ..., etc.)
+        # are resolved automatically because Python adds the script's own
+        # directory to sys.path[0] when it is run directly by path.
+        # No PYTHONPATH manipulation is needed.
         seg_env = os.environ.copy()
-        pkg_dir = str(Path(__file__).resolve().parent)
-        src_dir = str(Path(__file__).resolve().parents[1])
-        extra = pkg_dir + os.pathsep + src_dir
-        existing_pp = seg_env.get("PYTHONPATH", "")
-        seg_env["PYTHONPATH"] = (
-            extra + os.pathsep + existing_pp if existing_pp else extra
-        )
 
         seg_status = subprocess.call(seg_cmd, env=seg_env)
         if seg_status != 0 and retry:

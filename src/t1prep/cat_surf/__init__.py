@@ -15,8 +15,35 @@ All public symbols from ``cat_surf`` and its ``cli`` sub-module are
 available here with identical names and signatures.
 """
 
-import cat_surf as _cat_surf
-from cat_surf import cli  # noqa: F401 – re-exported as t1prep.cat_surf.cli
+import os as _os
+import sys as _sys
+
+# ---------------------------------------------------------------------------
+# Bootstrap: import the REAL installed cat_surf C-extension, not ourselves.
+#
+# When src/t1prep/ is on sys.path (e.g. because segment.py was run as a
+# script, which causes Python to add its directory to sys.path[0]),
+# 'import cat_surf' would resolve to this wrapper directory and trigger a
+# circular import.  We temporarily remove every sys.path entry that points
+# to our own parent (src/t1prep/) so importlib finds the installed package.
+# ---------------------------------------------------------------------------
+_our_parent = _os.path.realpath(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+_popped: list = []
+_i = 0
+while _i < len(_sys.path):
+    _entry = _sys.path[_i]
+    if _entry and _os.path.realpath(_entry) == _our_parent:
+        _sys.path.pop(_i)
+        _popped.append((_i, _entry))
+    else:
+        _i += 1
+try:
+    import cat_surf as _cat_surf
+    from cat_surf import cli  # noqa: F401 – re-exported as t1prep.cat_surf.cli
+finally:
+    for _idx, _entry in _popped:
+        _sys.path.insert(_idx, _entry)
+    del _i, _popped, _our_parent
 
 # Re-export every public symbol from the top-level cat_surf package.
 from cat_surf import (  # noqa: F401
