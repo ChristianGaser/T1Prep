@@ -1,3 +1,15 @@
+import os as _os
+import sys as _sys
+
+# MPS environment must be configured *before* torch is imported anywhere in
+# the package.  Submodules below (e.g. utils, t1prep, cat_surf) pull torch in
+# transitively, and PyTorch checks PYTORCH_ENABLE_MPS_FALLBACK at module-load
+# time — setting it later (e.g. inside segment.py) only works for the
+# subprocess invocation path, not for `python -m t1prep.segment`.
+if _sys.platform == "darwin":
+    _os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    _os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
+
 __version__ = "0.4.0"
 
 from . import cat_surf  # noqa: F401 – expose t1prep.cat_surf namespace

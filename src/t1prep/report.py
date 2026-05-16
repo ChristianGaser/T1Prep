@@ -13,7 +13,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from utils import get_filenames
+from .utils import get_filenames
 
 
 def write_t1prep_report(

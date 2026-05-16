@@ -55,14 +55,14 @@ from deepmriprep.atlas import get_volumes, shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from spline_resize import resize
-from report import write_t1prep_report
-from qa import estimate_qa
+from .report import write_t1prep_report
+from .qa import estimate_qa
 from scipy.ndimage import (
     binary_closing,
     binary_dilation,
     generate_binary_structure,
 )
-from utils import (
+from .utils import (
     smart_round,
     remove_file,
     resample_and_save_nifti,
@@ -74,7 +74,7 @@ from utils import (
     DATA_PATH_T1PREP,
     TEMPLATE_PATH_T1PREP,
 )
-from _segment_utils import (
+from ._segment_utils import (
     scale_intensity,
     correct_bias_field,
     unsmooth_kernel,
@@ -88,7 +88,7 @@ from _segment_utils import (
     handle_lesions,
     normalize_to_sum1,
 )
-from _models import (
+from ._models import (
     MODEL_DIR,
     MODEL_FILES,
     all_models_present,
@@ -176,6 +176,17 @@ class CustomPreprocess(Preprocess):
     Use linear interpolation for p0, which prevents negative values due to
     sinc-interpolation
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # deepbet ships a TorchScript-traced bbox model and PYTORCH_ENABLE_MPS_FALLBACK
+        # is not honored inside JIT graphs on newer PyTorch builds — the traced
+        # max_pool3d_with_indices raises NotImplementedError on MPS.  Force the
+        # skull-strip onto CPU; the rest of the pipeline keeps using MPS.
+        if self.device.type == "mps":
+            from deepbet.bet import BrainExtraction
+            from deepmriprep.preprocess import BET_MODEL_PATHS
+            self.brain_extract = BrainExtraction(no_gpu=True, **BET_MODEL_PATHS)
 
     def run_atlas_register(
         self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine

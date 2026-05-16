@@ -20,7 +20,7 @@ from scipy.ndimage import (
     grey_opening,
     median_filter,
 )
-from utils import (
+from .utils import (
     DATA_PATH_T1PREP,
     TEMPLATE_PATH_T1PREP, 
     find_largest_cluster, 
