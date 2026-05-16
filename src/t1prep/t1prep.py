@@ -217,12 +217,15 @@ def _build_surface_cmd(
     initial_surf: str = "",
     fmriprep: bool = False,
 ) -> List[str]:
-    """Return the argument list for invoking ``surface_estimation.py`` as a subprocess."""
+    """Return the argument list for invoking ``surface_estimation`` as a subprocess.
+
+    Uses ``-m t1prep.surface_estimation`` because the module uses relative
+    imports which require it to run as part of a package, not as a bare script.
+    """
     from .utils import DATA_PATH_T1PREP, _resolve_names_tsv
 
-    _script = str(Path(__file__).resolve().parent / "surface_estimation.py")
     return [
-        sys.executable, _script,
+        sys.executable, "-m", "t1prep.surface_estimation",
         "--bname",               bname,
         "--side",                side,
         "--mri-dir",             mri_dir,
@@ -424,11 +427,22 @@ def _process_single(
             **kw,
         ) -> int:
             """Launch both hemispheres concurrently; return 0 only if both succeed."""
+            # surface_estimation.py uses relative imports so it must be run as
+            # '-m t1prep.surface_estimation'.  PYTHONPATH must point to the
+            # package *parent* (src/) so Python can find the t1prep package.
+            # Do NOT add src/t1prep/ itself — that would shadow t1prep.py.
+            surf_env = os.environ.copy()
+            src_dir = str(Path(__file__).resolve().parents[1])
+            existing_pp = surf_env.get("PYTHONPATH", "")
+            surf_env["PYTHONPATH"] = (
+                src_dir + os.pathsep + existing_pp if existing_pp else src_dir
+            )
             procs = {
                 side: subprocess.Popen(
                     _build_surface_cmd(
                         bname, side, mri_dir, surf_dir, report_log, **kw
-                    )
+                    ),
+                    env=surf_env,
                 )
                 for side in ("left", "right")
             }
