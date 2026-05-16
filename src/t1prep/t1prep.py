@@ -195,7 +195,7 @@ def _build_segment_cmd(
 # Surface-estimation helper
 # ---------------------------------------------------------------------------
 
-def _run_surface_estimation(
+def _build_surface_cmd(
     bname: str,
     side: str,
     mri_dir: str,
@@ -216,44 +216,37 @@ def _run_surface_estimation(
     atlas_surf: str = "",
     initial_surf: str = "",
     fmriprep: bool = False,
-) -> int:
-    """Call :func:`surface_estimation.surface_estimation` directly (in-process).
-
-    Returns 0 on success, non-zero on failure.
-    """
-    from . import surface_estimation as _se
+) -> List[str]:
+    """Return the argument list for invoking ``surface_estimation.py`` as a subprocess."""
     from .utils import DATA_PATH_T1PREP, _resolve_names_tsv
 
-    return _se.surface_estimation(
-        bname=bname,
-        side=side,
-        mri_dir=mri_dir,
-        surf_dir=surf_dir,
-        estimate_spherereg=int(estimate_spherereg),
-        thickness_method=thickness_method,
-        save_pial_white=int(save_pial_white),
-        pre_fwhm=pre_fwhm,
-        median_filter=int(median_filter),
-        downsample=downsample,
-        vessel=int(vessel > 0),
-        correct_folding=int(correct_folding),
-        debug=int(debug),
-        multi=0,
-        nii_ext="nii.gz" if gz else "nii",
-        names_tsv=str(_resolve_names_tsv()),
-        bids_naming=int(use_bids),
-        report_log=report_log,
-        surf_templates_dir=str(DATA_PATH_T1PREP / "templates_surfaces_32k"),
-        atlas_templates_dir=str(DATA_PATH_T1PREP / "atlases_surfaces_32k"),
-        atlas_surf=atlas_surf,
-        initial_surface=initial_surf or "",
-        fmriprep=int(fmriprep),
-        # No bash progress-bar in the pure-Python path.
-        progress_bar_script=None,
-        progress_count_file=None,
-        progress_end_count=0,
-        progress_start_count=0,
-    )
+    _script = str(Path(__file__).resolve().parent / "surface_estimation.py")
+    return [
+        sys.executable, _script,
+        "--bname",               bname,
+        "--side",                side,
+        "--mri-dir",             mri_dir,
+        "--surf-dir",            surf_dir,
+        "--estimate-spherereg",  str(int(estimate_spherereg)),
+        "--thickness-method",    str(thickness_method),
+        "--save-pial-white",     str(int(save_pial_white)),
+        "--pre-fwhm",            str(pre_fwhm),
+        "--median-filter",       str(int(median_filter)),
+        "--downsample",          str(downsample),
+        "--vessel",              str(int(vessel > 0)),
+        "--correct-folding",     str(int(correct_folding)),
+        "--debug",               str(int(debug)),
+        "--multi",               "0",
+        "--nii-ext",             "nii.gz" if gz else "nii",
+        "--names-tsv",           str(_resolve_names_tsv()),
+        "--bids-naming",         str(int(use_bids)),
+        "--report-log",          report_log,
+        "--surf-templates-dir",  str(DATA_PATH_T1PREP / "templates_surfaces_32k"),
+        "--atlas-templates-dir", str(DATA_PATH_T1PREP / "atlases_surfaces_32k"),
+        "--atlas-surf",          atlas_surf,
+        "--initial-surface",     initial_surf or "",
+        "--fmriprep",            str(int(fmriprep)),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -409,54 +402,61 @@ def _process_single(
     if estimate_surf:
         atlas_surf_arg = "" if no_atlas else atlas_surf
 
-        for side in ("left", "right"):
-            surf_status = _run_surface_estimation(
-                bname, side, str(mri_dir), str(surf_dir), report_log,
-                estimate_spherereg=estimate_spherereg,
-                thickness_method=thickness_method,
-                save_pial_white=pial_white,
-                pre_fwhm=pre_fwhm,
-                median_filter=median_filter,
-                downsample=downsample,
-                vessel=vessel,
-                correct_folding=correct_folding,
-                debug=debug,
-                gz=gz,
-                use_bids=bids,
-                atlas_surf=atlas_surf_arg,
-                initial_surf=initial_surf,
-                fmriprep=fmriprep,
-            )
-            if surf_status != 0 and retry:
-                if verbose:
-                    print(
-                        f"Surface estimation failed for {side} hemisphere"
-                        f" \u2014 retrying\u2026"
+        surf_kwargs = dict(
+            estimate_spherereg=estimate_spherereg,
+            thickness_method=thickness_method,
+            save_pial_white=pial_white,
+            pre_fwhm=pre_fwhm,
+            median_filter=median_filter,
+            downsample=downsample,
+            vessel=vessel,
+            correct_folding=correct_folding,
+            debug=debug,
+            gz=gz,
+            use_bids=bids,
+            atlas_surf=atlas_surf_arg,
+            initial_surf=initial_surf,
+            fmriprep=fmriprep,
+        )
+
+        def _run_surf_parallel(
+            bname: str, mri_dir: str, surf_dir: str, report_log: str,
+            **kw,
+        ) -> int:
+            """Launch both hemispheres concurrently; return 0 only if both succeed."""
+            procs = {
+                side: subprocess.Popen(
+                    _build_surface_cmd(
+                        bname, side, mri_dir, surf_dir, report_log, **kw
                     )
-                surf_status = _run_surface_estimation(
-                    bname, side, str(mri_dir), str(surf_dir), report_log,
-                    estimate_spherereg=estimate_spherereg,
-                    thickness_method=thickness_method,
-                    save_pial_white=pial_white,
-                    pre_fwhm=pre_fwhm,
-                    median_filter=median_filter,
-                    downsample=downsample,
-                    vessel=vessel,
-                    correct_folding=correct_folding,
-                    debug=debug,
-                    gz=gz,
-                    use_bids=bids,
-                    atlas_surf=atlas_surf_arg,
-                    initial_surf=initial_surf,
-                    fmriprep=fmriprep,
                 )
-            if surf_status != 0:
-                print(
-                    f"ERROR: Surface estimation failed for {side} hemisphere"
-                    f" of {bname}",
-                    file=sys.stderr,
-                )
-                return 1
+                for side in ("left", "right")
+            }
+            failed = [s for s, p in procs.items() if p.wait() != 0]
+            if failed and verbose:
+                for s in failed:
+                    print(
+                        f"Surface estimation failed for {s} hemisphere"
+                        f" of {bname}",
+                        file=sys.stderr,
+                    )
+            return 0 if not failed else 1
+
+        surf_status = _run_surf_parallel(
+            bname, str(mri_dir), str(surf_dir), report_log, **surf_kwargs
+        )
+        if surf_status != 0 and retry:
+            if verbose:
+                print(f"Surface estimation failed — retrying {bname}…")
+            surf_status = _run_surf_parallel(
+                bname, str(mri_dir), str(surf_dir), report_log, **surf_kwargs
+            )
+        if surf_status != 0:
+            print(
+                f"ERROR: Surface estimation failed for {bname}",
+                file=sys.stderr,
+            )
+            return 1
 
     # ------------------------------------------------------------------ timing
     elapsed = time.perf_counter() - start

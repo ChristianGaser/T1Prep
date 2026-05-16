@@ -1,10 +1,12 @@
 # custom
 .claude
 .DS_Store
+.refact
 env
 ideas.txt
 todo.txt
 log*
+*egg-info
 *.nii
 internal
 webui_uploads
