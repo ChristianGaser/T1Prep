@@ -150,12 +150,15 @@ def _build_segment_cmd(
     end_count: int = 0,
 ) -> List[str]:
     """Return the argument list for invoking ``segment.py``."""
-    # Run segment.py by its absolute path rather than via '-m t1prep.segment'.
-    # The '-m' form resolves the 't1prep' package via sys.path, which can pick
-    # up 't1prep.py' (this file) when src/t1prep/ is on PYTHONPATH for sibling
-    # imports, causing '__path__ attribute not found' errors.
-    _segment_script = str(Path(__file__).resolve().parent / "segment.py")
-    cmd = [sys.executable, _segment_script]
+    # Run segment.py via ``-m t1prep.segment``.  segment.py uses package-
+    # relative imports (``from .utils import ...``) which only resolve when
+    # loaded as a package module, so the older "run by absolute path" form
+    # fails with ``ImportError: attempted relative import with no known
+    # parent package``.  The historical concern with ``-m`` (picking up
+    # ``t1prep.py`` when ``src/t1prep/`` is on PYTHONPATH) is handled in
+    # _process_single by injecting the *parent* of the package directory
+    # (``src/``), not the package directory itself.
+    cmd = [sys.executable, "-m", "t1prep.segment"]
 
     def flag(f: str, cond: bool) -> None:
         if cond:
@@ -383,11 +386,19 @@ def _process_single(
             skip_skullstrip=skip_skullstrip,
             seed=seed,
         )
-        # segment.py's bare sibling imports (from report import ..., etc.)
-        # are resolved automatically because Python adds the script's own
-        # directory to sys.path[0] when it is run directly by path.
-        # No PYTHONPATH manipulation is needed.
+        # When invoked via ``python -m t1prep.segment``, the subprocess must
+        # be able to locate the ``t1prep`` package.  If we are running from a
+        # source checkout (not installed into site-packages), the parent
+        # directory of this file (``src/``) is what carries ``t1prep`` — make
+        # sure it is on PYTHONPATH for the child.  Prepend so it wins over a
+        # stale installed copy.
         seg_env = os.environ.copy()
+        _pkg_parent = str(Path(__file__).resolve().parent.parent)
+        seg_env["PYTHONPATH"] = (
+            _pkg_parent + os.pathsep + seg_env["PYTHONPATH"]
+            if seg_env.get("PYTHONPATH")
+            else _pkg_parent
+        )
 
         seg_status = subprocess.call(seg_cmd, env=seg_env)
         if seg_status != 0 and retry:
