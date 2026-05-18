@@ -174,18 +174,32 @@ docker run --rm -it -v C:\path\to\data:/data t1prep:latest --out-dir /data/out /
 See the [Docker](#docker) section for build instructions.
 
 ### Manual Installation
-Download T1Prep_$version.zip from Github and unzip:
+
+If you do not want pip to manage the environment for you (e.g. for an
+offline or air-gapped setup), you can install the dependencies yourself.
+
+**From PyPI into your own virtualenv:**
 ```bash
-  unzip T1Prep_$version.zip -d your_installation_folder
+python3.12 -m venv env
+source env/bin/activate
+pip install T1Prep
 ```
-Install required Python packages (check that the correct Python version 3.9-3.12
-is being used):
+
+**From a source checkout (developers):**
 ```bash
+git clone https://github.com/ChristianGaser/T1Prep.git
+cd T1Prep
+python3.12 -m venv env
+source env/bin/activate
+pip install -e .                    # editable; tracks local edits
+# – or –
+pip install -r requirements.txt     # dependencies only (no T1Prep itself)
+```
+
+**Source ZIP plus bash bootstrapper** (kept for parity with older docs):
+```bash
+unzip T1Prep_$version.zip -d your_installation_folder
 ./scripts/T1Prep --python python3.12 --install
-```
-Alternatively, install the dependencies manually:
-```bash
-python3.12 -m pip install -r requirements.txt
 ```
 
 ## Web UI (Flask)
@@ -221,31 +235,28 @@ Uploaded files are stored under `webui_uploads/` and per-job logs under
 
 ## Docker
 
-A Dockerfile is provided to build an image with all required dependencies.
+A Dockerfile is provided that installs T1Prep from PyPI on top of a slim
+Python 3.12 base image. No source checkout is needed — the image is a
+pure-Python distribution with model weights fetched lazily on first run.
 
 ### Build
 
-**Default (release ZIP):**
+**Latest release from PyPI:**
 ```bash
 docker build -t t1prep:latest .
 ```
 
-**Latest GitHub source (e.g., main):**
+**Pinned release:**
 
 ```bash
 docker build \
-  --build-arg T1PREP_SOURCE=git \
-  --build-arg T1PREP_REF=main \
-  -t t1prep:git-main .
+  --build-arg T1PREP_VERSION=0.4.4 \
+  -t t1prep:0.4.4 .
 ```
 
-**Specific release:**
-
-```bash
-docker build \
-  --build-arg T1PREP_VERSION=v0.2.0-beta \
-  -t t1prep:release .
-```
+The `T1PREP_VERSION` build-arg accepts any PEP 440 version string (no
+leading `v`) and is forwarded to `pip install "T1Prep==..."`. Leave it
+unset to track the latest release on PyPI.
 
 ### Run
 

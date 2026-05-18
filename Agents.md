@@ -28,7 +28,8 @@ T1Prep/
 │   ├── T1Prep_ui                   # Web UI launcher (Flask)
 │   ├── activate_env.sh             # Source to activate the venv
 │   ├── run_with_env.sh             # Run any Python script with venv
-│   ├── install.sh                  # Download & install a release
+│   ├── install.sh                  # Bash bootstrapper: download release + set up venv
+│   #                                 (alternative to `pip install T1Prep` from PyPI)
 │   ├── cat_viewsurf.sh             # Interactive 3D surface viewer
 │   ├── dice.sh                     # Dice similarity metric wrapper
 │   ├── process_longitudinal.sh     # Batch longitudinal processing
@@ -74,10 +75,11 @@ T1Prep/
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` -> Project Structure, `CLAUDE.md` |
 | Atlas files in `src/t1prep/data/` | Add corresponding `.txt` description file |
 | Installation process | `README.md` -> Installation section |
-| Installation process | `scripts/install.sh` |
+| Installation process (bash bootstrapper) | `scripts/install.sh` |
+| Installation process (PyPI distribution) | `pyproject.toml`, `README_pypi.md` |
 | Docker configuration | `README.md` -> Docker section |
 | Docker configuration | `Dockerfile` |
-| Version number | `pyproject.toml`, release tags, README badges |
+| Version number | `src/t1prep/__init__.py` (canonical — pyproject.toml derives via setuptools attr, scripts/utils.sh reads it via awk); `Makefile` PREV_VERSION/VERSION drive `make release`; release tags + README badges |
 
 ### Core File Relationships
 
@@ -149,7 +151,9 @@ These helpers ensure the correct interpreter and dependencies are used across CL
 **README.md sections to check:**
 - **Options**: Must match `scripts/T1Prep --help` output
 - **Python API**: Must match `run_t1prep()` function signature
-- **Installation**: Must match `scripts/install.sh` behavior
+- **Installation**: PyPI path (`pip install T1Prep`) is primary; bash
+  bootstrapper (`scripts/install.sh`) is the secondary path for users
+  who want the full source tree.  Keep both in sync.
 - **Requirements**: Must match `requirements.txt` / `pyproject.toml`
 
 ## Adding New CLI Options

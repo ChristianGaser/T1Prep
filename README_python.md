@@ -28,13 +28,14 @@ requiring a separate `cat-surf` import.
 
 ## Installation
 
-Install T1Prep in editable (development) mode or as a regular package:
-
 ```bash
-# editable install from the repository root
+# From PyPI (recommended for most users)
+pip install T1Prep
+
+# Editable install from a source checkout (for development)
 pip install -e .
 
-# or via the quick-install script
+# Bash bootstrapper — fetches the source tree and sets up a managed venv
 curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/scripts/install.sh | bash
 ```
 
@@ -68,9 +69,12 @@ t1prep/
 
 ## Pipeline: `run_t1prep()`
 
-`run_t1prep()` is the main Python entry point. It calls the `scripts/T1Prep`
-bash pipeline as a subprocess with full CLI parity and returns the process
-exit code.
+`run_t1prep()` is the main Python entry point.  It drives the pipeline
+entirely from Python: segmentation runs in a child process via
+`python -m t1prep.segment`, surface estimation runs in parallel child
+processes via `python -m t1prep.surface_estimation`, and the two
+hemispheres are joined in-process.  No bash interpreter is required.
+The function returns a numeric exit code (`0` on success).
 
 ```python
 from t1prep import run_t1prep

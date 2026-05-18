@@ -66,7 +66,16 @@ Launches the Flask-based Web UI for T1Prep in a browser.
 
 ### `install.sh`
 
-Downloads and installs the latest T1Prep release from GitHub. Handles release selection, download, extraction, and initial setup.
+Bash bootstrapper that downloads a T1Prep release tarball from GitHub,
+extracts it to a chosen directory, and runs `scripts/T1Prep --install`
+to create a managed virtual environment.  Useful for users who want the
+full source tree (e.g. to run the bash orchestrator with multi-job
+parallelism) without needing pip themselves.
+
+> **For most Python users, `pip install T1Prep` is simpler** — it pulls
+> the same package from PyPI without a source checkout and handles
+> versioning via standard pip specifiers.  Use `install.sh` only if you
+> specifically need the bundled bash scripts on disk.
 
 ```bash
 # Interactive installation
