@@ -14,6 +14,7 @@ Console script entry point:  ``t1prep._models:main``
 
 from __future__ import annotations
 
+import os as _os
 import shutil
 import sys
 import tempfile
@@ -27,9 +28,6 @@ from deepmriprep.utils import DATA_PATH
 # Constants
 # ---------------------------------------------------------------------------
 
-#: Directory where model weight files are stored at runtime.
-MODEL_DIR: Path = Path(DATA_PATH) / "models"
-
 #: All model filenames that must be present for the pipeline to run.
 MODEL_FILES: list[str] = (
     [
@@ -41,9 +39,63 @@ MODEL_FILES: list[str] = (
     + ["segmentation_model.pt", "warp_model.pt"]
 )
 
+#: deepmriprep's default model directory.  Existing installs already have
+#: weights here, so we prefer it when usable.
+_DEEPMRIPREP_MODELS: Path = Path(DATA_PATH) / "models"
+
+
+def _user_cache_dir() -> Path:
+    """Platform-appropriate user cache base for T1Prep."""
+    if sys.platform == "win32":
+        base = _os.environ.get("LOCALAPPDATA")
+        return (Path(base) if base else Path.home() / "AppData" / "Local") / "t1prep" / "Cache"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "t1prep"
+    xdg = _os.environ.get("XDG_CACHE_HOME")
+    return Path(xdg) / "t1prep" if xdg else Path.home() / ".cache" / "t1prep"
+
+
+def _resolve_model_dir() -> Path:
+    """Decide where T1Prep stores its model weights.
+
+    Resolution order:
+
+    1. ``T1PREP_MODEL_DIR`` environment variable (explicit override).
+    2. ``deepmriprep``'s ``data/models``, when it already contains the full
+       set of weights — existing installs keep working with no migration.
+    3. ``deepmriprep``'s ``data/models``, when writable.  Preferred because
+       it lets ``deepmriprep``'s own hardcoded path constants resolve
+       without any redirection.
+    4. Platform user cache (``~/Library/Caches/t1prep/models`` on macOS,
+       ``$XDG_CACHE_HOME/t1prep/models`` or ``~/.cache/t1prep/models`` on
+       Linux, ``%LOCALAPPDATA%\\t1prep\\Cache\\models`` on Windows).  When
+       this fallback is used, ``_redirect_deepmriprep_paths`` rewires
+       upstream to look here.
+    """
+    override = _os.environ.get("T1PREP_MODEL_DIR")
+    if override:
+        return Path(override)
+
+    if all((_DEEPMRIPREP_MODELS / f).is_file() for f in MODEL_FILES):
+        return _DEEPMRIPREP_MODELS
+
+    try:
+        _DEEPMRIPREP_MODELS.mkdir(parents=True, exist_ok=True)
+        probe = _DEEPMRIPREP_MODELS / ".t1prep_writable"
+        probe.touch()
+        probe.unlink()
+        return _DEEPMRIPREP_MODELS
+    except (OSError, PermissionError):
+        pass
+
+    return _user_cache_dir() / "models"
+
+
+#: Directory where model weight files are stored at runtime.
+MODEL_DIR: Path = _resolve_model_dir()
+
 #: URL of the GitHub release archive that contains the model weights.
 #: Override with the ``T1PREP_MODEL_ZIP_URL`` environment variable if needed.
-import os as _os
 _DEFAULT_MODEL_ZIP_URL = (
     "https://github.com/ChristianGaser/T1Prep/releases/download/"
     "v0.2.0-beta/T1Prep_Models.zip"
@@ -52,6 +104,33 @@ MODEL_ZIP_URL: str = _os.environ.get("T1PREP_MODEL_ZIP_URL", _DEFAULT_MODEL_ZIP_
 
 #: Dev-mode fallback: models bundled inside the source tree (not in the wheel).
 _DEV_MODEL_DIR: Path = Path(__file__).resolve().parent / "data" / "models"
+
+
+def _redirect_deepmriprep_paths() -> None:
+    """Point ``deepmriprep``'s model-path lookups at :data:`MODEL_DIR`.
+
+    No-op when :data:`MODEL_DIR` is already deepmriprep's default location.
+    Otherwise patches the module-level ``DATA_PATH`` and ``BET_MODEL_PATHS``
+    that ``deepmriprep`` reads at construction time (e.g. inside
+    ``Preprocess.__init__``, ``BrainSegmentation.__init__``).  Templates
+    are loaded at deepmriprep's import time and remain in memory — they
+    are unaffected and keep resolving via the original ``DATA_PATH``.
+    """
+    if MODEL_DIR == _DEEPMRIPREP_MODELS:
+        return
+    # deepmriprep builds paths as f"{DATA_PATH}/models/<file>", so we hand
+    # it MODEL_DIR's parent as the synthetic DATA_PATH.
+    fake_data = str(MODEL_DIR.parent)
+    import deepmriprep.utils as _u
+    import deepmriprep.preprocess as _pp
+    import deepmriprep.segment as _seg
+    _u.DATA_PATH = fake_data
+    _pp.DATA_PATH = fake_data
+    _seg.DATA_PATH = fake_data
+    _pp.BET_MODEL_PATHS = {
+        "model_path": str(MODEL_DIR / "brain_extraction_model.pt"),
+        "bbox_model_path": str(MODEL_DIR / "brain_extraction_bbox_model.pt"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +222,7 @@ def prepare_model_files(verbose: bool = True) -> None:
         When ``True`` (default) print progress to stdout.
     """
     if all_models_present():
+        _redirect_deepmriprep_paths()
         return
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -173,6 +253,8 @@ def prepare_model_files(verbose: bool = True) -> None:
             "Model download completed but the following files are still missing:\n"
             + "\n".join(f"  {MODEL_DIR / f}" for f in still_missing)
         )
+
+    _redirect_deepmriprep_paths()
 
 
 def main() -> None:
