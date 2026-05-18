@@ -10,7 +10,7 @@ if _sys.platform == "darwin":
     _os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     _os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 from . import cat_surf  # noqa: F401 – expose t1prep.cat_surf namespace
 from .t1prep import run_t1prep
