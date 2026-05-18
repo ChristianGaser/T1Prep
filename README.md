@@ -16,7 +16,8 @@
 - [Requirements](#requirements)
 - [Main Differences to CAT12](#main-differences-to-cat12)
 - [Installation](#installation)
-- [Quick Install (Recommended)](#quick-install-recommended)
+- [pip / PyPI (Recommended for Python users)](#pip--pypi-recommended-for-python-users)
+- [Bash bootstrapper (full source tree)](#bash-bootstrapper-full-source-tree)
 - [Windows Installation via WSL](#windows-installation-via-wsl-recommended)
 - [Manual Installation](#manual-installation)
 - [Web UI (Flask)](#web-ui-flask)
@@ -61,8 +62,47 @@ CAT12 folder structures and the BIDS derivatives standard.
 
 ## Installation
 
-### Quick Install (Recommended)
-Install T1Prep directly with a single command:
+T1Prep is distributed as a pure-Python package on PyPI and can also be
+installed via a bash bootstrapper that lays down the full source tree.
+Pick whichever workflow suits you.
+
+### pip / PyPI (Recommended for Python users)
+
+If you have Python 3.9–3.12 available, install directly from PyPI:
+
+```bash
+# Latest release
+python3 -m pip install T1Prep
+
+# Pin a specific version (any PEP 440 spec)
+python3 -m pip install "T1Prep==0.4.4"
+
+# Optional: pipx keeps T1Prep isolated in its own venv
+pipx install T1Prep
+```
+
+Model weights are not bundled with the wheel; they are fetched lazily on
+the first run into your user cache (or downloaded ahead of time with
+`t1prep-download-models`).
+
+Use it from Python:
+
+```python
+from t1prep import run_t1prep
+run_t1prep("/path/to/sub-01_T1w.nii.gz")
+```
+
+…or as a CLI:
+
+```bash
+python -m t1prep.t1prep --input sub-01_T1w.nii.gz --out-dir out/
+```
+
+### Bash bootstrapper (full source tree)
+
+If you also want the bash orchestrator (`scripts/T1Prep`) — useful for
+multi-subject parallelism — install T1Prep with the bundled bootstrapper:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
 ```
