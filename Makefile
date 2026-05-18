@@ -6,13 +6,15 @@
 #
 # Bump VERSION to the new release.  Set PREV_VERSION to whatever VERSION
 # was on the last release — the `release` target uses an *exact*-match sed
-# to rewrite occurrences of PREV_VERSION to VERSION across the few files
-# that don't auto-derive (Dockerfile, __init__.py).
+# to rewrite occurrences of PREV_VERSION to VERSION in the one file that
+# doesn't auto-derive (src/t1prep/__init__.py).
 #
 # Auto-derived (no manual update needed):
 #   - pyproject.toml      → version = {attr = "t1prep.__version__"}
 #   - scripts/utils.sh    → reads __version__ from src/t1prep/__init__.py
 #   - scripts/T1Prep      → sources scripts/utils.sh
+#   - Dockerfile          → installs T1Prep from PyPI (pin via build-arg
+#                            T1PREP_VERSION=$(VERSION) at `docker build` time)
 # ---------------------------------------------------------------------------
 PREV_VERSION := 0.4.4
 VERSION      := 0.4.4
@@ -37,8 +39,6 @@ version:
 	-@echo
 	-@echo "Tracked locations:"
 	-@grep -H '^__version__'  src/t1prep/__init__.py
-	-@grep -H 'ARG T1PREP_VERSION' Dockerfile
-	-@grep -H 'T1PREP_VERSION=' scripts/utils.sh | head -1
 
 # remove .DS_Store files and correct file permissions
 clean:
@@ -65,7 +65,6 @@ release: clean
 	  else \
 	    echo "Bumping $(PREV_VERSION) -> $(VERSION)"; \
 	    sed -i "" 's/^__version__ = "$(PREV_VERSION)"/__version__ = "$(VERSION)"/' src/t1prep/__init__.py; \
-	    sed -i "" 's/^ARG T1PREP_VERSION=v$(PREV_VERSION)/ARG T1PREP_VERSION=v$(VERSION)/' Dockerfile; \
 	    echo "Done. Update PREV_VERSION := $(VERSION) in the Makefile before the next release."; \
 	  fi
 
