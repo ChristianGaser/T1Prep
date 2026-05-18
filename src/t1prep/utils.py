@@ -34,7 +34,16 @@ def _package_data_root() -> Optional[Path]:
             return None
     return None
 
-DATA_PATH_T1PREP = ROOT_PATH / "src" / "t1prep" / "data"
+# Resolve T1Prep's data directory.  Prefer importlib.resources (correct
+# for installed wheels, where __file__'s parent points into site-packages),
+# then fall back to the directory adjacent to this file — which works for
+# both editable installs and direct source-tree imports.  The legacy
+# ``ROOT_PATH / "src" / "t1prep" / "data"`` form was broken for non-editable
+# installs because it spliced ``src/`` under site-packages.
+DATA_PATH_T1PREP: Path = (
+    _package_data_root()
+    or (Path(__file__).resolve().parent / "data")
+)
 TEMPLATE_PATH_T1PREP = DATA_PATH_T1PREP / "templates_MNI152NLin2009cAsym"
 
 # Prefer packaged Names.tsv; fall back to repo root for editable/dev mode

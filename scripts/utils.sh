@@ -22,8 +22,6 @@
 # ______________________________________________________________________
 
 # defaults
-T1PREP_VERSION=0.4.3
-export T1PREP_VERSION
 os_type=$(uname -s) # Determine OS type
 
 # Directory of this utils.sh file (robust when sourced)
@@ -35,6 +33,14 @@ name_file=${data_dir}/Names.tsv
 surf_templates_dir=${data_dir}/templates_surfaces_32k
 atlas_templates_dir=${data_dir}/atlases_surfaces_32k
 T1prep_env=${root_dir}/env
+
+# Read T1Prep version from the Python package's __init__.py — the single
+# source of truth (pyproject.toml already derives its version from
+# t1prep.__version__ via setuptools attr).  Bump __version__ there and
+# every shell consumer of T1PREP_VERSION picks it up automatically.
+T1PREP_VERSION="$(awk -F'"' '/^__version__[[:space:]]*=/ {print $2; exit}' "${src_dir}/__init__.py" 2>/dev/null)"
+T1PREP_VERSION=${T1PREP_VERSION:-unknown}
+export T1PREP_VERSION
 
 # Text formatting and colors with fallback
 if [ -t 1 ] && [ -n "$TERM" ] && command -v tput >/dev/null 2>&1; then

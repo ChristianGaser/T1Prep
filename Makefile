@@ -1,17 +1,44 @@
-.PHONY: help release clean zip cp_binaries
-.DEFAULT: help
+.PHONY: help version release clean zip cp_binaries
+.DEFAULT_GOAL := help
 
-VERSION="0.3.8"
+# ---------------------------------------------------------------------------
+# Single source of truth for the project version.
+#
+# Bump VERSION to the new release.  Set PREV_VERSION to whatever VERSION
+# was on the last release — the `release` target uses an *exact*-match sed
+# to rewrite occurrences of PREV_VERSION to VERSION across the few files
+# that don't auto-derive (Dockerfile, __init__.py).
+#
+# Auto-derived (no manual update needed):
+#   - pyproject.toml      → version = {attr = "t1prep.__version__"}
+#   - scripts/utils.sh    → reads __version__ from src/t1prep/__init__.py
+#   - scripts/T1Prep      → sources scripts/utils.sh
+# ---------------------------------------------------------------------------
+PREV_VERSION := 0.4.4
+VERSION      := 0.4.4
 
-ZIPFILE=T1Prep_${VERSION}.zip
+ZIPFILE = T1Prep_$(VERSION).zip
 
 BIN ?= CAT*
 
 # print available commands
 help:
 	-@echo Available commands:
-	-@echo clean zip cp_binaries
-	-@echo "cp_binaries usage: make cp_binaries [BIN=CAT_MyBinary]"
+	-@echo "  release       Bump version files from PREV_VERSION to VERSION"
+	-@echo "  zip           Run release and zip the project"
+	-@echo "  clean         Clean up artifacts and permissions"
+	-@echo "  cp_binaries   Copy CAT-Surface binaries [BIN=CAT_MyBinary]"
+	-@echo "  version       Show current PREV_VERSION / VERSION"
+
+# show resolved versions (sanity check before `make release`)
+version:
+	-@echo "PREV_VERSION = $(PREV_VERSION)"
+	-@echo "VERSION      = $(VERSION)"
+	-@echo
+	-@echo "Tracked locations:"
+	-@grep -H '^__version__'  src/t1prep/__init__.py
+	-@grep -H 'ARG T1PREP_VERSION' Dockerfile
+	-@grep -H 'T1PREP_VERSION=' scripts/utils.sh | head -1
 
 # remove .DS_Store files and correct file permissions
 clean:
@@ -28,12 +55,19 @@ zip: release
 	-@rsync -av . T1Prep --exclude env --exclude '.*' --exclude Makefile --exclude Windows-Installation.txt --exclude test
 	-@zip ${ZIPFILE} -rm T1Prep
 
-# prepare a release
+# prepare a release: rewrite PREV_VERSION → VERSION in the few files that
+# don't auto-derive.  Uses exact-match seds so nothing unrelated can be hit.
+# When PREV_VERSION == VERSION (e.g. fresh checkout, no bump yet) this is a
+# safe no-op.
 release: clean
-	-@sed -i "" "s/version=.*/version=${VERSION}/" scripts/T1Prep
-	-@sed -i "" "s/^T1PREP_VERSION=.*/T1PREP_VERSION=${VERSION}/" scripts/utils.sh
-	-@sed -i "" "s/^__version__ = \".*\"/__version__ = \"${VERSION}\"/" src/t1prep/__init__.py
-	-@sed -i "" "s/T1PREP_VERSION=.*/T1PREP_VERSION=v${VERSION}/" Dockerfile
+	-@if [ "$(PREV_VERSION)" = "$(VERSION)" ]; then \
+	    echo "PREV_VERSION == VERSION ($(VERSION)) — nothing to bump."; \
+	  else \
+	    echo "Bumping $(PREV_VERSION) -> $(VERSION)"; \
+	    sed -i "" 's/^__version__ = "$(PREV_VERSION)"/__version__ = "$(VERSION)"/' src/t1prep/__init__.py; \
+	    sed -i "" 's/^ARG T1PREP_VERSION=v$(PREV_VERSION)/ARG T1PREP_VERSION=v$(VERSION)/' Dockerfile; \
+	    echo "Done. Update PREV_VERSION := $(VERSION) in the Makefile before the next release."; \
+	  fi
 
 # copy binaries after cross-compiling
 cp_binaries: 
