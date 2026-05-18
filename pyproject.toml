@@ -47,6 +47,7 @@ dependencies = [
 ]
 
 [project.scripts]
+t1prep = "t1prep.t1prep:main"
 cat-viewsurf = "t1prep.gui.cat_viewsurf:main"
 t1prep-download-models = "t1prep._models:main"
 
@@ -64,6 +65,15 @@ gui = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+# Standalone bash helpers shipped into <venv>/bin/ on install.  Only scripts
+# that are self-contained (no `source utils.sh`, no hardcoded "<repo>/env"
+# venv activation) belong here.  The wider bash orchestrator family
+# (`scripts/T1Prep`, `scripts/CAT_*_ui`, etc.) stays in the source tree and
+# is reached via `scripts/install.sh` for users who want that workflow.
+script-files = [
+    "scripts/parallelize",
+    "scripts/progress_bar_multi.sh",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
