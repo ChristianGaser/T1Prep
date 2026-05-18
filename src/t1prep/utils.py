@@ -104,11 +104,17 @@ class NameTable:
 # ===========================================================================
 
 class ProgressBar:
-    """Drives ``progress_bar_multi.sh`` from Python.
+    """Surface-estimation progress bridge with two backends.
 
-    A persistent count file is shared between parallel processes (e.g.
-    two hemispheres).  We increment it atomically and invoke the bash
-    bar with the new value.
+    * **Bash backend** — when both ``bar_script`` and ``count_file`` are
+      provided (the ``scripts/T1Prep`` orchestrator path), a shared count
+      file synchronises updates between the two parallel hemisphere
+      processes and the bash bar is invoked with the new total.
+    * **Python backend** — when either piece of plumbing is missing (the
+      pure-Python ``run_t1prep`` path), updates are routed through the
+      in-process :func:`progress_bar` renderer so the user still sees
+      step output.  The two hemispheres each run in their own subprocess;
+      the caller ensures only one of them has ``show=True``.
     """
 
     def __init__(self, bar_script: Optional[str], end_count: int,
@@ -119,8 +125,10 @@ class ProgressBar:
         # Always store an absolute path so os.chdir() in callers cannot
         # cause the file to resolve to a different location later.
         self.count_file = os.path.abspath(count_file) if count_file else None
-        self.show = bool(show and bar_script and count_file)
-        if self.show:
+        self._use_bash = bool(bar_script and count_file)
+        self.show = bool(show)
+        self._py_count = start_count
+        if self.show and self._use_bash:
             # Unconditionally (re-)initialise the count file so that stale
             # values from previous runs never corrupt the percentage.
             Path(self.count_file).write_text(str(start_count))
@@ -128,20 +136,28 @@ class ProgressBar:
     def step(self, label: str) -> None:
         if not self.show:
             return
-        try:
-            with open(self.count_file, "r+", encoding="utf-8") as fh:
-                cur = int(fh.read().strip() or "0") + 1
-                fh.seek(0)
-                fh.truncate()
-                fh.write(str(cur))
-        except FileNotFoundError:
-            cur = 1
-            Path(self.count_file).write_text(str(cur))
-        subprocess.run(
-            [self.bar_script, "1", "", str(cur), str(self.end_count),
-             f"{label:<31}", "40"],
-            check=False,
-        )
+        if self._use_bash:
+            # Narrow Optional[str] -> str for the type checker; _use_bash
+            # is only True when both are set.
+            bar_script: str = self.bar_script  # type: ignore[assignment]
+            count_file: str = self.count_file  # type: ignore[assignment]
+            try:
+                with open(count_file, "r+", encoding="utf-8") as fh:
+                    cur = int(fh.read().strip() or "0") + 1
+                    fh.seek(0)
+                    fh.truncate()
+                    fh.write(str(cur))
+            except FileNotFoundError:
+                cur = 1
+                Path(count_file).write_text(str(cur))
+            subprocess.run(
+                [bar_script, "1", "", str(cur), str(self.end_count),
+                 f"{label:<31}", "40"],
+                check=False,
+            )
+        else:
+            self._py_count += 1
+            progress_bar(self._py_count, self.end_count, label)
 
 
 def get_packaged_data_path(rel: str) -> Path:
