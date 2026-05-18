@@ -9,7 +9,7 @@ Typical usage (as done by scripts/T1Prep) provides output directories and
 optionally atlas names:
 
     python src/t1prep/segment.py \
-        --input sub-01_T1w.nii.gz --mri_dir out/mri --report_dir out/report --label_dir out/label \
+        --input sub-01_T1w.nii.gz --mri-dir out/mri --report-dir out/report --label-dir out/label \
         --atlas "'Neuromorphometrics','suit'" --bids
 """
 
@@ -297,9 +297,9 @@ def parse_arguments() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--input", required=True, type=str, help="Input NIfTI image")
-    parser.add_argument("--mri_dir", required=True, type=str, help="Output folder for MRI volumes")
-    parser.add_argument("--report_dir", required=True, type=str, help="Output folder for reports/logs")
-    parser.add_argument("--label_dir", required=True, type=str, help="Output folder for labels/aux outputs")
+    parser.add_argument("--mri-dir", required=True, type=str, help="Output folder for MRI volumes")
+    parser.add_argument("--report-dir", required=True, type=str, help="Output folder for reports/logs")
+    parser.add_argument("--label-dir", required=True, type=str, help="Output folder for labels/aux outputs")
     parser.add_argument(
         "--atlas",
         type=str,
@@ -373,7 +373,7 @@ def parse_arguments() -> argparse.Namespace:
         "--skullstrip-only",
         action="store_true",
         help=(
-            "Only run skull stripping and save outputs to --mri_dir, then exit. "
+            "Only run skull stripping and save outputs to --mri-dir, then exit. "
             "Writes a skull-stripped volume and a brain mask."
         ),
     )

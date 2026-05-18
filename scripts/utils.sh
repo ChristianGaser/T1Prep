@@ -22,7 +22,7 @@
 # ______________________________________________________________________
 
 # defaults
-T1PREP_VERSION=0.4.1
+T1PREP_VERSION=0.4.2
 export T1PREP_VERSION
 os_type=$(uname -s) # Determine OS type
 

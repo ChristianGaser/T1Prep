@@ -184,10 +184,10 @@ def _build_segment_cmd(
 
     cmd += ["--seed",       str(seed)]
     cmd += ["--vessel",     str(vessel)]
-    cmd += ["--label_dir",  label_dir]
+    cmd += ["--label-dir",  label_dir]
     cmd += ["--input",      input_file]
-    cmd += ["--mri_dir",    mri_dir]
-    cmd += ["--report_dir", report_dir]
+    cmd += ["--mri-dir",    mri_dir]
+    cmd += ["--report-dir", report_dir]
     cmd += ["--atlas",      atlas]
     cmd += ["--count",      str(end_count)]
 

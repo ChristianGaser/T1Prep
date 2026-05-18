@@ -3,6 +3,7 @@
 .DS_Store
 .refact
 env
+build
 ideas.txt
 todo.txt
 log*
