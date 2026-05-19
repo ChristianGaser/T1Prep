@@ -39,7 +39,7 @@ atlas_templates_dir=${root_dir}/src/t1prep/data/atlases_surfaces_${res}
 
 DEFAULT_ANNOT="'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'"
 
-source "${script_dir}/utils.sh"
+source "${script_dir}/T1Prep_utils.sh"
 
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
 PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"

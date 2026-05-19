@@ -33,7 +33,7 @@ script_dir=$(dirname "$0")
 root_dir=$(dirname $script_dir)
 name_file=${root_dir}/src/t1prep/data/Names.tsv
 
-source "${script_dir}/utils.sh"
+source "${script_dir}/T1Prep_utils.sh"
 
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
 PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"

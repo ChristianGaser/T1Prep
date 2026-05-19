@@ -65,14 +65,25 @@ gui = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-# Standalone bash helpers shipped into <venv>/bin/ on install.  Only scripts
-# that are self-contained (no `source utils.sh`, no hardcoded "<repo>/env"
-# venv activation) belong here.  The wider bash orchestrator family
-# (`scripts/T1Prep`, `scripts/CAT_*_ui`, etc.) stays in the source tree and
-# is reached via `scripts/install.sh` for users who want that workflow.
+# Bash orchestrator family shipped into <venv>/bin/ on install.
+# T1Prep_utils.sh has dual-mode path resolution (source-tree vs installed)
+# and the other scripts source it via "${script_dir}/T1Prep_utils.sh", which
+# works because setuptools dumps them all into the same bin/ directory.
+# Skipped on purpose:
+#   - install.sh / activate_env.sh / run_with_env.sh  (bootstrappers)
+#   - T1Prep_ui / dice.sh / cat_viewsurf.sh           (hardcode <repo>/env)
+#   - realign_longitudinal.sh                         (use `python -m t1prep.realign_longitudinal`)
+#   - process_longitudinal.sh                         (depends on the above)
 script-files = [
+    "scripts/T1Prep",
+    "scripts/T1Prep_utils.sh",
     "scripts/parallelize",
     "scripts/progress_bar_multi.sh",
+    "scripts/CAT_GrepJson",
+    "scripts/CAT_VolSmooth_ui",
+    "scripts/CAT_Surf2ROIMulti_ui",
+    "scripts/CAT_SurfParameters_ui",
+    "scripts/CAT_SurfResampleMulti_ui",
 ]
 
 [tool.setuptools.packages.find]

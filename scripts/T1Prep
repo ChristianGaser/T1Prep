@@ -39,7 +39,7 @@ end_count=1
 cfg="${script_dir}/../T1Prep_defaults.txt"
 
 # Use some external functions
-source "${script_dir}/utils.sh"
+source "${script_dir}/T1Prep_utils.sh"
 progress_bar="${script_dir}/progress_bar_multi.sh"
 
 
@@ -533,12 +533,15 @@ process()
   # Set overall starting time
   start0=$(date +%s)
 
-  # Use defined environment
-  if [ ! -f "${T1prep_env}/bin/activate" ]; then
-    echo "${RED}Virtual environment not found at ${T1prep_env}. Run the script once without --no-overwrite to set it up.${NC}" >&2
-    exit 1
+  # Source-tree mode: activate the project-managed venv.  Installed mode is
+  # already inside a venv (pip dropped this script there), so do nothing.
+  if [ "${T1PREP_INSTALLED:-0}" -ne 1 ]; then
+    if [ ! -f "${T1prep_env}/bin/activate" ]; then
+      echo "${RED}Virtual environment not found at ${T1prep_env}. Run the script once without --no-overwrite to set it up.${NC}" >&2
+      exit 1
+    fi
+    source ${T1prep_env}/bin/activate
   fi
-  source ${T1prep_env}/bin/activate
 
   while [ "$i" -lt "$SIZE_OF_ARRAY" ]; do
     
@@ -669,10 +672,14 @@ process()
     # Check for outputs from previous step
     if [ -f "${input}" ]; then
 
-      # Ensure Python can import the package from repo `src/`
-      export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
-      # Initialize command string with the segmentation entrypoint
-      cmd="${python} ${src_dir}/segment.py"
+      # Use the module form so it works in both source-tree and installed
+      # mode (segment.py uses package-relative imports, which require running
+      # under the t1prep package — `${python} ${src_dir}/segment.py` would
+      # fail with "attempted relative import with no known parent package").
+      if [ "${T1PREP_INSTALLED:-0}" -ne 1 ]; then
+        export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
+      fi
+      cmd="${python} -m t1prep.segment"
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap"
@@ -1202,13 +1209,15 @@ EOM
 
 check_python_cmd
 
-# Check whether local Python environment exists
-if [ ! -d "${T1prep_env}" ]; then
+# Source-tree mode only: offer to create the project-managed venv if missing.
+# In installed mode T1prep_env="" and we skip this entirely (the venv is
+# already in place because pip dropped this script into it).
+if [ "${T1PREP_INSTALLED:-0}" -ne 1 ] && [ ! -d "${T1prep_env}" ]; then
 
   # Prompt the user with a Y/N question
   echo "${RED}${BOLD}Local Python environment "${T1prep_env}" not found.${NC}"
   read -p "Do you want to install required Python libraries? (Y/N)" response
-  
+
   # Check if the user's answer is 'Y'
   case "$response" in
     [Yy]*)

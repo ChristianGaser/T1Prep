@@ -10,7 +10,6 @@
 # - get_pattern: Get the pattern from the desired column in namefile
 # - substitute_pattern: Substitute variables in the pattern
 # - check_files: Checks if the input files exist.
-# - run_cmd_log: Run command and print output and execution time to report file
 # - filter_arguments: Filter arguments so that filenames are removed
 #
 # ______________________________________________________________________
@@ -24,15 +23,54 @@
 # defaults
 os_type=$(uname -s) # Determine OS type
 
-# Directory of this utils.sh file (robust when sourced)
+# Directory of this T1Prep_utils.sh file (robust when sourced)
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-root_dir="$(cd "${script_dir}/.." && pwd)"
-src_dir=${root_dir}/src/t1prep
-data_dir=${src_dir}/data
+
+# ----------------------------------------------------------------------
+# Dual-mode path resolution
+# ----------------------------------------------------------------------
+# T1Prep_utils.sh works in two layouts:
+#
+#   1. Source-tree mode  — repo checkout; this script lives in <repo>/scripts/
+#      and the package sits at <repo>/src/t1prep/.  A project-managed venv is
+#      expected at <repo>/env/.
+#
+#   2. Installed mode    — `pip install T1Prep` placed this script in
+#      <venv>/bin/ via setuptools `script-files`.  The package sits inside
+#      site-packages; locate its data dir via importlib.resources using the
+#      venv's python (sibling of this script).  The venv is already active
+#      (or at least on PATH), so the venv-management functions are no-ops.
+# ----------------------------------------------------------------------
+
+if [ -d "${script_dir}/../src/t1prep" ]; then
+  T1PREP_INSTALLED=0
+  root_dir="$(cd "${script_dir}/.." && pwd)"
+  src_dir=${root_dir}/src/t1prep
+  data_dir=${src_dir}/data
+  T1prep_env=${root_dir}/env
+else
+  T1PREP_INSTALLED=1
+  # Prefer the venv's python sitting next to this script
+  if [ -x "${script_dir}/python" ]; then
+    python="${python:-${script_dir}/python}"
+  elif [ -x "${script_dir}/python3" ]; then
+    python="${python:-${script_dir}/python3}"
+  else
+    python="${python:-$(command -v python3 || command -v python)}"
+  fi
+  data_dir="$("${python}" -c 'from importlib.resources import files; print(files("t1prep").joinpath("data"))' 2>/dev/null)"
+  if [ -z "${data_dir}" ] || [ ! -d "${data_dir}" ]; then
+    echo "ERROR: cannot locate t1prep package data — is T1Prep installed in this Python environment?" >&2
+    exit 1
+  fi
+  src_dir="$(dirname "${data_dir}")"   # site-packages/t1prep
+  root_dir="${src_dir}"                # used only by a few legacy code paths
+  T1prep_env=""                        # already inside a managed venv
+fi
+
 name_file=${data_dir}/Names.tsv
 surf_templates_dir=${data_dir}/templates_surfaces_32k
 atlas_templates_dir=${data_dir}/atlases_surfaces_32k
-T1prep_env=${root_dir}/env
 
 # Read T1Prep version from the Python package's __init__.py — the single
 # source of truth (pyproject.toml already derives its version from
@@ -164,30 +202,6 @@ get_no_processes () {
   fi
 }
 
-# ----------------------------------------------------------------------
-# Run command and log function
-# ----------------------------------------------------------------------
-
-run_cmd_log() {
-    local report_log="$1"
-    shift
-    local start_cmd end_cmd runtime
-
-    # Ensure the report directory exists (important when called from functions
-    # that change the working directory, e.g. surface estimation).
-    mkdir -p "$(dirname "${report_log}")" 2>/dev/null || true
-
-    start_cmd=$(date +%s)
-
-    for cmd in "$@"; do
-        echo "${cmd}" >> "${report_log}"
-        eval "${cmd}" >> "${report_log}" 2>&1
-    done
-
-    end_cmd=$(date +%s)
-    runtime=$((end_cmd - start_cmd))
-    echo "Execution time: ${runtime}s" >> "${report_log}"
-}
 
 # ----------------------------------------------------------------------
 # Cleanup function
@@ -246,6 +260,12 @@ filter_arguments() {
 
 check_python_cmd()
 {
+  # In installed mode the dual-mode block above has already set ``python`` to
+  # the venv's interpreter — nothing to discover or validate.
+  if [ "${T1PREP_INSTALLED:-0}" -eq 1 ]; then
+    return 0
+  fi
+
   if [ -z "$python" ]; then
     if command -v python3.12 &>/dev/null; then
       python="python3.12"
@@ -381,7 +401,17 @@ check_venv_prerequisites()
 # ----------------------------------------------------------------------
 
 check_python_libraries()
-{  
+{
+  # In installed mode the user already has a managed venv with T1Prep on it
+  # (otherwise we wouldn't be running).  Recreating it from here would clobber
+  # their environment.  Quietly accept --install / --re-install as no-ops.
+  if [ "${T1PREP_INSTALLED:-0}" -eq 1 ]; then
+    if [ "${re_install:-0}" -eq 1 ]; then
+      echo "${YELLOW}--install/--re-install ignored: T1Prep was installed via pip; reinstall with 'pip install --force-reinstall T1Prep' if needed.${NC}"
+    fi
+    return 0
+  fi
+
   # Remove T1pre-env if reinstallation is selected
   [[ -d "${T1prep_env}" && "${re_install}" -eq 1 ]] &&  rm -r "${T1prep_env}"
 

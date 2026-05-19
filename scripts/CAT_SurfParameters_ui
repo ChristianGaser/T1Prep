@@ -34,7 +34,7 @@
 os_type=$(uname -s) # Determine OS type
 
 script_dir=$(dirname "$0")
-source "${script_dir}/utils.sh"
+source "${script_dir}/T1Prep_utils.sh"
 
 # Parameters
 use_absolute=0

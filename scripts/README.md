@@ -285,7 +285,6 @@ Shared bash utility functions sourced by most other scripts. Provides:
 - `exit_if_empty` — Argument validation
 - `check_python_cmd` / `check_python_module` / `check_python_libraries` — Python environment checks
 - `check_files` — Input file validation
-- `run_cmd_log` — Command execution with logging
 - `filter_arguments` — Argument filtering
 - Text formatting constants (`BOLD`, `RED`, `GREEN`, etc.)
 

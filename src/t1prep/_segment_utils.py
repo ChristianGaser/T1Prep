@@ -20,7 +20,7 @@ from scipy.ndimage import (
     grey_opening,
     median_filter,
 )
-from .utils import (
+from utils import (
     DATA_PATH_T1PREP,
     TEMPLATE_PATH_T1PREP, 
     find_largest_cluster, 
@@ -809,13 +809,7 @@ def get_atlas(
             yx.permute(0, 4, 1, 2, 3), shape, mode="trilinear", align_corners=False
         )
         warps = {shape: scaled_yx.permute(0, 2, 3, 4, 1)}
-        # AtlasRegistration internally pins its tensors to its own (CPU)
-        # device.  When ``device`` here is MPS/CUDA, the warp would be on a
-        # different device than the atlas tensor, triggering grid_sample's
-        # "input and grid to be on same device" error.  Align them.
-        atlas = atlas_register(
-            affine, warps[shape].to(atlas_register.device), atlas, t1.shape
-        )
+        atlas = atlas_register(affine, warps[shape], atlas, t1.shape)
 
     atlas_tensor = nifti_to_tensor(atlas)[None, None].to(device)
 

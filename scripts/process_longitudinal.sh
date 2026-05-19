@@ -11,7 +11,7 @@ T1PREP_CMD="$SCRIPT_DIR/T1Prep"
 # We run with nounset, but utils.sh is shared with scripts that don't.
 # Temporarily disable nounset while sourcing to avoid unbound variable errors.
 set +u
-source "$SCRIPT_DIR/utils.sh"
+source "$SCRIPT_DIR/T1Prep_utils.sh"
 set -u
 
 USE_AMAP=0

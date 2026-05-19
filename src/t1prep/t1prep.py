@@ -62,7 +62,7 @@ def _resolve_output_dirs(
 ) -> tuple:
     """Return *(outdir0, use_subfolder, bname)*.
 
-    Mirrors ``t1prep_output_folder_from_input`` in ``scripts/utils.sh``.
+    Mirrors ``t1prep_output_folder_from_input`` in ``scripts/T1Prep_utils.sh``.
 
     Parameters
     ----------
