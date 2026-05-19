@@ -279,7 +279,7 @@ Extracts specific fields from T1Prep JSON report files (generated during process
 
 These scripts are used internally by the pipeline and typically not called directly by users.
 
-### `utils.sh`
+### `T1Prep_utils.sh`
 
 Shared bash utility functions sourced by most other scripts. Provides:
 - `exit_if_empty` — Argument validation

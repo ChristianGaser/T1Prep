@@ -1199,7 +1199,7 @@ ${BOLD}Used Functions:${NC}
   CAT_VolThicknessPbt
   segment.py
   progress_bar_multi.sh
-  utils.sh
+  T1Prep_utils.sh
   parallelize
 
 ${BOLD}Author:${NC}
