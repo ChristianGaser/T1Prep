@@ -332,20 +332,16 @@ process()
     fi
     
     LH_UNIT="${LH_ARRAY[$i]}" RH_UNIT="${RH_ARRAY[$i]}" OUT_FILE="${OUT_ARRAY[$i]}" python3 - <<PYEOF 2>&1
-import os, os.path as op, cat_surf.cli as cli
+import os, cat_surf.cli as cli
 def parse_unit(s):
     d = {}
     for tok in s.split(','):
         k, _, v = tok.partition('=')
         d[k.strip()] = v.strip()
     return d
-out = os.environ['OUT_FILE']
-base, ext = op.splitext(out)
-surf_out = base + '.surf.gii' if ext.lower() in ('.dat', '.gii') else out + '.surf.gii'
 cli.surf_resample_multi(
     [parse_unit(os.environ['LH_UNIT']), parse_unit(os.environ['RH_UNIT'])],
-    surf_out,
-    output_values_file=out,
+    os.environ['OUT_FILE'],
     fwhm=${fwhm},
     areal=bool(${areal}),
 )
