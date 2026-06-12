@@ -327,10 +327,6 @@ get_outputname()
     18) str="sulc" ;;
   esac
 
-  if [[ "$use_absolute" -eq 1 ]]; then
-    str="a${str}"
-  fi
-
   bn1=${bn%%.*}
   if [[ "$bn1" == "lh" || "$bn1" == "rh" ]]; then
     # FreeSurfer-like naming: collapse "lh.central.SUBJ" -> "lh.SUBJ"
@@ -460,33 +456,33 @@ If an input file is named like "lh.*", the corresponding "rh.*" file is also
 processed automatically (if present).
 
 ${BOLD}OPTIONS:${NC}
-  --no-parallel   Disable parallelization via ${script_dir}/parallelize
-  --jobs <N>      Number of parallel processes (passed to parallelize -p)
+  --no-parallel    Disable parallelization via ${script_dir}/parallelize
+  --jobs <N>       Number of parallel processes (passed to parallelize -p)
 
-  -r <STR>        Remove string from output name
-  -noclobber      Do not overwrite existing output
-  -gifti          Save output as GIfTI (appends .gii)
+  --r <STR>        Remove string from output name
+  --noclobber      Do not overwrite existing output
+  --gifti          Save output as GIfTI (appends .gii)
 
-  -gy             Gyrification based on absolute mean curvature abs(k1+k2)/2 [default]
-  -mc | -curv     Mean curvature (in radians) (k1+k2)/2
-  -be | -bi       Bending energy k1*k1 + k2*k2
-  -gc             Gaussian curvature k1*k2
-  -cv             Curvedness sqrt(0.5*(k1*k1+k2*k2))
-  -si             Shape index atan((k1+k2)/(k2-k1))
-  -sh             Sharpness (k1 - k2)^2
-  -fi             Folding index |k1|*(|k1| - |k2|)
-  -min-curv       Minimum curvature k2
-  -max-curv       Maximum curvature k1
-  -dp             Depth potential with alpha = 1/curvtype (curvtype=650)
-  -sulc           Sulcal depth (using inflated surface based on Freesurfer method)
-  -depth          Sulcal depth (using convex hull)
-  -sqrt-depth     Sqrt-transformed sulcal depth (more normally distributed)
-  -area           Surface area
-  -fd  | -frac    Fractal dimension
-  -sr  | -tGI     Surface ratio with radius=20mm (Toro et al. 2008)
-  -sra | -tGIa    Surface ratio with adaptive radius estimation (Toro et al. 2008)
+  --gy             Gyrification based on absolute mean curvature abs(k1+k2)/2 [default]
+  --mc | --curv    Mean curvature (in radians) (k1+k2)/2
+  --be | --bi      Bending energy k1*k1 + k2*k2
+  --gc             Gaussian curvature k1*k2
+  --cv             Curvedness sqrt(0.5*(k1*k1+k2*k2))
+  --si             Shape index atan((k1+k2)/(k2-k1))
+  --sh             Sharpness (k1 - k2)^2
+  --fi             Folding index |k1|*(|k1| - |k2|)
+  --min-curv       Minimum curvature k2
+  --max-curv       Maximum curvature k1
+  --dp             Depth potential with alpha = 1/curvtype (curvtype=650)
+  --sulc           Sulcal depth (using inflated surface based on Freesurfer method)
+  --depth          Sulcal depth (using convex hull)
+  --sqrt-depth     Sqrt-transformed sulcal depth (more normally distributed)
+  --area           Surface area
+  --fd  | --frac   Fractal dimension
+  --sr  | --tGI    Surface ratio with radius=20mm (Toro et al. 2008)
+  --sra | --tGIa   Surface ratio with adaptive radius estimation (Toro et al. 2008)
 
-  -h | --help     Show this help and exit
+  -h | --help      Show this help and exit
 
 ${BOLD}INPUT NAMING EXPECTATIONS:${NC}
   *.obj and *.gii are accepted.
