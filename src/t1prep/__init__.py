@@ -12,6 +12,17 @@ if _sys.platform == "darwin":
 
 __version__ = "0.4.5"
 
+# Import torch *before* cat_surf.  cat_surf's compiled `_surf` extension
+# statically embeds its own LLVM OpenMP runtime, while torch loads its own
+# libomp.dylib dynamically.  Whichever OpenMP runtime initializes first owns
+# the process-wide OpenMP state; if cat_surf's static libomp goes first,
+# torch's libomp collides with it and the process hard-crashes (SIGSEGV in
+# __kmp_suspend_64).  Importing torch first is deterministic and avoids the
+# crash without needing KMP_DUPLICATE_LIB_OK / OMP_NUM_THREADS workarounds.
+# This runs for every `python -m t1prep.*` entry point because the package
+# __init__ is imported before any submodule.
+import torch as _torch  # noqa: F401
+
 from . import cat_surf  # noqa: F401 – expose t1prep.cat_surf namespace
 from .t1prep import run_t1prep
 from .utils import (

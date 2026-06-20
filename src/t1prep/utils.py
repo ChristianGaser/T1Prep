@@ -570,6 +570,8 @@ def resample_and_save_nifti(
         out_name (str): The output filename.
         align (bool, optional): Whether to align the brain. Defaults to None.
         crop (bool, optional): Whether to crop the image. Defaults to None.
+        round (bool, optional): Whether to round the resampled values.
+                                 Defaults to False.
         clip (tuple, optional): A tuple with min and max values to clip the data.
                                  Defaults to None.
     """

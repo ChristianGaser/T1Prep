@@ -356,7 +356,7 @@ surface_estimation()
   # File should already have been initialised by the outer loop before the
   # hemisphere processes were launched; create it here only as a safety fallback.
   [[ -f "${_count_file}" ]] || echo "${count}" > "${_count_file}"
-  python -m t1prep.surface_estimation \
+  ${python} -m t1prep.surface_estimation \
       --bname "${bname}" --side "${side}" \
       --mri-dir "${mri_dir}" --surf-dir "${surf_dir}" \
       --estimate-spherereg "${estimate_spherereg}" \
@@ -679,7 +679,7 @@ process()
       if [ "${T1PREP_INSTALLED:-0}" -ne 1 ]; then
         export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
       fi
-      cmd="${python} -m t1prep.segment"
+      cmd="KMP_DUPLICATE_LIB_OK=TRUE OMP_NUM_THREADS=1 ${python} -m t1prep.segment"
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap"
@@ -700,9 +700,9 @@ process()
       [ "${skullstrip_only}" -eq 1 ] && cmd+=" --skullstrip-only"
       [ "${skip_skullstrip}" -eq 1 ] && cmd+=" --skip-skullstrip"
 
-      cmd+=" --seed ${seed} --vessel \"${vessel}\" --label_dir \"${label_dir}\""
-      cmd+=" --input \"${input}\" --mri_dir \"${mri_dir}\""
-      cmd+=" --report_dir \"${report_dir}\" --atlas \"${atlas_vol}\" --count ${end_count}"
+      cmd+=" --seed ${seed} --vessel \"${vessel}\" --label-dir \"${label_dir}\""
+      cmd+=" --input \"${input}\" --mri-dir \"${mri_dir}\""
+      cmd+=" --report-dir \"${report_dir}\" --atlas \"${atlas_vol}\" --count ${end_count}"
       
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
