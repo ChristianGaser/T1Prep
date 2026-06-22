@@ -474,7 +474,8 @@ ${BOLD}OPTIONS:${NC}
   --min-curv       Minimum curvature k2
   --max-curv       Maximum curvature k1
   --dp             Depth potential with alpha = 1/curvtype (curvtype=650)
-  --sulc           Sulcal depth (using inflated surface based on Freesurfer method)
+  --sulc           Sulcal depth (using inflated surface based on Freesurfer method
+                   aka average convexity)
   --depth          Sulcal depth (using convex hull)
   --sqrt-depth     Sqrt-transformed sulcal depth (more normally distributed)
   --area           Surface area

@@ -679,7 +679,7 @@ process()
       if [ "${T1PREP_INSTALLED:-0}" -ne 1 ]; then
         export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
       fi
-      cmd="KMP_DUPLICATE_LIB_OK=TRUE OMP_NUM_THREADS=1 ${python} -m t1prep.segment"
+      cmd="${python} -m t1prep.segment"
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap"
@@ -1179,24 +1179,8 @@ ${BOLD}Input:${NC}
 ${BOLD}Output:${NC}
   Produces segmented images and surface extractions.
 
-${BOLD}Used Functions:${NC}  
-  CAT_Surf2PialWhite
-  CAT_Surf2Sphere
-  CAT_SurfArea
-  CAT_SurfAverage
-  CAT_SurfCorrectThicknessFolding
-  CAT_SurfDeform
-  CAT_SurfDistance
-  CAT_SurfReduce
-  CAT_SurfRemoveIntersections
-  CAT_SurfResample
-  CAT_SurfWarp
-  CAT_Vol2Surf
-  CAT_VolAmap
-  CAT_VolBloodVesselCorrection
-  CAT_VolMarchingCubes
-  CAT_VolSanlm
-  CAT_VolThicknessPbt
+${BOLD}Used Functions:${NC}
+  surface_estimation.py
   segment.py
   progress_bar_multi.sh
   T1Prep_utils.sh
