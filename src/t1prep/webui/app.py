@@ -507,15 +507,23 @@ def atlas_help():
     truncated = len(lines) > 20
 
     return jsonify({"name": name, "text": preview, "truncated": truncated})
-def _resolve_out_dir_within_root(root: Path, user_value: str) -> Path:
-    user_path = Path(user_value.strip())
-    if not user_value or user_path.is_absolute():
-        raise ValueError("Output directory must be within the application root.")
+def _resolve_out_dir(user_value: str) -> Path:
+    """Resolve a user-provided output directory.
 
-    root_resolved = root.resolve(strict=True)
-    candidate = (root_resolved / user_path).resolve(strict=False)
-    candidate.relative_to(root_resolved)
-    return candidate
+    ``t1prep-ui`` is a local, single-user tool, so the output directory may
+    live anywhere the user can write (e.g. the ``~/T1Prep_output`` default
+    suggested by ``/get-default-output``, or an absolute path next to the
+    input data). ``~`` is expanded; relative paths are interpreted against
+    ``BASE_DIR``.
+    """
+    value = user_value.strip()
+    if not value or "\x00" in value:
+        raise ValueError("Output directory is required.")
+
+    user_path = Path(value).expanduser()
+    if not user_path.is_absolute():
+        user_path = BASE_DIR / user_path
+    return user_path.resolve(strict=False)
 
 
 @app.route("/submit", methods=["POST"])
@@ -540,9 +548,9 @@ def submit():
         return "Output directory is required.", 400
 
     try:
-        out_dir = _resolve_out_dir_within_root(BASE_DIR, out_dir_str)
-    except ValueError:
-        return "Output directory must be within the application root.", 400
+        out_dir = _resolve_out_dir(out_dir_str)
+    except (ValueError, OSError):
+        return "Output directory is invalid.", 400
     out_dir.mkdir(parents=True, exist_ok=True)
 
     job_id = uuid.uuid4().hex
