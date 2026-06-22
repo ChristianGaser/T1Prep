@@ -92,20 +92,34 @@ from t1prep import run_t1prep
 run_t1prep("/path/to/sub-01_T1w.nii.gz")
 ```
 
-…or as a CLI:
+…or from the command line. A `pip install` places every entry point into the
+active environment's `bin/` directory, so once that directory is on your `PATH`
+the following commands are available:
 
 ```bash
-python -m t1prep.t1prep --input sub-01_T1w.nii.gz --out-dir out/
+T1Prep file.nii.gz                 # main CLI (batch + parallel, --multi)
+t1prep-ui                          # web UI
+t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
+cat-viewsurf lh.central.gii        # surface viewer
 ```
+
+> The `T1Prep` command is the bash orchestrator (full features incl. `--multi`
+> batch parallelism); `t1prep-run` is the equivalent single-subject Python
+> entry. Add the environment's `bin/` to `PATH` and you never need to call
+> anything from the source `scripts/` folder.
 
 ### Bash bootstrapper (full source tree)
 
-If you also want the bash orchestrator (`scripts/T1Prep`) — useful for
-multi-subject parallelism — install T1Prep with the bundled bootstrapper:
+To install everything (the package, all dependencies, and every entry point)
+into a self-contained environment, use the bundled bootstrapper:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
 ```
+
+It creates a virtualenv, installs T1Prep into it, and prints the `export PATH`
+line to add its `bin/` directory to your shell. After that, run `T1Prep`,
+`t1prep-ui`, etc. directly.
 
 The installer will interactively prompt you to:
 1. **Select a version**: Latest release, development (main branch), or choose from available releases
@@ -181,7 +195,7 @@ offline or air-gapped setup), you can install the dependencies yourself.
 **From PyPI into your own virtualenv:**
 ```bash
 python3.12 -m venv env
-source env/bin/activate
+source env/bin/activate         # or add env/bin to PATH
 pip install T1Prep
 ```
 
@@ -196,10 +210,16 @@ pip install -e .                    # editable; tracks local edits
 pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
+Either way the entry points (`T1Prep`, `t1prep-ui`, `t1prep-run`,
+`cat-viewsurf`, `t1prep-download-models`) are placed in `env/bin`. Activating
+the venv — or adding `env/bin` to your `PATH` — is all that is needed; the
+source `scripts/` folder is only a dev fallback and should not be put on `PATH`.
+
 **Source ZIP plus bash bootstrapper** (kept for parity with older docs):
 ```bash
 unzip T1Prep_$version.zip -d your_installation_folder
-./scripts/T1Prep --python python3.12 --install
+./scripts/T1Prep --python python3.12 --install   # creates env/ and installs into it
+export PATH="$PWD/env/bin:$PATH"                  # then use T1Prep, t1prep-ui, …
 ```
 
 ## Web UI (Flask)
@@ -209,13 +229,13 @@ files, lets you configure General and Save options, and can schedule jobs to
 start at a specific time.
 
 ```bash
-./scripts/T1Prep_ui
+t1prep-ui
 ```
 
 By default the Web UI runs on port 5050. To use a different port:
 
 ```bash
-./scripts/T1Prep_ui 5500
+t1prep-ui 5500
 ```
 
 When started, the UI will try to open an app-style window (Chrome if available,
@@ -227,11 +247,11 @@ Then open http://127.0.0.1:5050 (or the port you selected) in your browser.
 To prevent auto-opening a browser window:
 
 ```bash
-./scripts/T1Prep_ui --no-browser
+t1prep-ui --no-browser
 ```
 
-Uploaded files are stored under `webui_uploads/` and per-job logs under
-`webui_jobs/`.
+Uploaded files are stored under `webui_uploads/` (in the current working
+directory) and per-job logs under `webui_jobs/`.
 
 ## Docker
 
@@ -312,35 +332,39 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
    
 ## Usage
 ```bash
-./scripts/T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
+T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
 ```
+
+(`T1Prep` resolves from the environment's `bin/` once it is on your `PATH`; from
+a source checkout without an install you can still run `./scripts/T1Prep`.)
 
 ## Helper Scripts
 
-In addition to `./scripts/T1Prep`, the following wrappers provide convenient
-entry points for Web UI and CAT-Surface post-processing.
+In addition to `T1Prep`, the following commands — all installed into the
+environment's `bin/` — provide convenient entry points for the Web UI and
+CAT-Surface post-processing.
 
-### `./scripts/T1Prep_ui`
+### `t1prep-ui`
 
 Launches the Flask Web UI (same tool described in the [Web UI (Flask)](#web-ui-flask) section).
 
 ```bash
-./scripts/T1Prep_ui
-./scripts/T1Prep_ui 5500
-./scripts/T1Prep_ui --no-browser
+t1prep-ui
+t1prep-ui 5500
+t1prep-ui --no-browser
 ```
 
 - Default port: `5050`
 - Optional positional port argument (e.g., `5500`)
 - `--no-browser` disables auto-launching a browser/app window
 
-### `./scripts/CAT_SurfResampleMulti_ui`
+### `CAT_SurfResampleMulti_ui`
 
 Resamples LH/RH surface values to target spheres and writes a combined output
 per LH input using `CAT_SurfResampleMulti`.
 
 ```bash
-./scripts/CAT_SurfResampleMulti_ui [options] lh.thickness.subject.gii
+CAT_SurfResampleMulti_ui [options] lh.thickness.subject.gii
 ```
 
 Common options:
@@ -355,14 +379,14 @@ Input expectations:
 - Supports `lh.*` naming and auto-derives RH counterparts
 - BIDS-style `*_left*` naming is currently not implemented
 
-### `./scripts/CAT_SurfParameters_ui`
+### `CAT_SurfParameters_ui`
 
 Computes surface parameters from mesh files using CAT-Surface binaries
 (`CAT_SurfCurvature`, `CAT_SurfFractalDimension`, `CAT_SurfArea`,
 `CAT_SurfRatio`, `CAT_SurfSulcusDepth`) bundled in `src/t1prep/bin/`.
 
 ```bash
-./scripts/CAT_SurfParameters_ui [options] lh.central.gii
+CAT_SurfParameters_ui [options] lh.central.gii
 ```
 
 Common options:
@@ -376,13 +400,13 @@ Input expectations:
 - Accepts `.obj` and `.gii`
 - For `lh.*` files, matching `rh.*` is processed automatically when available
 
-### `./scripts/CAT_Surf2ROIMulti_ui`
+### `CAT_Surf2ROIMulti_ui`
 
 Extracts ROI-wise values from surface value files using `CAT_Surf2ROIMulti`.
 For each LH input, RH files are derived automatically.
 
 ```bash
-./scripts/CAT_Surf2ROIMulti_ui [options] lh.thickness.subject.gii
+CAT_Surf2ROIMulti_ui [options] lh.thickness.subject.gii
 ```
 
 Common options:
@@ -399,8 +423,8 @@ Atlas names for `--annot` are resolved as:
 Multi-atlas examples:
 
 ```bash
-./scripts/CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'" lh.thickness.subject.gii
-./scripts/CAT_Surf2ROIMulti_ui --annot "aparc_DK40.freesurfer,aparc_a2009s.freesurfer" lh.thickness.subject.gii
+CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'" lh.thickness.subject.gii
+CAT_Surf2ROIMulti_ui --annot "aparc_DK40.freesurfer,aparc_a2009s.freesurfer" lh.thickness.subject.gii
 ```
 
 ## Python API
@@ -424,7 +448,7 @@ run_t1prep([
 ## Options
 Simply call T1Prep to see available options
 ```bash
-./scripts/T1Prep
+T1Prep
 ```
 
 Skull-stripping modes:
@@ -479,48 +503,48 @@ With --out-dir /results:
 
 ## Examples
 ```bash
-  ./scripts/T1Prep --out-dir test_folder sTRIO*.nii
+  T1Prep --out-dir test_folder sTRIO*.nii
 ```
 Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation 
 and surface maps, saving the results in the 'test_folder' directory.
 
 ```bash
-  ./scripts/T1Prep --no-surf sTRIO*.nii
+  T1Prep --no-surf sTRIO*.nii
 ```
 Process all files matching the pattern 'sTRIO*.nii', but skip surface 
 creation. Only segmentation maps are generated and saved in the same 
 directory as the input files.
 
 ```bash
-  ./scripts/T1Prep --python python3.9 --no-overwrite "surf/lh.thickness." sTRIO*.nii
+  T1Prep --python python3.9 --no-overwrite "surf/lh.thickness." sTRIO*.nii
 ```
 Process all files matching the pattern `'sTRIO*.nii'` and use python3.9. 
 Skip processing for files where 'surf/lh.thickness.*' already exists, and 
 save new results in the same directory as the input files.
 
 ```bash
-  ./scripts/T1Prep --lesion --no-sphere sTRIO*.nii
+  T1Prep --lesion --no-sphere sTRIO*.nii
 ```
 Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of 
 spherical registration, but additionally save lesion map (named p7sTRIO*.nii) 
 in native space.
 
 ```bash
-  ./scripts/T1Prep --amap sTRIO*.nii
+  T1Prep --amap sTRIO*.nii
 ```
 Process all files matching the pattern `'sTRIO*.nii'` and enable AMAP segmentation.
   
 ```bash
-  ./scripts/T1Prep --multi 8 --p --csf sTRIO*.nii
+  T1Prep --multi 8 --p --csf sTRIO*.nii
 ```
 
 ```bash
-  ./scripts/T1Prep --skullstrip-only --out-dir test_folder sTRIO*.nii
+  T1Prep --skullstrip-only --out-dir test_folder sTRIO*.nii
 ```
 Only run skull-stripping and write the skull-stripped image and brain mask.
 
 ```bash
-  ./scripts/T1Prep --skip-skullstrip --out-dir test_folder sTRIO*_brain.nii
+  T1Prep --skip-skullstrip --out-dir test_folder sTRIO*_brain.nii
 ```
 Skip skull-stripping for already skull-stripped inputs.
 Process all files matching the pattern 'sTRIO*.nii'. Additionally save 

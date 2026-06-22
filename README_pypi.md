@@ -32,6 +32,18 @@ For full documentation, CLI usage, Docker instructions, and helper scripts see t
 pip install T1Prep
 ```
 
+`pip install` places every entry point into the active environment's `bin/`
+directory. With that directory on your `PATH` (e.g. an activated venv) the
+following commands are available:
+
+| Command | Role |
+| --- | --- |
+| `T1Prep` | main CLI — batch + parallel processing (`--multi`) |
+| `t1prep-ui` | browser-based web UI |
+| `t1prep-run` | single-subject Python entry |
+| `cat-viewsurf` | surface viewer |
+| `t1prep-download-models` | fetch model weights |
+
 ### Download model weights
 
 Model weights are not bundled in the wheel (they are ~500 MB). Download them after installation:

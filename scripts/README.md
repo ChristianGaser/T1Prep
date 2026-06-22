@@ -1,6 +1,13 @@
 # Scripts
 
-This directory contains the shell scripts that make up the T1Prep command-line interface, environment helpers, processing utilities, and CAT surface/volume tools. All scripts automatically activate the project virtual environment (`env/`) when needed.
+This directory contains the shell scripts behind the T1Prep command-line interface, environment helpers, processing utilities, and CAT surface/volume tools. All scripts automatically activate the project virtual environment (`env/`) when needed.
+
+> **Installed usage:** after `pip install` (or the bash bootstrapper), these
+> entry points are placed into the environment's `bin/` directory — put that on
+> your `PATH` and call them directly (`T1Prep`, `t1prep-ui`, `t1prep-run`,
+> `cat-viewsurf`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
+> `./scripts/<name>` form shown below is the source-tree/dev fallback; the
+> `scripts/` folder itself does not need to be on `PATH`.
 
 ---
 
@@ -23,19 +30,19 @@ The primary CLI entry point for the entire T1Prep pipeline. It performs preproce
 
 ```bash
 # Show all available options
-./scripts/T1Prep --help
+T1Prep --help
 
 # Process a single file
-./scripts/T1Prep --out-dir /tmp/out sub-01_T1w.nii.gz
+T1Prep --out-dir /tmp/out sub-01_T1w.nii.gz
 
 # Batch process with automatic parallelization
-./scripts/T1Prep --multi -1 --out-dir /tmp/out *.nii.gz
+T1Prep --multi -1 --out-dir /tmp/out *.nii.gz
 
 # Segmentation only (no surface estimation)
-./scripts/T1Prep --no-surf sub-01_T1w.nii.gz
+T1Prep --no-surf sub-01_T1w.nii.gz
 
 # Fast mode (skip spherical registration, atlas, pial/white surfaces)
-./scripts/T1Prep --fast sub-01_T1w.nii.gz
+T1Prep --fast sub-01_T1w.nii.gz
 ```
 
 **Key features:**
