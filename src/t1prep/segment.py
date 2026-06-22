@@ -98,6 +98,27 @@ from ._models import (
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
 
+
+def _progress_bar_script():
+    """Locate ``progress_bar_multi.sh`` in both source-tree and installed layouts.
+
+    Source-tree / editable installs keep it at ``<repo>/scripts/``; an installed
+    venv ships it into ``<venv>/bin/`` via setuptools ``script-files`` (so
+    ``parents[2]`` points into ``site-packages`` and the old ``ROOT_PATH/scripts``
+    path does not exist).  Returns ``None`` when it cannot be found, so callers
+    fall back to the pure-Python progress renderer rather than crashing.
+    """
+    candidates = (
+        ROOT_PATH / "scripts" / "progress_bar_multi.sh",   # source tree / editable
+        Path(sys.prefix) / "bin" / "progress_bar_multi.sh",  # installed venv bin
+    )
+    for c in candidates:
+        if c.is_file():
+            return c
+    found = shutil.which("progress_bar_multi.sh")
+    return Path(found) if found else None
+
+
 def shell_progress(count, end_count, label, failed=0):
     # When invoked from the pure-Python API (t1prep.run_t1prep), end_count is
     # 0 because the bash orchestrator's pre-scan that computes the step total
@@ -105,7 +126,10 @@ def shell_progress(count, end_count, label, failed=0):
     # by zero in progress_bar_multi.sh and stay free of bash dependencies.
     if end_count <= 0:
         return progress_bar(count, end_count, label, failed=bool(failed))
-    script = ROOT_PATH / "scripts" / "progress_bar_multi.sh"
+    script = _progress_bar_script()
+    if script is None:
+        # Shell renderer unavailable — fall back to the Python progress bar.
+        return progress_bar(count, end_count, label, failed=bool(failed))
     subprocess.run(
         [str(script), "1", "", str(count), str(end_count), label, "40", str(failed)],
         check=False)
