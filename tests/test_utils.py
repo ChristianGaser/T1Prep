@@ -125,8 +125,8 @@ class TestUtils(unittest.TestCase):
 
     def test_get_packaged_data_path_exists(self):
         # Should resolve both in editable (repo) mode and when installed.
-        p = get_packaged_data_path("cat_viewsurf_defaults.txt")
-        self.assertEqual(p.name, "cat_viewsurf_defaults.txt")
+        p = get_packaged_data_path("cat_surf_view_defaults.txt")
+        self.assertEqual(p.name, "cat_surf_view_defaults.txt")
         self.assertTrue(p.exists())
 
     def test_crop_nifti_image_with_border_even_dims(self):

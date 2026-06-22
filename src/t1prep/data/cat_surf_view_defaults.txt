@@ -1,4 +1,4 @@
-# Default settings for src/cat_viewsurf.py (key=value)
+# Default settings for src/t1prep/gui/cat_surf_view.py (key=value)
 # Lines starting with # are comments. Values not explicitly set on the CLI
 # will be overridden by this file when present.
 

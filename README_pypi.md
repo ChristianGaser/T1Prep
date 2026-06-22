@@ -41,7 +41,7 @@ following commands are available:
 | `T1Prep` | main CLI — batch + parallel processing (`--multi`) |
 | `t1prep-ui` | browser-based web UI |
 | `t1prep-run` | single-subject Python entry |
-| `cat-viewsurf` | surface viewer |
+| `CAT_SurfView` | surface viewer |
 | `t1prep-download-models` | fetch model weights |
 
 ### Download model weights

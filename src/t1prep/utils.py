@@ -173,7 +173,7 @@ def get_packaged_data_path(rel: str) -> Path:
     """Return a Path to a packaged data file under t1prep.data, with repo fallback.
 
     Args:
-        rel: relative path inside t1prep.data (e.g., 'cat_viewsurf_defaults.txt').
+        rel: relative path inside t1prep.data (e.g., 'cat_surf_view_defaults.txt').
 
     Returns:
         Path pointing to the resource on disk (may be within site-packages or the repo).

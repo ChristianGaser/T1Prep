@@ -41,8 +41,8 @@ if [[ "$VIRTUAL_ENV" == "$ENV_DIR" ]]; then
     echo "   Python version: $(python --version)"
     echo "   Project directory: $PROJECT_DIR"
     echo ""
-    echo "💡 You can now run: scripts/cat_viewsurf.sh <mesh_or_overlay> [options]"
-    echo "   Or: python src/t1prep/gui/cat_viewsurf.py -h"
+    echo "💡 You can now run: scripts/CAT_SurfView <mesh_or_overlay> [options]"
+    echo "   Or: python src/t1prep/gui/cat_surf_view.py -h"
 else
     echo "❌ Error: Failed to activate virtual environment"
     return 1 2>/dev/null || exit 1

@@ -25,7 +25,7 @@ Run in background automatically:
 
 Entry points are installed into the environment's `bin/` (the canonical way to
 run T1Prep): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python
-single-subject), `cat-viewsurf`, `t1prep-download-models`. The `scripts/` folder
+single-subject), `CAT_SurfView`, `t1prep-download-models`. The `scripts/` folder
 is a source-tree/dev fallback and should not be put on `PATH`.
 
 ## Key Commands
@@ -61,7 +61,7 @@ Always use the wrapper scripts – they auto-activate the virtual environment:
 |--------|---------|
 | `scripts/activate_env.sh` | Activate venv manually |
 | `scripts/run_with_env.sh <script>` | Run any Python script with correct env |
-| `scripts/cat_viewsurf.sh` | Launch CAT surface viewer (installed: `cat-viewsurf`) |
+| `scripts/CAT_SurfView` | Launch CAT surface viewer (installed: `CAT_SurfView`) |
 | `scripts/T1Prep_ui` | Launch Web UI (installed: `t1prep-ui`) |
 
 See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.

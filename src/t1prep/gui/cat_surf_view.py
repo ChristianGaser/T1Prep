@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CAT_ViewSurf — PySide6 + VTK port with right-side control panel
+CAT_SurfView — PySide6 + VTK port with right-side control panel
 
 Features:
   • Load LH mesh (.gii). Auto-detect RH mesh via name pattern ("lh."→"rh.", "left"→"right").
@@ -18,11 +18,11 @@ Usage
 -----
 Preferred (uses the repo's venv wrapper):
 
-    scripts/cat_viewsurf.sh <mesh_or_overlay> [more_overlays...] [options]
+    scripts/CAT_SurfView <mesh_or_overlay> [more_overlays...] [options]
 
 Direct invocation:
 
-    python src/t1prep/gui/cat_viewsurf.py <mesh_or_overlay> [more_overlays...] [options]
+    python src/t1prep/gui/cat_surf_view.py <mesh_or_overlay> [more_overlays...] [options]
 """
 from __future__ import annotations
 import argparse
@@ -39,7 +39,7 @@ from typing import List, Optional, Tuple
 # Must run BEFORE any Qt or VTK import because libGL.so / libEGL.so are
 # loaded as a side-effect of importing those modules.  Setting the env vars
 # afterwards has no effect.
-# The shell wrapper (cat_viewsurf.sh) also sets these before launching Python;
+# The shell wrapper (CAT_SurfView) also sets these before launching Python;
 # the block below is a belt-and-suspenders fallback for direct invocations.
 # ---------------------------------------------------------------------------
 def _x_display_works() -> bool:
@@ -64,7 +64,7 @@ if _headless:
 
 # --- Qt setup (PySide6 only) ---
 from PySide6 import QtWidgets
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, qInstallMessageHandler, QtMsgType
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QPainter, QColor, QPen, QBrush, QSurfaceFormat
 
 # Qt compatibility shims
@@ -911,12 +911,12 @@ class Options:
 
 def parse_args(argv: List[str]) -> Options:
     p = argparse.ArgumentParser(
-        prog='cat_viewsurf.py',
-        description='Render LH/RH surfaces with optional overlays (CAT_ViewSurf.py).\n\n'
+        prog='CAT_SurfView',
+        description='Render LH/RH surfaces with optional overlays (CAT_SurfView).\n\n'
                     'Usage examples:\n'
-                    '  • Single mesh: python src/t1prep/gui/cat_viewsurf.py lh.central.name.gii\n'
-                    '  • Single overlay: python src/t1prep/gui/cat_viewsurf.py lh.thickness.name1\n'
-                    '  • Multiple overlays (navigate with ←/→): python src/t1prep/gui/cat_viewsurf.py lh.thickness.name1 lh.thickness.name2 ...',
+                    '  • Single mesh: python src/t1prep/gui/cat_surf_view.py lh.central.name.gii\n'
+                    '  • Single overlay: python src/t1prep/gui/cat_surf_view.py lh.thickness.name1\n'
+                    '  • Multiple overlays (navigate with ←/→): python src/t1prep/gui/cat_surf_view.py lh.thickness.name1 lh.thickness.name2 ...',
         formatter_class=argparse.RawTextHelpFormatter,
     )
     # Accept one or more positional inputs. If more than one is given, treat all as overlays
@@ -1043,9 +1043,9 @@ def parse_args(argv: List[str]) -> Options:
         import re  # for parsing floats
         script_dir = Path(__file__).resolve().parent
         candidates = [
-            script_dir.parent / 'data' / 'cat_viewsurf_defaults.txt',
-            script_dir / 'cat_viewsurf_defaults.txt',
-            Path.cwd() / 'cat_viewsurf_defaults.txt',
+            script_dir.parent / 'data' / 'cat_surf_view_defaults.txt',
+            script_dir / 'cat_surf_view_defaults.txt',
+            Path.cwd() / 'cat_surf_view_defaults.txt',
         ]
         for c in candidates:
             if c.exists():
@@ -3954,7 +3954,11 @@ class HistogramCanvas(QtWidgets.QWidget):
         self.update()
 
     def paintEvent(self, event):
+        if self.rect().isEmpty():
+            return
         p = QPainter(self)
+        if not p.isActive():
+            return
         p.fillRect(self.rect(), QColor(30, 30, 30))
         rect = self.rect().adjusted(40, 10, -10, -30)
         # Border
@@ -4020,7 +4024,21 @@ class HistogramWindow(QtWidgets.QMainWindow):
         self._canvas.set_data(data, value_range)
 
 # ---- Entrypoint ----
-def main(argv: List[str]):
+def _qt_message_filter(mode, context, message):
+    # Suppress a harmless Qt warning emitted when the VTK render-to-texture
+    # (native OpenGL) widget's paint device is touched by Qt's backing store.
+    if "Paint device returned engine == 0" in message:
+        return
+    stream = sys.stderr if mode in (QtMsgType.QtWarningMsg,
+                                    QtMsgType.QtCriticalMsg,
+                                    QtMsgType.QtFatalMsg) else sys.stdout
+    print(message, file=stream)
+
+
+def main(argv: Optional[List[str]] = None):
+    if argv is None:
+        argv = sys.argv[1:]
+    qInstallMessageHandler(_qt_message_filter)
     opts = parse_args(argv)
     # Ensure a compatible OpenGL surface format before QApplication is created.
     try:

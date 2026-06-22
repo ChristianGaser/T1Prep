@@ -5,7 +5,7 @@ This directory contains the shell scripts behind the T1Prep command-line interfa
 > **Installed usage:** after `pip install` (or the bash bootstrapper), these
 > entry points are placed into the environment's `bin/` directory — put that on
 > your `PATH` and call them directly (`T1Prep`, `t1prep-ui`, `t1prep-run`,
-> `cat-viewsurf`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
+> `CAT_SurfView`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
 > `./scripts/<name>` form shown below is the source-tree/dev fallback; the
 > `scripts/` folder itself does not need to be on `PATH`.
 
@@ -115,7 +115,7 @@ Runs any Python script with the T1Prep virtual environment automatically activat
 ./scripts/run_with_env.sh src/t1prep/segment.py --help
 
 # Run the surface viewer
-./scripts/run_with_env.sh src/t1prep/gui/cat_viewsurf.py --help
+./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py --help
 ```
 
 ---
@@ -192,16 +192,16 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 These scripts provide user-friendly wrappers around the compiled CAT-Surface binaries in `src/t1prep/bin/` for post-processing tasks (surface parameters, resampling, ROI extraction, volume smoothing). The main T1Prep pipeline uses the `cat-surf` Python package instead of these binaries. They support batch processing with built-in parallelization via `parallelize`.
 
-### `cat_viewsurf.sh`
+### `CAT_SurfView`
 
 Interactive 3D surface viewer (PySide6/VTK). Displays cortical meshes and overlays.
 
 ```bash
 # View a surface mesh
-./scripts/cat_viewsurf.sh /path/to/lh.central.gii
+./scripts/CAT_SurfView /path/to/lh.central.gii
 
 # View a surface overlay (e.g., thickness)
-./scripts/cat_viewsurf.sh /path/to/lh.thickness
+./scripts/CAT_SurfView /path/to/lh.thickness
 ```
 
 ### `CAT_SurfParameters_ui`

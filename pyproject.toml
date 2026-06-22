@@ -57,7 +57,7 @@ dependencies = [
 # filesystems (macOS), where ``t1prep`` and ``T1Prep`` are the same path.
 t1prep-run = "t1prep.t1prep:main"
 t1prep-ui = "t1prep.webui.app:main"
-cat-viewsurf = "t1prep.gui.cat_viewsurf:main"
+CAT_SurfView = "t1prep.gui.cat_surf_view:main"
 t1prep-download-models = "t1prep._models:main"
 
 [project.optional-dependencies]
@@ -80,7 +80,7 @@ package-dir = {"" = "src"}
 # works because setuptools dumps them all into the same bin/ directory.
 # Skipped on purpose:
 #   - install.sh / activate_env.sh / run_with_env.sh  (bootstrappers)
-#   - T1Prep_ui / dice.sh / cat_viewsurf.sh           (hardcode <repo>/env)
+#   - T1Prep_ui / dice.sh / CAT_SurfView              (hardcode <repo>/env)
 #   - realign_longitudinal.sh                         (use `python -m t1prep.realign_longitudinal`)
 #   - process_longitudinal.sh                         (depends on the above)
 script-files = [

@@ -1,6 +1,6 @@
 #!/bin/bash
-# CAT_ViewSurf Wrapper Script
-# Ensures the virtual environment is activated before running cat_viewsurf.py
+# CAT_SurfView Wrapper Script
+# Ensures the virtual environment is activated before running cat_surf_view.py
 
 set -e  # Exit on any error
 
@@ -68,11 +68,11 @@ validate_input_files() {
         echo "   Provide at least one existing mesh or overlay file path." >&2
         echo "" >&2
         echo "Usage:" >&2
-        echo "  scripts/cat_viewsurf.sh <mesh_or_overlay> [more_overlays...] [options]" >&2
+        echo "  scripts/CAT_SurfView <mesh_or_overlay> [more_overlays...] [options]" >&2
         echo "" >&2
         echo "Examples:" >&2
-        echo "  scripts/cat_viewsurf.sh /path/to/lh.central.gii" >&2
-        echo "  scripts/cat_viewsurf.sh /path/to/lh.thickness" >&2
+        echo "  scripts/CAT_SurfView /path/to/lh.central.gii" >&2
+        echo "  scripts/CAT_SurfView /path/to/lh.thickness" >&2
         echo "" >&2
         echo "Note: If you passed a wildcard pattern, ensure your shell expands it (avoid quoting *)." >&2
         exit 1
@@ -84,19 +84,19 @@ main() {
     # Show help if called without any arguments
     if [[ $# -eq 0 ]]; then
         cat <<'USAGE'
-CAT_ViewSurf — wrapper
+CAT_SurfView — wrapper
 
 Usage:
-    scripts/cat_viewsurf.sh <mesh_or_overlay> [more_overlays...] [options]
+    scripts/CAT_SurfView <mesh_or_overlay> [more_overlays...] [options]
 
 Examples:
-    scripts/cat_viewsurf.sh lh.central.gii
-    scripts/cat_viewsurf.sh lh.thickness
-    scripts/cat_viewsurf.sh lh.thickness lh.pbt -colorbar --title-mode stats
+    scripts/CAT_SurfView lh.central.gii
+    scripts/CAT_SurfView lh.thickness
+    scripts/CAT_SurfView lh.thickness lh.pbt -colorbar --title-mode stats
 
 Notes:
     - You can pass one or more overlays; the mesh is auto-derived from the first overlay (e.g., lh.thickness -> lh.central.gii)
-    - For full options, run: python src/t1prep/gui/cat_viewsurf.py -h
+    - For full options, run: python src/t1prep/gui/cat_surf_view.py -h
 USAGE
         exit 1
     fi
@@ -156,7 +156,7 @@ USAGE
 
     # Run the Python script by absolute path so user-provided relative paths remain relative to caller's CWD
     export ORIGINAL_CWD="$(pwd)"
-    PY_SCRIPT="$PROJECT_DIR/src/t1prep/gui/cat_viewsurf.py"
+    PY_SCRIPT="$PROJECT_DIR/src/t1prep/gui/cat_surf_view.py"
     # Filter noisy QPainter warnings while preserving other stderr output
     "$PYTHON_BIN" "$PY_SCRIPT" "$@" \
         2> >(grep -v "QPainter::begin: Paint device returned engine == 0, type: 1" >&2)

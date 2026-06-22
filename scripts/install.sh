@@ -438,7 +438,7 @@ main() {
   # Mark installation as successful (prevents cleanup of temp install dir)
   INSTALL_SUCCESS=1
 
-  # All entry points (the T1Prep orchestrator plus the t1prep-* / cat-viewsurf
+  # All entry points (the T1Prep orchestrator plus the t1prep-* / CAT_SurfView
   # console scripts) are installed into the virtualenv's bin/ directory.  That
   # is the single location to put on PATH — the old "add the scripts/ folder"
   # advice is obsolete now that the pipeline runs entirely from Python.
@@ -456,7 +456,7 @@ main() {
   echo "  T1Prep                 # main CLI (batch + parallel, --multi)"
   echo "  t1prep-ui              # web UI"
   echo "  t1prep-run             # single-subject Python entry"
-  echo "  cat-viewsurf           # surface viewer"
+  echo "  CAT_SurfView           # surface viewer"
   echo "  t1prep-download-models # fetch model weights"
   echo ""
   if [ -n "${CREATED_TEMP_DIR:-}" ]; then

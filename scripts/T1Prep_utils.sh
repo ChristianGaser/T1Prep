@@ -533,7 +533,7 @@ install_deepmriprep()
 
   # Install the T1Prep package itself so all entry points land in <venv>/bin:
   # the bash 'T1Prep' orchestrator (via setuptools script-files) plus the
-  # t1prep-run / t1prep-ui / cat-viewsurf / t1prep-download-models console
+  # t1prep-run / t1prep-ui / CAT_SurfView / t1prep-download-models console
   # scripts.  --no-deps because requirements.txt above already installed (and
   # pinned) every dependency.  This makes the environment's bin/ the single
   # directory to put on PATH.

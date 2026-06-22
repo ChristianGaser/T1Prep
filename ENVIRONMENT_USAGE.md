@@ -1,10 +1,10 @@
 # Environment Usage Guide for T1Prep
 
-This guide explains how to ensure you're using the correct virtual environment when running T1Prep scripts, particularly `cat_viewsurf.py`.
+This guide explains how to ensure you're using the correct virtual environment when running T1Prep scripts, particularly `cat_surf_view.py`.
 
 ## 🎯 The Problem
 
-When you call `python src/t1prep/gui/cat_viewsurf.py`, you need to ensure that:
+When you call `python src/t1prep/gui/cat_surf_view.py`, you need to ensure that:
 1. The virtual environment is activated
 2. All required dependencies (PyQt6, VTK, etc.) are available
 3. The correct Python version is being used
@@ -13,13 +13,13 @@ When you call `python src/t1prep/gui/cat_viewsurf.py`, you need to ensure that:
 
 ### 1. **Shell Script Wrapper (Recommended)**
 
-Use the dedicated wrapper script for `cat_viewsurf.py`:
+Use the dedicated wrapper script for `cat_surf_view.py`:
 
 ```bash
 # From anywhere in your project
-./scripts/cat_viewsurf.sh
-./scripts/cat_viewsurf.sh mesh_file.gii
-./scripts/cat_viewsurf.sh mesh_file.gii -overlay overlay.gii
+./scripts/CAT_SurfView
+./scripts/CAT_SurfView mesh_file.gii
+./scripts/CAT_SurfView mesh_file.gii -overlay overlay.gii
 ```
 
 **What it does:**
@@ -35,7 +35,7 @@ For any Python script in the project:
 
 ```bash
 # Run any script with automatic environment activation
-./scripts/run_with_env.sh src/t1prep/gui/cat_viewsurf.py --help
+./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py --help
 ./scripts/run_with_env.sh src/t1prep/segment.py [arguments...]
 ```
 
@@ -48,7 +48,7 @@ Activate the environment manually, then run scripts:
 source scripts/activate_env.sh
 
 # Now you can run any script normally
-python src/t1prep/gui/cat_viewsurf.py --help
+python src/t1prep/gui/cat_surf_view.py --help
 python src/t1prep/segment.py [arguments...]
 ```
 
@@ -64,7 +64,7 @@ cd /path/to/T1Prep
 source env/bin/activate
 
 # Run scripts
-python src/t1prep/gui/cat_viewsurf.py --help
+python src/t1prep/gui/cat_surf_view.py --help
 ```
 
 ## 🔍 How to Verify You're Using the Correct Environment
@@ -93,18 +93,18 @@ python --version
 
 ## 🚀 Quick Start Examples
 
-### Running CAT_ViewSurf
+### Running CAT_SurfView
 
 ```bash
 # Method 1: Using wrapper (recommended)
-./scripts/cat_viewsurf.sh data/templates_surfaces_32k/lh.pial.gii
+./scripts/CAT_SurfView data/templates_surfaces_32k/lh.pial.gii
 
 # Method 2: Using generic runner
-./scripts/run_with_env.sh src/t1prep/gui/cat_viewsurf.py data/templates_surfaces_32k/lh.pial.gii
+./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py data/templates_surfaces_32k/lh.pial.gii
 
 # Method 3: Manual activation
 source scripts/activate_env.sh
-python src/t1prep/gui/cat_viewsurf.py data/templates_surfaces_32k/lh.pial.gii
+python src/t1prep/gui/cat_surf_view.py data/templates_surfaces_32k/lh.pial.gii
 ```
 
 ### Running the Web UI
@@ -159,12 +159,12 @@ T1Prep/
 │   │   └── python               # Environment Python executable
 │   └── pyvenv.cfg               # Environment configuration
 ├── scripts/
-│   ├── cat_viewsurf.sh          # CAT_ViewSurf wrapper
+│   ├── CAT_SurfView          # CAT_SurfView wrapper
 │   ├── run_with_env.sh          # Generic script runner
 │   └── activate_env.sh          # Environment activation helper
 ├── src/
 │   └── t1prep/
-│       ├── gui/cat_viewsurf.py  # Main CAT_ViewSurf script
+│       ├── gui/cat_surf_view.py  # Main CAT_SurfView script
 │       └── segment.py           # Segmentation script
 └── requirements.txt             # Python dependencies
 ```
@@ -176,7 +176,7 @@ T1Prep/
 3. **Use the generic runner** for any Python script in the project
 4. **Keep dependencies updated** - run `pip install -r requirements.txt` after environment changes
 5. **Document your workflow** - use these scripts in your own automation
-6. **Use provided launchers** - `scripts/T1Prep_ui` for the Web UI and `scripts/cat_viewsurf.sh` for visualization both manage the environment for you
+6. **Use provided launchers** - `scripts/T1Prep_ui` for the Web UI and `scripts/CAT_SurfView` for visualization both manage the environment for you
 
 ## 🔧 Advanced Usage
 
