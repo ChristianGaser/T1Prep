@@ -50,7 +50,13 @@ dependencies = [
 ]
 
 [project.scripts]
-t1prep = "t1prep.t1prep:main"
+# NOTE: the canonical CLI is the bash orchestrator ``T1Prep`` (full features,
+# incl. --multi batch parallelization), shipped into <venv>/bin via the
+# ``script-files`` block below.  The Python single-subject entry is named
+# ``t1prep-run`` to avoid colliding with ``T1Prep`` on case-insensitive
+# filesystems (macOS), where ``t1prep`` and ``T1Prep`` are the same path.
+t1prep-run = "t1prep.t1prep:main"
+t1prep-ui = "t1prep.webui.app:main"
 cat-viewsurf = "t1prep.gui.cat_viewsurf:main"
 t1prep-download-models = "t1prep._models:main"
 
@@ -82,6 +88,9 @@ script-files = [
     "scripts/T1Prep_utils.sh",
     "scripts/parallelize",
     "scripts/progress_bar_multi.sh",
+    # Defaults file the bash orchestrator reads; shipped next to the scripts so
+    # installed mode (running from <venv>/bin) can find it.
+    "T1Prep_defaults.txt",
     "scripts/CAT_GrepJson",
     "scripts/CAT_VolSmooth_ui",
     "scripts/CAT_Surf2ROIMulti_ui",
@@ -109,5 +118,10 @@ t1prep = [
     "data/templates_MNI152NLin2009cAsym/**",
     "data/templates_surfaces_32k/**",
     "data/templates_surfaces_4k/**",
+]
+# Flask templates/static for the packaged web UI (`t1prep-ui`).
+"t1prep.webui" = [
+    "templates/*.html",
+    "static/*",
 ]
 

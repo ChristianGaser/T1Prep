@@ -21,20 +21,25 @@ Run in background automatically:
 
 ## Overview
 
-**T1Prep** is a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data (bias-field correction, segmentation, lesion detection, cortical surface reconstruction, CAT12 integration). Code lives in `src/`, helper scripts in `scripts/`, Flask web UI in `webui/`.
+**T1Prep** is a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data (bias-field correction, segmentation, lesion detection, cortical surface reconstruction, CAT12 integration). Code lives in `src/`, helper/dev scripts in `scripts/`, Flask web UI in `src/t1prep/webui/`.
+
+Entry points are installed into the environment's `bin/` (the canonical way to
+run T1Prep): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python
+single-subject), `cat-viewsurf`, `t1prep-download-models`. The `scripts/` folder
+is a source-tree/dev fallback and should not be put on `PATH`.
 
 ## Key Commands
 
 ```bash
-# CLI
-./scripts/T1Prep --help
-./scripts/T1Prep --out-dir /tmp/out file.nii.gz
+# CLI (from <venv>/bin on PATH; or ./scripts/T1Prep in a source checkout)
+T1Prep --help
+T1Prep --out-dir /tmp/out file.nii.gz
 
 # Python API
 from t1prep import run_t1prep
 
 # Web UI
-./scripts/T1Prep_ui --port 5050
+t1prep-ui --port 5050
 
 # Sanity check
 python -m compileall src
@@ -56,8 +61,8 @@ Always use the wrapper scripts – they auto-activate the virtual environment:
 |--------|---------|
 | `scripts/activate_env.sh` | Activate venv manually |
 | `scripts/run_with_env.sh <script>` | Run any Python script with correct env |
-| `scripts/cat_viewsurf.sh` | Launch CAT surface viewer |
-| `scripts/T1Prep_ui` | Launch Web UI |
+| `scripts/cat_viewsurf.sh` | Launch CAT surface viewer (installed: `cat-viewsurf`) |
+| `scripts/T1Prep_ui` | Launch Web UI (installed: `t1prep-ui`) |
 
 See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 
@@ -67,7 +72,8 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 |------------------|--------------|
 | `requirements.txt` | `pyproject.toml` → `[project.dependencies]` |
 | `pyproject.toml` dependencies | `requirements.txt` |
-| CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py`, `webui/app.py`, `webui/templates/index.html`, `T1Prep_defaults.txt`, `README.md` |
+| CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py`, `src/t1prep/webui/app.py`, `src/t1prep/webui/templates/index.html`, `T1Prep_defaults.txt`, `README.md` |
+| `[project.scripts]` / `script-files` entry points in `pyproject.toml` | `README.md`, `README_pypi.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
 | `src/t1prep/t1prep.py` API | `README.md` → Python API section |
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` → Project Structure, `CLAUDE.md` |
 | Installation process | `README.md`, `README_pypi.md`, `scripts/install.sh` (bash bootstrapper is secondary to `pip install T1Prep`) |
@@ -78,8 +84,8 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 
 1. `scripts/T1Prep`
 2. `src/t1prep/t1prep.py` → `run_t1prep()` parameters
-3. `webui/app.py`
-4. `webui/templates/index.html`
+3. `src/t1prep/webui/app.py`
+4. `src/t1prep/webui/templates/index.html`
 5. `T1Prep_defaults.txt`
 6. `README.md`
 

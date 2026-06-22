@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run T1Prep Web UI (Flask) with environment activation.
+# Source-tree dev wrapper for the T1Prep Web UI (Flask).
+# Installed users should use the `t1prep-ui` console script from <venv>/bin.
 # Usage:
 #   ./scripts/T1Prep_ui [PORT] [--no-browser]
 # Examples:
@@ -11,7 +12,6 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_DIR="$PROJECT_DIR/env"
-APP_FILE="$PROJECT_DIR/webui/app.py"
 
 PORT="5050"
 if [[ "${1-}" =~ ^[0-9]+$ ]]; then
@@ -26,5 +26,7 @@ fi
 
 cd "$PROJECT_DIR"
 
-# Run Flask app on specified port
-exec python "$APP_FILE" --port "$PORT" "$@"
+# Run the packaged Flask app (t1prep.webui.app) on the chosen port.  Prepend
+# src/ to PYTHONPATH so it resolves from the source tree without an install.
+export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH}"
+exec python -m t1prep.webui.app --port "$PORT" "$@"

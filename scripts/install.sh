@@ -438,13 +438,26 @@ main() {
   # Mark installation as successful (prevents cleanup of temp install dir)
   INSTALL_SUCCESS=1
 
+  # All entry points (the T1Prep orchestrator plus the t1prep-* / cat-viewsurf
+  # console scripts) are installed into the virtualenv's bin/ directory.  That
+  # is the single location to put on PATH — the old "add the scripts/ folder"
+  # advice is obsolete now that the pipeline runs entirely from Python.
+  local venv_bin
+  venv_bin="$repo_root/env/bin"
+  [ -d "$venv_bin" ] || venv_bin="$(dirname "$t1prep_bin")"
+
   bold "T1Prep installation finished."
   echo ""
   info "T1Prep is installed at: $INSTALL_DIR"
-  info "To run T1Prep, use: $t1prep_bin"
+  info "Add the environment's bin directory to your PATH:"
+  echo "  export PATH=\"$venv_bin:\$PATH\""
   echo ""
-  info "You may want to add T1Prep to your PATH:"
-  echo "  export PATH=\"\$PATH:$(dirname "$t1prep_bin")\""
+  info "Then the following commands are available:"
+  echo "  T1Prep                 # main CLI (batch + parallel, --multi)"
+  echo "  t1prep-ui              # web UI"
+  echo "  t1prep-run             # single-subject Python entry"
+  echo "  cat-viewsurf           # surface viewer"
+  echo "  t1prep-download-models # fetch model weights"
   echo ""
   if [ -n "${CREATED_TEMP_DIR:-}" ]; then
     warn "Note: T1Prep was installed to a temporary directory."

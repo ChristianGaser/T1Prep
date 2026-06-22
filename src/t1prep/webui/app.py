@@ -14,11 +14,54 @@ from typing import Dict, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = ROOT_DIR / "scripts" / "T1Prep"
-TEMPLATE_ATLAS_DIR = ROOT_DIR / "src" / "t1prep" / "data" / "templates_MNI152NLin2009cAsym"
-SURFACE_ATLAS_DIR = ROOT_DIR / "src" / "t1prep" / "data" / "atlases_surfaces_32k"
-DEFAULT_UPLOAD_ROOT = ROOT_DIR / "webui_uploads"
+# Layout-independent paths.  This module lives at ``t1prep/webui/app.py``;
+# ``_PKG_DIR`` is the installed ``t1prep`` package directory.  ``_REPO_ROOT`` is
+# only set when running from a source checkout (used as a dev fallback / sandbox
+# base); in an installed venv it is ``None``.
+_PKG_DIR = Path(__file__).resolve().parents[1]            # .../t1prep
+_repo_root_candidate = _PKG_DIR.parents[1]                 # .../<repo> in source tree
+_REPO_ROOT = (
+    _repo_root_candidate
+    if (_repo_root_candidate / "scripts" / "T1Prep").exists()
+    else None
+)
+
+
+def _data_dir() -> Path:
+    """Resolve the packaged ``t1prep/data`` dir (installed) or source fallback."""
+    try:
+        from importlib.resources import files as _res_files
+
+        p = Path(str(_res_files("t1prep.data")))
+        if p.is_dir():
+            return p
+    except Exception:
+        pass
+    return _PKG_DIR / "data"
+
+
+def _resolve_t1prep_cmd() -> str:
+    """Locate the bash ``T1Prep`` orchestrator (needs --multi/--min-memory).
+
+    Prefer one on PATH (the venv ``bin/`` in installed mode); fall back to the
+    source-tree ``scripts/T1Prep`` for dev use.
+    """
+    found = shutil.which("T1Prep")
+    if found:
+        return found
+    if _REPO_ROOT is not None:
+        return str(_REPO_ROOT / "scripts" / "T1Prep")
+    return "T1Prep"
+
+
+# Sandbox/base dir for uploads, jobs and relative output paths: the repo root in
+# a source checkout, otherwise the current working directory.
+BASE_DIR = _REPO_ROOT or Path.cwd()
+T1PREP_CMD = _resolve_t1prep_cmd()
+DATA_DIR = _data_dir()
+TEMPLATE_ATLAS_DIR = DATA_DIR / "templates_MNI152NLin2009cAsym"
+SURFACE_ATLAS_DIR = DATA_DIR / "atlases_surfaces_32k"
+DEFAULT_UPLOAD_ROOT = BASE_DIR / "webui_uploads"
 DEFAULT_JOB_ROOT = Path("/tmp") / "webui_jobs"
 
 app = Flask(__name__)
@@ -137,10 +180,10 @@ def build_atlas_arg(atlas_items: list[str]) -> Optional[str]:
 
 def resolve_defaults_path(value: Optional[str]) -> Path:
     if not value:
-        return ROOT_DIR / "T1Prep_defaults.txt"
+        return BASE_DIR / "T1Prep_defaults.txt"
     candidate = Path(value)
     if not candidate.is_absolute():
-        candidate = ROOT_DIR / candidate
+        candidate = BASE_DIR / candidate
     return candidate
 
 
@@ -184,7 +227,7 @@ def build_command(
     surface_atlas_override: Optional[str] = None,
     remove_input: bool = False,
 ) -> list[str]:
-    cmd = [str(SCRIPT_PATH)]
+    cmd = [T1PREP_CMD]
 
     def add_flag(name: str) -> None:
         if form.get(name):
@@ -382,7 +425,7 @@ def schedule_or_run(job_id: str, run_at: Optional[datetime]) -> None:
 
 @app.route("/")
 def index():
-    default_file = ROOT_DIR / "T1Prep_defaults.txt"
+    default_file = BASE_DIR / "T1Prep_defaults.txt"
     defaults = load_defaults(default_file)
 
     atlas_names = list_atlas_names()
@@ -497,7 +540,7 @@ def submit():
         return "Output directory is required.", 400
 
     try:
-        out_dir = _resolve_out_dir_within_root(ROOT_DIR, out_dir_str)
+        out_dir = _resolve_out_dir_within_root(BASE_DIR, out_dir_str)
     except ValueError:
         return "Output directory must be within the application root.", 400
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -948,22 +991,29 @@ def open_chrome_app_mode(url: str, width: int = 1100, height: int = 900) -> bool
         return False
 
 
-if __name__ == "__main__":
+def main(argv: Optional[list] = None) -> int:
+    """Console-script entry point for ``t1prep-ui``.
+
+    Accepts ``--port N`` (or a bare numeric positional port, for parity with the
+    old ``T1Prep_ui`` wrapper) and ``--no-browser``.
+    """
     import sys
+
+    args = list(sys.argv[1:] if argv is None else argv)
     ensure_dirs()
     host = "127.0.0.1"
     port = 5000
-    # Parse --port argument
-    for i, arg in enumerate(sys.argv):
-        if arg == "--port" and i + 1 < len(sys.argv):
+    for i, arg in enumerate(args):
+        if arg == "--port" and i + 1 < len(args):
             try:
-                port = int(sys.argv[i + 1])
+                port = int(args[i + 1])
             except ValueError:
-                print(f"Invalid port: {sys.argv[i + 1]}")
-                sys.exit(1)
+                print(f"Invalid port: {args[i + 1]}")
+                return 1
+        elif arg.isdigit():
+            port = int(arg)
     url = f"http://{host}:{port}"
-    # Check if --no-browser flag is passed
-    open_browser = "--no-browser" not in sys.argv
+    open_browser = "--no-browser" not in args
     if open_browser:
         # Open Chrome in app mode after a short delay to allow server to start
         def delayed_open():
@@ -973,3 +1023,8 @@ if __name__ == "__main__":
         threading.Thread(target=delayed_open, daemon=True).start()
     debug_mode = os.getenv("FLASK_DEBUG", "").lower() in ("1", "true", "yes", "on")
     app.run(host=host, port=port, debug=debug_mode, use_reloader=False)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

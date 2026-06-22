@@ -523,14 +523,22 @@ install_deepmriprep()
   # syntax and are not valid Python.
   PYTHONIOENCODING=utf-8 $python -m pip install -U pip
   PYTHONIOENCODING=utf-8 $python -m pip install --no-compile -r ${root_dir}/requirements.txt
-  
+
   $python -c "import deepmriprep" &>/dev/null
   if [ $? -gt 0 ]; then
-    echo "${RED}ERROR: Installation of deepmriprep not successful. 
+    echo "${RED}ERROR: Installation of deepmriprep not successful.
       Please install it manually${NC}" >&2
     exit 1
   fi
-  
+
+  # Install the T1Prep package itself so all entry points land in <venv>/bin:
+  # the bash 'T1Prep' orchestrator (via setuptools script-files) plus the
+  # t1prep-run / t1prep-ui / cat-viewsurf / t1prep-download-models console
+  # scripts.  --no-deps because requirements.txt above already installed (and
+  # pinned) every dependency.  This makes the environment's bin/ the single
+  # directory to put on PATH.
+  PYTHONIOENCODING=utf-8 $python -m pip install --no-compile --no-deps "${root_dir}"
+
   # Allow executable on MacOS
   case "$os_type" in
     Darwin*)  

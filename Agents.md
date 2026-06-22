@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Overview
-This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, helper scripts are in `scripts/`, and a Flask-based web UI is in `webui/`.
+This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python single-subject), `cat-viewsurf`, `t1prep-download-models`.
 
 ## Project Structure
 
@@ -21,11 +21,15 @@ T1Prep/
 │       ├── data/                   # Templates, atlases, default files
 │       │   ├── templates_MNI152NLin2009cAsym/  # Volume atlases + .txt descriptions
 │       │   └── atlases_surfaces_32k/           # Surface atlases + .txt descriptions
-│       └── gui/                    # PySide6/VTK visualization tools
+│       ├── gui/                    # PySide6/VTK visualization tools
+│       └── webui/                  # Flask web UI (t1prep-ui)
+│           ├── app.py              # Flask application (main())
+│           ├── templates/index.html
+│           └── static/styles.css
 ├── scripts/
 │   ├── README.md                   # Comprehensive script documentation
-│   ├── T1Prep                      # Main CLI entry point (bash)
-│   ├── T1Prep_ui                   # Web UI launcher (Flask)
+│   ├── T1Prep                      # Main CLI entry point (bash; shipped to <venv>/bin)
+│   ├── T1Prep_ui                   # Web UI dev launcher (installed: t1prep-ui)
 │   ├── activate_env.sh             # Source to activate the venv
 │   ├── run_with_env.sh             # Run any Python script with venv
 │   ├── install.sh                  # Bash bootstrapper: download release + set up venv
@@ -42,10 +46,6 @@ T1Prep/
 │   ├── parallelize                 # Generic job parallelization engine
 │   ├── progress_bar_multi.sh       # Multi-job progress bars with ETA
 │   └── utils.sh                    # Shared bash utility functions
-├── webui/
-│   ├── app.py                      # Flask application
-│   ├── templates/index.html        # Main web interface
-│   └── static/styles.css           # CSS styling
 ├── tests/
 │   ├── __init__.py
 │   └── test_utils.py               # Unit tests
@@ -69,7 +69,8 @@ T1Prep/
 | `pyproject.toml` dependencies | `requirements.txt` (keep versions aligned) |
 | CLI options in `scripts/T1Prep` | `README.md` -> Options section |
 | CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py` -> `run_t1prep()` parameters |
-| CLI options in `scripts/T1Prep` | `webui/app.py` -> form handling and defaults |
+| CLI options in `scripts/T1Prep` | `src/t1prep/webui/app.py` -> form handling and defaults |
+| `[project.scripts]` / `script-files` in `pyproject.toml` | `README.md`, `README_pypi.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
 | `src/t1prep/t1prep.py` API | `README.md` -> Python API section |
 | Default values | `T1Prep_defaults.txt` |
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` -> Project Structure, `CLAUDE.md` |
@@ -100,13 +101,13 @@ scripts/CAT_Surf*_ui, scripts/CAT_VolSmooth_ui (post-processing helpers)
        v call
 src/t1prep/bin/* (compiled CAT-Surface binaries, used only by helper scripts)
 
-webui/app.py (Web UI)
+src/t1prep/webui/app.py (Web UI, `t1prep-ui`)
        |
        v calls
-scripts/T1Prep (via subprocess)
+T1Prep (the bash orchestrator on PATH, via subprocess)
        |
        v renders
-webui/templates/index.html
+src/t1prep/webui/templates/index.html
        |
        v styled by
 webui/static/styles.css
