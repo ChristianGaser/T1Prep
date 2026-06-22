@@ -2,8 +2,12 @@
 #
 # PURPOSE:
 #   Compute curvature-based parameters from surface files and write them to
-#   text (or GIfTI) files. This is a T1Prep wrapper around CAT_SurfCurvature
-#   CAT_SurfFractalDimension, CAT_SurfArea, CAT_SurfRatio, and CAT_SurfSulcusDepth.
+#   text (or GIfTI) files. This is a T1Prep wrapper around:
+#     cat_surf.cli.surf_curvature
+#     cat_surf.cli.surf_sulcus_depth
+#     cat_surf.cli.surf_fractal_dimension
+#     cat_surf.cli.surf_ratio
+#     cat_surf.cli.surf_area
 #
 #   If a left hemisphere file (lh.*) is provided, the corresponding right
 #   hemisphere file (rh.*) is automatically processed as well (if present).
@@ -12,8 +16,7 @@
 #   $0 [options] <surface_file> [<surface_file> ...]
 #
 # INPUT:
-#   Surface files (*.obj or *.gii). For FreeSurfer-style naming (lh.* / rh.*),
-#   output names follow the CAT_DumpCurv_ui scheme.
+#   Surface files (*.obj or *.gii). 
 #
 # OUTPUT:
 #   One output per processed hemisphere/input (txt by default, or *.gii when
@@ -450,8 +453,11 @@ ${BOLD}USAGE:${NC}
   ${GREEN}$0 [options] <filename(s)>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
-Compute surface-based parameters from surface files using CAT_SurfCurvature,
-CAT_SurfFractalDimension, CAT_SurfArea, CAT_SurfRatio, and CAT_SurfSulcusDepth.
+Compute surface-based parameters from surface files using:
+  cat_surf.cli.surf_sulcus_depth
+  cat_surf.cli.surf_fractal_dimension
+  cat_surf.cli.surf_ratio
+  cat_surf.cli.surf_area
 If an input file is named like "lh.*", the corresponding "rh.*" file is also
 processed automatically (if present).
 
@@ -487,18 +493,15 @@ ${BOLD}OPTIONS:${NC}
 
 ${BOLD}INPUT NAMING EXPECTATIONS:${NC}
   *.obj and *.gii are accepted.
-  For FreeSurfer-like files named "lh.*" or "rh.*", output naming follows
-  CAT_DumpCurv_ui conventions.
         
 ${BOLD}OUTPUT:${NC}
   Per input (and hemisphere if auto-RH applies): curvature values for each node.
 
 ${BOLD}Dependencies:${NC}
-  CAT_SurfCurvature
-  CAT_SurfFractalDimension
-  CAT_SurfSulcusDepth
-  CAT_SurfRatio
-  CAT_SurfArea
+  cat_surf.cli.surf_sulcus_depth
+  cat_surf.cli.surf_fractal_dimension
+  cat_surf.cli.surf_ratio
+  cat_surf.cli.surf_area
   ${script_dir}/parallelize
 
 ${BOLD}Author:${NC}

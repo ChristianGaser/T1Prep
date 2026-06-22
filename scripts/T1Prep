@@ -1119,7 +1119,7 @@ ${BOLD}${GREEN}Expert Options:${NC}
       Disable cortical thickness correction for folding effects.
 
   --pre-fwhm <NUMBER>         
-      Set the pre-smoothing kernel size (FWHM) for CAT_VolMarchingCubes 
+      Set the pre-smoothing kernel size (FWHM) for Marching Cubes 
       (default: $pre_fwhm).
 
   --no-vessel
