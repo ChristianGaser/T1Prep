@@ -116,6 +116,7 @@ t1prep = [
     "data/*.png",
     "data/atlases_surfaces_32k/**",
     "data/templates_MNI152NLin2009cAsym/**",
+    "data/templates_surfaces/**",
     "data/templates_surfaces_32k/**",
     "data/templates_surfaces_4k/**",
 ]

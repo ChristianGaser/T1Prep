@@ -435,6 +435,7 @@ check_python_libraries()
   fi
 
   source ${T1prep_env}/bin/activate
+  echo "${YELLOW}source ${T1prep_env}/bin/activate${NC}"
   
   # Check that installation was successful and try it a 2nd time otherwise
   $python -c "import deepmriprep" &>/dev/null

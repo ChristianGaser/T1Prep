@@ -409,6 +409,11 @@ process()
     sphere=${sphere//pial/sphere}
     sphere=${sphere//white/sphere}
     
+    # if sphere is not found we check for registered sphere
+    if [ ! -f "$sphere" ]; then
+      sphere=${sphere//sphere/sphere.reg}
+    fi
+    
     echo "calculating ${outputname}"
     IN="$infile" OUT="$outputname" SPHERE="$sphere" python3 - <<PYEOF 2>&1
 import os, cat_surf.cli as cli
