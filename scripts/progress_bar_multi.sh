@@ -97,19 +97,19 @@ single_job_bar() {
   bar+=$(printf "%${empty}s")
 
   if [ -t 1 ]; then
-    printf "[${COLOR}%-${width}s${NC}] %3d%% %s %s\r" "$bar" "$percent" "$label" "$eta"
+    printf "|${COLOR}%-${width}s${NC}| %3d%% %s %s\r" "$bar" "$percent" "$label" "$eta"
     if [ "$current" -eq "$total" ]; then
       rm -f "$state_file"
       echo ""  # newline at end
     fi
   elif [ -n "$T1PREP_WEBUI" ]; then
     # Web UI mode: always output progress for tracking
-    echo "[${bar}] ${percent}% $label $eta"
+    echo "|${bar}| ${percent}% $label $eta"
   else
     # Non-TTY: only final output
     if [ "$current" -eq "$total" ]; then
       rm -f "$state_file"
-      echo "[${COLOR}${bar}${NC}] ${percent}% $label"
+      echo "|${COLOR}${bar}${NC}| ${percent}% $label"
     fi
   fi
   
@@ -190,10 +190,10 @@ multi_job_bar() {
           fi
 
           if [ -t 1 ]; then
-            echo -ne "[${BAR_COLOR}${bar}${NC}] ${percent_str}% ${job_name} ${jobstr}\n"
+            echo -ne "|${BAR_COLOR}${bar}${NC}| ${percent_str}% ${job_name} ${jobstr}\n"
           else
             if [[ "$done_items" -eq "$total_items" ]]; then
-              echo "[${BAR_COLOR}${bar}${NC}] ${percent_str}% ${job_name} ${jobstr}"
+              echo "|${BAR_COLOR}${bar}${NC}| ${percent_str}% ${job_name} ${jobstr}"
             fi
           fi
         fi
@@ -238,7 +238,7 @@ multi_job_bar() {
       unfilled=$((width - filled))
       bar=$(printf "%${filled}s" "" | awk '{gsub(/ /,"█"); print}')
       bar+=$(printf "%${unfilled}s")
-      printf "[${DEFAULT_COLOR}${bar}${NC}] %4d%% %s %s %s\n" "$percent" "$job_name" "$ETA_str" "$ETA"      
+      printf "|${DEFAULT_COLOR}${bar}${NC}| %4d%% %s %s %s\n" "$percent" "$job_name" "$ETA_str" "$ETA"      
     fi
 
     $all_done && break
