@@ -576,6 +576,64 @@ def split_combined_mesh(
 
 
 # ---- I/O helpers ----
+def _nib_load_gifti(filename: str):
+    """Load a ``.gii`` file with nibabel, repairing a stale external-file
+    reference if needed.
+
+    CAT12/CAT-Surface write large GIFTI arrays with ``Encoding=
+    "ExternalFileBinary"``, storing the actual bytes in a sibling ``.dat``
+    file that the ``.gii`` XML references by name (``ExternalFileName``).
+    By convention that ``.dat`` file shares the exact basename of the
+    ``.gii`` file.  If the pair gets renamed after the fact (e.g. a subject
+    ID gets appended to both filenames by a batch-rename step) without the
+    XML being regenerated, the internal reference points at a filename that
+    no longer exists — even though the correctly-named ``.dat`` sits right
+    next to the ``.gii``.  nibabel then raises ``GiftiParseError: Cannot
+    locate external file ...``.
+
+    Detect that case and retry against a patched copy of the XML that
+    points ``ExternalFileName`` at ``<gii-basename>.dat`` instead.
+    """
+    import nibabel as nib
+    try:
+        return nib.load(filename)
+    except Exception as e:
+        if 'external file' not in str(e).lower():
+            raise
+        gii_path = Path(filename)
+        actual_dat = gii_path.with_suffix('.dat')
+        if not actual_dat.exists():
+            raise
+        try:
+            text = gii_path.read_text(encoding='utf-8', errors='replace')
+        except Exception:
+            raise e
+        patched, n = re.subn(
+            r'ExternalFileName="[^"]*"',
+            f'ExternalFileName="{actual_dat.resolve()}"',
+            text,
+        )
+        if n == 0:
+            raise e
+        import tempfile
+        tmp_name = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='w', suffix='.gii', delete=False, encoding='utf-8'
+            ) as tf:
+                tf.write(patched)
+                tmp_name = tf.name
+            return nib.load(tmp_name)
+        except Exception:
+            raise e
+        finally:
+            if tmp_name is not None:
+                try:
+                    os.unlink(tmp_name)
+                except Exception:
+                    pass
+
+
 def read_gifti_mesh(filename: str) -> vtkPolyData:
     if HAVE_VTK_GIFTI:
         r = vtkGIFTIReader(); r.SetFileName(filename); r.Update()
@@ -585,8 +643,7 @@ def read_gifti_mesh(filename: str) -> vtkPolyData:
         return out
     # Fallback: nibabel
     try:
-        import nibabel as nib
-        g = nib.load(filename)
+        g = _nib_load_gifti(filename)
     except Exception as e:  # pragma: no cover
         raise RuntimeError("This VTK build lacks vtkGIFTIReader. Install nibabel for fallback.") from e
     coords = None; faces = None
@@ -690,8 +747,7 @@ def _read_spm_overlay(filename: str) -> vtkDoubleArray:
     Returns:
         vtkDoubleArray with one scalar value per surface vertex.
     """
-    import nibabel as nib
-    g = nib.load(filename)
+    g = _nib_load_gifti(filename)
     data_arr = None
     for d in g.darrays:
         code = int(getattr(d, 'intent', getattr(d, 'intent_code', -1)) or -1)
@@ -738,8 +794,7 @@ def read_scalars(filename: str) -> vtkDoubleArray:
                 return out
         # fallback with nibabel
         try:
-            import nibabel as nib
-            g = nib.load(filename)
+            g = _nib_load_gifti(filename)
         except Exception as e:
             raise RuntimeError("vtkGIFTIReader unavailable and nibabel failed to load .gii") from e
         data_arr = None
