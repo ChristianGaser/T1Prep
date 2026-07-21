@@ -70,7 +70,7 @@ main()
   if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
   if ! [[ "${retry}" =~ ^[0-9]+$ ]]; then retry=1; fi
   if ! [[ "${use_bids_naming}" =~ ^[0-9]+$ ]]; then use_bids_naming=0; fi
-  if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=24; fi
+  if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=20; fi
 
   if [[ "$multi" -ne -2 ]]; then
     logo
