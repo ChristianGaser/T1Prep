@@ -508,15 +508,14 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             cat_surf.write_surface(p(surf, "Sphere_surface"), sv, sf)
 
         bar.step("Spherical registration")
-        with _run_step(log, "CAT_SurfWarp -steps 2 -avg", verbose=verbose):
-            cs_cli.surf_warp(
+        with _run_step(log, "CAT_SurfSphericalDemon -unfold", verbose=verbose):
+            cs_cli.surf_spherical_demon(
                 source_file=p(surf, "Mid_surface"),
                 source_sphere_file=p(surf, "Sphere_surface"),
                 target_file=Fsavg,
                 target_sphere_file=Fsavgsphere,
                 output_sphere_file=p(surf, "Spherereg_surface"),
-                n_steps=2,
-                avg=True,
+                unfold=True,
                 verbose=verbose,
             )
 
