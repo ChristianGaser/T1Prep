@@ -32,7 +32,7 @@ import numpy as np
 
 if sys.platform == "darwin":
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"        # CPU Fallback for MPS
-    os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0" # More GPU memory
+    os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
 
 # ---------------------------------------------------------------------------
 # RSS sampling
@@ -594,6 +594,12 @@ def main():
         MPS_READER = torch.mps.driver_allocated_memory
 
     from t1prep.segment import CustomPreprocess, CustomBrainSegmentation
+    from t1prep._device import route_deepmriprep
+
+    # Match the pipeline: deepmriprep pins itself to cuda-or-cpu at import,
+    # so without this --gpu would still measure the CPU path on Apple Silicon.
+    route_deepmriprep(torch.device('mps') if is_mps else
+                      (torch.device('cpu') if no_gpu else torch.device('cuda')))
 
     scratch = os.environ.get("TMPDIR", "/tmp")
     in_path = args.input

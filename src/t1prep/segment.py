@@ -22,8 +22,10 @@ import platform
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 if sys.platform == "darwin":
-    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"        # CPU Fallback for MPS
-    os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0" # More GPU memory
+    # setdefault, not assignment: both are worth tuning per machine, and a 0.0
+    # watermark (no ceiling at all) lets MPS allocate until the system swaps.
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")   # CPU fallback for MPS
+    os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")  # more GPU memory
 
 import cat_surf
 import torch
@@ -95,6 +97,14 @@ from ._models import (
     prepare_model_files,
 )
 from ._conv_chunk import chunked_conv3d
+from ._device import (
+    mps_routing_requested,
+    release_cache,
+    resolve_device,
+    route_deepmriprep,
+    stage_device,
+    stage_target_device,
+)
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
@@ -145,13 +155,13 @@ class CustomBrainSegmentation(BrainSegmentation):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # deepmriprep and deepbet can disagree on device selection on macOS,
-        # which may leave scripted model tensors on CPU while inputs are on MPS.
-        self.inference_device = (
-            torch.device("mps")
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-            else self.device
-        )
+        # Follow the device T1Prep selected, not the one deepmriprep pinned
+        # itself to: unless `T1PREP_DEVICE=mps` routes everything, deepmriprep
+        # stays on the CPU while this stage still belongs on the GPU.  Going
+        # through `resolve_device` (rather than hard-coding MPS) is what keeps
+        # `T1PREP_DEVICE=cpu` meaningful for a CPU reference run.
+        requested, _ = resolve_device()
+        self.inference_device = requested if requested.type != "cpu" else self.device
 
     def __call__(self, x, mask):
         x = x.to(device=self.inference_device)
@@ -204,14 +214,15 @@ class CustomPreprocess(Preprocess):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # deepbet ships a TorchScript-traced bbox model and PYTORCH_ENABLE_MPS_FALLBACK
-        # is not honored inside JIT graphs on newer PyTorch builds — the traced
-        # max_pool3d_with_indices raises NotImplementedError on MPS.  Force the
-        # skull-strip onto CPU; the rest of the pipeline keeps using MPS.
-        if self.device.type == "mps":
-            from deepbet.bet import BrainExtraction
-            from deepmriprep.preprocess import BET_MODEL_PATHS
-            self.brain_extract = BrainExtraction(no_gpu=True, **BET_MODEL_PATHS)
+        # deepbet picks its own device (it does support MPS) and moves inputs to
+        # wherever its weights live, so the skull-strip needs no help from us.
+        # This used to force it onto the CPU because the traced bbox model hit
+        # `max_pool3d_with_indices`, which had no MPS kernel; that op is native
+        # from torch 2.9 on, and on older builds the PYTORCH_ENABLE_MPS_FALLBACK
+        # set at the top of this module covers it — verified on 2.8 and 2.13.
+        # The branch was dead code anyway until `_device` started routing
+        # deepmriprep to MPS, at which point it would have *demoted* the
+        # skull-strip from MPS to CPU.
 
     def run_segment_brain(self, brain_large, mask, affine, mask_large):
         """Brain segmentation without deepmriprep's unused native-space ``p0``.
@@ -238,6 +249,23 @@ class CustomPreprocess(Preprocess):
                 p0_large.cpu().numpy(), **self.affine_template_metadata
             )
         }
+
+    def run_warp_register(self, p0_large, p1_affine, p2_affine, wj_affine):
+        """Warp registration, on the accelerator when this stage opted in.
+
+        This is the one deepmriprep stage that can move to MPS as-is: it never
+        calls ``spline_resize.grid_sample``, whose 27-tap gather over
+        47-million-voxel volumes is what exhausts unified memory in the affine,
+        brain and nogm stages.  Everything here happens at the 113x137x113 warp
+        grid, so the stage gets both faster and smaller — measured 21.6 s /
+        3.13 GB on CPU against 7.5 s / 2.28 GB on MPS.  Outputs are CPU-side
+        NIfTIs either way; only floating-point rounding differs.
+        """
+        target = stage_target_device("warp", self.device)
+        with stage_device(self, target):
+            return super().run_warp_register(
+                p0_large, p1_affine, p2_affine, wj_affine
+            )
 
     def run_atlas_register(
         self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
@@ -455,14 +483,21 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def setup_device() -> tuple[torch.device, bool]:
-    """Return the torch device and ``no_gpu`` flag."""
+    """Return the torch device and ``no_gpu`` flag.
 
-    if torch.cuda.is_available():
-        return torch.device("cuda"), False
-    elif torch.backends.mps.is_available():
-        return torch.device("mps"), False
-    else:
-        return torch.device("cpu"), True
+    Also routes deepmriprep's stages to the same device.  Left alone,
+    deepmriprep pins itself to ``'cuda' if cuda else 'cpu'`` at import, so on
+    Apple Silicon its affine/nogm/warp/atlas stages would stay on the CPU while
+    T1Prep believes it selected the GPU — see :mod:`t1prep._device`.  This runs
+    before any model is constructed, which is when the device is read.
+    """
+    device, no_gpu = resolve_device()
+    # MPS-everywhere is opt-in (T1PREP_DEVICE=mps): it is faster per stage but
+    # currently exhausts unified memory on a full run — see `_device`.  Any
+    # other resolved device (CPU, CUDA) is safe to route unconditionally.
+    if device.type != "mps" or mps_routing_requested():
+        route_deepmriprep(device)
+    return device, no_gpu
 
 
 def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
@@ -997,6 +1032,7 @@ def save_results(
             output_reg = prep.run_warp_register(
                 p0_large, p1_affine, p2_affine, wj_affine
             )
+        release_cache(device)
         warp_yx = output_reg["warp_yx"]
         warp_xy = output_reg["warp_xy"]
         warp_mse = output_reg["warp_mse"]
@@ -1312,6 +1348,7 @@ def run_segment():
     # 20.7 GB im2col buffer at this grid — the largest allocation in the run.
     with chunked_conv3d():
         output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
+    release_cache(device)
     p0_large = output_seg["p0_large"]
 
     # Due to sinc-interpolation we have to change values below zero
@@ -1384,6 +1421,7 @@ def run_segment():
         # Same story as the brain model: 15.2 GB in one block if left unsplit.
         with chunked_conv3d():
             output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
+        release_cache(device)
 
         # Load probability maps for GM, WM, CSF
         p1_large = output_nogm["p1_large"]
