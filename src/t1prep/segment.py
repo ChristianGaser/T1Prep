@@ -94,6 +94,7 @@ from ._models import (
     all_models_present,
     prepare_model_files,
 )
+from ._conv_chunk import chunked_conv3d
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
@@ -963,7 +964,13 @@ def save_results(
         if verbose:
             count = shell_progress(count, end_count, 
                 "Warping                      ")
-        output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
+        # The warp model's 32-channel layer at the template grid would ask for
+        # an 8 GB im2col buffer in one allocation on CPU, which is the peak of
+        # the whole run.  Slab it: same result, roughly a quarter of the memory.
+        with chunked_conv3d():
+            output_reg = prep.run_warp_register(
+                p0_large, p1_affine, p2_affine, wj_affine
+            )
         warp_yx = output_reg["warp_yx"]
         warp_xy = output_reg["warp_xy"]
         warp_mse = output_reg["warp_mse"]
