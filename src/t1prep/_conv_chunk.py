@@ -70,6 +70,9 @@ class ChunkedConv3d(TorchDispatchMode):
         super().__init__()
         self.budget = int(budget)
         self.chunked_calls = 0
+        #: Largest column buffer, in bytes, that splitting avoided allocating.
+        #: A lower bound on what the unsplit run would have needed at its peak.
+        self.largest_buffer = 0
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         kwargs = kwargs or {}
@@ -110,10 +113,12 @@ class ChunkedConv3d(TorchDispatchMode):
         # per gemm K value (C_in * kernel volume), one column per output voxel.
         k_elems = int(weight.shape[1]) * kernel[0] * kernel[1] * kernel[2]
         columns = k_elems * out_shape[0] * out_shape[1] * out_shape[2]
-        if columns * inp.element_size() <= self.budget:
+        buffer_bytes = columns * inp.element_size()
+        if buffer_bytes <= self.budget:
             return None
+        self.largest_buffer = max(self.largest_buffer, buffer_bytes)
 
-        n_slabs = -(-columns * inp.element_size() // self.budget)
+        n_slabs = -(-buffer_bytes // self.budget)
         depth = out_shape[0]
         step = max(1, -(-depth // n_slabs))
         halo = kernel[0] - 1

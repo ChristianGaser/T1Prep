@@ -196,8 +196,41 @@ def run_with_freeing(prep, in_path):
 
 
 # ---------------------------------------------------------------------------
-# Isolated warp for clean peak measurement
+# Isolated pipeline stages for clean peak measurement
 # ---------------------------------------------------------------------------
+def _ellipsoid(shape, scale=(0.40, 0.42, 0.40)):
+    """Normalised radius field for a brain-like ellipsoid on ``shape``."""
+    c = np.array(shape) / 2.0
+    zz, yy, xx = np.mgrid[0:shape[0], 0:shape[1], 0:shape[2]].astype(np.float32)
+    r = np.sqrt(((zz - c[0]) / (scale[0] * shape[0])) ** 2
+                + ((yy - c[1]) / (scale[1] * shape[1])) ** 2
+                + ((xx - c[2]) / (scale[2] * shape[2])) ** 2)
+    del zz, yy, xx
+    return r
+
+
+def _label_map(shape):
+    """p0-style 3-tissue label volume (1=CSF, 2=GM, 3=WM)."""
+    r = _ellipsoid(shape)
+    lab = np.zeros(shape, np.float32)
+    lab[r < 1.0] = 3.0
+    lab[(r >= 0.80) & (r < 1.0)] = 2.0
+    lab[(r >= 1.0) & (r < 1.10)] = 1.0
+    return lab
+
+
+def _native_t1(shape=(256, 256, 256)):
+    """Native-space image; only its shape/affine/header are used downstream."""
+    import nibabel as nib
+
+    r = _ellipsoid(shape)
+    vol = np.zeros(shape, np.float32)
+    vol[r < 1.0] = 110.0
+    vol[(r >= 0.82) & (r < 1.0)] = 75.0
+    vol[(r >= 1.0) & (r < 1.08)] = 35.0
+    return nib.Nifti1Image(vol, np.eye(4, dtype=np.float32))
+
+
 def _synth_warp_inputs(prep):
     """Synthetic run_warp_register inputs at the real template grids.
 
@@ -207,77 +240,110 @@ def _synth_warp_inputs(prep):
     import nibabel as nib
     import pandas as pd
 
-    lshape = prep.affine_template.shape[:3]
-    ashape = prep.warp_template.shape[:3]
-
-    c = np.array(lshape) / 2.0
-    zz, yy, xx = np.mgrid[0:lshape[0], 0:lshape[1], 0:lshape[2]].astype(np.float32)
-    r = np.sqrt(((zz - c[0]) / (0.40 * lshape[0])) ** 2
-                + ((yy - c[1]) / (0.42 * lshape[1])) ** 2
-                + ((xx - c[2]) / (0.40 * lshape[2])) ** 2)
-    del zz, yy, xx
-    lab = np.zeros(lshape, np.float32)
-    lab[r < 1.0] = 3.0
-    lab[(r >= 0.80) & (r < 1.0)] = 2.0
-    lab[(r >= 1.0) & (r < 1.10)] = 1.0
-    del r
-    p0_large = nib.Nifti1Image(lab, prep.affine_template.affine)
-
-    c = np.array(ashape) / 2.0
-    zz, yy, xx = np.mgrid[0:ashape[0], 0:ashape[1], 0:ashape[2]].astype(np.float32)
-    r = np.sqrt(((zz - c[0]) / (0.40 * ashape[0])) ** 2
-                + ((yy - c[1]) / (0.42 * ashape[1])) ** 2
-                + ((xx - c[2]) / (0.40 * ashape[2])) ** 2)
-    del zz, yy, xx
+    p0_large = nib.Nifti1Image(_label_map(prep.affine_template.shape[:3]),
+                               prep.affine_template.affine)
+    r = _ellipsoid(prep.warp_template.shape[:3])
     gm = np.clip(1.0 - 8.0 * np.abs(r - 0.9), 0, 1).astype(np.float32)
     wm = np.clip(1.0 - 3.0 * r, 0, 1).astype(np.float32)
     del r
     aff = prep.warp_template.affine
-    p1_affine = nib.Nifti1Image(gm, aff)
-    p2_affine = nib.Nifti1Image(wm, aff)
-    return p0_large, p1_affine, p2_affine, pd.Series([1.0])
+    return (p0_large, nib.Nifti1Image(gm, aff), nib.Nifti1Image(wm, aff),
+            pd.Series([1.0]))
 
 
-def run_only_warp(prep, chunk):
-    """Drive run_warp_register alone on synthetic inputs (isolated peak)."""
-    SAMPLER.stage = "  warp.inputs"
-    p0_large, p1_affine, p2_affine, wj_affine = _synth_warp_inputs(prep)
-    _reclaim()
-    rss0 = _rss_bytes(os.getpid())
-    print(f"[warp] RSS with inputs built: {rss0 / GB:5.2f} GB", flush=True)
+def _synth_brain_inputs(prep):
+    """Synthetic run_segment_brain inputs (brain_large, mask, affine, mask_large).
 
-    # Sub-stage instrumentation: which part of the 113^3 registration is big?
-    reg = prep.warp_register
-    _orig_model, _orig_flows = reg.model, reg.syn.apply_flows
+    Both large volumes sit on the 0.5 mm affine template; BrainSegmentation
+    crops them to its own (336, 384, 336) working grid on entry.
+    """
+    import nibabel as nib
+    import pandas as pd
 
-    def _model(*a, **k):
-        SAMPLER.stage = "  warp.model"
-        try:
-            return _orig_model(*a, **k)
-        finally:
-            SAMPLER.stage = "  warp.register"
+    shape = prep.affine_template.shape[:3]
+    aff = prep.affine_template.affine
+    r = _ellipsoid(shape)
+    brain = np.zeros(shape, np.float32)
+    brain[r < 1.0] = 110.0
+    brain[(r >= 0.82) & (r < 1.0)] = 75.0
+    brain[(r >= 1.0) & (r < 1.08)] = 35.0
+    mask_large = (r < 1.10).astype(np.float32)
+    del r
+    return (nib.Nifti1Image(brain, aff), _native_t1(),
+            pd.DataFrame(np.eye(4)), nib.Nifti1Image(mask_large, aff))
 
-    def _flows(*a, **k):
-        SAMPLER.stage = "  warp.apply_flows"
-        try:
-            return _orig_flows(*a, **k)
-        finally:
-            SAMPLER.stage = "  warp.register"
 
-    reg.model, reg.syn.apply_flows = _model, _flows
+def _synth_nogm_inputs(prep):
+    """Synthetic run_segment_nogm inputs (p0_large, affine, t1)."""
+    import nibabel as nib
+    import pandas as pd
 
+    p0_large = nib.Nifti1Image(_label_map(prep.affine_template.shape[:3]),
+                               prep.affine_template.affine)
+    return p0_large, pd.DataFrame(np.eye(4)), _native_t1()
+
+
+#: stage -> (input builder, Preprocess method name)
+STAGES = {
+    "warp": (_synth_warp_inputs, "run_warp_register"),
+    "brain": (_synth_brain_inputs, "run_segment_brain"),
+    "nogm": (_synth_nogm_inputs, "run_segment_nogm"),
+}
+
+
+def _instrument(prep, stage):
+    """Label the SAMPLER with the sub-step of ``stage`` currently running."""
+    def tag(owner, name, label, back):
+        orig = getattr(owner, name)
+
+        def wrapped(*a, **k):
+            SAMPLER.stage = label
+            try:
+                return orig(*a, **k)
+            finally:
+                SAMPLER.stage = back
+        setattr(owner, name, wrapped)
+
+    if stage == "warp":
+        reg = prep.warp_register
+        tag(reg, "model", "  warp.model", "  warp.run")
+        tag(reg.syn, "apply_flows", "  warp.apply_flows", "  warp.run")
+    elif stage == "brain":
+        seg = prep.brain_segment
+        tag(seg, "run_model", "  brain.model", "  brain.run")
+        tag(seg, "run_patch_models", "  brain.patches", "  brain.run")
+    elif stage == "nogm":
+        seg = prep.nogm_segment
+        tag(seg, "run_model", "  nogm.model", "  nogm.run")
+        tag(seg, "apply_nogm", "  nogm.apply", "  nogm.run")
+
+
+def run_stage(prep, stage, chunk):
+    """Drive one pipeline stage alone on synthetic inputs (isolated peak)."""
     from t1prep._conv_chunk import chunked_conv3d
 
-    SAMPLER.stage = "  warp.register"
+    build, method = STAGES[stage]
+    SAMPLER.stage = f"  {stage}.inputs"
+    inputs = build(prep)
+    _reclaim()
+    rss0 = _rss_bytes(os.getpid())
+    print(f"[{stage}] RSS with inputs built: {rss0 / GB:5.2f} GB", flush=True)
+
+    _instrument(prep, stage)
+    SAMPLER.stage = f"  {stage}.run"
     with chunked_conv3d(enabled=chunk) as mode:
-        out = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
+        out = getattr(prep, method)(*inputs)
         split = mode.chunked_calls if mode else 0
-    SAMPLER.stage = "  warp.done"
-    print(f"[warp] convolutions split: {split}", flush=True)
+        biggest = mode.largest_buffer if mode else 0
+    SAMPLER.stage = f"  {stage}.done"
+    print(f"[{stage}] convolutions split: {split}"
+          + (f"   largest buffer avoided: {biggest / GB:5.2f} GB" if biggest else ""),
+          flush=True)
     held = sum(
         int(np.prod(v.shape)) * 4 for v in out.values() if hasattr(v, "dataobj")
     )
-    print(f"[warp] outputs held: {held / GB:5.2f} GB in {len(out)} entries", flush=True)
+    print(f"[{stage}] outputs held: {held / GB:5.2f} GB in {len(out)} entries",
+          flush=True)
     return out, rss0
 
 
@@ -466,21 +532,21 @@ def main():
         "3-channel one-hot, no clone)",
     )
     ap.add_argument(
-        "--only-warp",
-        action="store_true",
-        help="run run_warp_register alone on synthetic inputs (isolated peak)",
+        "--stage",
+        choices=sorted(STAGES),
+        help="run one pipeline stage alone on synthetic inputs (isolated peak)",
     )
     ap.add_argument(
         "--chunk-conv",
         action="store_true",
         help="split oversized CPU conv3d into slabs (t1prep._conv_chunk), which "
-        "is what the pipeline does for the warp stage",
+        "is what the pipeline does for the segmentation and warp stages",
     )
     ap.add_argument(
-        "--verify-warp",
-        action="store_true",
-        help="run the warp stage with and without slab-wise conv and report the "
-        "max abs difference per output",
+        "--verify",
+        choices=sorted(STAGES),
+        help="run one stage with and without slab-wise conv and report the max "
+        "abs difference per output",
     )
     args = ap.parse_args()
 
@@ -531,7 +597,7 @@ def main():
 
     scratch = os.environ.get("TMPDIR", "/tmp")
     in_path = args.input
-    isolated = args.only_nogm or args.only_warp or args.verify_warp
+    isolated = args.only_nogm or args.stage or args.verify
     if in_path is None and not isolated:
         in_path = os.path.join(scratch, "mem_probe_phantom.nii.gz")
         print(f"Generating phantom ({args.shape}^3) -> {in_path}")
@@ -543,16 +609,19 @@ def main():
 
     prep = CustomPreprocess(no_gpu=no_gpu)
 
-    if args.verify_warp:
-        # Cross-check the slab-wise convolution on the real warp shapes; the
-        # unit tests only cover toy volumes.
+    if args.verify:
+        # Cross-check the slab-wise convolution on real stage shapes; the unit
+        # tests only cover toy volumes.
         from t1prep._conv_chunk import chunked_conv3d
 
-        print("Mode: verify warp (stock vs chunked conv)", flush=True)
-        inputs = _synth_warp_inputs(prep)
-        with chunked_conv3d():
-            chunked = prep.run_warp_register(*inputs)
-        base = prep.run_warp_register(*inputs)
+        stage = args.verify
+        build, method = STAGES[stage]
+        print(f"Mode: verify {stage} (stock vs chunked conv)", flush=True)
+        inputs = build(prep)
+        with chunked_conv3d() as mode:
+            chunked = getattr(prep, method)(*inputs)
+            print(f"  convolutions split: {mode.chunked_calls}", flush=True)
+        base = getattr(prep, method)(*inputs)
         SAMPLER.stop()
         worst = 0.0
         for key in sorted(base):
@@ -562,27 +631,28 @@ def main():
                 a2 = np.asanyarray(c.dataobj, dtype=np.float64)
                 d = float(np.abs(a1 - a2).max())
             else:
-                d = float(abs(np.asarray(b) - np.asarray(c)).max())
+                d = float(np.abs(np.asarray(b, dtype=np.float64)
+                                 - np.asarray(c, dtype=np.float64)).max())
             worst = max(worst, d)
             print(f"  {key:<10} max|diff| = {d:.3e}")
         print(f"\nworst deviation across all outputs: {worst:.3e}"
               f"  -> {'BITWISE IDENTICAL' if worst == 0 else 'DIFFERS'}")
         return
 
-    if args.only_warp:
+    if args.stage:
         tag = "CHUNKED" if args.chunk_conv else "BASELINE"
-        print(f"Mode: isolated warp [{tag}]", flush=True)
+        print(f"Mode: isolated {args.stage} [{tag}]", flush=True)
         import time as _t
         t0 = _t.time()
         rss0 = 0
         try:
-            _out, rss0 = run_only_warp(prep, args.chunk_conv)
+            _out, rss0 = run_stage(prep, args.stage, args.chunk_conv)
         except Exception:
-            print("\n[warp failed]\n" + traceback.format_exc())
+            print("\n[stage failed]\n" + traceback.format_exc())
         finally:
             SAMPLER.stop()
             time.sleep(0.1)
-            print(f"\nisolated warp [{tag}]  ({_t.time() - t0:.1f}s)")
+            print(f"\nisolated {args.stage} [{tag}]  ({_t.time() - t0:.1f}s)")
             for st, pk in SAMPLER.stage_peaks.items():
                 print(f"  {st:<24} peakRSS={pk / GB:5.2f} GB")
             print(f"  {'GLOBAL PEAK RSS':<24} peakRSS={SAMPLER.global_peak / GB:5.2f} GB")
@@ -665,12 +735,23 @@ def main():
 
     mode = "FREE between stages" if args.free else (
         f"{args.autocast} autocast (models only)" if args.autocast != "none" else "baseline")
+    if args.chunk_conv:
+        mode += " + slab conv"
     print(f"Mode: {mode}")
+    from t1prep._conv_chunk import chunked_conv3d
+
     try:
-        if args.free:
-            run_with_freeing(prep, in_path)
-        else:
-            prep.run(in_path, {}, run_all=True, seed=0, skip_unprocessed=False)
+        # The pipeline wraps its segmentation and warp calls individually; here
+        # one context covers the whole run, which is equivalent for measurement.
+        with chunked_conv3d(enabled=args.chunk_conv) as cc:
+            if args.free:
+                run_with_freeing(prep, in_path)
+            else:
+                prep.run(in_path, {}, run_all=True, seed=0, skip_unprocessed=False)
+            if cc:
+                print(f"[pipeline] convolutions split: {cc.chunked_calls}   "
+                      f"largest buffer avoided: {cc.largest_buffer / GB:5.2f} GB",
+                      flush=True)
     except Exception:
         print("\n[pipeline stopped early]\n" + traceback.format_exc())
     finally:

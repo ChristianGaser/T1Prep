@@ -1282,7 +1282,10 @@ def run_segment():
     if verbose:
         count = shell_progress(
             count, end_count, "DeepMriPrep segmentation     ")
-    output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
+    # Unsplit, the widest layer of the segmentation model asks for a single
+    # 20.7 GB im2col buffer at this grid — the largest allocation in the run.
+    with chunked_conv3d():
+        output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     p0_large = output_seg["p0_large"]
 
     # Due to sinc-interpolation we have to change values below zero
@@ -1352,7 +1355,9 @@ def run_segment():
                 count, end_count, 
                     "Fine DeepMriPrep segmentation"
             )
-        output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
+        # Same story as the brain model: 15.2 GB in one block if left unsplit.
+        with chunked_conv3d():
+            output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
 
         # Load probability maps for GM, WM, CSF
         p1_large = output_nogm["p1_large"]
