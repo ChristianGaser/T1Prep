@@ -213,6 +213,32 @@ class CustomPreprocess(Preprocess):
             from deepmriprep.preprocess import BET_MODEL_PATHS
             self.brain_extract = BrainExtraction(no_gpu=True, **BET_MODEL_PATHS)
 
+    def run_segment_brain(self, brain_large, mask, affine, mask_large):
+        """Brain segmentation without deepmriprep's unused native-space ``p0``.
+
+        Upstream additionally resamples ``p0_large`` back to native space with a
+        cubic B-spline, which costs ~4 s at 0.5 mm — over a tenth of the whole
+        volume pipeline.  T1Prep never reads that output: the native label map
+        is written later by ``resample_and_save_nifti`` with linear
+        interpolation, which avoids the negative overshoot spline sampling
+        produces on a label image.  ``p0_large`` is computed exactly as upstream
+        does, so every downstream result is unchanged.
+        """
+        brain_large = nifti_to_tensor(brain_large)
+        mask_large = nifti_to_tensor(mask_large)
+        p0_large = self.brain_segment(
+            brain_large[None, None].to(self.device),
+            mask_large[None, None].to(self.device),
+        )[0, 0]
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        p0_large[mask_large == 0.0] = 0.0
+        return {
+            "p0_large": reoriented_nifti(
+                p0_large.cpu().numpy(), **self.affine_template_metadata
+            )
+        }
+
     def run_atlas_register(
         self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
     ):
