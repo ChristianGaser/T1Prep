@@ -10,7 +10,7 @@ authors = [
     { name = "Christian Gaser", email = "christian.gaser@uni-jena.de" },
 ]
 license = {file = "LICENSE"}
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.10,<3.13"
 readme = {file = "README_pypi.md", content-type = "text/markdown"}
 
 classifiers = [
@@ -18,7 +18,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -35,7 +34,7 @@ dependencies = [
     # (__thread_bss zero-fill section); cap below 1.14 there. 1.13.1 works.
     "scipy>=1.10.1; sys_platform != 'darwin' or python_version >= '3.11'",
     "scipy>=1.10.1,<1.14; sys_platform == 'darwin' and python_version < '3.11'",
-    "torch>=1.11.0",
+    "torch>=2.9",
     "deepmriprep>=0.3.0",
     "deepbet>=1.0.2",
     "torchreg>=0.1.3",
