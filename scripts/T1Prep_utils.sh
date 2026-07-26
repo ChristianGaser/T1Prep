@@ -273,21 +273,19 @@ check_python_cmd()
       python="python3.11"
     elif command -v python3.10 &>/dev/null; then
       python="python3.10"
-    elif command -v python3.9 &>/dev/null; then
-      python="python3.9"
     elif command -v python3 &>/dev/null; then
       python="python3"
     elif command -v python &>/dev/null; then
       python="python"
     else
-      echo "${RED}Correct python version 3.9-3.12 was not found. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
+      echo "${RED}Correct python version 3.10-3.12 was not found. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
       exit 1
     fi
   fi
   
   python_version=$($python -V 2>&1)
-  if ! echo "$python_version" | grep -qE '^Python 3\.(9|10|11|12)\.'; then
-    echo "${RED}Only Python version 3.9-3.12 is supported. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
+  if ! echo "$python_version" | grep -qE '^Python 3\.(10|11|12)\.'; then
+    echo "${RED}Only Python version 3.10-3.12 is supported. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
     exit 1
   fi  
 }
@@ -480,7 +478,7 @@ repair_venv()
   local real_dir
   real_dir="$(dirname "$real_python")"
 
-  # Fix the versioned symlink (e.g. python3.9 -> system python)
+  # Fix the versioned symlink (e.g. python3.11 -> system python)
   ln -sf "$real_python" "${bin_dir}/python${sys_ver}"
   # Fix python3 and python -> the versioned symlink
   ln -sf "python${sys_ver}" "${bin_dir}/python3"
@@ -517,8 +515,8 @@ install_deepmriprep()
   fi
   source ${T1prep_env}/bin/activate
 
-  # PYTHONIOENCODING=utf-8: prevents a Python 3.9 crash when sys.stdout.encoding
-  # is None (no locale set) inside pip's error handler.
+  # PYTHONIOENCODING=utf-8: guards against a crash when sys.stdout.encoding is
+  # None (no locale set) inside pip's error handler; kept as cheap insurance.
   # --no-compile: skips bytecode compilation during install, avoiding pip crashes
   # on template files (e.g. PySide6's __init__.tmpl.py) that contain Jinja2
   # syntax and are not valid Python.

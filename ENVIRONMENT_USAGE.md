@@ -82,7 +82,7 @@ which python
 
 # Check Python version
 python --version
-# Should show: Python 3.9+
+# Should show: Python 3.10+
 ```
 
 ### Visual Indicators

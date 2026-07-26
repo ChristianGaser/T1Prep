@@ -1,4 +1,4 @@
-[![Python 3.9 | 3.10 | 3.11 | 3.12](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11%20|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.10 - 3.12](https://img.shields.io/badge/Python-3.10%20|%203.11|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](https://github.com/ChristianGaser/T1Prep/blob/main/LICENSE)
 [![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
 
@@ -59,7 +59,9 @@ on first pipeline use if this step is skipped.
 
 ## Requirements
 
-- Python 3.9–3.12
+- Python 3.10–3.12 — required for PyTorch 2.9+, whose MPS kernels give a
+  measurable speed-up on Apple Silicon (3:02 min vs 2:39 min per subject,
+  compared with the older Python 3.9 / PyTorch 2.8 stack)
 - ~2 GB disk space for model weights (downloaded separately, see above)
 - For GPU acceleration: CUDA-capable GPU or Apple Silicon (MPS)
 

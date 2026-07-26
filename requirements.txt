@@ -1,11 +1,11 @@
 cat-surf>=1.0.14
 nibabel>=3.2
-numpy>=1.20
+numpy>=1.23.2
 # macOS 27 rejects scipy's _spropack.so from the 1.15.x cp310 wheels
 # (__thread_bss zero-fill section); cap below 1.14 there. 1.13.1 works.
 scipy>=1.10.1; sys_platform != 'darwin' or python_version >= '3.11'
 scipy>=1.10.1,<1.14; sys_platform == 'darwin' and python_version < '3.11'
-torch>=1.11.0
+torch>=2.9
 deepmriprep>=0.3.0
 deepbet>=1.0.2
 torchreg>=0.1.3

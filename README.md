@@ -1,4 +1,4 @@
-[![Python 3.9 | 3.10 | 3.11 | 3.12](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11%20|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.10 - 3.12](https://img.shields.io/badge/Python-3.10%20|%203.11|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
 <!--
@@ -50,7 +50,9 @@ It is designed for both single-subject and batch processing, with optional paral
 CAT12 folder structures and the BIDS derivatives standard.
 
 ## Requirements
- [Python 3.9-3.12](https://www.python.org/downloads/) is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+ [Python 3.10-3.12](https://www.python.org/downloads/) is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+
+> **Why 3.10+?** PyTorch publishes no wheels for Python 3.9 after 2.8, and the GPU (MPS) kernels T1Prep relies on — `max_pool3d_with_indices`, `avg_pool3d` and `grid_sampler_3d` — only arrived in PyTorch 2.9; on the older stack they silently fall back to the CPU. On Apple Silicon that is worth a measurable amount: one subject takes **3:02 min on Python 3.9 / PyTorch 2.8 versus 2:39 min on Python 3.12 / PyTorch 2.13**. 
 
 ## Main Differences to CAT12
 - Implemented entirely in Python, eliminating the need for a Matlab license or platform-specific compiled binaries.
@@ -68,7 +70,7 @@ Pick whichever workflow suits you.
 
 ### pip / PyPI (Recommended for Python users)
 
-If you have Python 3.9–3.12 available, install directly from PyPI:
+If you have Python 3.10–3.12 available, install directly from PyPI:
 
 ```bash
 # Latest release
@@ -516,9 +518,9 @@ creation. Only segmentation maps are generated and saved in the same
 directory as the input files.
 
 ```bash
-  T1Prep --python python3.9 --no-overwrite "surf/lh.thickness." sTRIO*.nii
+  T1Prep --python python3.11 --no-overwrite "surf/lh.thickness." sTRIO*.nii
 ```
-Process all files matching the pattern `'sTRIO*.nii'` and use python3.9. 
+Process all files matching the pattern `'sTRIO*.nii'` and use python3.11. 
 Skip processing for files where 'surf/lh.thickness.*' already exists, and 
 save new results in the same directory as the input files.
 

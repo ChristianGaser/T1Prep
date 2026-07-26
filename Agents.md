@@ -114,7 +114,7 @@ webui/static/styles.css
 ```
 
 ## Development Guidelines
-- Use Python 3.9 or newer (supports 3.9-3.12).
+- Use Python 3.10 or newer (supports 3.10-3.12).
 - Keep functions small and well documented. Include docstrings for public functions.
 - Prefer using the utilities provided in `src/t1prep/utils.py` (and related helpers in `src/t1prep/`) when possible.
 - Check documentation of functions and add missing documentation.
