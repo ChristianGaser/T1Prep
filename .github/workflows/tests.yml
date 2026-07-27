@@ -1,0 +1,58 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is supported (pinned to PyTorch 2.8 via the conditional torch
+        # requirement); 3.10-3.12 use PyTorch 2.9+.  Keep this list in sync with
+        # `requires-python` in pyproject.toml.
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install T1Prep (CPU PyTorch)
+        # The PyTorch CPU wheel index keeps the download small and avoids CUDA
+        # packages the runner cannot use.  The conditional torch pin in
+        # pyproject.toml selects 2.8 on 3.9 and 2.9+ on 3.10-3.12 automatically.
+        run: pip install --extra-index-url https://download.pytorch.org/whl/cpu .
+
+      - name: Byte-compile sources
+        run: python -m compileall -q src
+
+      - name: Import smoke test
+        run: python -c "import t1prep; print('t1prep', t1prep.__version__, 'OK')"
+
+      - name: Run test suite
+        run: |
+          pip install pytest
+          pytest -q
