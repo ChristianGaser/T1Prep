@@ -55,6 +55,22 @@ progress_bar="${script_dir}/progress_bar_multi.sh"
 
 main()
 {
+  # Honor an explicit --python before the first validation so a user-selected
+  # interpreter is not rejected by check_python_cmd's auto-detection (which runs
+  # before parse_args would otherwise process the flag).
+  local _i _next
+  for ((_i = 1; _i <= $#; _i++)); do
+    case "${!_i}" in
+      --python)
+        _next=$((_i + 1))
+        python="${!_next:-}"
+        ;;
+      --python=*)
+        python="${!_i#--python=}"
+        ;;
+    esac
+  done
+
   check_python_cmd
   parse_args ${1+"$@"}
   check_python_cmd

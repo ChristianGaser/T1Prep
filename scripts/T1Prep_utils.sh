@@ -50,19 +50,86 @@ if [ -d "${script_dir}/../src/t1prep" ]; then
   T1prep_env=${root_dir}/env
 else
   T1PREP_INSTALLED=1
-  # Prefer the venv's python sitting next to this script
-  if [ -x "${script_dir}/python" ]; then
-    python="${python:-${script_dir}/python}"
-  elif [ -x "${script_dir}/python3" ]; then
-    python="${python:-${script_dir}/python3}"
-  else
-    python="${python:-$(command -v python3 || command -v python)}"
-  fi
-  data_dir="$("${python}" -c 'from importlib.resources import files; print(files("t1prep").joinpath("data"))' 2>/dev/null)"
+
+  # ------------------------------------------------------------------
+  # Locate the interpreter that actually has T1Prep installed.
+  #
+  # This file is *sourced* before parse_args() runs, so an explicit
+  # "--python <cmd>" / "--python=<cmd>" on the command line (or the
+  # T1PREP_PYTHON env var) is picked up here directly — otherwise the
+  # package-data lookup below would ignore --python and fail whenever the
+  # default interpreter on PATH is not the one T1Prep was installed into
+  # (a common situation with "pip install --user" plus several coexisting
+  # Python versions).
+  # ------------------------------------------------------------------
+
+  # Pre-scan the original arguments for an explicit interpreter.
+  _cli_python=""
+  _expect_python=0
+  for _arg in "$@"; do
+    if [ "${_expect_python}" -eq 1 ]; then
+      _cli_python="${_arg}"
+      _expect_python=0
+      continue
+    fi
+    case "${_arg}" in
+      --python)   _expect_python=1 ;;
+      --python=*) _cli_python="${_arg#--python=}" ;;
+    esac
+  done
+
+  # Try candidate interpreters in priority order and keep the first one that
+  # can import the installed t1prep package and resolve its bundled data dir:
+  #   1. explicit --python          4. venv sibling next to this script
+  #   2. $T1PREP_PYTHON             5. newest versioned python3.12..3.10
+  #   3. inherited $python          6. generic python3 / python
+  _env_python="${python:-}"
+  python=""
+  data_dir=""
+  for _cand in \
+      "${_cli_python}" \
+      "${T1PREP_PYTHON:-}" \
+      "${_env_python}" \
+      "${script_dir}/python" \
+      "${script_dir}/python3" \
+      "$(command -v python3.12 2>/dev/null || true)" \
+      "$(command -v python3.11 2>/dev/null || true)" \
+      "$(command -v python3.10 2>/dev/null || true)" \
+      "$(command -v python3 2>/dev/null || true)" \
+      "$(command -v python 2>/dev/null || true)"; do
+    [ -n "${_cand}" ] || continue
+    command -v "${_cand}" >/dev/null 2>&1 || [ -x "${_cand}" ] || continue
+    _dd="$("${_cand}" -c 'from importlib.resources import files; print(files("t1prep").joinpath("data"))' 2>/dev/null)"
+    if [ -n "${_dd}" ] && [ -d "${_dd}" ]; then
+      python="${_cand}"
+      data_dir="${_dd}"
+      break
+    fi
+  done
+
   if [ -z "${data_dir}" ] || [ ! -d "${data_dir}" ]; then
-    echo "ERROR: cannot locate t1prep package data — is T1Prep installed in this Python environment?" >&2
+    echo "ERROR: cannot locate the t1prep package data." >&2
+    echo "T1Prep must run with the Python interpreter it was installed into" >&2
+    echo "(supported: Python 3.10-3.12)." >&2
+    if [ -n "${_cli_python}${T1PREP_PYTHON:-}" ]; then
+      echo "The interpreter you selected does not have T1Prep installed." >&2
+    fi
+    echo "Fix by one of:" >&2
+    echo "  * install T1Prep into the interpreter you want to use:" >&2
+    echo "        <python> -m pip install T1Prep" >&2
+    echo "  * or point T1Prep at the interpreter that already has it:" >&2
+    echo "        T1Prep --python /path/to/python ...   (or: export T1PREP_PYTHON=/path/to/python)" >&2
     exit 1
   fi
+
+  # Warn (do not abort) if the resolved interpreter is outside the supported
+  # range — the package imported, but behaviour is only guaranteed on 3.10-3.12.
+  _pyver="$("${python}" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+  case "${_pyver}" in
+    3.10|3.11|3.12) ;;
+    *) echo "WARNING: T1Prep is running under Python ${_pyver:-unknown}; only 3.10-3.12 are supported." >&2 ;;
+  esac
+
   src_dir="$(dirname "${data_dir}")"   # site-packages/t1prep
   root_dir="${src_dir}"                # used only by a few legacy code paths
   T1prep_env=""                        # already inside a managed venv

@@ -32,6 +32,13 @@ For full documentation, CLI usage, Docker instructions, and helper scripts see t
 pip install T1Prep
 ```
 
+> **Multiple Python versions?** Install with the exact interpreter you will run
+> T1Prep with, e.g. `python3.12 -m pip install T1Prep` (requires Python
+> 3.10–3.12). If the wrong interpreter is auto-detected, point T1Prep at the
+> right one with `T1Prep --python /path/to/python …` or
+> `export T1PREP_PYTHON=/path/to/python`. `pipx install T1Prep` or a dedicated
+> venv avoids the ambiguity.
+
 `pip install` places every entry point into the active environment's `bin/`
 directory. With that directory on your `PATH` (e.g. an activated venv) the
 following commands are available:

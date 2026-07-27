@@ -15,6 +15,8 @@
 #   REPO_NAME   (default: T1prep)
 #   T1PREP_INSTALL_DIR (skip interactive prompt, use this directory)
 #   T1PREP_VERSION (skip interactive prompt, use this release version, e.g., "v1.0.0" or "latest")
+#   T1PREP_PYTHON  (skip interactive prompt, use this Python interpreter, e.g.,
+#                   "python3.12" or "/usr/bin/python3.11"; must be Python 3.10-3.12)
 #
 # Requirements: bash, tar, curl or wget. jq is optional.
 
@@ -32,6 +34,7 @@ CREATED_TEMP_DIR=""
 TMP_DOWNLOAD_DIR=""
 SELECTED_VERSION=""
 SELECTED_TARBALL_URL=""
+SELECTED_PYTHON=""
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 info() { printf "\033[32m[info]\033[0m %s\n" "$*"; }
@@ -342,6 +345,89 @@ prepare_install_dir() {
   fi
 }
 
+detect_supported_pythons() {
+  # Emit "<version>\t<command>" lines for interpreters that report Python
+  # 3.10-3.12, newest version first, one command per version (versioned names
+  # such as python3.12 take precedence over the generic python3/python).
+  local cmd ver seen=""
+  for cmd in python3.12 python3.11 python3.10 python3 python; do
+    have_cmd "$cmd" || continue
+    ver="$("$cmd" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+    case "$ver" in
+      3.10|3.11|3.12) ;;
+      *) continue ;;
+    esac
+    case "$seen" in *" $ver "*) continue ;; esac
+    seen="$seen $ver "
+    printf '%s\t%s\n' "$ver" "$cmd"
+  done | sort -rn
+}
+
+prompt_python_command() {
+  # If T1PREP_PYTHON is set, use it directly (non-interactive mode).
+  if [ -n "${T1PREP_PYTHON:-}" ]; then
+    SELECTED_PYTHON="$T1PREP_PYTHON"
+    info "Using Python interpreter from environment: $SELECTED_PYTHON"
+    local ver
+    ver="$("$SELECTED_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+    case "$ver" in
+      3.10|3.11|3.12) ;;
+      "") warn "Could not run '$SELECTED_PYTHON'. Make sure it exists and is Python 3.10-3.12." ;;
+      *)  warn "'$SELECTED_PYTHON' is Python ${ver}; T1Prep supports only 3.10-3.12." ;;
+    esac
+    return
+  fi
+
+  # Discover supported interpreters on the system.
+  local vers=() cmds=() v c
+  while IFS=$'\t' read -r v c; do
+    [ -n "$c" ] || continue
+    vers+=("$v")
+    cmds+=("$c")
+  done < <(detect_supported_pythons)
+
+  if [ "${#cmds[@]}" -eq 0 ]; then
+    warn "No supported Python (3.10-3.12) found on PATH."
+    warn "Installation will still try to detect one; if it fails, install"
+    warn "Python 3.10-3.12 or re-run with T1PREP_PYTHON=/path/to/python."
+    SELECTED_PYTHON=""
+    return
+  fi
+
+  if [ "${#cmds[@]}" -eq 1 ]; then
+    SELECTED_PYTHON="${cmds[0]}"
+    info "Using Python ${vers[0]} (${cmds[0]})"
+    return
+  fi
+
+  echo ""
+  bold "Multiple supported Python versions found. Which should T1Prep use?"
+  echo ""
+  local i=1 idx
+  for idx in "${!cmds[@]}"; do
+    if [ "$i" -eq 1 ]; then
+      echo "  $i) ${cmds[$idx]}  (Python ${vers[$idx]}, newest — recommended)"
+    else
+      echo "  $i) ${cmds[$idx]}  (Python ${vers[$idx]})"
+    fi
+    ((i++))
+  done
+  echo ""
+
+  local choice
+  while true; do
+    read_input "Enter your choice [1-${#cmds[@]}] (default 1): "
+    choice="$REPLY"
+    [ -z "$choice" ] && choice=1
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#cmds[@]}" ]; then
+      SELECTED_PYTHON="${cmds[$((choice - 1))]}"
+      break
+    fi
+    warn "Invalid choice. Please enter a number between 1 and ${#cmds[@]}."
+  done
+  info "Selected Python: $SELECTED_PYTHON"
+}
+
 main() {
   bold "T1Prep installer"
 
@@ -353,6 +439,10 @@ main() {
 
   # Prompt for installation location
   prompt_install_location
+
+  # Prompt for the Python interpreter to install into (newest supported by
+  # default). Honors T1PREP_PYTHON for non-interactive use.
+  prompt_python_command
 
   # Create temporary directory for download only
   local base_tmp
@@ -433,7 +523,11 @@ main() {
   fi
 
   info "Starting T1Prep installation…"
-  ( cd "$repo_root" && "$t1prep_bin" --install )
+  if [ -n "${SELECTED_PYTHON:-}" ]; then
+    ( cd "$repo_root" && "$t1prep_bin" --python "$SELECTED_PYTHON" --install )
+  else
+    ( cd "$repo_root" && "$t1prep_bin" --install )
+  fi
 
   # Mark installation as successful (prevents cleanup of temp install dir)
   INSTALL_SUCCESS=1

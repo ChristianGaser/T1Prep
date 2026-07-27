@@ -83,6 +83,15 @@ python3 -m pip install "T1Prep==0.4.4"
 pipx install T1Prep
 ```
 
+> **Multiple Python versions?** Install with the *exact* interpreter you intend
+> to run T1Prep with, e.g. `python3.12 -m pip install T1Prep` (T1Prep requires
+> Python 3.10–3.12; a `pip` bound to an older Python will refuse to install).
+> T1Prep first tries the interpreter it was installed into and the newest
+> Python 3.10–3.12 on your `PATH`. If auto-detection picks the wrong one, point
+> it explicitly — either per invocation (`T1Prep --python /path/to/python …`) or
+> for the whole session (`export T1PREP_PYTHON=/path/to/python`). Using `pipx`
+> or a dedicated venv sidesteps the ambiguity entirely.
+
 Model weights are not bundled with the wheel; they are fetched lazily on
 the first run into your user cache (or downloaded ahead of time with
 `t1prep-download-models`).
@@ -126,6 +135,9 @@ line to add its `bin/` directory to your shell. After that, run `T1Prep`,
 The installer will interactively prompt you to:
 1. **Select a version**: Latest release, development (main branch), or choose from available releases
 2. **Choose installation directory**: Current folder, temporary folder, or custom path
+3. **Select a Python interpreter**: if several supported Pythons (3.10–3.12) are
+   found, pick which one to install into (the newest is offered as the default).
+   If only one is found it is used automatically.
 
 #### Non-Interactive Installation
 Use environment variables to skip the interactive prompts:
@@ -137,12 +149,17 @@ T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" \
 # Install specific version to custom directory
 T1PREP_VERSION=v1.0.0 T1PREP_INSTALL_DIR=/opt/T1Prep \
   curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+
+# Pin the Python interpreter to install into (skips the Python prompt)
+T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" T1PREP_PYTHON=python3.12 \
+  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
 ```
 
 | Environment Variable | Description |
 |---------------------|-------------|
 | `T1PREP_VERSION` | Release tag (e.g., `v1.0.0`) or `latest` |
 | `T1PREP_INSTALL_DIR` | Absolute path for installation |
+| `T1PREP_PYTHON` | Python interpreter to install into (e.g., `python3.12` or an absolute path); must be Python 3.10–3.12 |
 
 ### Windows Installation via WSL (Recommended)
 
