@@ -78,7 +78,7 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` → Project Structure, `CLAUDE.md` |
 | Installation process | `README.md`, `README_pypi.md`, `scripts/install.sh` (bash bootstrapper is secondary to `pip install T1Prep`) |
 | Docker configuration | `README.md`, `Dockerfile` |
-| Version number | `src/t1prep/__init__.py` is the single source of truth — `pyproject.toml` derives via `setuptools.dynamic`, `scripts/utils.sh` awks it, `Makefile` bumps it via `make release`. Also update README badges + git tag. |
+| Version number | `src/t1prep/__init__.py` is the single source of truth — `pyproject.toml` derives via `setuptools.dynamic`, `scripts/T1Prep_utils.sh` awks it, `Makefile` bumps it via `make release`. Also update README badges + git tag. |
 
 ## Adding New CLI Options (order matters)
 

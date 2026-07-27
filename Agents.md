@@ -80,7 +80,7 @@ T1Prep/
 | Installation process (PyPI distribution) | `pyproject.toml`, `README_pypi.md` |
 | Docker configuration | `README.md` -> Docker section |
 | Docker configuration | `Dockerfile` |
-| Version number | `src/t1prep/__init__.py` (canonical — pyproject.toml derives via setuptools attr, scripts/utils.sh reads it via awk); `Makefile` PREV_VERSION/VERSION drive `make release`; release tags + README badges |
+| Version number | `src/t1prep/__init__.py` (canonical — pyproject.toml derives via setuptools attr, scripts/T1Prep_utils.sh reads it via awk); `Makefile` PREV_VERSION/VERSION drive `make release`; release tags + README badges |
 
 ### Core File Relationships
 

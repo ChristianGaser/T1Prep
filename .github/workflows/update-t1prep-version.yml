@@ -45,47 +45,12 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved version: $VERSION"
 
-      - name: Update version in scripts/T1Prep
-        run: |
-          set -euo pipefail
-          VERSION='${{ steps.get_version.outputs.version }}'
-          FILE='scripts/T1Prep'
-
-          if [ ! -f "$FILE" ]; then
-            echo "::error::File $FILE not found" >&2
-            exit 1
-          fi
-
-          echo "Updating $FILE to version $VERSION"
-          # Replace a line like: version=0.2.3
-          sed -i -E "s/^version=[0-9]+\.[0-9]+\.[0-9]+/version=${VERSION}/" "$FILE"
-
-          # Verify substitution occurred
-          if ! grep -qE "^version=${VERSION}" "$FILE"; then
-            echo "::error::Failed to set version to ${VERSION} in $FILE" >&2
-            exit 1
-          fi
-
-      - name: Update version in scripts/utils.sh
-        run: |
-          set -euo pipefail
-          VERSION='${{ steps.get_version.outputs.version }}'
-          FILE='scripts/utils.sh'
-
-          if [ ! -f "$FILE" ]; then
-            echo "::error::File $FILE not found" >&2
-            exit 1
-          fi
-
-          echo "Updating $FILE to version $VERSION"
-          sed -i -E "s/^T1PREP_VERSION=[0-9]+\.[0-9]+\.[0-9]+/T1PREP_VERSION=${VERSION}/" "$FILE"
-
-          if ! grep -qE "^T1PREP_VERSION=${VERSION}" "$FILE"; then
-            echo "::error::Failed to set T1PREP_VERSION to ${VERSION} in $FILE" >&2
-            exit 1
-          fi
-
       - name: Update version in src/t1prep/__init__.py
+        # src/t1prep/__init__.py is the single source of truth for the version.
+        # Everything else derives from it automatically: pyproject.toml via
+        # setuptools.dynamic, the bash scripts awk it from here at runtime, and
+        # the Dockerfile ARG is pinned by the separate "Update Dockerfile"
+        # workflow.  So this is the only file this workflow needs to edit.
         run: |
           set -euo pipefail
           VERSION='${{ steps.get_version.outputs.version }}'
@@ -104,26 +69,6 @@ jobs:
             exit 1
           fi
 
-      - name: Update version in Makefile and Dockerfile
-        run: |
-          set -euo pipefail
-          VERSION='${{ steps.get_version.outputs.version }}'
-          # Makefile: VERSION="X.Y.Z"
-          if [ -f Makefile ]; then
-            sed -i -E "s/^VERSION=\"[^\"]*\"/VERSION=\"${VERSION}\"/" Makefile
-            grep -qE "^VERSION=\"${VERSION}\"" Makefile || { echo "::error::Failed to update Makefile VERSION"; exit 1; }
-          else
-            echo "::warning::Makefile not found; skipping"
-          fi
-
-          # Dockerfile: ARG T1PREP_VERSION=vX.Y.Z
-          if [ -f Dockerfile ]; then
-            sed -i -E "s/^ARG T1PREP_VERSION=.*/ARG T1PREP_VERSION=v${VERSION}/" Dockerfile
-            grep -qE "^ARG T1PREP_VERSION=v${VERSION}" Dockerfile || { echo "::error::Failed to update Dockerfile ARG"; exit 1; }
-          else
-            echo "::warning::Dockerfile not found; skipping"
-          fi
-
       - name: Commit and push changes
         env:
           VERSION: ${{ steps.get_version.outputs.version }}
@@ -136,6 +81,19 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/T1Prep scripts/utils.sh src/t1prep/__init__.py Makefile Dockerfile
+          git add src/t1prep/__init__.py
           git commit -m "chore: bump T1Prep version to ${VERSION}"
-          git push origin HEAD:main
+
+          # The "Update Dockerfile" workflow may push to main on the same
+          # release event; rebase-and-retry so concurrent pushes don't fail.
+          n=0
+          until git push origin HEAD:main; do
+            n=$((n + 1))
+            if [ "$n" -ge 5 ]; then
+              echo "::error::push to main failed after $n attempts" >&2
+              exit 1
+            fi
+            echo "push rejected; rebasing on latest main and retrying ($n)…"
+            git pull --rebase origin main
+            sleep $((RANDOM % 4 + 1))
+          done

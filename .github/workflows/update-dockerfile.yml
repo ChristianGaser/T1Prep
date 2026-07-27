@@ -2,23 +2,82 @@ name: Update Dockerfile
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag/version to pin (e.g., v0.5.3 or 0.5.3)"
+        required: false
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   bump-dockerfile:
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: echo "TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
-      - name: Update Dockerfile
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Determine version from tag
+        id: get_version
         run: |
-          sed -i -E "s/ARG T1PREP_VERSION=.*/ARG T1PREP_VERSION=${{ env.TAG }}/" Dockerfile
-          sed -i -E "s/version=.*/version=${{ env.TAG }}/" scripts/T1Prep
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          set -euo pipefail
+          # Prefer explicit input for manual runs, else use the release tag_name.
+          RAW_TAG="${{ github.event.release.tag_name }}"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            RAW_TAG="${{ github.event.inputs.tag }}"
+          fi
+
+          if [ -z "$RAW_TAG" ]; then
+            echo "::error::No tag found. Provide 'tag' input for workflow_dispatch or trigger from a Release." >&2
+            exit 1
+          fi
+
+          # pip expects a bare PEP 440 version (no leading 'v') for the
+          # "T1Prep==${T1PREP_VERSION}" install in the Dockerfile.
+          VERSION="${RAW_TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+      - name: Pin version in Dockerfile
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.get_version.outputs.version }}'
+          sed -i -E "s/^ARG T1PREP_VERSION=.*/ARG T1PREP_VERSION=${VERSION}/" Dockerfile
+          if ! grep -qE "^ARG T1PREP_VERSION=${VERSION}$" Dockerfile; then
+            echo "::error::Failed to pin T1PREP_VERSION to ${VERSION} in Dockerfile" >&2
+            exit 1
+          fi
+
+      - name: Commit and push changes
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No Dockerfile changes; already pinned to ${VERSION}."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Dockerfile
-          git commit -am "chore: bump Dockerfile to ${{ env.TAG }}"
-          git push origin HEAD:${{ github.ref_name }}
+          git commit -m "chore: pin Dockerfile T1PREP_VERSION to ${VERSION}"
+
+          # The "Update T1Prep version on release" workflow may push to main on
+          # the same release event; rebase-and-retry so concurrent pushes don't fail.
+          n=0
+          until git push origin HEAD:main; do
+            n=$((n + 1))
+            if [ "$n" -ge 5 ]; then
+              echo "::error::push to main failed after $n attempts" >&2
+              exit 1
+            fi
+            echo "push rejected; rebasing on latest main and retrying ($n)…"
+            git pull --rebase origin main
+            sleep $((RANDOM % 4 + 1))
+          done
