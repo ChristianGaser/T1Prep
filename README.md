@@ -1,4 +1,4 @@
-[![Python 3.10 - 3.12](https://img.shields.io/badge/Python-3.10%20|%203.11|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.9 - 3.12](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
 <!--
@@ -50,9 +50,9 @@ It is designed for both single-subject and batch processing, with optional paral
 CAT12 folder structures and the BIDS derivatives standard.
 
 ## Requirements
- [Python 3.10-3.12](https://www.python.org/downloads/) is required, and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+ [Python 3.9-3.12](https://www.python.org/downloads/) is required (3.10+ recommended), and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
 
-> **Why 3.10+?** PyTorch publishes no wheels for Python 3.9 after 2.8, and the GPU (MPS) kernels T1Prep relies on — `max_pool3d_with_indices`, `avg_pool3d` and `grid_sampler_3d` — only arrived in PyTorch 2.9; on the older stack they silently fall back to the CPU. On Apple Silicon that is worth a measurable amount: one subject takes **3:02 min on Python 3.9 / PyTorch 2.8 versus 2:39 min on Python 3.12 / PyTorch 2.13**. 
+> **Why prefer 3.10+?** Python 3.9 works, but PyTorch publishes no wheels for it after 2.8, so a 3.9 install is pinned to PyTorch 2.8. The GPU (MPS) kernels T1Prep relies on — `max_pool3d_with_indices`, `avg_pool3d` and `grid_sampler_3d` — only arrived in PyTorch 2.9; on 2.8 they silently fall back to the CPU. On Apple Silicon that is worth a measurable amount: one subject takes **3:02 min on Python 3.9 / PyTorch 2.8 versus 2:39 min on Python 3.12 / PyTorch 2.13**. On Linux/CUDA/CPU the two stacks perform the same, so 3.9 is a fine choice there.
 
 ## Main Differences to CAT12
 - Implemented entirely in Python, eliminating the need for a Matlab license or platform-specific compiled binaries.
@@ -70,7 +70,7 @@ Pick whichever workflow suits you.
 
 ### pip / PyPI (Recommended for Python users)
 
-If you have Python 3.10–3.12 available, install directly from PyPI:
+If you have Python 3.9–3.12 available (3.10+ recommended), install directly from PyPI:
 
 ```bash
 # Latest release
@@ -85,9 +85,11 @@ pipx install T1Prep
 
 > **Multiple Python versions?** Install with the *exact* interpreter you intend
 > to run T1Prep with, e.g. `python3.12 -m pip install T1Prep` (T1Prep requires
-> Python 3.10–3.12; a `pip` bound to an older Python will refuse to install).
+> Python 3.9–3.12; a `pip` bound to a Python older than 3.9 will refuse to
+> install). On macOS, prefer 3.10+ — a 3.9 install is pinned to PyTorch 2.8 and
+> runs slower (see [Requirements](#requirements)).
 > T1Prep first tries the interpreter it was installed into and the newest
-> Python 3.10–3.12 on your `PATH`. If auto-detection picks the wrong one, point
+> Python 3.9–3.12 on your `PATH`. If auto-detection picks the wrong one, point
 > it explicitly — either per invocation (`T1Prep --python /path/to/python …`) or
 > for the whole session (`export T1PREP_PYTHON=/path/to/python`). Using `pipx`
 > or a dedicated venv sidesteps the ambiguity entirely.
@@ -135,7 +137,7 @@ line to add its `bin/` directory to your shell. After that, run `T1Prep`,
 The installer will interactively prompt you to:
 1. **Select a version**: Latest release, development (main branch), or choose from available releases
 2. **Choose installation directory**: Current folder, temporary folder, or custom path
-3. **Select a Python interpreter**: if several supported Pythons (3.10–3.12) are
+3. **Select a Python interpreter**: if several supported Pythons (3.9–3.12) are
    found, pick which one to install into (the newest is offered as the default).
    If only one is found it is used automatically.
 
@@ -159,7 +161,7 @@ T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" T1PREP_PYTHON=python3.12 
 |---------------------|-------------|
 | `T1PREP_VERSION` | Release tag (e.g., `v1.0.0`) or `latest` |
 | `T1PREP_INSTALL_DIR` | Absolute path for installation |
-| `T1PREP_PYTHON` | Python interpreter to install into (e.g., `python3.12` or an absolute path); must be Python 3.10–3.12 |
+| `T1PREP_PYTHON` | Python interpreter to install into (e.g., `python3.12` or an absolute path); must be Python 3.9–3.12 |
 
 ### Windows Installation via WSL (Recommended)
 

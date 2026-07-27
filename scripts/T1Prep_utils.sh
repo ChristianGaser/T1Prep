@@ -82,7 +82,7 @@ else
   # can import the installed t1prep package and resolve its bundled data dir:
   #   1. explicit --python          4. venv sibling next to this script
   #   2. $T1PREP_PYTHON             5. newest versioned python3.12..3.10
-  #   3. inherited $python          6. generic python3 / python
+  #   3. inherited $python          6. generic python3 / python, then python3.9
   _env_python="${python:-}"
   python=""
   data_dir=""
@@ -96,7 +96,8 @@ else
       "$(command -v python3.11 2>/dev/null || true)" \
       "$(command -v python3.10 2>/dev/null || true)" \
       "$(command -v python3 2>/dev/null || true)" \
-      "$(command -v python 2>/dev/null || true)"; do
+      "$(command -v python 2>/dev/null || true)" \
+      "$(command -v python3.9 2>/dev/null || true)"; do
     [ -n "${_cand}" ] || continue
     command -v "${_cand}" >/dev/null 2>&1 || [ -x "${_cand}" ] || continue
     _dd="$("${_cand}" -c 'from importlib.resources import files; print(files("t1prep").joinpath("data"))' 2>/dev/null)"
@@ -110,7 +111,7 @@ else
   if [ -z "${data_dir}" ] || [ ! -d "${data_dir}" ]; then
     echo "ERROR: cannot locate the t1prep package data." >&2
     echo "T1Prep must run with the Python interpreter it was installed into" >&2
-    echo "(supported: Python 3.10-3.12)." >&2
+    echo "(supported: Python 3.9-3.12)." >&2
     if [ -n "${_cli_python}${T1PREP_PYTHON:-}" ]; then
       echo "The interpreter you selected does not have T1Prep installed." >&2
     fi
@@ -123,11 +124,11 @@ else
   fi
 
   # Warn (do not abort) if the resolved interpreter is outside the supported
-  # range — the package imported, but behaviour is only guaranteed on 3.10-3.12.
+  # range — the package imported, but behaviour is only guaranteed on 3.9-3.12.
   _pyver="$("${python}" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
   case "${_pyver}" in
-    3.10|3.11|3.12) ;;
-    *) echo "WARNING: T1Prep is running under Python ${_pyver:-unknown}; only 3.10-3.12 are supported." >&2 ;;
+    3.9|3.10|3.11|3.12) ;;
+    *) echo "WARNING: T1Prep is running under Python ${_pyver:-unknown}; only 3.9-3.12 are supported." >&2 ;;
   esac
 
   src_dir="$(dirname "${data_dir}")"   # site-packages/t1prep
@@ -334,6 +335,8 @@ check_python_cmd()
   fi
 
   if [ -z "$python" ]; then
+    # Prefer the newest supported interpreter; python3.9 is only a fallback
+    # (it works but is slower on macOS — see requirements.txt torch pin).
     if command -v python3.12 &>/dev/null; then
       python="python3.12"
     elif command -v python3.11 &>/dev/null; then
@@ -344,17 +347,19 @@ check_python_cmd()
       python="python3"
     elif command -v python &>/dev/null; then
       python="python"
+    elif command -v python3.9 &>/dev/null; then
+      python="python3.9"
     else
-      echo "${RED}Correct python version 3.10-3.12 was not found. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
+      echo "${RED}Correct python version 3.9-3.12 was not found. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
       exit 1
     fi
   fi
-  
+
   python_version=$($python -V 2>&1)
-  if ! echo "$python_version" | grep -qE '^Python 3\.(10|11|12)\.'; then
-    echo "${RED}Only Python version 3.10-3.12 is supported. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
+  if ! echo "$python_version" | grep -qE '^Python 3\.(9|10|11|12)\.'; then
+    echo "${RED}Only Python version 3.9-3.12 is supported. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
     exit 1
-  fi  
+  fi
 }
 
 # ----------------------------------------------------------------------

@@ -1,4 +1,4 @@
-[![Python 3.10 - 3.12](https://img.shields.io/badge/Python-3.10%20|%203.11|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.9 - 3.12](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](https://github.com/ChristianGaser/T1Prep/blob/main/LICENSE)
 [![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
 
@@ -34,8 +34,9 @@ pip install T1Prep
 
 > **Multiple Python versions?** Install with the exact interpreter you will run
 > T1Prep with, e.g. `python3.12 -m pip install T1Prep` (requires Python
-> 3.10–3.12). If the wrong interpreter is auto-detected, point T1Prep at the
-> right one with `T1Prep --python /path/to/python …` or
+> 3.9–3.12; on macOS prefer 3.10+, since a 3.9 install is pinned to PyTorch 2.8
+> and runs slower). If the wrong interpreter is auto-detected, point T1Prep at
+> the right one with `T1Prep --python /path/to/python …` or
 > `export T1PREP_PYTHON=/path/to/python`. `pipx install T1Prep` or a dedicated
 > venv avoids the ambiguity.
 
@@ -66,9 +67,10 @@ on first pipeline use if this step is skipped.
 
 ## Requirements
 
-- Python 3.10–3.12 — required for PyTorch 2.9+, whose MPS kernels give a
-  measurable speed-up on Apple Silicon (3:02 min vs 2:39 min per subject,
-  compared with the older Python 3.9 / PyTorch 2.8 stack)
+- Python 3.9–3.12 (3.10+ recommended). PyTorch 2.9+ (Python 3.10+) adds MPS
+  kernels that give a measurable speed-up on Apple Silicon (2:39 min vs 3:02 min
+  per subject); a Python 3.9 install is pinned to PyTorch 2.8 and falls back to
+  the CPU for those kernels. On Linux/CUDA/CPU both stacks perform the same.
 - ~2 GB disk space for model weights (downloaded separately, see above)
 - For GPU acceleration: CUDA-capable GPU or Apple Silicon (MPS)
 

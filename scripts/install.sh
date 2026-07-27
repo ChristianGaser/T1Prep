@@ -16,7 +16,7 @@
 #   T1PREP_INSTALL_DIR (skip interactive prompt, use this directory)
 #   T1PREP_VERSION (skip interactive prompt, use this release version, e.g., "v1.0.0" or "latest")
 #   T1PREP_PYTHON  (skip interactive prompt, use this Python interpreter, e.g.,
-#                   "python3.12" or "/usr/bin/python3.11"; must be Python 3.10-3.12)
+#                   "python3.12" or "/usr/bin/python3.11"; must be Python 3.9-3.12)
 #
 # Requirements: bash, tar, curl or wget. jq is optional.
 
@@ -347,20 +347,22 @@ prepare_install_dir() {
 
 detect_supported_pythons() {
   # Emit "<version>\t<command>" lines for interpreters that report Python
-  # 3.10-3.12, newest version first, one command per version (versioned names
+  # 3.9-3.12, newest version first, one command per version (versioned names
   # such as python3.12 take precedence over the generic python3/python).
   local cmd ver seen=""
-  for cmd in python3.12 python3.11 python3.10 python3 python; do
+  for cmd in python3.12 python3.11 python3.10 python3.9 python3 python; do
     have_cmd "$cmd" || continue
     ver="$("$cmd" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
     case "$ver" in
-      3.10|3.11|3.12) ;;
+      3.9|3.10|3.11|3.12) ;;
       *) continue ;;
     esac
     case "$seen" in *" $ver "*) continue ;; esac
     seen="$seen $ver "
     printf '%s\t%s\n' "$ver" "$cmd"
-  done | sort -rn
+  done | sort -Vr
+  # Version-aware reverse sort: 3.12 > 3.11 > 3.10 > 3.9 (a plain "sort -rn"
+  # would wrongly rank 3.9 above 3.12 by treating them as decimals).
 }
 
 prompt_python_command() {
@@ -372,8 +374,9 @@ prompt_python_command() {
     ver="$("$SELECTED_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
     case "$ver" in
       3.10|3.11|3.12) ;;
-      "") warn "Could not run '$SELECTED_PYTHON'. Make sure it exists and is Python 3.10-3.12." ;;
-      *)  warn "'$SELECTED_PYTHON' is Python ${ver}; T1Prep supports only 3.10-3.12." ;;
+      3.9) warn "'$SELECTED_PYTHON' is Python 3.9; supported, but on macOS it is slower (PyTorch < 2.9 lacks some MPS kernels)." ;;
+      "")  warn "Could not run '$SELECTED_PYTHON'. Make sure it exists and is Python 3.9-3.12." ;;
+      *)   warn "'$SELECTED_PYTHON' is Python ${ver}; T1Prep supports only 3.9-3.12." ;;
     esac
     return
   fi
@@ -387,9 +390,9 @@ prompt_python_command() {
   done < <(detect_supported_pythons)
 
   if [ "${#cmds[@]}" -eq 0 ]; then
-    warn "No supported Python (3.10-3.12) found on PATH."
+    warn "No supported Python (3.9-3.12) found on PATH."
     warn "Installation will still try to detect one; if it fails, install"
-    warn "Python 3.10-3.12 or re-run with T1PREP_PYTHON=/path/to/python."
+    warn "Python 3.9-3.12 or re-run with T1PREP_PYTHON=/path/to/python."
     SELECTED_PYTHON=""
     return
   fi
