@@ -4,30 +4,137 @@ This module provides a function to compute Dice-based metrics between an integer
 label ground truth and a test label map restricted to a mask and a selected set
 of label values (e.g., [1, 2] or [1, 2, 3]).
 
-Inputs may be file paths to NIfTI images or nibabel Nifti1Image objects.
+Inputs may be file paths to NIfTI images or nibabel image objects. Voxel grids
+do not have to agree: the world-space affine (``sform``/``qform``) of both
+images is honoured and the prediction is resampled onto the ground-truth grid
+whenever the geometries differ.
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple, Union
+import logging
+import os
+from typing import Any, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import nibabel as nib
 
-NiftiLike = Union[str, nib.Nifti1Image]
+NiftiLike = Union[str, "os.PathLike[str]", nib.Nifti1Image]
+
+# Tolerance (in affine units, i.e. mm for NIfTI) below which two affines are
+# considered identical and no resampling is performed.
+DEFAULT_AFFINE_ATOL = 1e-3
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["compute_dice_nifti", "dice_cli_main"]
 
 
-def _load_labels(img: NiftiLike, round_labels: bool) -> np.ndarray:
-    if isinstance(img, nib.Nifti1Image):
-        data = img.get_fdata()
-    else:
-        data = nib.load(str(img)).get_fdata()
+def _as_image(img: NiftiLike) -> Any:
+    """Return a loaded nibabel image for a path or an image object."""
+    if isinstance(img, (str, os.PathLike)):
+        return nib.load(os.fspath(img))
+    if hasattr(img, "get_fdata") and hasattr(img, "affine"):
+        return img
+    raise TypeError(
+        "Expected a file path or a nibabel image with 'get_fdata' and "
+        f"'affine', got {type(img).__name__}"
+    )
+
+
+def _to_labels(data: np.ndarray, round_labels: bool) -> np.ndarray:
+    """Convert raw image data to integer labels or continuous values."""
     if round_labels:
         # Convert to integer labels; round to nearest to be robust to tiny float stores
         return np.rint(data).astype(np.int64, copy=False)
     # Preserve original floating values for soft/continuous Dice
     return np.asarray(data, dtype=float)
+
+
+def _same_geometry(
+    shape_a: Sequence[int],
+    affine_a: np.ndarray,
+    shape_b: Sequence[int],
+    affine_b: np.ndarray,
+    affine_atol: float = DEFAULT_AFFINE_ATOL,
+) -> bool:
+    """Return True when both images sample world space on the same voxel grid."""
+    if tuple(shape_a[:3]) != tuple(shape_b[:3]):
+        return False
+    return bool(
+        np.allclose(
+            np.asarray(affine_a, dtype=float),
+            np.asarray(affine_b, dtype=float),
+            rtol=0.0,
+            atol=affine_atol,
+        )
+    )
+
+
+def _resample_to_grid(
+    data: np.ndarray,
+    src_affine: np.ndarray,
+    ref_shape: Sequence[int],
+    ref_affine: np.ndarray,
+    order: int,
+) -> np.ndarray:
+    """Resample ``data`` onto the voxel grid described by ``ref_shape``/``ref_affine``.
+
+    The mapping is derived from both affines, so translations, rotations,
+    flips and voxel-size differences stored in the NIfTI headers are taken into
+    account. Voxels falling outside the source field of view become 0
+    (background).
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Source image data (3D, or 4D with data channels in the trailing axes).
+    src_affine : np.ndarray
+        4x4 voxel-to-world affine of ``data``.
+    ref_shape : Sequence[int]
+        Spatial shape of the target grid (first three entries are used).
+    ref_affine : np.ndarray
+        4x4 voxel-to-world affine of the target grid.
+    order : int
+        Spline interpolation order; use 0 (nearest neighbour) for label maps
+        and 1 (trilinear) for probability / partial-volume maps.
+    """
+    from scipy import ndimage  # local import: keeps module import lightweight
+
+    # Target voxel -> world (ref_affine) -> source voxel (inv(src_affine))
+    try:
+        src_inv = np.linalg.inv(np.asarray(src_affine, dtype=float))
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(
+            "Cannot resample: the source affine is singular, so its "
+            f"voxel-to-world mapping cannot be inverted:\n{np.asarray(src_affine)}"
+        ) from exc
+    mat = src_inv @ np.asarray(ref_affine, dtype=float)
+    spatial = tuple(int(s) for s in ref_shape[:3])
+    # scipy accepts a per-axis offset sequence even though its stub says float
+    offset: Any = mat[:3, 3]
+
+    def _warp(volume: np.ndarray) -> np.ndarray:
+        return ndimage.affine_transform(
+            volume,
+            matrix=mat[:3, :3],
+            offset=offset,
+            output_shape=spatial,
+            order=order,
+            mode="constant",
+            cval=0.0,
+            prefilter=False,
+        )
+
+    src = np.asarray(data, dtype=float)
+    if src.ndim <= 3:
+        return _warp(src)
+
+    # Resample each trailing channel (e.g. probability maps) independently
+    flat = src.reshape(src.shape[:3] + (-1,))
+    out = np.empty(spatial + (flat.shape[-1],), dtype=float)
+    for channel in range(flat.shape[-1]):
+        out[..., channel] = _warp(flat[..., channel])
+    return out.reshape(spatial + src.shape[3:])
 
 
 def _to_bool_mask_from_labels(arr: np.ndarray, labels_arr: np.ndarray) -> np.ndarray:
@@ -40,6 +147,8 @@ def compute_dice_nifti(
     pred: NiftiLike,
     *,
     round_labels: bool = True,
+    resample: bool = True,
+    affine_atol: float = DEFAULT_AFFINE_ATOL,
 ) -> Tuple[np.ndarray, Sequence[int], np.ndarray, float, float]:
     """Compute Dice-based metrics for 2- or 3-class integer labels from NIfTI images.
 
@@ -47,6 +156,7 @@ def compute_dice_nifti(
     ----------
     gt : str | nib.Nifti1Image
         Ground-truth label image (NIfTI). Integer labels (2 or 3 classes).
+        Its voxel grid defines the reference space for the comparison.
     pred : str | nib.Nifti1Image
         Test/predicted label image (NIfTI). Integer labels (2 or 3 classes).
     round_labels : bool, optional
@@ -55,6 +165,25 @@ def compute_dice_nifti(
         continuous Dice using the unrounded arrays. In soft mode, per-class
         volumes and overlaps are derived from the continuous values, while the
         class set and confusion matrix still follow the rounded label indices.
+    resample : bool, optional
+        When True (default), ``pred`` is resampled onto the voxel grid of ``gt``
+        whenever their world-space geometries differ (different shape, voxel
+        size, orientation, rotation or translation in the NIfTI affine).
+        Nearest-neighbour interpolation is used for label maps
+        (``round_labels=True``), trilinear interpolation for probability /
+        partial-volume maps (``round_labels=False``). When False, the two images
+        are compared voxel-to-voxel, the affines are ignored and identical
+        shapes are required.
+    affine_atol : float, optional
+        Absolute tolerance (mm) for treating two affines as identical. Affines
+        differing by less than this are considered the same grid and no
+        resampling is performed.
+
+    Raises
+    ------
+    ValueError
+        If the two images cannot be compared: shapes differ while
+        ``resample=False``, or the non-spatial (channel) dimensions differ.
 
     Notes
     -----
@@ -62,6 +191,10 @@ def compute_dice_nifti(
         evaluated. The prediction ``pred`` does **not** control which labels are
         included, so missing classes in ``pred`` are treated as Dice = 0 rather
         than being silently ignored.
+    - The NIfTI affine (``sform``/``qform``, whichever nibabel selects) is
+        honoured, so images sharing a shape but carrying different rotations or
+        translations are aligned in world space before scoring instead of being
+        compared voxel-by-voxel.
 
     Returns
     -------
@@ -97,9 +230,44 @@ def compute_dice_nifti(
     - Handles degenerate cases by returning NaN when denominators are zero or
         when there are no valid voxels after masking.
     """
-    # Load labels (rounded or continuous depending on mode)
-    y_true = _load_labels(gt, round_labels)
-    y_pred = _load_labels(pred, round_labels)
+    # Load both images, keeping their affines so the voxel grids can be aligned
+    gt_img = _as_image(gt)
+    pred_img = _as_image(pred)
+    gt_data = gt_img.get_fdata()
+    pred_data = pred_img.get_fdata()
+
+    if not _same_geometry(
+        gt_data.shape, gt_img.affine, pred_data.shape, pred_img.affine, affine_atol
+    ):
+        if resample:
+            # Nearest neighbour for discrete labels, trilinear for soft maps
+            order = 0 if round_labels else 1
+            pred_data = _resample_to_grid(
+                pred_data, pred_img.affine, gt_data.shape, gt_img.affine, order=order
+            )
+            logger.warning(
+                "Geometry mismatch between gt and pred: resampled pred "
+                "(shape %s) onto the gt grid (shape %s) using the NIfTI affines "
+                "with interpolation order %d.",
+                tuple(int(s) for s in pred_img.shape[:3]),
+                tuple(int(s) for s in gt_data.shape[:3]),
+                order,
+            )
+        elif tuple(gt_data.shape[:3]) != tuple(pred_data.shape[:3]):
+            raise ValueError(
+                f"Shape mismatch: gt {gt_data.shape} vs pred {pred_data.shape}. "
+                "Pass resample=True (CLI: drop --no-resample) to align pred to "
+                "the gt grid via the NIfTI affines."
+            )
+        else:
+            logger.warning(
+                "gt and pred affines differ but resampling is disabled: "
+                "comparing voxel-to-voxel and ignoring the NIfTI affines."
+            )
+
+    # Convert to labels (rounded or continuous depending on mode)
+    y_true = _to_labels(gt_data, round_labels)
+    y_pred = _to_labels(pred_data, round_labels)
     if y_true.shape != y_pred.shape:
         raise ValueError(f"Shape mismatch: gt {y_true.shape} vs pred {y_pred.shape}")
 
@@ -353,6 +521,17 @@ def _parse_dice_args(argv=None):
         ),
     )
     p.add_argument(
+        "--resample",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Resample --pred onto the grid of --gt using the NIfTI affines when "
+            "their shape, voxel size or orientation/rotation differs. With "
+            "--no-resample the images are compared voxel-to-voxel, the affines "
+            "are ignored and identical shapes are required."
+        ),
+    )
+    p.add_argument(
         "--verbose",
         action="store_true",
         help=(
@@ -373,8 +552,16 @@ def dice_cli_main(argv=None) -> int:
     import sys
 
     args = _parse_dice_args(argv)
+
+    # Surface geometry notices (e.g. "pred resampled onto gt grid") on stderr
+    # without polluting the metric line on stdout.
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stderr
+        )
+
     conf, order, dice_per, dice_weighted, generalized_dice = compute_dice_nifti(
-        args.gt, args.pred, round_labels=not args.soft
+        args.gt, args.pred, round_labels=not args.soft, resample=args.resample
     )
 
     if args.verbose:

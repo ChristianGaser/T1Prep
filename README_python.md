@@ -396,13 +396,21 @@ print("Weighted Dice: ", dice_weighted)
 print("Generalized Dice:", generalized_dice)
 ```
 
-### `compute_dice_nifti(gt, pred, *, round_labels=True)`
+### `compute_dice_nifti(gt, pred, *, round_labels=True, resample=True, affine_atol=1e-3)`
 
 | Parameter | Description |
 |-----------|-------------|
-| `gt` | Ground-truth label NIfTI (path or `nib.Nifti1Image`) |
+| `gt` | Ground-truth label NIfTI (path or `nib.Nifti1Image`); its voxel grid is the reference space |
 | `pred` | Predicted label NIfTI (path or `nib.Nifti1Image`) |
 | `round_labels` | When `True` (default), round to integer labels before scoring. Set `False` for soft/continuous Dice. |
+| `resample` | When `True` (default), resample `pred` onto the grid of `gt` whenever the world-space geometries differ (shape, voxel size, orientation, rotation or translation in the NIfTI affine). Nearest neighbour for label maps, trilinear for soft maps. Set `False` to compare voxel-to-voxel, ignoring the affines. |
+| `affine_atol` | Absolute tolerance (mm) below which two affines count as the same grid. |
+
+The NIfTI affine (`sform`/`qform`, whichever nibabel selects) is honoured, so
+images that share a shape but carry different rotations — or that differ in shape
+while covering the same world space — are aligned before scoring instead of being
+compared voxel-by-voxel. Resampling is reported through the
+`t1prep.metrics` logger at `WARNING` level.
 
 Returns a 5-tuple:
 

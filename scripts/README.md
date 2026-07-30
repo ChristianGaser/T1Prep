@@ -182,9 +182,14 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 # Save confusion matrix
 ./scripts/dice.sh --gt GT.nii.gz --pred PRED.nii.gz --save-conf conf.csv
+
+# Compare voxel-to-voxel, ignoring the NIfTI affines (same shape required)
+./scripts/dice.sh --gt GT.nii.gz --pred PRED.nii.gz --no-resample
 ```
 
 **Output (default):** `[dice_label_1, dice_label_2, ...] generalized_dice, dice_weighted`
+
+**Geometry:** the NIfTI affine (`sform`/`qform`) of both images is honoured. If `--pred` differs from `--gt` in shape, voxel size, orientation or rotation, it is resampled onto the grid of `--gt` — nearest neighbour for label maps, trilinear with `--soft` — and a note is written to stderr. Pass `--no-resample` to disable this and compare voxel-to-voxel.
 
 ---
 

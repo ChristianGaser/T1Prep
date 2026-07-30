@@ -314,7 +314,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             n_median_filter=median_filter,
             median_subsample=2,
             range_val=0.45,
-            correct_voxelsize=-0.45,
+            correct_voxelsize=-0.35,
             sulcal_width=5.0,
             verbose=verbose,
         )

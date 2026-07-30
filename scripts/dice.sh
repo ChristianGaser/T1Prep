@@ -43,12 +43,18 @@ Dice-based metric — wrapper
 
 Usage:
     scripts/dice.sh --gt GT.nii.gz --pred PRED.nii.gz \
-        [--soft] [--save-conf conf.csv] [--verbose]
+        [--soft] [--no-resample] [--save-conf conf.csv] [--verbose]
 
 Notes:
     - Wraps Python module: t1prep.dice
         - --soft computes soft/continuous Dice using unrounded inputs (for
             probability/partial-volume maps); default is rounded labels.
+    - The NIfTI affines (sform/qform) are honoured: when --gt and --pred differ
+        in shape, voxel size, orientation or rotation, --pred is resampled onto
+        the grid of --gt (nearest neighbour for labels, trilinear with --soft)
+        and a note is printed to stderr. Use --no-resample to compare
+        voxel-to-voxel instead, which ignores the affines and requires
+        identical shapes.
     - A brain mask is obtained from ``gt != 0``; all voxels inside this mask
         contribute to the confusion matrix, so disagreements between ``gt`` and
         ``pred`` are fully accounted for.
