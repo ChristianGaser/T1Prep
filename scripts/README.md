@@ -185,7 +185,12 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 # Compare voxel-to-voxel, ignoring the NIfTI affines (same shape required)
 ./scripts/dice.sh --gt GT.nii.gz --pred PRED.nii.gz --no-resample
+
+# Select the interpreter (same flag/env var as T1Prep)
+./scripts/dice.sh --python python3.12 --gt GT.nii.gz --pred PRED.nii.gz
 ```
+
+**Python discovery:** identical to `T1Prep` — `T1Prep_utils.sh` resolves the source-tree vs. installed layout, `--python <FILE>` / `$T1PREP_PYTHON` override the auto-detected interpreter, the project venv (`env/`) is activated in a source checkout, and the module form `python -m t1prep.dice` is used in both layouts.
 
 **Output (default):** `[dice_label_1, dice_label_2, ...] generalized_dice, dice_weighted`
 
