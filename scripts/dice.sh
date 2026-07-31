@@ -48,7 +48,10 @@ Notes:
     - With --verbose, prints one line per label, generalized_dice, and dice_weighted
     - --python <FILE> selects the interpreter (or set $T1PREP_PYTHON), exactly
       as for T1Prep. In a source checkout the project venv (../env) is
-      activated automatically; an installed T1Prep is used as-is.
+      activated when it exists and no interpreter was given explicitly; if it
+      is absent, any Python providing numpy/nibabel/scipy is used and the
+      checkout under ../src takes precedence over an installed t1prep. An
+      installed T1Prep is used as-is.
 USAGE
 }
 
@@ -80,6 +83,9 @@ for _arg in "$@"; do
     esac
 done
 python="${python:-${T1PREP_PYTHON:-}}"
+# Remember whether the interpreter was chosen explicitly: such a choice must
+# survive the venv activation below.
+python_explicit="${python}"
 
 # Dual-mode path resolution shared with T1Prep: sets T1PREP_INSTALLED,
 # root_dir, src_dir, T1prep_env and (installed mode) python.
@@ -92,16 +98,44 @@ source "${script_dir}/T1Prep_utils.sh"
 
 check_python_cmd
 
-# Source-tree mode: activate the project-managed venv and make the checkout
-# importable.  Installed mode already runs inside the venv pip installed into.
+# ----------------------------------------------------------------------
+# Source-tree mode: make the checkout importable and, when available, use the
+# project-managed venv.
+#
+# ${root_dir}/src is prepended to PYTHONPATH unconditionally: PYTHONPATH is
+# searched before site-packages, so this guarantees the checkout wins over a
+# pip-installed (possibly older) t1prep — otherwise running scripts/dice.sh
+# from a source tree can silently execute stale code from site-packages.
+#
+# A missing venv is *not* fatal here.  Unlike the full T1Prep pipeline this
+# wrapper only needs numpy/nibabel/scipy, so any interpreter providing them
+# works — including a system Python that T1Prep was pip installed into.  An
+# explicit --python / $T1PREP_PYTHON always wins over the venv.
+#
+# Installed mode already runs inside the environment pip installed into, so
+# neither step applies.
+# ----------------------------------------------------------------------
 if [ "${T1PREP_INSTALLED:-0}" -ne 1 ]; then
-    if [ ! -f "${T1prep_env}/bin/activate" ]; then
-        echo "${RED}Virtual environment not found at ${T1prep_env}. Run T1Prep once to set it up.${NC}" >&2
-        exit 1
+    export PYTHONPATH="${root_dir}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
+    if [ -z "${python_explicit}" ] && [ -f "${T1prep_env}/bin/activate" ]; then
+        # shellcheck disable=SC1091
+        source "${T1prep_env}/bin/activate"
+        python="${T1prep_env}/bin/python"
     fi
-    # shellcheck disable=SC1091
-    source "${T1prep_env}/bin/activate"
-    export PYTHONPATH="${root_dir}/src:${PYTHONPATH:-}"
+fi
+
+# Fail with an actionable message instead of a bare ImportError further down
+if ! missing="$("${python}" -c 'import importlib.util as u; print(" ".join(m for m in ("numpy", "nibabel", "scipy") if u.find_spec(m) is None))' 2>/dev/null)"; then
+    echo "${RED}ERROR: cannot run the Python interpreter '${python}'.${NC}" >&2
+    echo "Select one with '--python <FILE>' or \$T1PREP_PYTHON." >&2
+    exit 1
+fi
+if [ -n "${missing}" ]; then
+    echo "${RED}ERROR: '${python}' is missing required module(s): ${missing}${NC}" >&2
+    echo "Install them (${python} -m pip install ${missing}), or select an" >&2
+    echo "interpreter that has them with '--python <FILE>' / \$T1PREP_PYTHON." >&2
+    exit 1
 fi
 
 # Module form so package-relative imports resolve in both layouts
