@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "cat-surf>=1.0.14",
+    "cat-surf>=1.0.15",
     "nibabel>=3.2",
     "numpy>=1.23.2",
     # macOS 27 rejects scipy's _spropack.so from the 1.15.x cp310 wheels
