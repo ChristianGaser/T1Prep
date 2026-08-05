@@ -9,7 +9,7 @@ FROM python:3.12-slim
 #
 #     docker build --build-arg T1PREP_VERSION=0.4.4 -t t1prep .   # specific
 #     docker build --build-arg T1PREP_VERSION=      -t t1prep .   # latest
-ARG T1PREP_VERSION=0.5.4
+ARG T1PREP_VERSION=0.5.5
 
 LABEL org.opencontainers.image.authors="Christian Gaser <christian.gaser@uni-jena.de>"
 LABEL org.opencontainers.image.source="https://github.com/ChristianGaser/T1Prep"
