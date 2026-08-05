@@ -49,7 +49,6 @@ import argparse
 import contextlib
 import logging
 import os
-import platform
 import shutil
 import sys
 import time
@@ -389,13 +388,12 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
         )
         cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
 
-    # Self-intersection cleanup (not supported on Windows)
-    if platform.system() not in ("Windows",) and not sys.platform.startswith(
-            ("cygwin", "msys")):
-        with _run_step(log, "CAT_SurfRemoveIntersections", verbose=verbose):
-            v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
-            v, fcs = cat_surf.remove_intersections(v, fcs, verbose=verbose)
-            cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
+    # Self-intersection cleanup.  Topology preserving, so the vertex count of
+    # the central surface is unchanged and later per-vertex data stays valid.
+    with _run_step(log, "CAT_SurfFixSelfIntersect", verbose=verbose):
+        v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
+        v, fcs = cat_surf.fix_self_intersect(v, fcs, verbose=verbose)
+        cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
 
     # =====================================================================
     # 4) Map thickness values onto the surface (CAT_Vol2Surf)
@@ -427,14 +425,15 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # =====================================================================
     if save_pial_white or thickness_method == 2:
         bar.step("Estimate pial and white surface")
-        with _run_step(log, "CAT_Surf2PialWhite method=2", verbose=verbose):
+        with _run_step(log, "CAT_Surf2PialWhite method=2 -remove_intersect",
+                       verbose=verbose):
             v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
             t = cat_surf.read_values(p(surf, "GMT_shape"))
             pv, pf, wv, wf = cat_surf.surf_to_pial_white(
                 v, fcs, t, p(mri, "Hemi_volume"),
                 w1=0.05, w2=0.05, w3=0.05, sigma=0.2,
                 iterations=100, gradient_iterations=0,
-                method=2, verbose=verbose,
+                method=2, remove_intersect=True, verbose=verbose,
             )
             cat_surf.write_surface(p(surf, "Pial_surface"), pv, pf)
             cat_surf.write_surface(p(surf, "WM_surface"), wv, wf)
