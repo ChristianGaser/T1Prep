@@ -313,7 +313,10 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             n_median_filter=median_filter,
             median_subsample=2,
             range_val=0.45,
-            correct_voxelsize=-0.35,
+            # Additive thickness correction in mm.  Was correct_voxelsize=-0.35,
+            # given in voxels, which made the correction scale with the grid;
+            # -0.175 mm is the same amount at the 0.5 mm grid used here.
+            correct_thickness=-0.175,
             sulcal_width=5.0,
             verbose=verbose,
         )
