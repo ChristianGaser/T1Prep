@@ -316,8 +316,9 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             # Additive thickness correction in mm.  Was correct_voxelsize=-0.35,
             # given in voxels, which made the correction scale with the grid;
             # -0.175 mm is the same amount at the 0.5 mm grid used here.
-            correct_thickness=-0.175,
+            correct_thickness=-0.0,
             sulcal_width=5.0,
+            pve_distance,
             verbose=verbose,
         )
 
