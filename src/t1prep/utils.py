@@ -418,7 +418,12 @@ def progress_bar(elapsed, total, name, *, width=40, failed=False):
 
 def remove_file(name):
     """
-    Remove file if exists.
+    Remove file if it exists.
+
+    A missing file is not an error: the callers clean up temporary output
+    that is only written on some code paths (e.g. the Amap branch writes
+    the ``*_brain_large*`` files, the lesion branch does not), so absence
+    is the normal case rather than something worth reporting.
 
     Args:
         name (str): Name of file.
@@ -426,10 +431,7 @@ def remove_file(name):
     Usage:
         remove_file("Filename")
     """
-    if os.path.exists(name):
-        os.remove(name)
-    else:
-        print(f"The file '{name}' does not exist.")
+    Path(name).unlink(missing_ok=True)
 
 
 def get_ras(aff, dim):
