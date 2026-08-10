@@ -22,8 +22,8 @@ This module is normally driven from the T1Prep bash script::
         --save-pial-white 1 \
         --pre-fwhm 1.0 \
         --median-filter 2 \
-        --downsample 0 \
         --vessel 1 \
+        --amap 0 \
         --correct-folding 0 \
         --debug 0 \
         --multi 1 \
@@ -165,8 +165,8 @@ def surface_estimation(
     save_pial_white: int = 1,
     pre_fwhm: float = 1.0,
     median_filter: int = 2,
-    downsample: float = 0.0,
     vessel: int = 1,
+    amap: int = 0,
     correct_folding: int = 0,
     debug: int = 0,
     multi: int = -1,
@@ -212,7 +212,7 @@ def surface_estimation(
             thickness_method=thickness_method,
             save_pial_white=save_pial_white,
             pre_fwhm=pre_fwhm, median_filter=median_filter,
-            downsample=downsample, vessel=vessel,
+            vessel=vessel, amap=amap,
             correct_folding=correct_folding, debug=debug, multi=multi,
             nii_ext=nii_ext, names_tsv=names_tsv,
             bids_naming=bids_naming,
@@ -232,7 +232,7 @@ def surface_estimation(
 
 def _run(*, log, bname, side, mri, surf, estimate_spherereg,
          thickness_method, save_pial_white, pre_fwhm, median_filter,
-         downsample, vessel, correct_folding, debug, multi, nii_ext,
+         vessel, amap, correct_folding, debug, multi, nii_ext,
          names_tsv, bids_naming, surf_templates_dir, atlas_templates_dir,
          atlas_surf, initial_surface, fmriprep, bar) -> int:
 
@@ -309,16 +309,16 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
         gmt, ppm, dcsf, dwm = cat_surf.vol_thickness_pbt(
             vol,
             voxelsize=img.header.get_zooms()[:3],
-            n_avgs=2,
+            n_avgs=5,
             n_median_filter=median_filter,
             median_subsample=2,
             range_val=0.45,
-            # Additive thickness correction in mm.  Was correct_voxelsize=-0.35,
-            # given in voxels, which made the correction scale with the grid;
-            # -0.175 mm is the same amount at the 0.5 mm grid used here.
-            correct_thickness=-0.0,
+            # Additive thickness correction in mm.  It compensates the
+            # systematic border shift of the segmentation, so it depends on
+            # which segmentation produced the label map.
+            correct_thickness=0.1 if amap else 0.05,
             sulcal_width=5.0,
-            pve_distance,
+            pve_distance=False,
             verbose=verbose,
         )
 
@@ -328,11 +328,6 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                      out_path)
         _save_like(gmt, p(mri, "GMT_volume"))
         _save_like(ppm, p(mri, "PPM_volume"))
-
-        # Optional downsampling (CLI does this post-PBT for storage).
-        if downsample and downsample > 0:
-            log.info("downsample > 0 requested but not yet implemented "
-                     "in this port — output kept at native resolution")
 
     if not os.path.exists(p(mri, "PPM_volume")):
         log.error("Surface estimation for %s hemisphere failed: "
@@ -367,16 +362,14 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
         if topochange:
             log.info("Topochange volume output skipped (not surfaced)")
 
-        if downsample == 0:
-            bar_label = "Reduce mesh"
-            with _run_step(log, "CAT_SurfReduce ratio=0.25 aggr=7", verbose=verbose):
-                v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
-                target = int(round(0.25 * fcs.shape[0]))
-                v, fcs = cat_surf.reduce_mesh(
-                    v, fcs, target_faces=target,
-                    aggressiveness=7.0, preserve_sharp=True,
-                    verbose=verbose)
-                cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
+        with _run_step(log, "CAT_SurfReduce ratio=0.25 aggr=7", verbose=verbose):
+            v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
+            target = int(round(0.25 * fcs.shape[0]))
+            v, fcs = cat_surf.reduce_mesh(
+                v, fcs, target_faces=target,
+                aggressiveness=7.0, preserve_sharp=True,
+                verbose=verbose)
+            cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
 
     # =====================================================================
     # 3) Refine central surface with SurfDeform
@@ -603,8 +596,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--save-pial-white", type=int, default=1)
     ap.add_argument("--pre-fwhm", type=float, default=1.0)
     ap.add_argument("--median-filter", type=int, default=2)
-    ap.add_argument("--downsample", type=float, default=0.0)
     ap.add_argument("--vessel", type=int, default=1)
+    ap.add_argument("--amap", type=int, default=0)
     ap.add_argument("--correct-folding", type=int, default=0)
     ap.add_argument("--debug", type=int, default=0)
     ap.add_argument("--multi", type=int, default=-1)
