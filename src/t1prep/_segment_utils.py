@@ -410,8 +410,149 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
     return nib.Nifti1Image(brain0, brain.affine, brain.header)
 
 
+def _gradient_magnitude(vol, vx=(1.0, 1.0, 1.0)):
+    """Gradient magnitude in physical units (mm^-1)."""
+    g = np.gradient(vol, vx[0], vx[1], vx[2])
+    return np.sqrt(g[0] ** 2 + g[1] ** 2 + g[2] ** 2)
+
+
+def _divergence(vol, vx=(1.0, 1.0, 1.0)):
+    """Divergence of the normalised gradient, as in CAT12's cat_vol_div.
+
+    Thin bright structures -- blood vessels, meninges -- have a strongly
+    negative divergence, while the interior of a tissue does not.  This is
+    what lets them be excluded from the intensity peak estimation instead of
+    dragging the CSF and GM peaks upwards.
+    """
+    eps = np.finfo(np.float32).eps
+    g = np.gradient(vol, vx[0], vx[1], vx[2])
+    n = np.sqrt(g[0] ** 2 + g[1] ** 2 + g[2] ** 2) + eps
+    return sum(np.gradient(g[i] / n, vx[i], axis=i) for i in range(3))
+
+
+def _tissue_masks(seg0):
+    """High-confidence, non-overlapping tissue masks from a PVE label map.
+
+    A label of 1/2/3 is pure CSF/GM/WM, so a tissue fraction of at least 75 %
+    -- the >192/255 class threshold CAT12 uses -- becomes a +-0.25 window
+    around the pure value.  The windows do not overlap, unlike the label
+    ranges these replace, where the GM range ran to 2.85 and so was fitted
+    largely on GM/WM partial-volume voxels.
+    """
+    return (
+        (seg0 > 0.75) & (seg0 <= 1.25),      # CSF
+        (seg0 >= 1.75) & (seg0 <= 2.25),     # GM
+        (seg0 >= 2.75),                      # WM
+    )
+
+
+def global_intensity_norm(brain, seg, vx=None, verbose=False):
+    """Global intensity normalisation, after CAT12's cat_main_gintnorm.
+
+    Estimates one intensity peak per tissue and maps the image through those
+    peaks onto the scale AMAP expects (CSF=1/3, GM=2/3, WM=1).  Three ideas
+    are taken from cat_main_gintnorm and are the reason this is more robust
+    than taking a plain mean per label range:
+
+    * the peak is a **median** over voxels that are at least 75 % one tissue,
+    * restricted to **low local gradient**, which drops partial-volume and
+      edge voxels (a tighter bound for WM than for CSF/GM), and additionally
+      **low divergence**, which drops vessels and meninges,
+    * CSF is additionally capped below the GM level, because vessels and
+      meninges have GM-like intensity and otherwise pull the CSF peak up.
+
+    The mapping runs through a node list rather than a single linear scale,
+    with a node above WM, so hyperintensities are compressed into a bounded
+    range instead of extrapolating away.
+
+    Returns
+    -------
+    (normalised nifti, stats dict) with the peaks, the contrast, and a
+    noise estimate (local sigma in WM and CSF over the smallest tissue gap),
+    which is the contrast-to-noise figure CAT12 uses to decide how hard to
+    filter.
+    """
+    eps = np.finfo(np.float32).eps
+    src = brain.get_fdata().astype(np.float32)
+    seg0 = seg.get_fdata()
+    if vx is None:
+        vx = tuple(float(z) for z in brain.header.get_zooms()[:3])
+
+    m_csf, m_gm, m_wm = _tissue_masks(seg0)
+
+    def _median(mask, fallback):
+        return float(np.median(src[mask])) if mask.sum() >= 100 else fallback
+
+    # Pass 1: crude peaks, needed only to normalise the image so that the
+    # gradient and the CSF ceiling below are on a known scale.
+    c0 = _median(m_csf, 0.0)
+    g0 = _median(m_gm, 0.0)
+    w0 = _median(m_wm, float(np.max(src)) if src.size else 1.0)
+    prov = _map_through_nodes(src, c0, g0, w0)
+
+    # Pass 2: refine with the gradient / divergence / ceiling guards.
+    yg = _gradient_magnitude(prov, vx) / np.maximum(prov, eps)
+    ydiv = _divergence(prov, vx)
+    div_lim = float(np.percentile(np.abs(ydiv), 95)) if ydiv.size else np.inf
+
+    clean = np.abs(ydiv) < div_lim
+    sel_csf = m_csf & (yg < 0.20) & (prov < 0.45) & clean
+    sel_gm = m_gm & (yg < 0.20) & clean
+    sel_wm = m_wm & (yg < 0.10) & clean
+
+    csf = _median(sel_csf, c0)
+    gm = _median(sel_gm, g0)
+    wm = _median(sel_wm, w0)
+
+    # Contrast-to-noise, as in cat_main_gintnorm: local sigma inside the two
+    # most homogeneous tissues over the smallest tissue gap.
+    gaps = [abs(gm - csf), abs(wm - gm)]
+    contrast = min(gaps) / max(abs(wm - csf), eps)
+    noise = np.nan
+    if sel_wm.sum() >= 100 and sel_csf.sum() >= 100:
+        sd = min(float(np.std(src[sel_wm])), float(np.std(src[sel_csf])))
+        noise = sd / max(min(gaps), eps)
+
+    if not (csf < gm < wm):
+        # Non-monotonic peaks mean the contrast assumption is violated (bad
+        # segmentation, inverted contrast).  Fall back to the crude peaks
+        # rather than building a non-monotonic mapping.
+        if verbose:
+            print(f"gintnorm: non-monotonic peaks ({csf:.3f},{gm:.3f},{wm:.3f}), "
+                  "falling back to unguarded estimates")
+        csf, gm, wm = c0, g0, w0
+    if verbose:
+        print(f"gintnorm: peaks CSF/GM/WM = {csf:.3f}/{gm:.3f}/{wm:.3f}, "
+              f"contrast = {contrast:.3f}, noise = {noise:.4f}")
+
+    out = _map_through_nodes(src, csf, gm, wm)
+    stats = {"csf": csf, "gm": gm, "wm": wm,
+             "contrast": float(contrast), "noise": float(noise)}
+    return nib.Nifti1Image(out, brain.affine, brain.header), stats
+
+
+def _map_through_nodes(src, csf, gm, wm):
+    """Piecewise-linear map through the tissue peaks onto the 1/3, 2/3, 1 scale.
+
+    The node above WM (``wm + (wm - csf) / 2`` -> 4/3) is what bounds
+    hyperintense structures: everything from there to the image maximum is
+    compressed into 4/3..5/3 rather than extrapolated linearly.
+    """
+    eps = np.finfo(np.float32).eps
+    wm_plus = wm + 0.5 * (wm - csf)
+    imax = max(float(np.max(src)) if src.size else wm_plus, wm_plus + eps)
+    xs = [0.0, csf, gm, wm, wm_plus, imax]
+    # np.interp needs strictly increasing nodes
+    for i in range(1, len(xs)):
+        if xs[i] <= xs[i - 1]:
+            xs[i] = xs[i - 1] + 1e-6
+    ys = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32) / 3.0
+    return np.interp(src, xs, ys).astype(np.float32)
+
+
 def fit_intensity_field(
-    brain, seg, limit=None, steps=1000, spacing=1.0, stopthr=5e-4, use_prctile=3
+    brain, seg, limit=None, steps=1000, spacing=1.0, stopthr=5e-4, use_prctile=3,
+    exclude=None
 ):
     """Estimate a smooth bias-like intensity field."""
     if limit is None:
@@ -430,6 +571,13 @@ def fit_intensity_field(
     brain0 = brain.get_fdata().copy()
     seg0 = seg.get_fdata().copy()
     mask = (seg0 > limit[0]) & (seg0 <= limit[1])
+    if exclude is not None:
+        # Drop edge / partial-volume / vessel voxels before fitting, so the
+        # field describes the tissue and not the structures next to it.
+        # Keep the unguarded mask if the guard leaves too little to fit.
+        guarded = mask & ~exclude
+        if guarded.sum() >= max(1000, 0.05 * mask.sum()):
+            mask = guarded
 
     if subsamp:
         offset = 0
@@ -527,31 +675,59 @@ def fit_intensity_field(
     return field
 
 
-def apply_LAS(t1, label):
-    """Apply Local Adaptive Segmentation to T1 images."""
+def apply_LAS(t1, label, verbose=False):
+    """Apply Local Adaptive Segmentation to T1 images.
+
+    Runs in two stages, following CAT12's order of gintnorm -> LAS: a global
+    intensity normalisation fixes the tissue peaks and bounds hyperintense
+    structures, then the smooth per-tissue fields below capture what is left,
+    which is the spatial variation LAS is actually for.
+
+    The fields are fitted on high-confidence, non-overlapping label windows
+    with the edge / vessel voxels excluded.  Previously the GM window ran to
+    2.85 and so was fitted largely on GM/WM partial-volume voxels, which
+    biased the GM reference towards WM and compressed the GM/WM contrast.
+    """
     eps = np.finfo(float).eps
     stopthr = 5e-4
     spacing = 1.0
 
+    t1, stats = global_intensity_norm(t1, label, verbose=verbose)
+
     Ysrc = t1.get_fdata().copy()
     minYsrc = np.min(Ysrc)
 
+    # Edge / partial-volume / vessel voxels, excluded from every fit below.
+    vx = tuple(float(z) for z in t1.header.get_zooms()[:3])
+    yg = _gradient_magnitude(Ysrc, vx) / np.maximum(Ysrc, eps)
+    ydiv = _divergence(Ysrc, vx)
+    div_lim = float(np.percentile(np.abs(ydiv), 95)) if ydiv.size else np.inf
+    exclude_soft = (yg >= 0.20) | (np.abs(ydiv) >= div_lim)
+    exclude_hard = (yg >= 0.10) | (np.abs(ydiv) >= div_lim)
+
     fit_csf = fit_intensity_field(
-        t1, label, limit=[1, 1.25], spacing=spacing, stopthr=stopthr, use_prctile=3
+        t1, label, limit=[0.75, 1.25], spacing=spacing, stopthr=stopthr,
+        use_prctile=3, exclude=exclude_soft
     )
     fit_gm = fit_intensity_field(
-        t1, label, limit=[1.5, 2.85], spacing=spacing, stopthr=stopthr, use_prctile=3
+        t1, label, limit=[1.75, 2.25], spacing=spacing, stopthr=stopthr,
+        use_prctile=3, exclude=exclude_soft
     )
     fit_wm = fit_intensity_field(
-        t1, label, limit=[2.5, 3], spacing=spacing, stopthr=stopthr, use_prctile=3
+        t1, label, limit=[2.75, 3], spacing=spacing, stopthr=stopthr,
+        use_prctile=3, exclude=exclude_hard
     )
 
     Yml = np.zeros_like(Ysrc, dtype=np.float32)
     if not (fit_csf.shape == fit_gm.shape == fit_wm.shape == Ysrc.shape):
         raise ValueError("All fitted fields and source image must have the same shape.")
 
+    # Above WM the slope must match the GM->WM slope, otherwise the map has a
+    # kink at the WM level (it used fit_wm - fit_csf here, roughly twice the
+    # GM->WM span, so the slope halved).  Yml is bounded at 5 afterwards,
+    # which is the same ceiling the global node mapping applies.
     mask_wm = Ysrc >= fit_wm
-    Yml += mask_wm * (3 + (Ysrc - fit_wm) / np.maximum(eps, fit_wm - fit_csf))
+    Yml += mask_wm * (3 + (Ysrc - fit_wm) / np.maximum(eps, fit_wm - fit_gm))
 
     mask_gm = (Ysrc >= fit_gm) & (Ysrc < fit_wm)
     Yml += mask_gm * (2 + (Ysrc - fit_gm) / np.maximum(eps, fit_wm - fit_gm))
@@ -563,6 +739,7 @@ def apply_LAS(t1, label):
     Yml += mask_bg * ((Ysrc - minYsrc) / np.maximum(eps, fit_csf - minYsrc))
 
     Yml[Yml < 0.25] = 0
+    np.clip(Yml, 0.0, 5.0, out=Yml)
     return nib.Nifti1Image(Yml / 3, t1.affine, t1.header)
 
 

@@ -609,7 +609,7 @@ def run_amap_segmentation(
         print("Running AMAP segmentation")
 
     p0_large, brain_large = correct_label_map(brain_large, p0_large)
-    brain_large = apply_LAS(brain_large, p0_large)
+    brain_large = apply_LAS(brain_large, p0_large, verbose=bool(verbose and debug))
 
     nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large.{ext}")
     nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
@@ -1416,7 +1416,7 @@ def run_segment():
             debug,
         )
     else:
-        brain_large = apply_LAS(brain_large, p0_large)
+        brain_large = apply_LAS(brain_large, p0_large, verbose=bool(verbose and debug))
 
     if debug:
         nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
