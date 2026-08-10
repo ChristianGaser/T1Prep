@@ -152,7 +152,7 @@ run_t1prep(
     long_data=None,      # str | Path
     # robustness
     no_overwrite=None,   # str (filename pattern to skip)
-    no_retry=False,
+    retry=False,         # retry a failed step once
     # misc
     hemisphere=False,
     defaults=None,       # str | Path (alternative defaults file)

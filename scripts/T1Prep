@@ -84,7 +84,7 @@ main()
   if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=1; fi
   if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
   if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
-  if ! [[ "${retry}" =~ ^[0-9]+$ ]]; then retry=1; fi
+  if ! [[ "${retry}" =~ ^[0-9]+$ ]]; then retry=0; fi
   if ! [[ "${use_bids_naming}" =~ ^[0-9]+$ ]]; then use_bids_naming=0; fi
   if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=10; fi
 
@@ -286,6 +286,10 @@ parse_args()
       --no-correct-folding)
         correct_folding=0
         ;;
+      --retry)
+        retry=1
+        ;;
+      # Retry is off by default; kept so existing command lines keep working.
       --no-retry)
         retry=0
         ;;
@@ -724,12 +728,17 @@ process()
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
         echo "${cmd}" >> "${report_log}" 
+        # Take the status inside each branch: after a pipeline `$?` is the
+        # status of `tee`, which practically never fails, so a segmentation
+        # that died (e.g. on a signal) was recorded as a success and the
+        # retry below never fired.
         if [[ "$multi" -ne -2 ]]; then
           eval "${cmd}"
+          seg_status=$?
         else
           eval "${cmd}" 2>&1 | tee -a "${report_log}"
+          seg_status=${PIPESTATUS[0]}
         fi
-        seg_status=$?
 
         # Retry once on failure if retry is enabled
         if [[ "$seg_status" -ne 0 && "${retry}" -eq 1 ]]; then
@@ -737,11 +746,12 @@ process()
           if [[ "$multi" -ne -2 ]]; then
             echo "${YELLOW}Segmentation failed — retrying ${input}...${NC}"
             eval "${cmd}"
+            seg_status=$?
           else
             echo "--- Retrying: ${input} ---" 2>&1 | tee -a "${report_log}"
             eval "${cmd}" 2>&1 | tee -a "${report_log}"
+            seg_status=${PIPESTATUS[0]}
           fi
-          seg_status=$?
         fi
       else
         seg_status=0
@@ -975,11 +985,14 @@ ${BOLD}${GREEN}General Options:${NC}
       Enable verbose output, retain all temporary files, and save additional
       debugging information for inspection.
 
+  --retry
+      Retry failed processing steps once. By default, if segmentation or
+      surface estimation fails for a subject, it is reported as an error
+      straight away. Use this flag to give it a second attempt first.
+
   --no-retry
-      Disable automatic retry of failed processing steps. By default, if
-      segmentation or surface estimation fails for a subject, it is retried
-      once before being reported as an error. Use this flag to disable that
-      behaviour.
+      Do not retry failed processing steps. This is the default; the flag is
+      kept so existing command lines keep working.
 
   --long-data <PATH>
       Use longitudinally realigned images as the actual input data while still

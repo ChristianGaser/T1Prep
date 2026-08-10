@@ -294,7 +294,7 @@ def _process_single(
     debug: bool = False,
     verbose: bool = True,
     initial_surf: str = "",
-    retry: bool = True,
+    retry: bool = False,
 ) -> int:
     """Process one NIfTI file through the T1Prep pipeline.
 
@@ -548,6 +548,7 @@ def run_t1prep(
     # misc
     debug: bool = False,
     verbose: bool = True,
+    retry: bool = False,
     no_retry: bool = False,
 ) -> int:
     """Run the T1Prep pipeline for one or more input files.
@@ -634,8 +635,12 @@ def run_t1prep(
         Retain temporary files and save additional diagnostic outputs.
     verbose:
         Print progress messages (default ``True``).
+    retry:
+        Retry a failed processing step once before reporting it as an error
+        (default ``False``).
     no_retry:
-        Disable automatic retry of failed processing steps.
+        Deprecated. Retry is off by default; passing ``True`` still forces it
+        off and overrides ``retry``.
 
     Returns
     -------
@@ -717,7 +722,7 @@ def run_t1prep(
             debug=bool(debug),
             verbose=bool(verbose),
             initial_surf=str(initial_surf) if initial_surf else "",
-            retry=not no_retry,
+            retry=bool(retry) and not no_retry,
         )
         errors += rc
 
@@ -826,8 +831,10 @@ def _build_parser() -> argparse.ArgumentParser:
                          "while deriving output folders from the original file")
     g3.add_argument("--initial-surf", metavar="FILE", default="",
                     help="Initial surface file for longitudinal processing")
+    g3.add_argument("--retry", action="store_true",
+                    help="Retry a failed processing step once (default: off)")
     g3.add_argument("--no-retry", action="store_true",
-                    help="Disable automatic retry of failed processing steps")
+                    help=argparse.SUPPRESS)
     g3.add_argument("--debug", action="store_true",
                     help="Retain temporary files and save extra diagnostic outputs")
     g3.add_argument("--verbose", action="store_true", default=True,
@@ -878,6 +885,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         fast=args.fast,
         debug=args.debug,
         verbose=args.verbose,
+        retry=args.retry,
         no_retry=args.no_retry,
     )
 
