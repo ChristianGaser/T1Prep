@@ -46,7 +46,6 @@ pre_fwhm=2            # Set the pre-smoothing FWHM size in CAT_VolMarchingCubes
 vessel=1              # Use vessel removal
 median_filter=1       # Set the number of median filter applications to reduce 
                       # topology artefacts
-downsample=0.0        # Downsample image to defined resolution
 fast=0                # Skip spherical registration and estimating atlases and 
                       # warped segmentations
 long=0                # Use pipeline for longitudinal data

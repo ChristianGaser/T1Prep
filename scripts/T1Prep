@@ -164,11 +164,6 @@ parse_args()
         pre_fwhm=$optarg
         shift
         ;;
-      --downsample)
-        exit_if_empty "$optname" "$optarg"
-        downsample=$optarg
-        shift
-        ;;
       --median-filter)
         exit_if_empty "$optname" "$optarg"
         median_filter=$optarg
@@ -386,8 +381,8 @@ surface_estimation()
       --save-pial-white "${save_pial_white}" \
       --pre-fwhm "${pre_fwhm}" \
       --median-filter "${median_filter}" \
-      --downsample "${downsample}" \
       --vessel "${vessel}" \
+      --amap "${use_amap}" \
       --correct-folding "${correct_folding}" \
       --debug "${debug}" \
       --multi "${multi}" \
