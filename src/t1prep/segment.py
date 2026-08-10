@@ -622,7 +622,11 @@ def run_amap_segmentation(
         lab,
         voxelsize=vx,
         weight_mrf=0.0,
-        sub=int(round(64 / np.mean(vx))),
+        # Amap() normalises this itself (`sub = ROUND(sub / mean_voxelsize)`,
+        # CAT_Amap.c), so `sub` is a distance in mm and must not be divided by
+        # the voxel size here as well -- that made the sampling grid twice as
+        # coarse as intended at 0.5 mm.
+        sub=64,
         use_multistep=True,
         pve=True,
         verbose=bool(verbose and debug),
@@ -636,7 +640,13 @@ def run_amap_segmentation(
     # intensity between the two tissues it lies between, using the pure-class
     # means Amap estimated.  Note this follows Pve5 in deciding on the hard
     # label rather than mixing the class posteriors.
-    m_csf, m_gm, m_wm = (float(mean[0]), float(mean[1]), float(mean[2]))
+    #
+    # `mean` follows the same 5-class order, so the pure-class means are at
+    # indices 0, 2 and 4 -- which is how Pve5 itself reads them
+    # (mean[CSFLABEL - 1], mean[GMLABEL - 1], mean[WMLABEL - 1]).  Taking
+    # 0, 1, 2 instead picks up the CSF/GM mixture mean as GM and the GM mean
+    # as WM, which collapses the GM/WM band below to pure WM.
+    m_csf, m_gm, m_wm = (float(mean[0]), float(mean[2]), float(mean[4]))
     p_csf = np.zeros(vol.shape, np.float32)
     p_gm = np.zeros(vol.shape, np.float32)
     p_wm = np.zeros(vol.shape, np.float32)
