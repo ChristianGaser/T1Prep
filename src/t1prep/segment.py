@@ -617,21 +617,38 @@ def run_amap_segmentation(
     vol = brain_large.get_fdata().astype(np.float32)
     lab = np.round(p0_large.get_fdata()).astype(np.uint8)
     vx = brain_large.header.get_zooms()[:3]
-    prob, _lab_out, _mean = cat_surf.vol_amap(
+    _prob, lab_pve, mean = cat_surf.vol_amap(
         vol,
         lab,
         voxelsize=vx,
         weight_mrf=0.0,
-        sub=64,
+        sub=int(round(64 / np.mean(vx))),
         use_multistep=True,
-        pve=False,
+        pve=True,
         verbose=bool(verbose and debug),
     )
 
-    # prob shape: (X, Y, Z, 3), uint8 in [0, 255]; order: 0=CSF, 1=GM, 2=WM
-    p_gm  = prob[:, :, :, 1].astype(np.float32) / 255.0
-    p_wm  = prob[:, :, :, 2].astype(np.float32) / 255.0
-    p_csf = prob[:, :, :, 0].astype(np.float32) / 255.0
+    # vol_amap binds Amap() directly and therefore returns the raw 5-class PVE
+    # result.  The 5 -> 3 conversion that CAT_VolAmap and CAT12's cat_amap both
+    # apply afterwards is Pve5(), which is not part of Amap(), so it is done
+    # here.  Class codes (CAT_Amap.h): 1=CSF, 2=CSF/GM, 3=GM, 4=GM/WM, 5=WM.
+    # Pure classes go to their own map; a mixture voxel is split by its
+    # intensity between the two tissues it lies between, using the pure-class
+    # means Amap estimated.  Note this follows Pve5 in deciding on the hard
+    # label rather than mixing the class posteriors.
+    m_csf, m_gm, m_wm = (float(mean[0]), float(mean[1]), float(mean[2]))
+    p_csf = np.zeros(vol.shape, np.float32)
+    p_gm = np.zeros(vol.shape, np.float32)
+    p_wm = np.zeros(vol.shape, np.float32)
+    p_csf[lab_pve == 1] = 1.0
+    p_gm[lab_pve == 3] = 1.0
+    p_wm[lab_pve == 5] = 1.0
+    sel = lab_pve == 2
+    w = np.clip((vol[sel] - m_csf) / max(m_gm - m_csf, 1e-6), 0.0, 1.0)
+    p_csf[sel], p_gm[sel] = 1.0 - w, w
+    sel = lab_pve == 4
+    w = np.clip((vol[sel] - m_gm) / max(m_wm - m_gm, 1e-6), 0.0, 1.0)
+    p_gm[sel], p_wm[sel] = 1.0 - w, w
     nib.save(
         nib.Nifti1Image(p_gm, brain_large.affine, brain_large.header),
         f"{mri_dir}/{out_name}_brain_large_label-GM_probseg.{ext}",
@@ -658,7 +675,6 @@ def final_cleanup(
     """Remove temporary files generated during processing."""
 
     if (use_amap or save_lesions) and not debug:
-        remove_file(f"{mri_dir}/{out_name}_brain_large_seg.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large.{ext}")
         remove_file(f"{mri_dir}/{out_name}_seg_large.{ext}")
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-GM_probseg.{ext}")
@@ -1546,9 +1562,9 @@ def run_segment():
         
     if use_amap or save_lesions:
         p0_value = p0_large.get_fdata().copy()
-        np.clip(p0_value, 0, 3)
+        np.clip(p0_value, 0, 3, out=p0_value)
         p0_value[ind_wmh] += wmh_value[ind_wmh]
-        np.clip(p0_value, 0, 4)
+        np.clip(p0_value, 0, 4, out=p0_value)
         p0_large = nib.Nifti1Image(
             p0_value, affine_resamp_reordered, header_resamp_reordered
         )
