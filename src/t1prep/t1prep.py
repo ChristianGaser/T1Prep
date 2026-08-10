@@ -210,8 +210,8 @@ def _build_surface_cmd(
     save_pial_white: bool = True,
     pre_fwhm: float = 2.0,
     median_filter: int = 1,
-    downsample: float = 0.0,
     vessel: float = 1.0,
+    amap: bool = False,
     correct_folding: bool = True,
     debug: bool = False,
     gz: bool = False,
@@ -238,8 +238,8 @@ def _build_surface_cmd(
         "--save-pial-white",     str(int(save_pial_white)),
         "--pre-fwhm",            str(pre_fwhm),
         "--median-filter",       str(int(median_filter)),
-        "--downsample",          str(downsample),
         "--vessel",              str(int(vessel > 0)),
+        "--amap",                str(int(amap)),
         "--correct-folding",     str(int(correct_folding)),
         "--debug",               str(int(debug)),
         "--multi",               "0",
@@ -266,7 +266,6 @@ def _process_single(
     long_data: Optional[str] = None,
     no_overwrite: Optional[str] = None,
     pre_fwhm: float = 2.0,
-    downsample: float = 0.0,
     median_filter: int = 1,
     vessel: float = 1.0,
     thickness_method: int = 3,
@@ -422,8 +421,8 @@ def _process_single(
             save_pial_white=pial_white,
             pre_fwhm=pre_fwhm,
             median_filter=median_filter,
-            downsample=downsample,
             vessel=vessel,
+            amap=amap,
             correct_folding=correct_folding,
             debug=debug,
             gz=gz,
@@ -513,7 +512,6 @@ def run_t1prep(
     no_overwrite: Optional[str] = None,
     # numeric / tuning options
     pre_fwhm: float = 2.0,
-    downsample: float = 0.0,
     median_filter: int = 1,
     vessel: float = 1.0,
     thickness_method: int = 3,
@@ -577,8 +575,6 @@ def run_t1prep(
         exist in the output directory.
     pre_fwhm:
         Pre-smoothing FWHM (mm) applied before Marching Cubes (default 2).
-    downsample:
-        Downsample input to this resolution (mm) before processing; 0 = off.
     median_filter:
         Number of median-filter passes to reduce topology artefacts (default 1).
     vessel:
@@ -693,7 +689,6 @@ def run_t1prep(
             long_data=str(long_data) if long_data else None,
             no_overwrite=no_overwrite,
             pre_fwhm=float(pre_fwhm),
-            downsample=float(downsample),
             median_filter=int(median_filter),
             vessel=float(vessel),
             thickness_method=int(thickness_method),
@@ -809,8 +804,6 @@ def _build_parser() -> argparse.ArgumentParser:
     g3 = p.add_argument_group("Expert options")
     g3.add_argument("--pre-fwhm", type=float, default=2.0, metavar="MM",
                     help="Pre-smoothing FWHM before Marching Cubes (default 2)")
-    g3.add_argument("--downsample", type=float, default=0.0, metavar="MM",
-                    help="Downsample to this resolution (0 = off)")
     g3.add_argument("--median-filter", type=int, default=1, metavar="N",
                     help="Median-filter passes (default 1)")
     g3.add_argument("--vessel", type=float, default=1.0,
@@ -857,7 +850,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         initial_surf=args.initial_surf,
         no_overwrite=args.no_overwrite,
         pre_fwhm=args.pre_fwhm,
-        downsample=args.downsample,
         median_filter=args.median_filter,
         vessel=args.vessel,
         thickness_method=args.thickness_method,
