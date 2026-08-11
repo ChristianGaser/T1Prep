@@ -31,6 +31,7 @@ import sys
 import re
 import numpy as np
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -122,11 +123,8 @@ DEFAULT_WINDOW_SIZE = (1800, 800)
 
 # ---- Lookup table helper ----
 class LookupTableWithEnabling(vtkLookupTable):
-    def __init__(self):
-        super().__init__()
-        self._enabled_scalars = None
-    def SetEnabledArray(self, arr: vtkDoubleArray):
-        self._enabled_scalars = arr
+    """Plain VTK lookup table; clipping is applied by zeroing table alphas."""
+
 
 def _fill_from_ctf(lut: LookupTableWithEnabling, points, alpha: float):
     # points: list of (pos0..100, r,g,b)
@@ -413,27 +411,136 @@ def _is_gifti_mesh_by_name(filename: str) -> bool:
     return False
 
 
-def _get_template_surface_dir() -> Path:
-    """Return the path to the templates_surfaces_32k directory."""
-    return Path(__file__).resolve().parent.parent / 'data' / 'templates_surfaces_32k'
+# Vertices per hemisphere of the shipped resampling templates.  Overlays that
+# were resampled to one of these meshes can be matched by value count alone,
+# which is the only reliable clue when the filename says nothing about the
+# underlying surface (CAT12/SPM statistic folders, for example).
+TEMPLATE_HEMI_POINTS = {
+    4002: 'templates_surfaces_4k',
+    32492: 'templates_surfaces_32k',
+    163842: 'templates_surfaces_164k',
+}
+DEFAULT_TEMPLATE_DIR = 'templates_surfaces_32k'
+
+
+def _get_template_surface_dir(n_points: Optional[int] = None) -> Path:
+    """Return the directory holding the resampling template surfaces.
+
+    Args:
+        n_points: Optional vertex count of the data to display.  Accepts either
+            a per-hemisphere count (e.g. 32492) or a combined LH+RH count
+            (e.g. 64984) and selects the matching template resolution.
+            Without it, the 32k templates used by T1Prep are returned.
+
+    Returns:
+        Path to the ``templates_surfaces_*`` directory.
+    """
+    data_dir = Path(__file__).resolve().parent.parent / 'data'
+    if n_points:
+        for hemi_pts, dirname in TEMPLATE_HEMI_POINTS.items():
+            if n_points in (hemi_pts, 2 * hemi_pts):
+                return data_dir / dirname
+    return data_dir / DEFAULT_TEMPLATE_DIR
+
+
+def _hemi_counterpart(path: Path) -> Optional[Path]:
+    """Return the right-hemisphere sibling of a left-hemisphere file.
+
+    Handles the FreeSurfer/CAT12 (``lh.``), plain (``left``) and BIDS
+    (``_hemi-L_``) conventions.  Files that do not name the left hemisphere
+    return None — the viewer always treats the given file as the primary
+    (left-column) surface and only looks for its right-hand partner.  The
+    returned path is not checked for existence.
+    """
+    name = path.name
+    for left, right in (('lh.', 'rh.'), ('left', 'right'), ('_hemi-L_', '_hemi-R_')):
+        if left in name:
+            return path.with_name(name.replace(left, right))
+    return None
+
+
+def _split_scalars(arr: vtkDoubleArray, n_left: int, n_right: int) -> Tuple[vtkDoubleArray, vtkDoubleArray]:
+    """Split a concatenated LH+RH scalar array into per-hemisphere arrays."""
+    values = vtk_to_numpy(arr)
+
+    def _to_vtk(chunk) -> vtkDoubleArray:
+        out = vtkDoubleArray()
+        out.SetNumberOfTuples(len(chunk))
+        for i, v in enumerate(chunk):
+            out.SetValue(i, float(v))
+        return out
+
+    return _to_vtk(values[:n_left]), _to_vtk(values[n_left:n_left + n_right])
+
+
+@lru_cache(maxsize=64)
+def _gifti_point_count(filename: str) -> int:
+    """Return the number of vertices of a GIFTI surface (0 when unreadable)."""
+    try:
+        poly = read_gifti_mesh(filename)
+        return int(poly.GetNumberOfPoints()) if poly is not None else 0
+    except Exception:
+        return 0
+
+
+def _mesh_point_capacity(mesh_path: Path) -> Tuple[int, int]:
+    """Return (points of *mesh_path*, points of both hemispheres together).
+
+    The second value equals the first when no opposite-hemisphere file exists,
+    so a caller can simply test its scalar count against both numbers.
+    """
+    n_l = _gifti_point_count(str(mesh_path))
+    if n_l <= 0:
+        return (0, 0)
+    other = _hemi_counterpart(mesh_path)
+    n_r = _gifti_point_count(str(other)) if (other is not None and other.exists()) else 0
+    return (n_l, n_l + n_r)
+
+
+def _template_mesh_for_points(n_points: int, hemi: str = 'lh') -> Optional[Path]:
+    """Return the template central surface matching *n_points*, if any.
+
+    Args:
+        n_points: Per-hemisphere or combined LH+RH vertex count.
+        hemi: ``'lh'`` or ``'rh'``.
+
+    Returns:
+        Path to ``<hemi>.central.freesurfer.gii`` of the matching template
+        resolution, or None when the count matches no shipped template.
+    """
+    if not n_points:
+        return None
+    for hemi_pts, dirname in TEMPLATE_HEMI_POINTS.items():
+        if n_points in (hemi_pts, 2 * hemi_pts):
+            cand = (Path(__file__).resolve().parent.parent / 'data' / dirname
+                    / f'{hemi}.central.freesurfer.gii')
+            return cand if cand.exists() else None
+    return None
 
 
 def is_spm_surface_overlay(filename: str) -> bool:
-    """Check if a file is an SPM surface analysis overlay (.gii with .dat companion).
+    """Check whether a file is a surface result of an SPM/CAT12 analysis.
 
     SPM stores surface-based analysis results as .gii/.dat pairs where:
     - The .gii file contains the GIFTI metadata referencing external binary data
     - The .dat file contains the actual scalar values
-    - Data covers the combined LH+RH template mesh
+    - Data covers the template mesh the analysis was run on
 
-    Common SPM analysis filenames: spmT_*.gii, spmF_*.gii, con_*.gii,
-    ess_*.gii, beta_*.gii, ResMS.gii, etc.
+    Three cues are accepted, in decreasing specificity:
+
+    1. A known SPM result filename (``spmT_0001.gii``, ``con_0001.gii``, …).
+    2. A ``.dat`` companion next to an ``SPM.mat``.
+    3. Any non-mesh ``.gii`` inside a directory that holds an ``SPM.mat``.
+       CAT12 writes its thresholded results there under free-form names such
+       as ``logP_age_(polynomial_of_degree_3)_pFWE0.1_k0.gii``, which no
+       naming rule can recognise — the ``SPM.mat`` sibling is the only
+       dependable marker.
 
     Args:
         filename: Path to a potential SPM surface overlay file
 
     Returns:
-        True if the file looks like an SPM surface analysis overlay
+        True if the file looks like a surface analysis result
     """
     p = Path(filename)
     if p.suffix.lower() != '.gii':
@@ -452,11 +559,12 @@ def is_spm_surface_overlay(filename: str) -> bool:
     pattern_match = any(re.match(pat, name, re.IGNORECASE) for pat in spm_patterns)
     if pattern_match:
         return True
-    # Also accept when a .dat companion AND SPM.mat exist in the same directory
-    dat_file = p.with_suffix('.dat')
-    spm_mat = p.parent / 'SPM.mat'
-    if dat_file.exists() and spm_mat.exists():
-        return True
+    # Any result file living next to an SPM.mat, provided it is not itself a
+    # surface that happens to be stored in the analysis directory.
+    if (p.parent / 'SPM.mat').exists() and not _is_gifti_mesh_by_name(name):
+        if p.with_suffix('.dat').exists():
+            return True
+        return p.exists()
     return False
 
 
@@ -769,6 +877,21 @@ def _read_spm_overlay(filename: str) -> vtkDoubleArray:
     return out
 
 
+def _is_freesurfer_morph(filename: str) -> bool:
+    """Return True when the file starts with the FreeSurfer curv magic.
+
+    ``nibabel.freesurfer.read_morph_data`` also accepts the legacy format,
+    which has no magic number, so it silently returns nonsense for text or
+    other binary files.  Requiring the magic keeps plain-text overlays
+    (which frequently have no file extension either) on the text path.
+    """
+    try:
+        with open(filename, 'rb') as f:
+            return f.read(3) == b'\xff\xff\xff'
+    except Exception:
+        return False
+
+
 def read_scalars(filename: str) -> vtkDoubleArray:
     ext = Path(filename).suffix.lower()
 
@@ -814,14 +937,17 @@ def read_scalars(filename: str) -> vtkDoubleArray:
         return out
 
     # --- Case 2: FreeSurfer texture data (thickness/curv/sulc, with or without extension) ---
-    try:
-        from nibabel.freesurfer.io import read_morph_data
-        fs = np.nan_to_num(read_morph_data(filename).astype(float), nan=0.0)
-        out = vtkDoubleArray(); out.SetNumberOfTuples(len(fs))
-        for i, v in enumerate(fs): out.SetValue(i, float(v))
-        return out
-    except Exception:
-        pass
+    # Only when the file really carries the curv magic: nibabel happily
+    # misreads other content as the legacy format and returns garbage counts.
+    if _is_freesurfer_morph(filename):
+        try:
+            from nibabel.freesurfer.io import read_morph_data
+            fs = np.nan_to_num(read_morph_data(filename).astype(float), nan=0.0)
+            out = vtkDoubleArray(); out.SetNumberOfTuples(len(fs))
+            for i, v in enumerate(fs): out.SetValue(i, float(v))
+            return out
+        except Exception:
+            pass
 
     # --- Case 3: Plain text file (one value per line) ---
     data: List[float] = []
@@ -967,53 +1093,93 @@ class Options:
 def parse_args(argv: List[str]) -> Options:
     p = argparse.ArgumentParser(
         prog='CAT_SurfView',
-        description='Render LH/RH surfaces with optional overlays (CAT_SurfView).\n\n'
-                    'Usage examples:\n'
-                    '  • Single mesh: python src/t1prep/gui/cat_surf_view.py lh.central.name.gii\n'
-                    '  • Single overlay: python src/t1prep/gui/cat_surf_view.py lh.thickness.name1\n'
-                    '  • Multiple overlays (navigate with ←/→): python src/t1prep/gui/cat_surf_view.py lh.thickness.name1 lh.thickness.name2 ...',
+        description='Render LH/RH cortical surfaces with optional overlays (CAT_SurfView).',
+        epilog=(
+            'Examples:\n'
+            '  CAT_SurfView lh.central.subj.gii                 surface mesh\n'
+            '  CAT_SurfView lh.thickness.subj                   overlay (mesh found automatically)\n'
+            '  CAT_SurfView lh.central.subj.gii -overlay lh.thickness.subj\n'
+            '  CAT_SurfView sub-*/lh.thickness.*                many overlays, ←/→ to step through\n'
+            '  CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii\n'
+            '  CAT_SurfView -output view.png lh.thickness.subj  write a PNG and exit\n'
+            '\n'
+            'How the surface is determined:\n'
+            '  An overlay does not reference its surface, so it is looked up in this order:\n'
+            '    1. geometry stored inside the overlay file itself (CAT12 mesh.* and\n'
+            '       statistic results usually carry it),\n'
+            '    2. the mesh matching the overlay name (lh.thickness.subj -> lh.central.subj.gii)\n'
+            '       or a central/midthickness surface in the same folder,\n'
+            '    3. the number of values, matched against the 4k/32k/164k templates.\n'
+            '  Step 3 is what makes free-form names work, e.g. CAT12/SPM statistic folders\n'
+            '  (logP_*.gii next to an SPM.mat), and it is re-run for every overlay, so files\n'
+            '  from different folders, subjects or mesh resolutions can be mixed in one call.\n'
+            '  The right hemisphere is added when an rh./right/_hemi-R_ file sits next to the\n'
+            '  left one, or when an overlay holds both hemispheres back to back.\n'
+            '\n'
+            'Keys:\n'
+            '  ←/→ previous/next overlay (or mesh)   u/d/l/r rotate   o reset view\n'
+            '  b flip dorsal views   w/s wireframe/shaded   g screenshot   h key help   q quit\n'
+            '\n'
+            'Batch use:\n'
+            '  -output renders the view, writes the PNG and exits, so the viewer can be\n'
+            '  called in a loop.  With several overlays the first one is written.\n'
+        ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     # Accept one or more positional inputs. If more than one is given, treat all as overlays
     # and derive the mesh from the first overlay via naming rules.
     p.add_argument(
         'inputs', nargs='*',
-        help='Mesh or overlay(s). If multiple values are provided, they are treated as overlays.'
+        help='Mesh and/or overlay files. Several overlays can be stepped through with ←/→.'
     )
     p.add_argument('-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
     p.add_argument('-overlays', dest='overlays', nargs='+', help='Multiple overlay files for navigation')
     p.add_argument('-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
     p.add_argument('-volume','-vol','--nifti', dest='volume', help='3D NIfTI volume to display in a separate orthogonal view window')
-    p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0], help='Overlay value range (min max). Use -1 for auto.')
-    p.add_argument('-range-bkg','-rb', dest='range_bkg', nargs=2, type=float, default=[0.0, -1.0], help='Background value range (min max). Use -1 for auto.')
-    p.add_argument('-clip','-cl', dest='clip', nargs=2, type=float, default=[0.0, -1.0], help='Clip range for display (min max). Use -1 for none/auto.')
+    p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0],
+                   help='Overlay value range (min max); omit for auto-scaling.\n'
+                        'Given explicitly, it also overrides the thickness/pbt presets.')
+    p.add_argument('-range-bkg','-rb', dest='range_bkg', nargs=2, type=float, default=[0.0, -1.0],
+                   help='Background (curvature) value range (min max); omit for auto-scaling.')
+    p.add_argument('-clip','-cl', dest='clip', nargs=2, type=float, default=[0.0, -1.0],
+                   help='Hide values between min and max (min max); min == max disables it.\n'
+                        'Bounds shared with -range are included, so "-range 6 16 -clip -100 6"\n'
+                        'hides everything up to 6.')
     p.add_argument('-size','-sz', dest='size', nargs=2, type=int, default=list(DEFAULT_WINDOW_SIZE), help='Window size in pixels (width height)')
     p.add_argument('-title', dest='title', help='Window/title string (overrides auto title)')
-    p.add_argument('-output','-save', dest='output', help='Save a screenshot to this path and exit')
+    p.add_argument('-output','-save', dest='output',
+                   help='Render to this PNG file and exit without user interaction (batch mode)')
     p.add_argument('-fontsize','-fs', dest='fontsize', type=int, default=0, help='Title/font size (0 = auto)')
     p.add_argument('-opacity','-op', dest='opacity', type=float, default=0.8, help='Overlay opacity')
     p.add_argument('-stats', action='store_true', help='Deprecated: same as --title-mode stats when colorbar is shown')
     p.add_argument('-title-mode', dest='title_mode', choices=['shape','stats','none'], default='shape',
                    help='Colorbar title: shape (filename), stats, or none')
     p.add_argument('-inverse', action='store_true', help='Invert the overlay colormap')
-    p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true')
+    p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true',
+                   help='Show the colorbar (only has an effect with an overlay)')
     p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=0,
                    help='Number of discrete color levels (0 = continuous)')
-    p.add_argument('-log', action='store_true', help='Use logarithmic scaling for overlay display')
+    p.add_argument('-log', action='store_true', help=argparse.SUPPRESS)  # accepted, not implemented
     p.add_argument('-white', action='store_true', help='Use a white background')
     # Control panel visibility (default: hidden)
     p.add_argument('-panel', dest='panel', action='store_true', help='Start with the control panel shown')
     p.add_argument('-no-panel', dest='panel', action='store_false', help='Start with the control panel hidden (default)')
     p.set_defaults(panel=False)
-    p.add_argument('-fire', action='store_true')
-    p.add_argument('-bipolar', action='store_true')
-    p.add_argument('-c1', action='store_true')
-    p.add_argument('-c2', action='store_true')
-    p.add_argument('-c3', action='store_true')
-    p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true', help='Fix scaling across all overlays')
-    p.add_argument('-debug', action='store_true', help='Enable debug output')
+    # Colormap selection (default: jet)
+    p.add_argument('-fire', action='store_true', help='Use the fire colormap')
+    p.add_argument('-bipolar', action='store_true', help='Use the bipolar colormap')
+    p.add_argument('-c1', action='store_true', help='Use custom colormap 1')
+    p.add_argument('-c2', action='store_true', help='Use custom colormap 2')
+    p.add_argument('-c3', action='store_true', help='Use custom colormap 3')
+    p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true',
+                   help='Keep the range of the first overlay for all following ones')
+    p.add_argument('-debug', action='store_true', help=argparse.SUPPRESS)  # accepted, not implemented
     # External defaults file for viewer settings (key=value lines)
     p.add_argument('-defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
+    # Called without any argument: show the help instead of opening an empty window
+    if not argv:
+        p.print_help()
+        sys.exit(0)
     a = p.parse_args(argv)
 
     # Optionally load external defaults and apply only for values not explicitly provided on CLI
@@ -1645,17 +1811,8 @@ class Viewer(QtWidgets.QMainWindow):
                 # Input is a mesh file
                 left_mesh_path = input_path
             self.poly_l = read_gifti_mesh(str(left_mesh_path))
-            rh_candidate: Optional[Path] = None
-            name = left_mesh_path.name
-            if 'lh.' in name:
-                rh_candidate = left_mesh_path.with_name(name.replace('lh.', 'rh.'))
-            elif 'left' in name:
-                rh_candidate = left_mesh_path.with_name(name.replace('left', 'right'))
-            elif '_hemi-L_' in name:
-                rh_candidate = left_mesh_path.with_name(name.replace('_hemi-L_', '_hemi-R_'))
-            elif '_hemi-R_' in name:
-                rh_candidate = left_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
-            if rh_candidate and rh_candidate.exists(): 
+            rh_candidate = _hemi_counterpart(left_mesh_path)
+            if rh_candidate is not None and rh_candidate.exists():
                 self.poly_r = read_gifti_mesh(str(rh_candidate))
             # Normalize Y-origin similar to C++ utility
             self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
@@ -1684,18 +1841,15 @@ class Viewer(QtWidgets.QMainWindow):
         self.bkg_scalar_l = None; self.bkg_scalar_r = None
         if opts.overlay_bkg:
             self.bkg_scalar_l = read_scalars(opts.overlay_bkg)
-            rh_overlay_bkg = None
-            if 'lh.' in opts.overlay_bkg: rh_overlay_bkg = opts.overlay_bkg.replace('lh.', 'rh.')
-            elif 'left' in opts.overlay_bkg: rh_overlay_bkg = opts.overlay_bkg.replace('left', 'right')
-            if rh_overlay_bkg and Path(rh_overlay_bkg).exists() and self.poly_r is not None:
-                self.bkg_scalar_r = read_scalars(rh_overlay_bkg)
+            rh_overlay_bkg = _hemi_counterpart(Path(opts.overlay_bkg))
+            if rh_overlay_bkg is not None and rh_overlay_bkg.exists() and self.poly_r is not None:
+                self.bkg_scalar_r = read_scalars(str(rh_overlay_bkg))
             elif self.poly_r is not None and self.bkg_scalar_l is not None and self.bkg_scalar_l.GetNumberOfTuples() == (self.poly_l.GetNumberOfPoints()+self.poly_r.GetNumberOfPoints()):
-                nL = self.poly_l.GetNumberOfPoints(); nR = self.poly_r.GetNumberOfPoints(); arr = self.bkg_scalar_l
-                self.bkg_scalar_r = vtkDoubleArray(); self.bkg_scalar_r.SetNumberOfTuples(nR)
-                for i in range(nR): self.bkg_scalar_r.SetValue(i, arr.GetValue(i+nL))
-                left_only = vtkDoubleArray(); left_only.SetNumberOfTuples(nL)
-                for i in range(nL): left_only.SetValue(i, arr.GetValue(i))
-                self.bkg_scalar_l = left_only
+                self.bkg_scalar_l, self.bkg_scalar_r = _split_scalars(
+                    self.bkg_scalar_l,
+                    self.poly_l.GetNumberOfPoints(),
+                    self.poly_r.GetNumberOfPoints(),
+                )
 
         self.curv_l_out = self.curv_l.GetOutput();  
         if self.bkg_scalar_l is not None: self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
@@ -1703,6 +1857,14 @@ class Viewer(QtWidgets.QMainWindow):
         if self.curv_r is not None:
             self.curv_r_out = self.curv_r.GetOutput();
             if self.bkg_scalar_r is not None: self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
+
+        # Overlay range (must be known before any LUT/clip computation)
+        self.overlay_range = list(opts.range)
+        # Track which display ranges the user explicitly provided via CLI so that
+        # per-overlay presets (e.g. thickness) never silently override them.
+        self._user_set_range = (opts.range[1] > opts.range[0])
+        self._user_set_clip = (opts.clip[1] > opts.clip[0])
+        self._user_set_range_bkg = (opts.range_bkg[1] > opts.range_bkg[0])
 
         # Actors and LUTs
         self._actors: List[vtkActor] = []
@@ -1715,9 +1877,8 @@ class Viewer(QtWidgets.QMainWindow):
         # Apply discrete bands to overlay LUTs if requested
         self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
-        # Apply clip transparency to overlay LUTs (values inside clip become transparent)
-        self._apply_clip_to_overlay_luts()
-        lut_bkg = vtkLookupTable(); lut_bkg.SetHueRange(0,0); lut_bkg.SetSaturationRange(0,0); lut_bkg.SetValueRange(0,1); lut_bkg.Build()
+        # Clip transparency is applied further below, once the overlay range is final
+        self.lut_bkg = vtkLookupTable(); self.lut_bkg.SetHueRange(0,0); self.lut_bkg.SetSaturationRange(0,0); self.lut_bkg.SetValueRange(0,1); self.lut_bkg.Build()
 
         # Background scalar range
         self.range_bkg = list(opts.range_bkg)
@@ -1725,14 +1886,11 @@ class Viewer(QtWidgets.QMainWindow):
             r = [0.0,0.0]; self.curv_l_out.GetScalarRange(r); self.range_bkg = r
         if self.range_bkg[0] < 0 < self.range_bkg[1]:
             m = max(abs(self.range_bkg[0]), abs(self.range_bkg[1])); self.range_bkg = [-m, m]
-        lut_bkg.SetTableRange(self.range_bkg)
-        # Overlay range (init before calling _load_overlay)
-        self.overlay_range = list(opts.range)
-        # Track whether the user explicitly provided a valid range via CLI
-        self._user_set_range = (opts.range[1] > opts.range[0])
-        # Predefine overlay actors (referenced in _load_overlay)
-        self.actor_ov_l = None
-        self.actor_ov_r = None
+        self.lut_bkg.SetTableRange(self.range_bkg)
+        # Predefine hemisphere actors; they are created as soon as the data
+        # they render is known (see _ensure_hemisphere_actors)
+        self.actor_bkg_l = None; self.actor_ov_l = None
+        self.actor_bkg_r = None; self.actor_ov_r = None
 
         # Overlay management
         self.overlay_list = []
@@ -1758,59 +1916,15 @@ class Viewer(QtWidgets.QMainWindow):
         if not (self.overlay_range[1] > self.overlay_range[0]) and (self.scal_l is not None):
             r = [0.0,0.0]; self.poly_l.GetScalarRange(r); self.overlay_range = r
 
-        # Mappers/actors
-        self.actor_bkg_l = None
-        if hasattr(self, 'curv_l_out') and self.curv_l_out is not None:
-            mapper_bkg_l = vtkPolyDataMapper(); mapper_bkg_l.SetInputData(self.curv_l_out); mapper_bkg_l.SetLookupTable(lut_bkg); mapper_bkg_l.SetScalarRange(self.range_bkg)
-            self.actor_bkg_l = vtkActor(); self.actor_bkg_l.SetMapper(mapper_bkg_l)
-            self.actor_bkg_l.GetProperty().SetAmbient(0.8); self.actor_bkg_l.GetProperty().SetDiffuse(0.7)
-            self._actors.append(self.actor_bkg_l)
+        # Apply clip transparency to overlay LUTs (values inside clip become transparent).
+        # Done here so the clip window is mapped against the final overlay range.
+        self._apply_clip_to_overlay_luts()
 
-        self.actor_ov_l = None
-        if self.scal_l is not None:
-            mapper_ov_l = vtkPolyDataMapper(); mapper_ov_l.SetInputData(self.poly_l); mapper_ov_l.SetLookupTable(self.lut_overlay_l)
-            if self.overlay_range[1] > self.overlay_range[0]: mapper_ov_l.SetScalarRange(self.overlay_range)
-            self.actor_ov_l = vtkActor(); self.actor_ov_l.SetMapper(mapper_ov_l)
-            self.actor_ov_l.GetProperty().SetAmbient(0.3); self.actor_ov_l.GetProperty().SetDiffuse(0.7)
-            self._actors.append(self.actor_ov_l)
-
-        self.actor_bkg_r = None; self.actor_ov_r = None
-        if self.poly_r is not None and hasattr(self, 'curv_r_out') and self.curv_r_out is not None:
-            mapper_bkg_r = vtkPolyDataMapper(); mapper_bkg_r.SetInputData(self.curv_r_out); mapper_bkg_r.SetLookupTable(lut_bkg); mapper_bkg_r.SetScalarRange(self.range_bkg)
-            self.actor_bkg_r = vtkActor(); self.actor_bkg_r.SetMapper(mapper_bkg_r)
-            self.actor_bkg_r.GetProperty().SetAmbient(0.8); self.actor_bkg_r.GetProperty().SetDiffuse(0.7)
-            self._actors.append(self.actor_bkg_r)
-            if self.scal_r is not None:
-                mapper_ov_r = vtkPolyDataMapper(); mapper_ov_r.SetInputData(self.poly_r); mapper_ov_r.SetLookupTable(self.lut_overlay_r)
-                if self.overlay_range[1] > self.overlay_range[0]: mapper_ov_r.SetScalarRange(self.overlay_range)
-                self.actor_ov_r = vtkActor(); self.actor_ov_r.SetMapper(mapper_ov_r)
-                self.actor_ov_r.GetProperty().SetAmbient(0.3); self.actor_ov_r.GetProperty().SetDiffuse(0.7)
-                self._actors.append(self.actor_ov_r)
+        # Mappers/actors for whichever hemispheres carry data
+        self._ensure_hemisphere_actors()
 
         # Build 6-view montage
-        views = 6; shifts = (180.0, 180.0)
-        posx = [0, 2*shifts[0], 0.15*shifts[0], 1.85*shifts[0], shifts[0], shifts[0]]
-        posy = [0, 0, 0.8*shifts[1], 0.8*shifts[1], 0.6*shifts[1], 0.6*shifts[1]]
-        rotx = [270, 270, 270, 270, 0, 0]; rotz = [90, -90, -90, 90, 0, 0]
-        order = [0,1,0,1,0,1]
-        # Keep track of clones per view index for selective operations (e.g., key 'b')
-        self._montage_bkg: List[Optional[vtkActor]] = [None]*views
-        self._montage_ov: List[Optional[vtkActor]] = [None]*views
-        def add_clone(actor: vtkActor, px, py, rx, rz) -> vtkActor:
-            a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a); return a
-        for i in range(views):
-            if self.poly_r is None and (i % 2 == 1): continue
-            src = self.actor_bkg_r if (order[i] == 1 and self.actor_bkg_r is not None) else self.actor_bkg_l
-            if src is not None:
-                a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
-                self._montage_bkg[i] = a
-        if self.actor_ov_l is not None or self.actor_ov_r is not None:
-            for i in range(views):
-                if self.poly_r is None and (i % 2 == 1): continue
-                src = self.actor_ov_r if (order[i] == 1 and self.actor_ov_r is not None) else self.actor_ov_l
-                if src is not None:
-                    a = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
-                    self._montage_ov[i] = a
+        self._build_montage()
 
         # Colorbar: create once and attach/detach based on option
         self.scalar_bar = None
@@ -1840,12 +1954,153 @@ class Viewer(QtWidgets.QMainWindow):
 
         # Focus is set during initialization; no extra activation timer needed
 
-        # Optional snapshot
-        if opts.output:
-            self.save_png(opts.output)
+        # Optional snapshot: taken in _post_init_render once the scene is
+        # rendered, then the application quits so that -output can be used
+        # from batch scripts (see _save_and_quit).
 
         # (Shortcuts/event filter reverted to previous behavior)
         
+    # -- Scene construction --
+    # Layout of the six montage views: lateral/medial for both hemispheres in
+    # the two rows, dorsal views in the middle.  order[i] picks the hemisphere
+    # (0 = left, 1 = right) an individual view is cloned from.
+    _MONTAGE_ORDER = (0, 1, 0, 1, 0, 1)
+
+    def _ensure_hemisphere_actors(self) -> bool:
+        """Create the background/overlay actors for hemispheres that have data.
+
+        Called at start-up and again after loading an overlay: a file covering
+        both hemispheres may follow one that only had a left one, and without
+        the missing actors the right-hand views would keep repeating the left
+        hemisphere.
+
+        Returns:
+            True when at least one actor was created.
+        """
+        created = False
+
+        def _new_actor(data, lut, scalar_range, ambient) -> vtkActor:
+            mapper = vtkPolyDataMapper()
+            mapper.SetInputData(data)
+            mapper.SetLookupTable(lut)
+            if scalar_range is not None and scalar_range[1] > scalar_range[0]:
+                mapper.SetScalarRange(scalar_range)
+            actor = vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetAmbient(ambient)
+            actor.GetProperty().SetDiffuse(0.7)
+            self._actors.append(actor)
+            return actor
+
+        if self.actor_bkg_l is None and getattr(self, 'curv_l_out', None) is not None:
+            self.actor_bkg_l = _new_actor(self.curv_l_out, self.lut_bkg, self.range_bkg, 0.8)
+            created = True
+        if self.actor_ov_l is None and self.scal_l is not None and self.poly_l is not None:
+            self.actor_ov_l = _new_actor(self.poly_l, self.lut_overlay_l, self.overlay_range, 0.3)
+            created = True
+        if (self.actor_bkg_r is None and self.poly_r is not None
+                and getattr(self, 'curv_r_out', None) is not None):
+            self.actor_bkg_r = _new_actor(self.curv_r_out, self.lut_bkg, self.range_bkg, 0.8)
+            created = True
+        if self.actor_ov_r is None and self.scal_r is not None and self.poly_r is not None:
+            self.actor_ov_r = _new_actor(self.poly_r, self.lut_overlay_r, self.overlay_range, 0.3)
+            created = True
+        return created
+
+    def _build_montage(self):
+        """(Re)create the six-view montage from the current hemisphere actors.
+
+        Clones of the left/right actors are what actually gets rendered; the
+        actors themselves are only templates.  Rebuilding is required whenever
+        the set of hemispheres changes (e.g. switching from a single-hemisphere
+        overlay to a combined LH+RH one), so previous clones are removed first.
+        """
+        shifts = (180.0, 180.0)
+        posx = [0, 2 * shifts[0], 0.15 * shifts[0], 1.85 * shifts[0], shifts[0], shifts[0]]
+        posy = [0, 0, 0.8 * shifts[1], 0.8 * shifts[1], 0.6 * shifts[1], 0.6 * shifts[1]]
+        rotx = [270, 270, 270, 270, 0, 0]
+        rotz = [90, -90, -90, 90, 0, 0]
+        order = self._MONTAGE_ORDER
+        views = len(order)
+
+        # Drop clones of a previous scene
+        for attr in ('_montage_bkg', '_montage_ov'):
+            for actor in (getattr(self, attr, None) or []):
+                if actor is not None:
+                    try:
+                        self.ren.RemoveActor(actor)
+                    except Exception:
+                        pass
+        # Keep track of clones per view index for selective operations (e.g., key 'b')
+        self._montage_bkg: List[Optional[vtkActor]] = [None] * views
+        self._montage_ov: List[Optional[vtkActor]] = [None] * views
+
+        def add_clone(actor: vtkActor, px, py, rx, rz) -> vtkActor:
+            a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a); return a
+
+        bkg_l = getattr(self, 'actor_bkg_l', None); bkg_r = getattr(self, 'actor_bkg_r', None)
+        ov_l = getattr(self, 'actor_ov_l', None); ov_r = getattr(self, 'actor_ov_r', None)
+        for i in range(views):
+            if self.poly_r is None and (i % 2 == 1):
+                continue
+            src = bkg_r if (order[i] == 1 and bkg_r is not None) else bkg_l
+            if src is not None:
+                self._montage_bkg[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+        if ov_l is not None or ov_r is not None:
+            for i in range(views):
+                if self.poly_r is None and (i % 2 == 1):
+                    continue
+                src = ov_r if (order[i] == 1 and ov_r is not None) else ov_l
+                if src is not None:
+                    self._montage_ov[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+
+    def _set_meshes(self, poly_l: vtkPolyData, poly_r: Optional[vtkPolyData]):
+        """Install new hemisphere meshes and rewire everything that renders them.
+
+        Recomputes curvature, re-attaches background scalars, points the
+        existing mappers at the new geometry and rebuilds the montage when the
+        number of hemispheres changed.  Used by every code path that replaces
+        the displayed surface (mesh navigation, overlay-driven mesh switching,
+        geometry embedded in an overlay file).
+        """
+        had_right = self.poly_r is not None
+        self.poly_l = poly_l
+        self.poly_r = poly_r
+        self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
+        self._y_shift_r = (self._shift_y_to(self.poly_r) or 0.0) if self.poly_r is not None else 0.0
+
+        # Curvature / background scalars
+        self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l)
+        self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
+        self.curv_l_out = self.curv_l.GetOutput()
+        if self.bkg_scalar_l is not None:
+            self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
+        self.curv_r = None; self.curv_r_out = None
+        if self.poly_r is not None:
+            self.curv_r = vtkCurvatures(); self.curv_r.SetInputData(self.poly_r)
+            self.curv_r.SetCurvatureTypeToMean(); self.curv_r.Update()
+            self.curv_r_out = self.curv_r.GetOutput()
+            if self.bkg_scalar_r is not None:
+                self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
+
+        # Point existing mappers at the new geometry
+        if getattr(self, 'actor_bkg_l', None) is not None:
+            self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
+        if getattr(self, 'actor_ov_l', None) is not None:
+            self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
+        if getattr(self, 'actor_bkg_r', None) is not None and self.curv_r_out is not None:
+            self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
+        if getattr(self, 'actor_ov_r', None) is not None and self.poly_r is not None:
+            self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
+
+        # A changed hemisphere layout invalidates the montage clones: without
+        # this the right-hand views would keep showing the previous surface.
+        if had_right != (self.poly_r is not None):
+            self._build_montage()
+
+        # Keep slider bounds in sync with the new data
+        self._update_slider_bounds()
+
     def _show_view_context_menu(self, pos):
         menu = QtWidgets.QMenu(self)
         # reuse the same action so state stays in sync
@@ -1868,7 +2123,27 @@ class Viewer(QtWidgets.QMainWindow):
             self.rw.Render()
         except Exception:
             pass
-    
+        # Batch mode: -output writes the rendered view and terminates, so the
+        # viewer can be scripted over many files without user interaction.
+        if getattr(self.opts, 'output', None):
+            QTimer.singleShot(0, self._save_and_quit)
+
+    def _save_and_quit(self):
+        """Write the screenshot requested via -output and close the application."""
+        status = 0
+        try:
+            self.rw.Render()
+            self.save_png(self.opts.output)
+        except Exception as e:
+            print(f"Failed to save {self.opts.output}: {e}", file=sys.stderr)
+            status = 1
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.exit(status)
+        else:  # pragma: no cover - only when run without an event loop
+            sys.exit(status)
+
+
     # -- Control panel integration --
     def _build_control_panel(self):
         self.ctrl = ControlPanel(self)
@@ -2339,9 +2614,8 @@ class Viewer(QtWidgets.QMainWindow):
                     a_o.RotateX(180)
             camera.OrthogonalizeViewUp(); self.rw.Render(); return
         if s in ('g','G'):
-            w2i = vtkWindowToImageFilter(); w2i.SetInput(self.rw); w2i.Update()
             name = Path(self.rw.GetWindowName() or 'screenshot').with_suffix('.png')
-            png = vtkPNGWriter(); png.SetFileName(str(name)); png.SetInputConnection(w2i.GetOutputPort()); png.Write(); print(f"Saved {name}"); return
+            self.save_png(str(name)); return
         if s in ('h','H'):
             hint = '⌘D' if sys.platform == 'darwin' else 'Ctrl+D'
             print(f"KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation, toggle controls: {hint}"); return
@@ -2456,6 +2730,50 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             pass
 
+    def _rebuild_overlay_luts(self):
+        """Rebuild both overlay LUTs from colormap/opacity, honoring inverse and discrete.
+
+        Any clip transparency previously baked into the LUT alpha is dropped;
+        call :meth:`_apply_clip_to_overlay_luts` afterwards to re-apply it.
+        """
+        self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
+        self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
+        if self.opts.inverse:
+            self._invert_lut(self.lut_overlay_l)
+            self._invert_lut(self.lut_overlay_r)
+        self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
+        self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+
+    @staticmethod
+    def _clipped_lut_indices(n: int, smin: float, smax: float, c0: float, c1: float) -> List[int]:
+        """Return the LUT indices covered by the clip window (c0, c1).
+
+        Entry ``i`` of an ``n``-entry table represents the scalar
+        ``smin + i/(n-1) * (smax - smin)``.  VTK clamps values outside
+        ``[smin, smax]`` onto the first/last entry, so those two entries are
+        also clipped once the clip window reaches the corresponding range
+        boundary.  That makes ``-range 6 16 -clip -100 6`` behave like
+        ``-clip -100 6.00001`` instead of clipping nothing.
+        """
+        if n <= 0 or not (c1 > c0):
+            return []
+        span = abs(smax - smin)
+        eps = (span if span > 0 else 1.0) * 1e-9
+        out: List[int] = []
+        for i in range(n):
+            t = i / (n - 1) if n > 1 else 0.0
+            val = smin + t * (smax - smin)
+            inside = (c0 < val < c1)
+            if not inside and i == 0:
+                # Everything below smin is clamped onto entry 0
+                inside = (c0 - eps) <= smin <= (c1 + eps)
+            if not inside and i == n - 1:
+                # Everything above smax is clamped onto the last entry
+                inside = (c0 - eps) <= smax <= (c1 + eps)
+            if inside:
+                out.append(i)
+        return out
+
     def _apply_clip_to_overlay_luts(self):
         """Make values inside the clip range transparent and gray in colorbar.
 
@@ -2480,13 +2798,10 @@ class Viewer(QtWidgets.QMainWindow):
             smin, smax = float(r[0]), float(r[1])
         def apply(lut: vtkLookupTable):
             n = int(lut.GetNumberOfTableValues())
-            for i in range(n):
-                t = i / (n - 1 if n > 1 else 1)
-                val = smin + t * (smax - smin)
+            for i in self._clipped_lut_indices(n, smin, smax, c0, c1):
                 r, g, b, a = lut.GetTableValue(i)
-                if c0 < val < c1:
-                    # Transparent in overlay
-                    lut.SetTableValue(i, r, g, b, 0.0)
+                # Transparent in overlay
+                lut.SetTableValue(i, r, g, b, 0.0)
         if self.lut_overlay_l is not None:
             apply(self.lut_overlay_l)
         if self.lut_overlay_r is not None:
@@ -2748,48 +3063,13 @@ class Viewer(QtWidgets.QMainWindow):
             pass
         # Capture camera before changing geometry
         self._capture_camera_state()
-        # Load left mesh and normalize Y
-        self.poly_l = read_gifti_mesh(str(p))
-        self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
-        # Find corresponding right mesh (best-effort) and normalize Y
-        self.poly_r = None
-        rh_candidate: Optional[Path] = None
-        name = p.name
-        if 'lh.' in name:
-            rh_candidate = p.with_name(name.replace('lh.', 'rh.'))
-        elif 'left' in name:
-            rh_candidate = p.with_name(name.replace('left', 'right'))
-        elif '_hemi-L_' in name:
-            rh_candidate = p.with_name(name.replace('_hemi-L_', '_hemi-R_'))
-        elif '_hemi-R_' in name:
-            rh_candidate = p.with_name(name.replace('_hemi-R_', '_hemi-L_'))
-        if rh_candidate and rh_candidate.exists():
-            self.poly_r = read_gifti_mesh(str(rh_candidate))
-            self._y_shift_r = self._shift_y_to(self.poly_r) or 0.0
-        else:
-            self._y_shift_r = 0.0
-        # Rebuild curvature
-        self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
-        self.curv_l_out = self.curv_l.GetOutput()
-        if self.bkg_scalar_l is not None:
-            self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
-        self.curv_r = None; self.curv_r_out = None
-        if self.poly_r is not None:
-            self.curv_r = vtkCurvatures(); self.curv_r.SetInputData(self.poly_r); self.curv_r.SetCurvatureTypeToMean(); self.curv_r.Update()
-            self.curv_r_out = self.curv_r.GetOutput()
-            if self.bkg_scalar_r is not None:
-                self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
-        # Update inputs on existing actors/mappers
-        if getattr(self, 'actor_bkg_l', None) is not None and self.curv_l_out is not None:
-            self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
-        if getattr(self, 'actor_bkg_r', None) is not None and self.curv_r_out is not None:
-            self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
-        if getattr(self, 'actor_ov_l', None) is not None and self.poly_l is not None:
-            self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
-        if getattr(self, 'actor_ov_r', None) is not None and self.poly_r is not None:
-            self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
-        # Keep slider bounds in sync with new data
-        self._update_slider_bounds()
+        # Load left mesh plus its opposite-hemisphere sibling (best-effort)
+        poly_l = read_gifti_mesh(str(p))
+        poly_r = None
+        rh_candidate = _hemi_counterpart(p)
+        if rh_candidate is not None and rh_candidate.exists():
+            poly_r = read_gifti_mesh(str(rh_candidate))
+        self._set_meshes(poly_l, poly_r)
         # Update window title to mesh name if no overlay is active
         if not self.opts.overlay:
             try:
@@ -2951,137 +3231,145 @@ class Viewer(QtWidgets.QMainWindow):
         best = max(candidates, key=score)
         return best if _is_mesh(best) else None
 
-    def _maybe_switch_mesh_for_overlay(self, overlay_path: str):
-        """If the overlay implies a different mesh, switch meshes and rebuild mappers/actors.
+    def _mesh_fits_scalars(self, n_scal: int) -> bool:
+        """True when the loaded mesh(es) have exactly *n_scal* vertices in total."""
+        if self.poly_l is None or n_scal <= 0:
+            return False
+        n_l = self.poly_l.GetNumberOfPoints()
+        n_r = self.poly_r.GetNumberOfPoints() if self.poly_r is not None else 0
+        return n_scal in (n_l, n_l + n_r)
 
-        This allows cycling across overlays from different subjects/runs where the mesh files differ.
+    def _use_embedded_mesh(self, ov_path: Path, n_scal: int) -> bool:
+        """Display the geometry stored inside an overlay ``.gii``, if it fits.
+
+        CAT12 writes combined-hemisphere overlays (``mesh.thickness.*``) and
+        statistic results with the surface included in the same file, which is
+        the most reliable source: no filename guessing involved.
+
+        Returns:
+            True when the embedded mesh was adopted.
+        """
+        if ov_path.suffix.lower() != '.gii':
+            return False
+        try:
+            poly = read_gifti_mesh(str(ov_path))
+        except Exception:
+            return False
+        if poly is None or poly.GetNumberOfPoints() != n_scal:
+            return False
+        half = n_scal // 2
+        # Split when the file holds both hemispheres: either the CAT12 'mesh.'
+        # naming says so, or the size matches twice a known template hemisphere.
+        if n_scal % 2 == 0 and (
+            _parse_mesh_combined_overlay(str(ov_path)) is not None
+            or half in TEMPLATE_HEMI_POINTS
+        ):
+            poly_l, poly_r = split_combined_mesh(poly, half)
+        else:
+            poly_l, poly_r = poly, None
+        self._set_meshes(poly_l, poly_r)
+        return True
+
+    def _ensure_mesh_for_scalars(self, ov_path: Path, n_scal: int):
+        """Make the displayed surface match the number of overlay values.
+
+        Overlay files carry no reference to their surface, so it is normally
+        derived from the filename.  That heuristic fails for free-form names —
+        most notably CAT12/SPM statistic folders (``logP_*.gii`` next to an
+        ``SPM.mat``) — and when overlays from several folders are passed in one
+        call.  The value count is the one unambiguous clue, so when the current
+        mesh does not fit, candidates are tried in order of reliability:
+
+        1. geometry embedded in the overlay file itself,
+        2. the mesh derived from the overlay name or found next to it,
+        3. the shipped resampling template (4k/32k/164k) of matching size.
+        """
+        if n_scal <= 0 or self.poly_l is None:
+            return
+        if self._mesh_fits_scalars(n_scal):
+            return
+
+        if self._use_embedded_mesh(ov_path, n_scal):
+            # Remember that this overlay brings its own geometry, so navigating
+            # back to it does not switch to a guessed mesh first.
+            self._remember_mesh_for_overlay(ov_path, '')
+            return
+
+        cand = self._find_mesh_for_overlay(str(ov_path))
+        if cand is not None and n_scal in _mesh_point_capacity(cand):
+            self._switch_mesh(str(cand))
+            if self._mesh_fits_scalars(n_scal):
+                self._remember_mesh_for_overlay(ov_path, self.opts.mesh_left)
+                return
+
+        tpl = _template_mesh_for_points(n_scal)
+        if tpl is not None:
+            self._switch_mesh(str(tpl))
+            if self._mesh_fits_scalars(n_scal):
+                self._remember_mesh_for_overlay(ov_path, self.opts.mesh_left)
+        if not self._mesh_fits_scalars(n_scal):
+            print(
+                f"Warning: no surface with {n_scal} vertices found for "
+                f"{ov_path.name}; the overlay may not be displayed correctly.",
+                file=sys.stderr,
+            )
+
+    @staticmethod
+    def _overlay_cache_key(ov_path: Path) -> str:
+        try:
+            return str(ov_path.expanduser().resolve())
+        except Exception:
+            return str(ov_path)
+
+    def _remember_mesh_for_overlay(self, ov_path: Path, mesh: str):
+        """Record which mesh belongs to an overlay ('' = geometry is in the file)."""
+        self._overlay_mesh_cache[self._overlay_cache_key(ov_path)] = mesh or ''
+
+    def _maybe_switch_mesh_for_overlay(self, overlay_path: str):
+        """Switch to the mesh that belongs to *overlay_path*, if it is another one.
+
+        Overlays selected from different folders (subjects, smoothing levels,
+        statistic directories) usually sit next to their own surface, so the
+        mesh is re-resolved on every switch.  Results are cached per overlay to
+        keep the pairing stable when cycling back and forth: without the cache
+        an ambiguous directory could otherwise "stick" to the mesh resolved for
+        a previous overlay.
         """
         ov_path = Path(overlay_path)
-        ov_dir = ov_path.parent
+        overlay_key = self._overlay_cache_key(ov_path)
 
-        # Resolve via cache first to ensure stable overlay->mesh pairing.
-        try:
-            overlay_key = str(ov_path.expanduser().resolve())
-        except Exception:
-            overlay_key = str(ov_path)
-
-        cached_mesh = None
-        try:
-            cached_mesh = self._overlay_mesh_cache.get(overlay_key)
-        except Exception:
-            cached_mesh = None
-
-        if cached_mesh:
+        if overlay_key in self._overlay_mesh_cache:
+            cached_mesh = self._overlay_mesh_cache[overlay_key]
+            if not cached_mesh:
+                # The overlay carries its own geometry; _load_overlay installs it
+                return
             new_mesh_path = Path(cached_mesh)
         else:
             new_mesh_path = self._find_mesh_for_overlay(str(ov_path))
             if new_mesh_path is None:
+                # Nothing conclusive from the filename; _load_overlay still
+                # reconciles the mesh via the value count.
                 return
             try:
                 self._overlay_mesh_cache[overlay_key] = str(new_mesh_path.resolve())
             except Exception:
                 self._overlay_mesh_cache[overlay_key] = str(new_mesh_path)
 
-        # If the target mesh is the same file, do nothing
+        # If the target mesh is the file already shown, do nothing
         if getattr(self.opts, 'mesh_left', None):
             try:
                 if new_mesh_path.resolve() == Path(self.opts.mesh_left).resolve():
                     return
             except Exception:
                 pass
-        # Load new left mesh
-        try:
-            self.poly_l = read_gifti_mesh(str(new_mesh_path))
-            self.opts.mesh_left = str(new_mesh_path)
-        except Exception:
-            return
-        # Normalize Y-origin to match initial alignment
-        self._shift_y_to(self.poly_l)
-        # Attempt right mesh detection similar to __init__
-        self.poly_r = None
-        rh_candidate: Optional[Path] = None
-        name = new_mesh_path.name
-        if 'lh.' in name:
-            rh_candidate = new_mesh_path.with_name(name.replace('lh.', 'rh.'))
-        elif 'left' in name:
-            rh_candidate = new_mesh_path.with_name(name.replace('left', 'right'))
-        elif '_hemi-L_' in name:
-            rh_candidate = new_mesh_path.with_name(name.replace('_hemi-L_', '_hemi-R_'))
-        elif '_hemi-R_' in name:
-            rh_candidate = new_mesh_path.with_name(name.replace('_hemi-R_', '_hemi-L_'))
-        if rh_candidate and rh_candidate.exists():
-            self.poly_r = read_gifti_mesh(str(rh_candidate))
-            # Normalize Y-origin for right mesh too
-            self._shift_y_to(self.poly_r)
-        # Recompute curvature and background on the new meshes
-        self.curv_l = vtkCurvatures(); self.curv_l.SetInputData(self.poly_l); self.curv_l.SetCurvatureTypeToMean(); self.curv_l.Update()
-        self.curv_l_out = self.curv_l.GetOutput()
-        if self.bkg_scalar_l is not None:
-            self.curv_l_out.GetPointData().SetScalars(self.bkg_scalar_l)
-        self.curv_r = None; self.curv_r_out = None
-        if self.poly_r is not None:
-            self.curv_r = vtkCurvatures(); self.curv_r.SetInputData(self.poly_r); self.curv_r.SetCurvatureTypeToMean(); self.curv_r.Update()
-            self.curv_r_out = self.curv_r.GetOutput()
-            if self.bkg_scalar_r is not None:
-                self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
-
-        # Rewire existing mappers/actors to the newly loaded meshes
-        try:
-            if self.actor_bkg_l is not None and self.curv_l_out is not None:
-                self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
-            if self.actor_ov_l is not None:
-                self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
-            if self.actor_bkg_r is not None and self.curv_r_out is not None:
-                self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
-            if self.actor_ov_r is not None and self.poly_r is not None:
-                self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
-            # Update montage clones to reference the refreshed actor mappers
-            order = [0,1,0,1,0,1]
-            for i, clone in enumerate(getattr(self, '_montage_bkg', []) or []):
-                if clone is None:
-                    continue
-                src = self.actor_bkg_r if (order[i] == 1 and self.actor_bkg_r is not None) else self.actor_bkg_l
-                if src is not None:
-                    clone.SetMapper(src.GetMapper())
-            for i, clone in enumerate(getattr(self, '_montage_ov', []) or []):
-                if clone is None:
-                    continue
-                src = self.actor_ov_r if (order[i] == 1 and self.actor_ov_r is not None) else self.actor_ov_l
-                if src is not None:
-                    clone.SetMapper(src.GetMapper())
-                else:
-                    # Hide overlay clones when no overlay actor on that side
-                    try:
-                        clone.SetVisibility(False)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        # Update mappers for background actors
-        if self.actor_bkg_l is not None:
-            self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
-        if self.actor_bkg_r is not None and self.curv_r_out is not None:
-            self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
-        # Update mappers for overlay actors if present
-        if self.actor_ov_l is not None:
-            self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
-        if self.actor_ov_r is not None and self.poly_r is not None:
-            self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
-        # Keep the stored mesh_left updated for subsequent comparisons
-        self.opts.mesh_left = str(new_mesh_path)
-
-    
+        self._switch_mesh(str(new_mesh_path))
 
     def _apply_inverse(self):
         """Flip colormap without changing data or scalar ranges."""
         # Rebuild LUTs to ensure consistent base, then invert
-        self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        if self.opts.inverse:
-            self._invert_lut(self.lut_overlay_l)
-            self._invert_lut(self.lut_overlay_r)
-        self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
-        self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+        self._rebuild_overlay_luts()
+        # Rebuilding drops the clip alpha, so re-apply the current clip window
+        self._apply_clip_to_overlay_luts()
         if self.actor_ov_l is not None:
             self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
         if self.actor_ov_r is not None:
@@ -3109,13 +3397,10 @@ class Viewer(QtWidgets.QMainWindow):
             if c1 > c0 and self.overlay_range[1] > self.overlay_range[0]:
                 smin, smax = float(self.overlay_range[0]), float(self.overlay_range[1])
                 n = int(lut_cb.GetNumberOfTableValues())
-                for i in range(n):
-                    t = i / (n - 1 if n > 1 else 1)
-                    val = smin + t * (smax - smin)
-                    if c0 < val < c1:
-                        r, g, b, a = lut_cb.GetTableValue(i)
-                        gray = 0.5
-                        lut_cb.SetTableValue(i, gray, gray, gray, a)
+                for i in self._clipped_lut_indices(n, smin, smax, c0, c1):
+                    r, g, b, a = lut_cb.GetTableValue(i)
+                    gray = 0.5
+                    lut_cb.SetTableValue(i, gray, gray, gray, a)
             # Apply discrete bands WITH GAPS to colorbar LUT AFTER range and clip
             try:
                 steps = int(getattr(self.opts, 'discrete', 0) or 0)
@@ -3163,13 +3448,10 @@ class Viewer(QtWidgets.QMainWindow):
         if c1 > c0 and self.overlay_range[1] > self.overlay_range[0]:
             smin, smax = float(self.overlay_range[0]), float(self.overlay_range[1])
             n = int(lut_cb.GetNumberOfTableValues())
-            for i in range(n):
-                t = i / (n - 1 if n > 1 else 1)
-                val = smin + t * (smax - smin)
-                if c0 < val < c1:
-                    r, g, b, a = lut_cb.GetTableValue(i)
-                    gray = 0.5
-                    lut_cb.SetTableValue(i, gray, gray, gray, a)
+            for i in self._clipped_lut_indices(n, smin, smax, c0, c1):
+                r, g, b, a = lut_cb.GetTableValue(i)
+                gray = 0.5
+                lut_cb.SetTableValue(i, gray, gray, gray, a)
         # Apply discrete bands WITH GAPS to colorbar LUT AFTER range and clip
         try:
             steps = int(getattr(self.opts, 'discrete', 0) or 0)
@@ -3252,124 +3534,23 @@ class Viewer(QtWidgets.QMainWindow):
             scal_r = None
             n_scal = scal_l.GetNumberOfTuples() if scal_l is not None else 0
 
-            # For SPM surface analysis overlays the data covers the combined
-            # LH+RH template mesh.  If the current meshes do not match, switch
-            # to the template first so the split logic below can succeed.
-            if (
-                is_spm_surface_overlay(str(ov_path))
-                and n_scal > 0
-                and self.poly_l is not None
-            ):
-                nL_cur = self.poly_l.GetNumberOfPoints()
-                nR_cur = self.poly_r.GetNumberOfPoints() if self.poly_r is not None else 0
-                if n_scal != nL_cur and n_scal != (nL_cur + nR_cur):
-                    # Current mesh does not match; switch to template
-                    template_dir = _get_template_surface_dir()
-                    lh_tpl = template_dir / 'lh.central.freesurfer.gii'
-                    if lh_tpl.exists():
-                        self._switch_mesh(str(lh_tpl))
-
-            # For combined 'mesh.' overlays the .gii contains its own mesh
-            # geometry.  If the overlay data count doesn't match the current
-            # mesh, load the embedded mesh from the file and split it.
-            is_mesh_combined = _parse_mesh_combined_overlay(str(ov_path)) is not None
-            if is_mesh_combined and n_scal > 0 and self.poly_l is not None:
-                nL_cur = self.poly_l.GetNumberOfPoints()
-                nR_cur = self.poly_r.GetNumberOfPoints() if self.poly_r is not None else 0
-                if n_scal != nL_cur and n_scal != (nL_cur + nR_cur):
-                    # The overlay data has n_scal values.  If n_scal is even
-                    # it encodes equal-sized hemispheres.
-                    n_half = n_scal // 2
-                    # Try to read the embedded mesh from the same file
-                    try:
-                        combined_poly = read_gifti_mesh(str(ov_path))
-                        n_mesh_pts = combined_poly.GetNumberOfPoints()
-                    except Exception:
-                        combined_poly = None
-                        n_mesh_pts = 0
-                    if combined_poly is not None and n_mesh_pts == n_scal:
-                        # Split the embedded combined mesh at half
-                        poly_l_new, poly_r_new = split_combined_mesh(
-                            combined_poly, n_half,
-                        )
-                        self.poly_l = poly_l_new
-                        self.poly_r = poly_r_new
-                        self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
-                        self._y_shift_r = self._shift_y_to(self.poly_r) or 0.0
-                        # Rebuild curvature on new meshes
-                        self.curv_l = vtkCurvatures()
-                        self.curv_l.SetInputData(self.poly_l)
-                        self.curv_l.SetCurvatureTypeToMean()
-                        self.curv_l.Update()
-                        self.curv_l_out = self.curv_l.GetOutput()
-                        self.curv_r = vtkCurvatures()
-                        self.curv_r.SetInputData(self.poly_r)
-                        self.curv_r.SetCurvatureTypeToMean()
-                        self.curv_r.Update()
-                        self.curv_r_out = self.curv_r.GetOutput()
-                        # Rewire actors to new meshes
-                        if getattr(self, 'actor_bkg_l', None) is not None:
-                            self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
-                        if getattr(self, 'actor_bkg_r', None) is not None:
-                            self.actor_bkg_r.GetMapper().SetInputData(self.curv_r_out)
-                        if getattr(self, 'actor_ov_l', None) is not None:
-                            self.actor_ov_l.GetMapper().SetInputData(self.poly_l)
-                        if getattr(self, 'actor_ov_r', None) is not None:
-                            self.actor_ov_r.GetMapper().SetInputData(self.poly_r)
-                    else:
-                        # Fallback: try template mesh or derived mesh
-                        mesh_path = convert_filename_to_mesh(str(ov_path))
-                        if mesh_path and Path(mesh_path).exists():
-                            self._switch_mesh(mesh_path)
+            # An overlay file does not say which surface it belongs to, so
+            # make sure the displayed mesh has room for exactly these values.
+            self._ensure_mesh_for_scalars(ov_path, n_scal)
 
             # Prefer a separate RH overlay sitting next to the selected file
-            rh_path = None
-            base_name = ov_path.name
-            if 'lh.' in base_name:
-                rh_path = ov_path.with_name(base_name.replace('lh.', 'rh.'))
-            elif 'left' in base_name:
-                rh_path = ov_path.with_name(base_name.replace('left', 'right'))
+            rh_path = _hemi_counterpart(ov_path)
             if rh_path is not None and rh_path.exists() and self.poly_r is not None:
                 scal_r = read_scalars(str(rh_path))
-            # Or: a single overlay contains L+R concatenated values
-            elif (
-                self.poly_r is not None
-                and scal_l is not None
-                and scal_l.GetNumberOfTuples()
-                == (self.poly_l.GetNumberOfPoints() + self.poly_r.GetNumberOfPoints())
+            # Or: a single overlay holds LH and RH values back to back
+            elif self.poly_r is not None and scal_l is not None and n_scal == (
+                self.poly_l.GetNumberOfPoints() + self.poly_r.GetNumberOfPoints()
             ):
-                nL = self.poly_l.GetNumberOfPoints()
-                nR = self.poly_r.GetNumberOfPoints()
-                arr = scal_l
-                scal_r = vtkDoubleArray()
-                scal_r.SetNumberOfTuples(nR)
-                for i in range(nR):
-                    scal_r.SetValue(i, arr.GetValue(i + nL))
-                left_only = vtkDoubleArray()
-                left_only.SetNumberOfTuples(nL)
-                for i in range(nL):
-                    left_only.SetValue(i, arr.GetValue(i))
-                scal_l = left_only
-            # SPM / combined 'mesh.' overlay: force split at half when
-            # data count equals 2× one hemisphere
-            elif (
-                self.poly_r is not None
-                and scal_l is not None
-                and scal_l.GetNumberOfTuples() > 0
-                and scal_l.GetNumberOfTuples() == 2 * self.poly_l.GetNumberOfPoints()
-            ):
-                nL = self.poly_l.GetNumberOfPoints()
-                nR = nL  # equal-sized hemispheres
-                arr = scal_l
-                scal_r = vtkDoubleArray()
-                scal_r.SetNumberOfTuples(nR)
-                for i in range(nR):
-                    scal_r.SetValue(i, arr.GetValue(i + nL))
-                left_only = vtkDoubleArray()
-                left_only.SetNumberOfTuples(nL)
-                for i in range(nL):
-                    left_only.SetValue(i, arr.GetValue(i))
-                scal_l = left_only
+                scal_l, scal_r = _split_scalars(
+                    scal_l,
+                    self.poly_l.GetNumberOfPoints(),
+                    self.poly_r.GetNumberOfPoints(),
+                )
         except Exception as e:
             # If loading fails, clear the overlay and disable controls
             print(f"Failed to load overlay: {e}")
@@ -3386,10 +3567,14 @@ class Viewer(QtWidgets.QMainWindow):
         # Predefined ranges for recognized overlays (thickness, pbt)
         kind = detect_overlay_kind(overlay_path)
         if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
-            # Apply requested defaults: overlay 0.5..5; clip 0..0; bkg -1..1
-            self.overlay_range = [0.5, 5.0]
-            self.opts.clip = (0.0, 0.0)
-            self.range_bkg = [-1.0, 1.0]
+            # Apply requested defaults: overlay 0.5..5; clip 0..0; bkg -1..1,
+            # but never override values the user gave on the command line.
+            if not getattr(self, '_user_set_range', False):
+                self.overlay_range = [0.5, 5.0]
+            if not getattr(self, '_user_set_clip', False):
+                self.opts.clip = (0.0, 0.0)
+            if not getattr(self, '_user_set_range_bkg', False):
+                self.range_bkg = [-1.0, 1.0]
         elif self.opts.fix_scaling and self.fixed_overlay_range is not None:
             # Use the fixed range across all overlays
             self.overlay_range = list(self.fixed_overlay_range)
@@ -3401,21 +3586,28 @@ class Viewer(QtWidgets.QMainWindow):
             if self.scal_l is not None:
                 r = [0.0, 0.0]; self.poly_l.GetScalarRange(r)
                 self.overlay_range = r
+        # The new overlay may cover a hemisphere that had no actor yet
+        if self._ensure_hemisphere_actors() and hasattr(self, '_montage_ov'):
+            self._build_montage()
         for actor in (self.actor_ov_l, self.actor_ov_r):
-            if actor:
-                actor.GetMapper().SetLookupTable(self.lut_overlay_l)
-                if self.overlay_range[1] > self.overlay_range[0]: actor.GetMapper().SetScalarRange(self.overlay_range)
+            # LUTs are (re)assigned below, after the clip window has been applied
+            if actor and self.overlay_range[1] > self.overlay_range[0]:
+                actor.GetMapper().SetScalarRange(self.overlay_range)
         # Apply background range to background actors when set (if already created)
         if self.range_bkg[1] > self.range_bkg[0]:
             for actor in (getattr(self, 'actor_bkg_l', None), getattr(self, 'actor_bkg_r', None)):
                 if actor:
                     actor.GetMapper().SetScalarRange(self.range_bkg)
         if self.opts.colorbar: self._ensure_colorbar()
-        # Apply clip transparency and refresh LUTs on actors
+        # Rebuild the overlay LUTs from scratch before re-applying clip: the clip
+        # window is baked into the LUT alpha, so a stale LUT would keep hiding
+        # values of the previous overlay/clip setting.
+        self._rebuild_overlay_luts()
         self._apply_clip_to_overlay_luts()
-        for actor in (self.actor_ov_l, self.actor_ov_r):
-            if actor:
-                actor.GetMapper().SetLookupTable(self.lut_overlay_l)
+        if self.actor_ov_l is not None:
+            self.actor_ov_l.GetMapper().SetLookupTable(self.lut_overlay_l)
+        if self.actor_ov_r is not None:
+            self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
         # Update histogram window if visible
         self._update_histogram_window()
         
@@ -3428,8 +3620,10 @@ class Viewer(QtWidgets.QMainWindow):
                 self.ctrl.range_max.setValue(float(self.overlay_range[1]))
             # If we applied predefined defaults, reflect them in the UI
             if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
-                self.ctrl.clip_min.setValue(0.0); self.ctrl.clip_max.setValue(0.0)
-                self.ctrl.bkg_min.setValue(-1.0); self.ctrl.bkg_max.setValue(1.0)
+                if not getattr(self, '_user_set_clip', False):
+                    self.ctrl.clip_min.setValue(0.0); self.ctrl.clip_max.setValue(0.0)
+                if not getattr(self, '_user_set_range_bkg', False):
+                    self.ctrl.bkg_min.setValue(-1.0); self.ctrl.bkg_max.setValue(1.0)
             # Update slider bounds from data and align to spins
             self._update_slider_bounds()
             # Enforce fix scaling enable/disable based on overlay count and availability
@@ -3542,8 +3736,39 @@ class Viewer(QtWidgets.QMainWindow):
 
     # -- Save PNG --
     def save_png(self, path: str):
-        w2i = vtkWindowToImageFilter(); w2i.SetInput(self.rw); w2i.Update()
-        writer = vtkPNGWriter(); writer.SetFileName(path); writer.SetInputConnection(w2i.GetOutputPort()); writer.Write()
+        """Write the current view to a PNG file.
+
+        The scene is re-rendered with buffer swapping disabled and captured
+        from the back buffer.  Reading the front buffer (the VTK default)
+        returns whatever the window server happens to hold, which on a
+        freshly-shown window can be just the topmost layer — the colorbar —
+        instead of the rendered surfaces.
+        """
+        swap_off = False
+        try:
+            self.rw.SwapBuffersOff()
+            swap_off = True
+        except Exception:
+            pass
+        try:
+            self.rw.Render()
+            w2i = vtkWindowToImageFilter()
+            w2i.SetInput(self.rw)
+            try:
+                w2i.SetInputBufferTypeToRGB()
+                w2i.ReadFrontBufferOff()
+            except Exception:
+                pass
+            w2i.Modified()
+            w2i.Update()
+            writer = vtkPNGWriter(); writer.SetFileName(path)
+            writer.SetInputConnection(w2i.GetOutputPort()); writer.Write()
+        finally:
+            if swap_off:
+                try:
+                    self.rw.SwapBuffersOn()
+                except Exception:
+                    pass
         print(f"Saved {path}")
 
     # -- Volume Integration --

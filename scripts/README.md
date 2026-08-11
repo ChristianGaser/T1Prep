@@ -204,15 +204,49 @@ These scripts provide user-friendly wrappers around the compiled CAT-Surface bin
 
 ### `CAT_SurfView`
 
-Interactive 3D surface viewer (PySide6/VTK). Displays cortical meshes and overlays.
+Interactive 3D surface viewer (PySide6/VTK). Displays cortical meshes and overlays in a
+six-view montage. Run it without arguments to print the full help.
 
 ```bash
 # View a surface mesh
 ./scripts/CAT_SurfView /path/to/lh.central.gii
 
-# View a surface overlay (e.g., thickness)
+# View a surface overlay (e.g., thickness) – the mesh is found automatically
 ./scripts/CAT_SurfView /path/to/lh.thickness
+
+# Several overlays, stepped through with the ←/→ keys
+./scripts/CAT_SurfView sub-*/lh.thickness.*
+
+# CAT12/SPM statistic results with a fixed range and everything up to 6 hidden
+./scripts/CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii
 ```
+
+**How the surface is found.** An overlay file does not reference the surface it belongs to,
+so it is resolved in this order:
+
+1. geometry stored inside the overlay file itself (CAT12 `mesh.*` files and statistic
+   results usually carry it),
+2. the mesh matching the overlay name (`lh.thickness.subj` → `lh.central.subj.gii`) or a
+   `central`/`midthickness` surface in the same folder,
+3. the number of values, matched against the shipped 4k/32k/164k templates.
+
+Step 3 is what makes free-form names work — most notably CAT12/SPM statistic folders where
+the results sit next to an `SPM.mat` (`logP_age_(...)_pFWE0.1_k0.gii`). Because the lookup
+runs for every overlay, files from different folders, subjects and mesh resolutions can be
+mixed in a single call. The right hemisphere is added when an `rh.`/`right`/`_hemi-R_` file
+sits next to the left one, or when an overlay holds both hemispheres back to back.
+
+**Batch use.** `-output` renders the view, writes the PNG and exits, so the viewer can be
+called from a loop without any interaction:
+
+```bash
+for f in sub-*/lh.thickness.*; do
+  ./scripts/CAT_SurfView -range 1 5 -colorbar -output "$(dirname "$f")/thickness.png" "$f"
+done
+```
+
+**Keys.** `←/→` previous/next overlay (or mesh), `u/d/l/r` rotate, `o` reset view,
+`b` flip dorsal views, `w/s` wireframe/shaded, `g` screenshot, `h` key help, `q` quit.
 
 ### `CAT_SurfParameters_ui`
 

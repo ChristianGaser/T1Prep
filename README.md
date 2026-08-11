@@ -113,7 +113,8 @@ the following commands are available:
 T1Prep file.nii.gz                 # main CLI (batch + parallel, --multi)
 t1prep-ui                          # web UI
 t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
-CAT_SurfView lh.central.gii        # surface viewer
+CAT_SurfView lh.central.gii        # surface viewer (no arguments prints the help)
+CAT_SurfView -output view.png lh.thickness.sub-01   # batch: render a PNG and exit
 ```
 
 > The `T1Prep` command is the bash orchestrator (full features incl. `--multi`
