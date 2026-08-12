@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Overview
-This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `t1prep-download-models`.
+This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`.
 
 ## Project Structure
 
@@ -22,6 +22,9 @@ T1Prep/
 │       │   ├── templates_MNI152NLin2009cAsym/  # Volume atlases + .txt descriptions
 │       │   └── atlases_surfaces_32k/           # Surface atlases + .txt descriptions
 │       ├── gui/                    # PySide6/VTK visualization tools
+│       │   ├── cat_surf_view.py    # Surface viewer (CAT_SurfView)
+│       │   └── cat_vol_view.py     # Orthogonal volume viewer (CAT_VolView),
+│       │                           # also embedded in CAT_SurfView's -volume window
 │       └── webui/                  # Flask web UI (t1prep-ui)
 │           ├── app.py              # Flask application (main())
 │           ├── templates/index.html
@@ -34,7 +37,6 @@ T1Prep/
 │   ├── run_with_env.sh             # Run any Python script with venv
 │   ├── install.sh                  # Bash bootstrapper: download release + set up venv
 │   #                                 (alternative to `pip install T1Prep` from PyPI)
-│   ├── CAT_SurfView                # Interactive 3D surface viewer
 │   ├── dice.sh                     # Dice similarity metric wrapper
 │   ├── process_longitudinal.sh     # Batch longitudinal processing
 │   ├── realign_longitudinal.sh     # Longitudinal rigid realignment
@@ -124,7 +126,6 @@ webui/static/styles.css
 - Prefer wrapper scripts that auto-activate the environment:
        - [scripts/activate_env.sh](scripts/activate_env.sh)
        - [scripts/run_with_env.sh](scripts/run_with_env.sh)
-       - [scripts/CAT_SurfView](scripts/CAT_SurfView)
        - [scripts/T1Prep_ui](scripts/T1Prep_ui) (Web UI launcher)
   
 These helpers ensure the correct interpreter and dependencies are used across CLI, GUI, and Web UI workflows.

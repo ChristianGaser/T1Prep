@@ -11,15 +11,22 @@ When you call `python src/t1prep/gui/cat_surf_view.py`, you need to ensure that:
 
 ## ✅ Solutions
 
-### 1. **Shell Script Wrapper (Recommended)**
+### 1. **Installed entry points (Recommended)**
 
-Use the dedicated wrapper script for `cat_surf_view.py`:
+After `pip install T1Prep` (or `scripts/install.sh`) the viewers are on `PATH`
+inside the environment and need no wrapper:
 
 ```bash
-# From anywhere in your project
-./scripts/CAT_SurfView
-./scripts/CAT_SurfView mesh_file.gii
-./scripts/CAT_SurfView mesh_file.gii -overlay overlay.gii
+CAT_SurfView mesh_file.gii
+CAT_SurfView mesh_file.gii -overlay overlay.gii
+CAT_VolView  T1.nii.gz
+```
+
+From a source checkout without installing, use the generic runner:
+
+```bash
+./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py mesh_file.gii
+./scripts/run_with_env.sh src/t1prep/gui/cat_vol_view.py T1.nii.gz
 ```
 
 **What it does:**
@@ -96,8 +103,8 @@ python --version
 ### Running CAT_SurfView
 
 ```bash
-# Method 1: Using wrapper (recommended)
-./scripts/CAT_SurfView data/templates_surfaces_32k/lh.pial.gii
+# Method 1: Installed entry point (recommended)
+CAT_SurfView data/templates_surfaces_32k/lh.pial.gii
 
 # Method 2: Using generic runner
 ./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py data/templates_surfaces_32k/lh.pial.gii
@@ -159,12 +166,12 @@ T1Prep/
 │   │   └── python               # Environment Python executable
 │   └── pyvenv.cfg               # Environment configuration
 ├── scripts/
-│   ├── CAT_SurfView          # CAT_SurfView wrapper
 │   ├── run_with_env.sh          # Generic script runner
 │   └── activate_env.sh          # Environment activation helper
 ├── src/
 │   └── t1prep/
-│       ├── gui/cat_surf_view.py  # Main CAT_SurfView script
+│       ├── gui/cat_surf_view.py  # Surface viewer (CAT_SurfView)
+│       ├── gui/cat_vol_view.py   # Volume viewer (CAT_VolView)
 │       └── segment.py           # Segmentation script
 └── requirements.txt             # Python dependencies
 ```
