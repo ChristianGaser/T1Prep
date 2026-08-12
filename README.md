@@ -115,6 +115,7 @@ t1prep-ui                          # web UI
 t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
 CAT_SurfView lh.central.gii        # surface viewer (no arguments prints the help)
 CAT_SurfView -output view.png lh.thickness.sub-01   # batch: render a PNG and exit
+CAT_VolView T1.nii.gz              # volume viewer (3 orthogonal slices)
 ```
 
 > The `T1Prep` command is the bash orchestrator (full features incl. `--multi`
@@ -233,7 +234,7 @@ pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
 Either way the entry points (`T1Prep`, `t1prep-ui`, `t1prep-run`,
-`CAT_SurfView`, `t1prep-download-models`) are placed in `env/bin`. Activating
+`CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`) are placed in `env/bin`. Activating
 the venv — or adding `env/bin` to your `PATH` — is all that is needed; the
 source `scripts/` folder is only a dev fallback and should not be put on `PATH`.
 
