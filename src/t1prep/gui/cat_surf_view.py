@@ -13,6 +13,7 @@ Features:
     Overlays holding -log10(p) values (name contains "log", or -log) are labelled
     with the p-values they stand for (1.3 -> 0.05, 2 -> 0.01, 3 -> 0.001).
   • Right-side docked control panel: range, clip, colorbar toggle, overlay picker, opacity, bkg range, stats, inverse.
+    For -log10(p) overlays it also offers the p<0.05 / p<0.01 / p<0.001 thresholds.
   • Optional volume window (-volume) with three orthogonal slices, linked to the
     surface in both directions: clicking the surface moves the slices, clicking
     a slice marks the closest surface point.  Right-click for the zoom levels.
@@ -414,6 +415,16 @@ def detect_overlay_kind(filename: str) -> Optional[str]:
 
 # -log10(0.05) = 1.30103, the usual p<0.05 threshold of CAT12 statistic results
 LOG10_P005 = -math.log10(0.05)
+
+#: Thresholds offered for -log10(p) overlays, as in cat_surf_results: the label
+#: shown in the control panel and the value in -log10(p) units.  Selecting one
+#: hides everything between -value and +value.
+LOGP_THRESHOLDS = (
+    ('none', 0.0),
+    ('p<0.05', -math.log10(0.05)),
+    ('p<0.01', -math.log10(0.01)),
+    ('p<0.001', -math.log10(0.001)),
+)
 
 
 def is_logp_overlay(filename: Optional[str]) -> bool:
@@ -1721,6 +1732,18 @@ class ControlPanel(QtWidgets.QWidget):
         clip_box = QtWidgets.QHBoxLayout(); clip_box.addWidget(self.clip_min); clip_box.addWidget(self.clip_slider_min); clip_box.addWidget(self.clip_slider_max); clip_box.addWidget(self.clip_max)
         form.addRow("Clip window", self._wrap(clip_box))
 
+        # Threshold for -log10(p) overlays, as in cat_surf_results.  The row is
+        # only shown for such overlays, where these are the values that matter.
+        self.threshold = QtWidgets.QComboBox()
+        self.threshold.addItems([label for label, _ in LOGP_THRESHOLDS])
+        thr_box = QtWidgets.QHBoxLayout()
+        thr_box.addWidget(self.threshold)
+        thr_box.addStretch(1)
+        self.threshold_row = self._wrap(thr_box)
+        self.threshold_label = QtWidgets.QLabel("Threshold")
+        form.addRow(self.threshold_label, self.threshold_row)
+        self.set_threshold_visible(False)
+
         # Range bkg
         self.bkg_min = QtWidgets.QDoubleSpinBox(); self.bkg_min.setDecimals(6); self.bkg_min.setRange(-1e9, 1e9)
         self.bkg_max = QtWidgets.QDoubleSpinBox(); self.bkg_max.setDecimals(6); self.bkg_max.setRange(-1e9, 1e9)
@@ -1778,7 +1801,25 @@ class ControlPanel(QtWidgets.QWidget):
 
     def _wrap(self, hbox: QtWidgets.QHBoxLayout) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget(); w.setLayout(hbox); return w
-    
+
+    def set_threshold_visible(self, visible: bool):
+        """Show the p-value threshold row (only useful for -log10(p) overlays)."""
+        for widget in (self.threshold_label, self.threshold_row):
+            widget.setVisible(bool(visible))
+
+    def set_threshold_from_clip(self, clip: Tuple[float, float]):
+        """Select the entry matching *clip*, or 'none' for anything else."""
+        index = 0
+        if clip[1] > clip[0]:
+            for i, (_, value) in enumerate(LOGP_THRESHOLDS):
+                if value and abs(clip[1] - value) < 0.05 and abs(clip[0] + value) < 0.05:
+                    index = i
+                    break
+        self.threshold.blockSignals(True)
+        self.threshold.setCurrentIndex(index)
+        self.threshold.blockSignals(False)
+
+
     def set_overlay_controls_enabled(self, enabled: bool):
         """Enable or disable overlay-related controls based on whether an overlay is loaded."""
         # Ensure a strict boolean is used (avoid None/[] leaking from callers)
@@ -2524,6 +2565,8 @@ class Viewer(QtWidgets.QMainWindow):
             pass
         # Initialize control states (ensure clean ASCII spaces for indentation)
         self.ctrl.cb_colorbar.setChecked(self.opts.colorbar)
+        self.ctrl.set_threshold_visible(self._uses_logp_scale())
+        self.ctrl.set_threshold_from_clip(self.opts.clip)
         self.ctrl.title_mode.setCurrentText(self.opts.title_mode)
         self.ctrl.cb_inverse.setChecked(self.opts.inverse)
         self.ctrl.cb_fix_scaling.setChecked(self.opts.fix_scaling)
@@ -2753,11 +2796,29 @@ class Viewer(QtWidgets.QMainWindow):
                 self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
             if self.opts.colorbar:
                 self._ensure_colorbar()
+            # Keep the threshold entry in sync when the clip is edited by hand
+            self.ctrl.set_threshold_from_clip(self.opts.clip)
             self.rw.Render()
         self.ctrl.clip_slider_min.sliderReleased.connect(_apply_clip_live)
         self.ctrl.clip_slider_max.sliderReleased.connect(_apply_clip_live)
         self.ctrl.clip_min.editingFinished.connect(_apply_clip_live)
         self.ctrl.clip_max.editingFinished.connect(_apply_clip_live)
+
+        # Threshold for -log10(p) overlays: hides everything below it, which is
+        # the clip window the spin boxes above show
+        def _on_threshold_changed(index: int):
+            try:
+                value = LOGP_THRESHOLDS[int(index)][1]
+            except Exception:
+                return
+            self.ctrl.clip_min.blockSignals(True); self.ctrl.clip_max.blockSignals(True)
+            self.ctrl.clip_min.setValue(-value)
+            self.ctrl.clip_max.setValue(value)
+            self.ctrl.clip_min.blockSignals(False); self.ctrl.clip_max.blockSignals(False)
+            self.ctrl._spin_to_slider('clip', 'min', -value)
+            self.ctrl._spin_to_slider('clip', 'max', value)
+            _apply_clip_live()
+        self.ctrl.threshold.currentIndexChanged.connect(_on_threshold_changed)
     
         # Start state based on CLI flag --panel (default hidden)
         if self.opts.panel:
@@ -3938,6 +3999,9 @@ class Viewer(QtWidgets.QMainWindow):
                     self.ctrl.clip_min.setValue(0.0); self.ctrl.clip_max.setValue(0.0)
                 if not getattr(self, '_user_set_range_bkg', False):
                     self.ctrl.bkg_min.setValue(-1.0); self.ctrl.bkg_max.setValue(1.0)
+            # The p-value thresholds only make sense for -log10(p) overlays
+            self.ctrl.set_threshold_visible(self._uses_logp_scale())
+            self.ctrl.set_threshold_from_clip(self.opts.clip)
             # Update slider bounds from data and align to spins
             self._update_slider_bounds()
             # Enforce fix scaling enable/disable based on overlay count and availability

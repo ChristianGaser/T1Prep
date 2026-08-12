@@ -157,6 +157,58 @@ class TestScalarsOnlyGifti(unittest.TestCase):
         self.assertFalse(is_overlay_file(str(template)))
 
 
+class TestLogPThresholds(unittest.TestCase):
+    """The p-value thresholds offered for -log10(p) overlays."""
+
+    def test_table_matches_cat_surf_results(self):
+        from t1prep.gui.cat_surf_view import LOGP_THRESHOLDS
+        labels = [label for label, _ in LOGP_THRESHOLDS]
+        self.assertEqual(labels, ["none", "p<0.05", "p<0.01", "p<0.001"])
+        values = [value for _, value in LOGP_THRESHOLDS]
+        self.assertEqual(values[0], 0.0)
+        for value, p in zip(values[1:], (0.05, 0.01, 0.001)):
+            self.assertAlmostEqual(value, -math.log10(p), places=6)
+
+    def test_labels_match_the_colorbar(self):
+        """The entry and the tick it produces must say the same p-value."""
+        from t1prep.gui.cat_surf_view import LOGP_THRESHOLDS
+        for label, value in LOGP_THRESHOLDS[1:]:
+            self.assertEqual(f"p<{format_p_value_label(value)}", label)
+
+
+class TestThresholdWidget(unittest.TestCase):
+    """The control-panel entry follows, and drives, the clip window."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from PySide6 import QtWidgets
+            cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+            from t1prep.gui.cat_surf_view import ControlPanel
+            cls.panel = ControlPanel()
+        except Exception as exc:  # pragma: no cover - needs a Qt platform plugin
+            raise unittest.SkipTest(f"Qt unavailable: {exc}")
+
+    def test_hidden_until_asked_for(self):
+        self.panel.set_threshold_visible(False)
+        self.assertFalse(self.panel.threshold_row.isVisibleTo(self.panel))
+        self.panel.set_threshold_visible(True)
+        self.assertTrue(self.panel.threshold_row.isVisibleTo(self.panel))
+
+    def test_selection_follows_the_clip_window(self):
+        self.panel.set_threshold_from_clip((-2.0, 2.0))
+        self.assertEqual(self.panel.threshold.currentText(), "p<0.01")
+        self.panel.set_threshold_from_clip((-1.3, 1.3))
+        self.assertEqual(self.panel.threshold.currentText(), "p<0.05")
+        self.panel.set_threshold_from_clip((-3.0, 3.0))
+        self.assertEqual(self.panel.threshold.currentText(), "p<0.001")
+
+    def test_other_clips_show_as_none(self):
+        for clip in ((0.0, 0.0), (-4.0, 4.0), (-100.0, 6.0), (0.0, -1.0)):
+            self.panel.set_threshold_from_clip(clip)
+            self.assertEqual(self.panel.threshold.currentText(), "none", clip)
+
+
 class TestPresets(unittest.TestCase):
     """-preset applies several options at once."""
 

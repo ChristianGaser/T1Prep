@@ -278,6 +278,12 @@ colorbar is labelled with p-values instead of the raw -log10(p) values, as in
 Thresholded maps (`-clip -1.3 1.3`) get their first tick at exactly ±log10(0.05). Use `-log`
 to force the p-value labels for files that do not follow the naming convention.
 
+For such overlays the control panel also shows a **Threshold** entry with the three common
+levels — `p<0.05`, `p<0.01`, `p<0.001` (and `none`) — which set the clip window to
+±log10(p), hiding everything below it and greying that band on the colorbar, exactly like
+the threshold menu of `cat_surf_results`. It stays in sync with the clip spin boxes, so
+`-clip -2 2` on the command line starts on `p<0.01`.
+
 **How the surface is found.** An overlay file does not reference the surface it belongs to,
 so it is resolved in this order:
 
