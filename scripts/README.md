@@ -5,7 +5,7 @@ This directory contains the shell scripts behind the T1Prep command-line interfa
 > **Installed usage:** after `pip install` (or the bash bootstrapper), these
 > entry points are placed into the environment's `bin/` directory — put that on
 > your `PATH` and call them directly (`T1Prep`, `t1prep-ui`, `t1prep-run`,
-> `CAT_SurfView`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
+> `CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
 > `./scripts/<name>` form shown below is the source-tree/dev fallback; the
 > `scripts/` folder itself does not need to be on `PATH`.
 
@@ -114,8 +114,9 @@ Runs any Python script with the T1Prep virtual environment automatically activat
 # Run a specific module
 ./scripts/run_with_env.sh src/t1prep/segment.py --help
 
-# Run the surface viewer
+# Run the viewers from a source checkout
 ./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py --help
+./scripts/run_with_env.sh src/t1prep/gui/cat_vol_view.py --help
 ```
 
 ---
@@ -202,24 +203,40 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 These scripts provide user-friendly wrappers around the compiled CAT-Surface binaries in `src/t1prep/bin/` for post-processing tasks (surface parameters, resampling, ROI extraction, volume smoothing). The main T1Prep pipeline uses the `cat-surf` Python package instead of these binaries. They support batch processing with built-in parallelization via `parallelize`.
 
-### `CAT_SurfView`
+### `CAT_SurfView` / `CAT_VolView`
 
-Interactive 3D surface viewer (PySide6/VTK). Displays cortical meshes and overlays in a
-six-view montage. Run it without arguments to print the full help.
+The two viewers (PySide6/VTK) are installed as console scripts, not as wrappers in this
+folder: `CAT_SurfView` shows cortical meshes and overlays in a six-view montage,
+`CAT_VolView` shows a volume as three orthogonal slices. Run either without arguments (or
+with `-h`) for the full help. From a source checkout without installing, use
+`./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py …`.
 
 ```bash
 # View a surface mesh
-./scripts/CAT_SurfView /path/to/lh.central.gii
+CAT_SurfView /path/to/lh.central.gii
 
 # View a surface overlay (e.g., thickness) – the mesh is found automatically
-./scripts/CAT_SurfView /path/to/lh.thickness
+CAT_SurfView /path/to/lh.thickness
 
 # Several overlays, stepped through with the ←/→ keys
-./scripts/CAT_SurfView sub-*/lh.thickness.*
+CAT_SurfView sub-*/lh.thickness.*
 
 # CAT12/SPM statistic results with a fixed range and everything up to 6 hidden
-./scripts/CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii
+CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii
+
+# Volume with surface outlines drawn onto the slices
+CAT_VolView T1.nii.gz lh.central.gii rh.central.gii
 ```
+
+**Linked volume view.** `-volume <image>` (or the *Open NIfTI…* button) opens the three
+orthogonal slices of a volume next to the surface, sharing one millimetre space: clicking
+the surface moves the slices, and clicking or scrolling a slice marks the closest surface
+point in every montage view. It is the same window `CAT_VolView` opens on its own, so both
+offer the identical slices, status line (voxel, mm, value) and right-click menu with the
+zoom levels (full volume, 160/80/40/20/10 mm bounding box around the cursor, as in the SPM
+ortho viewer). Slices are shown in neurological orientation (left is left) in the
+millimetre space of the NIfTI sform/qform, and `--screenshot` writes a PNG without opening
+a window.
 
 **Statistic results.** When the overlay name contains `log` (CAT12/SPM `logP_*` files), the
 colorbar is labelled with p-values instead of the raw -log10(p) values, as in
@@ -241,14 +258,15 @@ Step 3 is what makes free-form names work — most notably CAT12/SPM statistic r
 no surface is treated as an overlay, so such results also load when they were copied away
 from their `SPM.mat`. Because the lookup runs for every overlay, files from different
 folders, subjects and mesh resolutions can be mixed in a single call. The right hemisphere is added when an `rh.`/`right`/`_hemi-R_` file
-sits next to the left one, or when an overlay holds both hemispheres back to back.
+sits next to the left one, or when a mesh (`mesh.central.*`) or overlay holds both
+hemispheres back to back — those are split so all six views are shown.
 
 **Batch use.** `-output` renders the view, writes the PNG and exits, so the viewer can be
 called from a loop without any interaction:
 
 ```bash
 for f in sub-*/lh.thickness.*; do
-  ./scripts/CAT_SurfView -range 1 5 -colorbar -output "$(dirname "$f")/thickness.png" "$f"
+  CAT_SurfView -range 1 5 -colorbar -output "$(dirname "$f")/thickness.png" "$f"
 done
 ```
 

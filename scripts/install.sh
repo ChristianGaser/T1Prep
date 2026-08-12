@@ -554,6 +554,7 @@ main() {
   echo "  t1prep-ui              # web UI"
   echo "  t1prep-run             # single-subject Python entry"
   echo "  CAT_SurfView           # surface viewer"
+  echo "  CAT_VolView            # volume viewer (3 orthogonal slices)"
   echo "  t1prep-download-models # fetch model weights"
   echo ""
   if [ -n "${CREATED_TEMP_DIR:-}" ]; then
