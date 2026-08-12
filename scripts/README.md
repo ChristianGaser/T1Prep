@@ -232,11 +232,21 @@ CAT_VolView T1.nii.gz lh.central.gii rh.central.gii
 orthogonal slices of a volume next to the surface, sharing one millimetre space: clicking
 the surface moves the slices, and clicking or scrolling a slice marks the closest surface
 point in every montage view. It is the same window `CAT_VolView` opens on its own, so both
-offer the identical slices, status line (voxel, mm, value) and right-click menu with the
-zoom levels (full volume, 160/80/40/20/10 mm bounding box around the cursor, as in the SPM
-ortho viewer). Slices are shown in neurological orientation (left is left) in the
-millimetre space of the NIfTI sform/qform, and `--screenshot` writes a PNG without opening
-a window.
+offer the identical slices and right-click menu. Slices are shown in neurological
+orientation (left is left) in the millimetre space of the NIfTI sform/qform, and
+`--screenshot` writes a PNG without opening a window.
+
+The free quadrant carries an information panel: file name, dimensions, voxel size,
+orientation code, data type and intensity range, plus the voxel index, mm coordinates and
+value under the cursor. The right-click menu holds:
+
+- **Zoom** — full volume or a 160/80/40/20/10 mm bounding box centred on the cursor, as in
+  the SPM ortho viewer.
+- **Atlas** — name the region under the cursor from any atlas shipped with T1Prep (or one
+  of your own via *Other…*, or `--atlas` on the command line). The atlas is sampled at the
+  mm position of the cursor, so pick one only when the displayed image is registered to its
+  space; *None* switches the lookup off.
+- **Image information** — hide or show the panel (`--no-info` starts without it).
 
 **Statistic results.** When the overlay name contains `log` (CAT12/SPM `logP_*` files), the
 colorbar is labelled with p-values instead of the raw -log10(p) values, as in

@@ -220,6 +220,141 @@ class TestCursorApi(unittest.TestCase):
         self.assertEqual(value, self.viewer.get_value_at_index((3, 4, 5)))
 
 
+class TestRegionNames(unittest.TestCase):
+    """Region lists ship with different column layouts."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _read(self, text):
+        path = self.tmp / "atlas.csv"
+        path.write_text(text, encoding="utf-8")
+        return CatImageViewer._read_region_names(str(path))
+
+    def test_with_abbreviation_column(self):
+        names = self._read("ROIid;ROIabbr;ROIname;ROIcolor\n"
+                           "1;lPreCG;Left Precentral gyrus;203 142 203\n"
+                           "2;rPreCG;Right Precentral gyrus;203 142 203\n")
+        self.assertEqual(names[1], "Left Precentral gyrus")
+        self.assertEqual(names[2], "Right Precentral gyrus")
+
+    def test_without_abbreviation_column(self):
+        """Hammers puts the name in the second column."""
+        names = self._read("ROIid;ROIname;Vgm;Vwm;Vcsf;ROIcolor\n"
+                           "1;TL hippocampus R;1;0;0;0 204 0\n")
+        self.assertEqual(names[1], "TL hippocampus R")
+
+    def test_unreadable_file_is_not_fatal(self):
+        self.assertEqual(CatImageViewer._read_region_names(str(self.tmp / "nope.csv")), {})
+
+
+class TestAtlasLookup(unittest.TestCase):
+    """The atlas is sampled in world space, at the user's choice."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        affine = np.array([[-1.0, 0, 0, 10.0],
+                           [0, 1.0, 0, -12.0],
+                           [0, 0, 1.0, -14.0],
+                           [0, 0, 0, 1.0]])
+        _write_volume(tmp / "image.nii.gz", affine)
+        # Atlas on the same grid: label 1 in one half, 2 in the other
+        labels = np.zeros((20, 24, 28), dtype=np.int16)
+        labels[:10] = 1
+        labels[10:] = 2
+        nib.save(nib.Nifti1Image(labels, affine), str(tmp / "atlas.nii.gz"))
+        (tmp / "atlas.csv").write_text(
+            "ROIid;ROIabbr;ROIname;ROIcolor\n1;a;Region A;0 0 0\n2;b;Region B;0 0 0\n",
+            encoding="utf-8")
+        self.atlas = str(tmp / "atlas.nii.gz")
+
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(tmp / "image.nii.gz"))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _region_at(self, world):
+        self.viewer.set_world_position(world)
+        return self.viewer._atlas_region()
+
+    def test_no_atlas_by_default(self):
+        self.assertIsNone(self.viewer.atlas_path)
+        self.assertIsNone(self.viewer._atlas_region())
+
+    def test_region_follows_world_position(self):
+        self.viewer.set_atlas(self.atlas)
+        self.assertEqual(self.viewer.atlas_path, self.atlas)
+        # world x = 10 - i, so i < 10 (label 1) is x > 0
+        self.assertEqual(self._region_at((8.0, 0.0, 0.0)), "Region A")
+        self.assertEqual(self._region_at((-8.0, 0.0, 0.0)), "Region B")
+
+    def test_atlas_can_be_switched_off(self):
+        self.viewer.set_atlas(self.atlas)
+        self.viewer.set_atlas(None)
+        self.assertIsNone(self.viewer.atlas_path)
+        self.assertIsNone(self.viewer._atlas_region())
+
+    def test_broken_atlas_is_ignored(self):
+        self.viewer.set_atlas(str(Path(self._tmp.name) / "missing.nii.gz"))
+        self.assertIsNone(self.viewer.atlas_path)
+
+
+class TestInfoPanel(unittest.TestCase):
+    """The free quadrant reports the image properties and the cursor."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        affine = np.array([[-2.0, 0, 0, 10.0],
+                           [0, 3.0, 0, -12.0],
+                           [0, 0, 4.0, -14.0],
+                           [0, 0, 0, 1.0]])
+        path = _write_volume(Path(self._tmp.name) / "image.nii.gz", affine,
+                             shape=(10, 12, 14))
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(path))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_static_lines(self):
+        text = "\n".join(self.viewer._static_info_lines())
+        self.assertIn("image.nii.gz", text)
+        self.assertIn("10 x 12 x 14", text)
+        self.assertIn("2 x 3 x 4 mm", text)
+        self.assertIn("orientation", text)
+
+    def test_cursor_lines(self):
+        self.viewer.set_world_position((4.0, 0.0, 2.0))
+        text = "\n".join(self.viewer._cursor_info_lines())
+        self.assertIn("voxel", text)
+        self.assertIn("mm", text)
+        self.assertIn("value", text)
+        self.assertNotIn("atlas", text)
+
+    def test_can_be_hidden(self):
+        self.viewer.set_info_visible(False)
+        self.assertFalse(self.viewer.show_info)
+        self.assertFalse(self.viewer._info_actor.GetVisibility())
+        self.viewer.set_info_visible(True)
+        self.assertTrue(self.viewer._info_actor.GetVisibility())
+
+
 class TestNeurologicalOrientation(unittest.TestCase):
     """Slices are shown "left is left" (neurological), not mirrored."""
 

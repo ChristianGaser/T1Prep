@@ -10,9 +10,14 @@ Layout (SPM12-like)::
     | Coronal  | Sagittal |
     |  (top-L) |  (top-R) |
     +----------+----------+
-    | Axial    |          |
-    |  (bot-L) |  (empty) |
+    | Axial    | image    |
+    |  (bot-L) | info     |
     +----------+----------+
+
+Slices are shown in neurological orientation (left is left).  The information
+panel lists file name, dimensions, voxel size, orientation code, data type and
+intensity range, plus voxel index, mm position and value under the cursor —
+and the region name when an atlas has been selected.
 
 Display intensities are scaled to the 3rd--97th percentile range by default.
 
@@ -43,6 +48,7 @@ import itertools
 import os
 import sys
 import argparse
+from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 # Import minimal VTK modules explicitly (avoids large monolithic import)
@@ -86,8 +92,10 @@ from vtkmodules.vtkRenderingCore import (
     vtkRenderer,
     vtkRenderWindow,
     vtkRenderWindowInteractor,
+    vtkTextActor,
     vtkWindowToImageFilter,
 )
+import vtkmodules.vtkRenderingFreeType  # noqa: F401  (text rendering)
 try:
     from vtkmodules.vtkImagingColor import (
         vtkImageMapToWindowLevelColors,
@@ -137,6 +145,57 @@ def _guess_image_reader(image_path: str):
         raise RuntimeError(f"Unsupported image type: {image_path}")
     reader.SetFileName(image_path)
     return reader
+
+
+def _header_matrix(reader) -> Optional[List[List[float]]]:
+    """The sform/qform a NIfTI reader exposes, or None when unset.
+
+    VTK reports it normalized: it maps *data* coordinates (voxel index times
+    spacing) to world, which is what the image actors need.
+    """
+    for getter in ("GetSFormMatrix", "GetQFormMatrix"):
+        try:
+            m = getattr(reader, getter)()
+        except Exception:
+            m = None
+        if m is None:
+            continue
+        M = [[float(m.GetElement(r, c)) for c in range(4)] for r in range(4)]
+        if all(abs(M[r][c]) < 1e-12 for r in range(3) for c in range(3)):
+            continue  # unset form
+        return M
+    return None
+
+
+def _voxel_to_world_matrix(reader, image) -> Tuple[List[List[float]], bool]:
+    """Voxel index to world (mm) transform, and whether it came from the header.
+
+    NIfTI keeps the anatomical mapping in the sform/qform, which VTK reports
+    separately instead of baking it into the image.  Taking it from there is
+    what puts slices, crosshair, surfaces and any linked window into the same
+    millimetre space; the spacing has to be folded in because the reported
+    matrix expects data coordinates, not voxel indices.
+    """
+    header = _header_matrix(reader)
+    if header is not None:
+        spacing = image.GetSpacing()
+        return ([[header[r][c] * spacing[c] for c in range(3)] + [header[r][3]]
+                 for r in range(4)], True)
+
+    # No usable header transform: use the geometry VTK applied to the image
+    ox, oy, oz = image.GetOrigin()
+    sx, sy, sz = image.GetSpacing()
+    try:
+        dm = image.GetDirectionMatrix()
+        D = [[dm.GetElement(r, c) for c in range(3)] for r in range(3)]
+    except Exception:
+        D = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    return ([
+        [D[0][0] * sx, D[0][1] * sy, D[0][2] * sz, ox],
+        [D[1][0] * sx, D[1][1] * sy, D[1][2] * sz, oy],
+        [D[2][0] * sx, D[2][1] * sy, D[2][2] * sz, oz],
+        [0.0, 0.0, 0.0, 1.0],
+    ], False)
 
 
 def _load_surface(surface_path: str) -> vtkPolyData:
@@ -264,10 +323,14 @@ class CatImageViewer:
         percentile_range: Optional[Tuple[float, float]] = (3.0, 97.0),
         render_window: Optional[vtkRenderWindow] = None,
         interactor: Optional[vtkRenderWindowInteractor] = None,
+        show_info: bool = True,
     ):
         """Create the viewer.
 
         Args:
+            show_info: Fill the free quadrant with image information (name,
+                dimensions, voxel size, orientation, data type, intensity
+                range) and the values under the cursor.
             render_window: Render window to draw into.  Pass the one of a Qt
                 ``QVTKRenderWindowInteractor`` to embed the viewer in another
                 application (CAT_SurfView does this); a standalone window is
@@ -300,6 +363,14 @@ class CatImageViewer:
         self._pane_axis: List[int] = [2, 0, 1]
         # Edge length in mm the panes are zoomed to (None = whole volume)
         self._fov_mm: Optional[float] = None
+        # Information panel in the free quadrant
+        self.show_info = bool(show_info)
+        self._info_actor: Optional[vtkTextActor] = None
+        self._image_name = ""
+        self._orientation: Optional[str] = None
+        # Atlas selected for naming the region under the cursor
+        self.atlas_path: Optional[str] = None
+        self._atlas: Optional[dict] = None
 
         # Three renderers + image actors (one per orthogonal view)
         self.renderers: List[vtkRenderer] = [
@@ -857,6 +928,8 @@ class CatImageViewer:
         if self._fov_mm:
             self._apply_field_of_view()
 
+        self._update_info_text()
+
         # Keep clipping valid but do not move camera/focal point.
         for ren in self.renderers:
             ren.ResetCameraClippingRange()
@@ -914,6 +987,181 @@ class CatImageViewer:
         self._notify_position()
         if self.verbose:
             print(f"[cat_vol_view] Click -> ijk=({i},{j},{k})")
+
+    # ---------- Atlas lookup ----------
+    @staticmethod
+    def available_atlases() -> List[Tuple[str, str]]:
+        """The volume atlases shipped with T1Prep as (name, path) pairs.
+
+        Only atlases with a region list (``<name>.csv``) are offered, since
+        without it there is nothing to report at the cursor.
+        """
+        folder = (Path(__file__).resolve().parent.parent / 'data'
+                  / 'templates_MNI152NLin2009cAsym')
+        out: List[Tuple[str, str]] = []
+        if not folder.is_dir():
+            return out
+        for volume in sorted(folder.glob('*.nii.gz')):
+            name = volume.name[:-len('.nii.gz')]
+            if (folder / f'{name}.csv').exists():
+                out.append((name, str(volume)))
+        return out
+
+    @staticmethod
+    def _read_region_names(csv_path: str) -> dict:
+        """Parse a T1Prep region list.
+
+        The files are semicolon separated and start with a header naming the
+        columns; which column holds the name differs between atlases
+        (``ROIid;ROIabbr;ROIname;…`` vs ``ROIid;ROIname;…``), so it is taken
+        from the header rather than assumed.
+        """
+        names = {}
+        name_col = 2
+        try:
+            with open(csv_path, "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    parts = [p.strip() for p in line.strip().split(";")]
+                    if len(parts) < 2:
+                        continue
+                    if parts[0].lower() == "roiid":
+                        lowered = [p.lower() for p in parts]
+                        if "roiname" in lowered:
+                            name_col = lowered.index("roiname")
+                        continue
+                    try:
+                        roi_id = int(parts[0])
+                    except ValueError:
+                        continue
+                    if name_col < len(parts):
+                        names[roi_id] = parts[name_col]
+        except Exception:
+            return {}
+        return names
+
+    def set_atlas(self, atlas_path: Optional[str]):
+        """Name the region under the cursor using *atlas_path*.
+
+        The atlas is sampled at the world (mm) position of the cursor, so it
+        only says something meaningful when the displayed image is registered
+        to the space of that atlas — which is why it is chosen explicitly
+        rather than guessed.  Pass None to switch the lookup off.
+        """
+        self._atlas = None
+        self.atlas_path = None
+        if atlas_path:
+            try:
+                reader = _guess_image_reader(atlas_path)
+                reader.Update()
+                image = reader.GetOutput()
+                # VTK reports a read failure through empty dimensions
+                if image is None or image.GetDimensions() == (0, 0, 0):
+                    raise RuntimeError("image is empty or unreadable")
+                vox2world, _ = _voxel_to_world_matrix(reader, image)
+                world2vox = np.linalg.inv(np.array(vox2world, dtype=float))
+                stem = os.path.basename(atlas_path)
+                for suffix in ('.nii.gz', '.nii', '.mnc'):
+                    if stem.endswith(suffix):
+                        stem = stem[:-len(suffix)]
+                        break
+                names = self._read_region_names(
+                    os.path.join(os.path.dirname(atlas_path), stem + '.csv'))
+                self._atlas = {'image': image, 'world2vox': world2vox,
+                               'names': names, 'name': stem}
+                self.atlas_path = atlas_path
+            except Exception as exc:
+                if self.verbose:
+                    print(f"[cat_vol_view] Could not load atlas {atlas_path}: {exc}")
+                self._atlas = None
+        self._update_info_text()
+        self.render_window.Render()
+
+    def _atlas_region(self) -> Optional[str]:
+        """Region name of the selected atlas at the cursor, if any."""
+        if not self._atlas:
+            return None
+        world = self.get_world_position()
+        if world is None:
+            return None
+        try:
+            ijk = self._atlas['world2vox'] @ np.array([*world, 1.0])
+            index = [int(round(v)) for v in ijk[:3]]
+            ext = self._atlas['image'].GetExtent()
+            for axis in range(3):
+                if not (ext[2 * axis] <= index[axis] <= ext[2 * axis + 1]):
+                    return None  # outside the atlas
+            value = int(round(self._atlas['image'].GetScalarComponentAsDouble(
+                index[0], index[1], index[2], 0)))
+        except Exception:
+            return None
+        if value == 0:
+            return None
+        return self._atlas['names'].get(value, f"label {value}")
+
+    # ---------- Image information panel ----------
+    def _orientation_code(self, image_path: str) -> Optional[str]:
+        """Anatomical order of the file's voxel axes, e.g. ``LAS``."""
+        try:
+            if nib is None:
+                return None
+            return "".join(nib.aff2axcodes(nib.load(image_path).affine))
+        except Exception:
+            return None
+
+    def _static_info_lines(self) -> List[str]:
+        """Properties of the image itself (fixed while it is displayed)."""
+        dims = self._image.GetDimensions()
+        voxel = self._voxel_axis_lengths()
+        ext = self._image.GetExtent()
+        size = [voxel[a] / max(1, ext[2 * a + 1] - ext[2 * a] + 1) for a in range(3)]
+        lo, hi = self._image.GetScalarRange()
+        lines = [
+            self._image_name,
+            "",
+            f"dimensions  {dims[0]} x {dims[1]} x {dims[2]}",
+            f"voxel size  {size[0]:.3g} x {size[1]:.3g} x {size[2]:.3g} mm",
+        ]
+        if self._orientation:
+            lines.append(f"orientation {self._orientation}")
+        lines.append(f"data type   {self._image.GetScalarTypeAsString()}")
+        lines.append(f"intensity   {lo:g} .. {hi:g}")
+        return lines
+
+    def _cursor_info_lines(self) -> List[str]:
+        """Everything that changes with the cursor."""
+        ijk = self.get_index()
+        world = self.get_world_position()
+        if ijk is None or world is None:
+            return []
+        value = self.get_value_at_index(ijk)
+        lines = [
+            "",
+            f"voxel       [{ijk[0]}, {ijk[1]}, {ijk[2]}]",
+            f"mm          ({world[0]:.1f}, {world[1]:.1f}, {world[2]:.1f})",
+            f"value       {value:g}" if value is not None else "value       -",
+        ]
+        if self._atlas:
+            region = self._atlas_region()
+            lines.append(f"atlas       {self._atlas['name']}")
+            lines.append(f"region      {region or '-'}")
+        return lines
+
+    def _update_info_text(self):
+        """Redraw the information panel in the free quadrant."""
+        if self._info_actor is None or self._image is None:
+            return
+        if not self.show_info:
+            self._info_actor.SetVisibility(False)
+            return
+        self._info_actor.SetVisibility(True)
+        self._info_actor.SetInput(
+            "\n".join(self._static_info_lines() + self._cursor_info_lines()))
+
+    def set_info_visible(self, visible: bool):
+        """Show or hide the information panel."""
+        self.show_info = bool(visible)
+        self._update_info_text()
+        self.render_window.Render()
 
     # ---------- Cursor position ----------
     def _notify_position(self):
@@ -1009,66 +1257,14 @@ class CatImageViewer:
             raise RuntimeError(
                 f"Image appears empty or unreadable (dims={dims}): {image_path}"
             )
-        # Voxel-to-world: NIfTI keeps the anatomical (mm) mapping in the
-        # sform/qform, which VTK reports separately instead of baking it into
-        # the image — the image itself stays in voxel space.  Taking it from
-        # the header is what puts the slices, the crosshair and any surface
-        # into the same millimetre space, which in turn is what makes the
-        # cursor linking with a surface viewer meaningful.
-        self._vox2world = None
+        self._vox2world, self._world_from_header = _voxel_to_world_matrix(
+            reader, self._image)
         self._actor_matrix = None
-        self._world_from_header = False
-        for getter in ("GetSFormMatrix", "GetQFormMatrix"):
-            try:
-                m = getattr(reader, getter)()
-            except Exception:
-                m = None
-            if m is None:
-                continue
-            M = [[float(m.GetElement(r, c)) for c in range(4)] for r in range(4)]
-            if all(abs(M[r][c]) < 1e-12 for r in range(3) for c in range(3)):
-                continue  # unset form
-            # VTK reports this transform normalized: it maps *data* coordinates
-            # (voxel index times spacing) to world.  The image actors apply the
-            # spacing themselves, so they take it as it is, while index-based
-            # coordinate maths has to fold the spacing in — without that every
-            # position is off by the voxel size in each axis.
-            self._actor_matrix = M
-            spacing = self._image.GetSpacing()
-            self._vox2world = [
-                [M[r][c] * spacing[c] for c in range(3)] + [M[r][3]]
-                for r in range(4)
-            ]
-            self._world_from_header = True
-            if self.verbose:
-                print(f"[cat_vol_view] Using voxel->world from {getter[3:-6]}:")
-                for row in self._vox2world:
-                    print("    ", row)
-            break
-        if self._vox2world is None:
-            # No usable header transform: fall back to the geometry VTK
-            # applied to the image itself (origin/spacing/direction).
-            ox, oy, oz = self._image.GetOrigin()
-            sx, sy, sz = self._image.GetSpacing()
-            try:
-                dm = self._image.GetDirectionMatrix()
-                D = [[dm.GetElement(r, c) for c in range(3)] for r in range(3)]
-            except Exception:
-                D = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-            self._vox2world = [
-                [D[0][0]*sx, D[0][1]*sy, D[0][2]*sz, ox],
-                [D[1][0]*sx, D[1][1]*sy, D[1][2]*sz, oy],
-                [D[2][0]*sx, D[2][1]*sy, D[2][2]*sz, oz],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
-            if self.verbose:
-                print("[cat_vol_view] Using voxel->world from VTK image properties:")
-                for row in self._vox2world:
-                    print("    ", row)
-        else:
-            # Origin and orientation come from the header transform the actors
-            # carry (see setup()); the image keeps its spacing, which that
-            # transform expects the actors to have applied already.
+        if self._world_from_header:
+            # The actors get the transform as the header stores it (they apply
+            # the spacing themselves), so the image must not carry an origin or
+            # orientation on top of it.
+            self._actor_matrix = _header_matrix(reader)
             self._image.SetOrigin(0.0, 0.0, 0.0)
             try:
                 ident = vtkMatrix3x3()
@@ -1076,7 +1272,16 @@ class CatImageViewer:
                 self._image.SetDirectionMatrix(ident)
             except Exception:
                 pass
+        if self.verbose:
+            source = "header" if self._world_from_header else "VTK image properties"
+            print(f"[cat_vol_view] Using voxel->world from {source}:")
+            for row in self._vox2world:
+                print("    ", row)
         self._assign_pane_axes()
+
+        # Details for the information panel
+        self._image_name = os.path.basename(image_path)
+        self._orientation = self._orientation_code(image_path)
 
         # Window/level – prefer percentile-based scaling
         rng = self._image.GetScalarRange()
@@ -1233,13 +1438,27 @@ class CatImageViewer:
                 print(f"[cat_vol_view] Configured {names[i]} "
                       f"viewport {self._viewports[i]}")
 
-        # Background renderer for the empty bottom-right quadrant
-        bg_ren = vtkRenderer()
+        # The free bottom-right quadrant carries the image information
+        info_ren = vtkRenderer()
         col_edge = self._viewports[0][2] + 0.003
         row_edge = self._viewports[0][3] + 0.003
-        bg_ren.SetViewport(col_edge, 0.0, 1.0, row_edge)
-        bg_ren.SetBackground(0, 0, 0)
-        self.render_window.AddRenderer(bg_ren)
+        info_ren.SetViewport(col_edge, 0.0, 1.0, row_edge)
+        info_ren.SetBackground(0, 0, 0)
+        info_ren.SetInteractive(0)
+        self.render_window.AddRenderer(info_ren)
+        self._info_renderer = info_ren
+
+        info = vtkTextActor()
+        prop = info.GetTextProperty()
+        prop.SetFontFamilyToCourier()   # keeps the values in a column
+        prop.SetFontSize(13)
+        prop.SetColor(0.85, 0.85, 0.85)
+        prop.SetVerticalJustificationToTop()
+        coord = info.GetPositionCoordinate()
+        coord.SetCoordinateSystemToNormalizedViewport()
+        coord.SetValue(0.06, 0.94)
+        info_ren.AddViewProp(info)
+        self._info_actor = info
 
         # Set initial crosshair to the centre of the volume
         self._ijk = [
@@ -1465,14 +1684,37 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
     def _show_context_menu(self, pos):
         """Right-click menu of the slice views."""
         menu = QtWidgets.QMenu(self)
-        current = self.viewer.get_field_of_view()
 
         zoom_menu = menu.addMenu("Zoom")
+        current = self.viewer.get_field_of_view()
         for label, mm in self.ZOOM_LEVELS:
             action = zoom_menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(current == mm)
             action.triggered.connect(lambda _checked=False, v=mm: self.set_zoom(v))
+
+        # Naming the region under the cursor only makes sense when the image is
+        # registered to the atlas, so the atlas is picked by hand
+        atlas_menu = menu.addMenu("Atlas")
+        selected = self.viewer.atlas_path
+        none_action = atlas_menu.addAction("None")
+        none_action.setCheckable(True)
+        none_action.setChecked(selected is None)
+        none_action.triggered.connect(lambda _checked=False: self.set_atlas(None))
+        atlas_menu.addSeparator()
+        for name, path in self.viewer.available_atlases():
+            action = atlas_menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(selected == path)
+            action.triggered.connect(lambda _checked=False, p=path: self.set_atlas(p))
+        atlas_menu.addSeparator()
+        atlas_menu.addAction("Other…").triggered.connect(self._choose_atlas)
+
+        info_action = menu.addAction("Image information")
+        info_action.setCheckable(True)
+        info_action.setChecked(self.viewer.show_info)
+        info_action.triggered.connect(
+            lambda checked=False: self.viewer.set_info_visible(checked))
         # Further sections (window/level, overlays, …) go here
 
         menu.exec(self.vtk_widget.mapToGlobal(pos))
@@ -1483,6 +1725,21 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             self.viewer.set_field_of_view(mm)
         except Exception:
             pass
+
+    def set_atlas(self, path: Optional[str]):
+        """Use *path* to name the region under the cursor (None switches off)."""
+        try:
+            self.viewer.set_atlas(path)
+        except Exception:
+            pass
+
+    def _choose_atlas(self):
+        """Pick an atlas volume that is not one of the shipped ones."""
+        start = os.path.dirname(self.viewer.atlas_path or self.image_path)
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Choose atlas volume", start, "NIfTI (*.nii *.nii.gz);;All files (*)")
+        if path:
+            self.set_atlas(path)
 
     # -------- cursor --------
     def _update_label(self):
@@ -1549,6 +1806,15 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         help=argparse.SUPPRESS,  # now the default; kept for compatibility
     )
     p.add_argument(
+        "--atlas", type=str, default=None,
+        help=("Atlas volume naming the region under the cursor; also "
+              "selectable from the right-click menu"),
+    )
+    p.add_argument(
+        "--no-info", action="store_true",
+        help="Leave the information panel out of the free quadrant",
+    )
+    p.add_argument(
         "--headless", action="store_true",
         help="Do not start interactor (no window)",
     )
@@ -1594,6 +1860,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         verbose=args.verbose,
         surface_convention=args.surface_convention,
         percentile_range=pct,
+        show_info=not args.no_info,
     )
     surfaces = list(args.surfaces[:3])
 
@@ -1604,11 +1871,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for i, surf in enumerate(surfaces):
             viewer.add_surface(surf, VolumeViewerWindow.SURFACE_COLORS[i])
         viewer.setup(window_title=os.path.basename(args.image))
+        if args.atlas:
+            viewer.set_atlas(args.atlas)
         viewer.render(screenshot=args.screenshot, headless=True)
         return 0
 
     app = QtWidgets.QApplication(sys.argv)
     window = VolumeViewerWindow(args.image, surfaces=surfaces, **options)
+    if args.atlas:
+        window.set_atlas(args.atlas)
     window.show()
     return int(app.exec())
 
