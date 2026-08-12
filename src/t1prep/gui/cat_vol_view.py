@@ -1,5 +1,5 @@
 """
-cat_viewimage.py
+cat_vol_view.py
 
 Single-window VTK image viewer with 3 orthogonal slices (axial, coronal,
 sagittal) arranged in an SPM12-like layout, with optional surface overlays.
@@ -17,18 +17,29 @@ Layout (SPM12-like)::
 Display intensities are scaled to the 3rd--97th percentile range by default.
 
 Usage (CLI):
-    python src/t1prep/gui/cat_viewimage.py <image> [surf1] [surf2] [surf3] \
-        --size 400 [--no-mirror] [--percentile 3 97]
+    CAT_VolView <image> [surf1] [surf2] [surf3] \
+        --size 400 [--percentile 3 97]
+
+    # source checkout
+    python src/t1prep/gui/cat_vol_view.py <image> [surf1] [surf2] [surf3]
 
 Notes:
 - Tries to use vtkNIFTIImageReader for NIfTI, vtkMINCImageReader for MINC,
   and vtkImageReader2Factory otherwise.
 - Surfaces: supports .gii, .vtp, .vtk, .obj, .stl via appropriate VTK readers.
-- Mirroring (scale -1,1,1) is applied by default to match C++ example.
+- The viewer works in the millimetre space of the NIfTI sform/qform, so images
+  and surfaces line up without adjustment and each pane shows the anatomical
+  plane it is named after, whatever voxel order the image is stored in.
+  ``--mirror`` is available for surfaces that need the x flip anyway.
+- ``CatImageViewer`` can render into a render window supplied by a host
+  application; CAT_SurfView embeds it as its volume window and links the cursor
+  to the surface through :meth:`CatImageViewer.set_world_position` and the
+  ``on_position_changed`` callback.
 """
 
 from __future__ import annotations
 
+import itertools
 import os
 import sys
 import argparse
@@ -37,6 +48,7 @@ from typing import List, Optional, Sequence, Tuple
 # Import minimal VTK modules explicitly (avoids large monolithic import)
 from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray, vtkPlane
 from vtkmodules.vtkCommonCore import vtkPoints
+from vtkmodules.vtkCommonMath import vtkMatrix3x3, vtkMatrix4x4
 from vtkmodules.vtkCommonTransforms import vtkTransform
 from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
 from vtkmodules.vtkFiltersCore import vtkCutter
@@ -88,6 +100,13 @@ import vtkmodules.vtkInteractionStyle  # noqa: F401
 import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleImage
 from vtkmodules.vtkFiltersSources import vtkLineSource
+
+# Qt window + interactor.  QVTKRWIBase has to be chosen before the widget is
+# imported; CAT_SurfView imports this module and relies on the same setting.
+from PySide6 import QtCore, QtWidgets
+import vtkmodules.qt as _vtk_qt
+_vtk_qt.QVTKRWIBase = "QOpenGLWidget"
+from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
 
 def _guess_image_reader(image_path: str):
@@ -239,11 +258,23 @@ class CatImageViewer:
     def __init__(
         self,
         window_size: int = 400,
-        mirror_surfaces: bool = True,
+        mirror_surfaces: bool = False,
         verbose: bool = False,
         surface_convention: str = "auto",
         percentile_range: Optional[Tuple[float, float]] = (3.0, 97.0),
+        render_window: Optional[vtkRenderWindow] = None,
+        interactor: Optional[vtkRenderWindowInteractor] = None,
     ):
+        """Create the viewer.
+
+        Args:
+            render_window: Render window to draw into.  Pass the one of a Qt
+                ``QVTKRenderWindowInteractor`` to embed the viewer in another
+                application (CAT_SurfView does this); a standalone window is
+                created when omitted.
+            interactor: Interactor belonging to *render_window*; required
+                together with it.
+        """
         self.window_size = int(window_size)
         self.verbose = bool(verbose)
         self.surface_convention = surface_convention.lower()
@@ -253,12 +284,22 @@ class CatImageViewer:
         if self.surface_convention in ("ras", "lps") and mirror_surfaces:
             self.mirror_surfaces = False
             if self.verbose:
-                print("[cat_viewimage] Disabling mirroring due to "
+                print("[cat_vol_view] Disabling mirroring due to "
                       "explicit --surface-convention")
         else:
             self.mirror_surfaces = bool(mirror_surfaces)
         self._image = None
-        self._vox2world = None  # 4×4 matrix (list of lists)
+        self._vox2world = None  # 4×4 matrix (list of lists): index -> world
+        # Same transform in the form the image actors need (data coordinates,
+        # i.e. index times spacing, to world)
+        self._actor_matrix = None
+        # True when the transform comes from the NIfTI sform/qform, i.e. the
+        # world space is anatomical millimetres
+        self._world_from_header = False
+        # Voxel axis each pane slices along; recomputed per image
+        self._pane_axis: List[int] = [2, 0, 1]
+        # Edge length in mm the panes are zoomed to (None = whole volume)
+        self._fov_mm: Optional[float] = None
 
         # Three renderers + image actors (one per orthogonal view)
         self.renderers: List[vtkRenderer] = [
@@ -268,10 +309,13 @@ class CatImageViewer:
             None, None, None,
         ]
         self._wl_filters: List = [None, None, None]
-        # Single render window and interactor
-        self.render_window: vtkRenderWindow = vtkRenderWindow()
+        # Single render window and interactor.  When both are supplied the
+        # viewer is embedded in a host application, which owns the window
+        # geometry and the event loop.
+        self.embedded = render_window is not None and interactor is not None
+        self.render_window: vtkRenderWindow = render_window or vtkRenderWindow()
         self.interactor: vtkRenderWindowInteractor = (
-            vtkRenderWindowInteractor()
+            interactor or vtkRenderWindowInteractor()
         )
         # Viewport bounds computed in setup – default equal quadrants
         self._viewports: List[Tuple[float, float, float, float]] = [
@@ -289,6 +333,78 @@ class CatImageViewer:
         # Interaction callbacks (kept alive)
         self._event_cbs: List = []
         self._left_down = False
+        # Called with the world (mm) position whenever the user moves the
+        # cursor by clicking or scrolling.  Used to link the viewer to other
+        # windows, e.g. the surface view of CAT_SurfView.
+        self.on_position_changed = None
+
+    # -------- Geometry helpers --------
+    def _voxel_axis_directions(self) -> List[Tuple[float, float, float]]:
+        """Unit world direction of each voxel axis."""
+        m = self._vox2world
+        dirs = []
+        for a in range(3):
+            v = (m[0][a], m[1][a], m[2][a])
+            n = (v[0] ** 2 + v[1] ** 2 + v[2] ** 2) ** 0.5 or 1.0
+            dirs.append((v[0] / n, v[1] / n, v[2] / n))
+        return dirs
+
+    def _voxel_axis_lengths(self) -> List[float]:
+        """Physical length of the volume along each voxel axis (mm)."""
+        m = self._vox2world
+        ext = self._image.GetExtent()
+        out = []
+        for a in range(3):
+            n = float(ext[2 * a + 1] - ext[2 * a] + 1)
+            step = (m[0][a] ** 2 + m[1][a] ** 2 + m[2][a] ** 2) ** 0.5
+            out.append(n * step)
+        return out
+
+    def _world_matrix(self) -> vtkMatrix4x4:
+        """Transform for the image actors: data coordinates to world."""
+        source = self._actor_matrix or self._vox2world
+        m = vtkMatrix4x4()
+        for r in range(4):
+            for c in range(4):
+                m.SetElement(r, c, float(source[r][c]))
+        return m
+
+    def _assign_pane_axes(self):
+        """Choose the voxel axis each pane slices along.
+
+        The panes are anatomical (axial, sagittal, coronal) but the voxel axes
+        are not — a scan may be stored sagittal-first.  Every pane therefore
+        takes the voxel axis whose world direction is most parallel to the
+        anatomical axis it cuts, so each pane shows the plane it is named
+        after whatever the storage order.  For an image stored in RAS order
+        this reproduces the classic k/i/j assignment.
+        """
+        dirs = self._voxel_axis_directions()
+        wanted = (2, 0, 1)  # axial cuts world Z, sagittal X, coronal Y
+        best, best_score = (2, 0, 1), -1.0
+        for perm in itertools.permutations(range(3)):
+            score = sum(abs(dirs[perm[p]][wanted[p]]) for p in range(3))
+            if score > best_score:
+                best, best_score = perm, score
+        self._pane_axis = list(best)
+        if self.verbose:
+            names = ["Axial", "Sagittal", "Coronal"]
+            print("[cat_vol_view] Pane -> voxel axis: "
+                  + ", ".join(f"{names[p]}={'ijk'[self._pane_axis[p]]}"
+                              for p in range(3)))
+
+    def _world_bbox_lengths(self) -> Tuple[float, float, float]:
+        """Size of the volume along the world axes (mm)."""
+        ext = self._image.GetExtent()
+        corners = [
+            self._world_from_index((ext[0 + (i & 1)], ext[2 + ((i >> 1) & 1)],
+                                    ext[4 + ((i >> 2) & 1)]))
+            for i in range(8)
+        ]
+        return tuple(
+            max(c[ax] for c in corners) - min(c[ax] for c in corners)
+            for ax in range(3)
+        )
 
     # -------- Layout helpers --------
     def _compute_viewports(self) -> Tuple[int, int]:
@@ -296,12 +412,8 @@ class CatImageViewer:
 
         Returns the pixel *(width, height)* for the render window.
         """
-        dims = self._image.GetDimensions()
-        spacing = self._image.GetSpacing()
-
-        px = dims[0] * abs(spacing[0])
-        py = dims[1] * abs(spacing[1])
-        pz = dims[2] * abs(spacing[2])
+        # World extents, so the layout does not depend on the storage order
+        px, py, pz = self._world_bbox_lengths()
 
         # Prevent division by zero for degenerate images
         if px + py == 0 or py + pz == 0:
@@ -310,11 +422,15 @@ class CatImageViewer:
         col = px / (px + py)   # left-column width fraction
         row = py / (py + pz)   # bottom-row height fraction
 
+        # Panes are placed so their aspect matches the pane they sit in: the
+        # left column is as wide as the volume is in x (coronal, axial), the
+        # right column as wide as it is in y (sagittal); the bottom row is as
+        # tall as the volume is in y, the top row as tall as it is in z.
         gap = 0.003  # thin black border between viewports
         self._viewports = [
-            (0.0,        0.0,        col - gap, row - gap),  # Axial  (bot-L)
-            (0.0,        row + gap,  col - gap, 1.0),        # Sagit  (top-L)
-            (col + gap,  row + gap,  1.0,       1.0),        # Coron  (top-R)
+            (0.0,        0.0,        col - gap, row - gap),  # Axial    (bot-L)
+            (col + gap,  row + gap,  1.0,       1.0),        # Sagittal (top-R)
+            (0.0,        row + gap,  col - gap, 1.0),        # Coronal  (top-L)
         ]
 
         # Window pixel dimensions preserving physical proportions
@@ -352,18 +468,15 @@ class CatImageViewer:
     # -------- Scroll handler --------
     def _on_scroll(self, view_idx: int, delta: int):
         """Advance the slice in *view_idx* by *delta* steps."""
-        # view 0 (XY/Axial) → k (axis 2)
-        # view 1 (YZ/Sagittal) → i (axis 0)
-        # view 2 (XZ/Coronal) → j (axis 1)
-        axis_map = {0: 2, 1: 0, 2: 1}
-        axis = axis_map.get(view_idx)
-        if axis is None:
+        if self._ijk is None or not (0 <= view_idx < 3):
             return
+        axis = self._pane_axis[view_idx]
         ext = self._image.GetExtent()
         lo, hi = ext[2 * axis], ext[2 * axis + 1]
         self._ijk[axis] = max(lo, min(hi, self._ijk[axis] + delta))
         self._set_slices_from_index()
         self._update_crosshair_lines()
+        self._notify_position()
 
     def _dispatch_pointer(self, x: int, y: int):
         """Route a pointer position to the appropriate view and update slices."""
@@ -417,15 +530,30 @@ class CatImageViewer:
 
     # -------- Camera setup --------
     def _setup_cameras_spm12(self):
-        """Set camera orientation per view for SPM12 radiological convention.
+        """Set camera orientation per view, neurological convention.
 
-        Axial   : camera from inferior (−Z), view-up = +Y → anterior up,
-                   patient-left on screen-right (radiological).
+        Axial   : camera from superior (+Z), view-up = +Y → anterior up,
+                   patient-left on screen-left (neurological).
         Sagittal: camera from left (−X), view-up = +Z → superior up,
                    anterior on screen-left.
-        Coronal : camera from anterior (+Y), view-up = +Z → superior up,
-                   patient-left on screen-right (radiological).
+        Coronal : camera from posterior (−Y), view-up = +Z → superior up,
+                   patient-left on screen-left (neurological).
+
+        With the camera looking along *d* and *up* on screen, screen-right is
+        ``d × up``; both in-plane views put +x (the patient's right) there,
+        which is what "left is left" means.
+
+        These directions are anatomical, which only holds because the world
+        space comes from the NIfTI sform/qform (see :meth:`load_image`); the
+        slices are then oriented the same way for every image, whatever voxel
+        order it is stored in.
         """
+        # (camera offset from the focal point, view-up)
+        placement = [
+            ((0.0, 0.0, 100.0), (0.0, 1.0, 0.0)),   # Axial, from superior
+            ((-100.0, 0.0, 0.0), (0.0, 0.0, 1.0)),  # Sagittal, from the left
+            ((0.0, -100.0, 0.0), (0.0, 0.0, 1.0)),  # Coronal, from posterior
+        ]
         for vi in range(3):
             ren = self.renderers[vi]
             cam = ren.GetActiveCamera()
@@ -433,22 +561,9 @@ class CatImageViewer:
             fp = list(cam.GetFocalPoint())
             pscale = cam.GetParallelScale()
 
-            if vi == 0:  # Axial (XY)
-                cam.SetPosition(fp[0], fp[1], fp[2] - 100)
-                cam.SetViewUp(0, 1, 0)
-            elif vi == 1:  # Sagittal (YZ)
-                cam.SetPosition(fp[0] - 100, fp[1], fp[2])
-                cam.SetViewUp(0, 0, 1)
-            elif vi == 2:  # Coronal (XZ)
-                cam.SetPosition(fp[0], fp[1] + 100, fp[2])
-                cam.SetViewUp(0, 0, 1)
-
-            # Apply requested display transform:
-            # 1) rotate 90° clockwise in-plane
-            # 2) switch left/right display (horizontal mirror)
-            cam.Roll(90.0)
-            px, py, pz = cam.GetPosition()
-            cam.SetPosition(2.0 * fp[0] - px, 2.0 * fp[1] - py, 2.0 * fp[2] - pz)
+            offset, view_up = placement[vi]
+            cam.SetPosition(fp[0] + offset[0], fp[1] + offset[1], fp[2] + offset[2])
+            cam.SetViewUp(*view_up)
 
             cam.SetParallelScale(pscale)
             ren.ResetCameraClippingRange()
@@ -458,44 +573,56 @@ class CatImageViewer:
 
         This keeps each view static in its pane while slices change.
         """
+        self._apply_field_of_view()
+
+    def get_field_of_view(self) -> Optional[float]:
+        """Edge length in mm the panes are zoomed to, None when showing all."""
+        return self._fov_mm
+
+    def set_field_of_view(self, mm: Optional[float]):
+        """Zoom every pane to an *mm* bounding box around the cursor.
+
+        Follows the zoom of the SPM ortho viewer: the value is the edge length
+        of the box in millimetres (e.g. 20 for 20x20 mm), and None shows the
+        whole volume again.
+        """
+        self._fov_mm = float(mm) if mm else None
+        self._apply_field_of_view()
+        self.render_window.Render()
+
+    def _apply_field_of_view(self):
+        """Point every camera at the region the current zoom asks for."""
+        if self._image is None:
+            return
         ext = self._image.GetExtent()
 
-        ni = float(ext[1] - ext[0] + 1)
-        nj = float(ext[3] - ext[2] + 1)
-        nk = float(ext[5] - ext[4] + 1)
-
-        # Physical axis lengths in world coordinates
-        if self._vox2world is not None:
-            m = self._vox2world
-            li = ni * ((m[0][0] ** 2 + m[1][0] ** 2 + m[2][0] ** 2) ** 0.5)
-            lj = nj * ((m[0][1] ** 2 + m[1][1] ** 2 + m[2][1] ** 2) ** 0.5)
-            lk = nk * ((m[0][2] ** 2 + m[1][2] ** 2 + m[2][2] ** 2) ** 0.5)
+        if self._fov_mm:
+            # Zoomed: centre on the cursor, same box in every pane
+            focus = self.get_world_position()
+            scales = [0.5 * self._fov_mm] * 3
         else:
-            sx, sy, sz = self._image.GetSpacing()
-            li, lj, lk = ni * abs(sx), nj * abs(sy), nk * abs(sz)
-
-        # Use largest in-plane dimension for each view with small margin.
-        margin = 1.05
-        scales = [
-            0.5 * max(li, lj) * margin,  # Axial (XY)
-            0.5 * max(lj, lk) * margin,  # Sagittal (YZ)
-            0.5 * max(li, lk) * margin,  # Coronal (XZ)
-        ]
-
-        cx = 0.5 * (ext[0] + ext[1])
-        cy = 0.5 * (ext[2] + ext[3])
-        cz = 0.5 * (ext[4] + ext[5])
-        fx, fy, fz = self._world_from_index((cx, cy, cz))
+            focus = None
+            # Largest in-plane dimension per view, with a small margin
+            lengths = self._voxel_axis_lengths()
+            margin = 1.05
+            scales = []
+            for pane in range(3):
+                in_plane = [a for a in range(3) if a != self._pane_axis[pane]]
+                scales.append(0.5 * max(lengths[a] for a in in_plane) * margin)
+        if focus is None:
+            focus = self._world_from_index((
+                0.5 * (ext[0] + ext[1]),
+                0.5 * (ext[2] + ext[3]),
+                0.5 * (ext[4] + ext[5]),
+            ))
 
         for vi, ren in enumerate(self.renderers):
             cam = ren.GetActiveCamera()
-            old_fx, old_fy, old_fz = cam.GetFocalPoint()
-            old_px, old_py, old_pz = cam.GetPosition()
-            dx = old_px - old_fx
-            dy = old_py - old_fy
-            dz = old_pz - old_fz
-            cam.SetFocalPoint(fx, fy, fz)
-            cam.SetPosition(fx + dx, fy + dy, fz + dz)
+            old_f = cam.GetFocalPoint()
+            old_p = cam.GetPosition()
+            offset = [old_p[i] - old_f[i] for i in range(3)]
+            cam.SetFocalPoint(*focus)
+            cam.SetPosition(*[focus[i] + offset[i] for i in range(3)])
             cam.SetParallelScale(scales[vi])
             ren.ResetCameraClippingRange()
 
@@ -614,45 +741,45 @@ class CatImageViewer:
             # axis-aligned fallback
             return ( (wx - ox)/sx, (wy - oy)/sy, (wz - oz)/sz )
 
+    def _camera_offset(self, view_idx: int, distance: float = 0.5):
+        """Return a small world-space shift towards the camera of *view_idx*.
+
+        The crosshair lies exactly in the slice plane, where the depth buffer
+        lets the image win.  Offsetting it towards the camera keeps it visible
+        for any image orientation, whereas a fixed index-space offset points
+        away from the camera as soon as the corresponding voxel axis is
+        flipped — which is what hid the crosshair in the coronal view.
+        """
+        cam = self.renderers[view_idx].GetActiveCamera()
+        px, py, pz = cam.GetPosition()
+        fx, fy, fz = cam.GetFocalPoint()
+        dx, dy, dz = px - fx, py - fy, pz - fz
+        norm = (dx * dx + dy * dy + dz * dz) ** 0.5
+        if norm < 1e-12:
+            return (0.0, 0.0, 0.0)
+        s = distance / norm
+        return (dx * s, dy * s, dz * s)
+
     def _update_crosshair_lines(self):
         extent = self._image.GetExtent()
-        i, j, k = self._ijk
-        eps = 0.01
 
-        def w(ii, jj, kk):
-            return self._world_from_index((ii, jj, kk))
+        def w(ijk, off):
+            wx, wy, wz = self._world_from_index(tuple(ijk))
+            return (wx + off[0], wy + off[1], wz + off[2])
 
-        # For each viewer, update two lines spanning the in-plane axes
-        # Viewer 0: XY plane at Z=k
-        #   - horizontal line: x in [ix0..ix1] at y=j, z=k
-        #   - vertical line:   y in [iy0..iy1] at x=i, z=k
-        # Viewer 1: YZ plane at X=i
-        # Viewer 2: XZ plane at Y=j
-        # Compute endpoints in world coordinates
-
-        # XY
-        ls_h, ls_v = self._line_src[0]
-        p1 = w(extent[0], j, k + eps); p2 = w(extent[1], j, k + eps)
-        ls_h.SetPoint1(*p1); ls_h.SetPoint2(*p2)
-        p1 = w(i, extent[2], k + eps); p2 = w(i, extent[3], k + eps)
-        ls_v.SetPoint1(*p1); ls_v.SetPoint2(*p2)
-        ls_h.Modified(); ls_v.Modified()
-
-        # YZ
-        ls_h, ls_v = self._line_src[1]
-        p1 = w(i + eps, extent[2], k); p2 = w(i + eps, extent[3], k)
-        ls_h.SetPoint1(*p1); ls_h.SetPoint2(*p2)
-        p1 = w(i + eps, j, extent[4]); p2 = w(i + eps, j, extent[5])
-        ls_v.SetPoint1(*p1); ls_v.SetPoint2(*p2)
-        ls_h.Modified(); ls_v.Modified()
-
-        # XZ
-        ls_h, ls_v = self._line_src[2]
-        p1 = w(extent[0], j + eps, k); p2 = w(extent[1], j + eps, k)
-        ls_h.SetPoint1(*p1); ls_h.SetPoint2(*p2)
-        p1 = w(i, j + eps, extent[4]); p2 = w(i, j + eps, extent[5])
-        ls_v.SetPoint1(*p1); ls_v.SetPoint2(*p2)
-        ls_h.Modified(); ls_v.Modified()
+        # Each pane gets one line along either in-plane voxel axis, both
+        # crossing at the cursor and spanning the whole image.
+        for pane in range(3):
+            fixed = self._pane_axis[pane]
+            in_plane = [a for a in range(3) if a != fixed]
+            off = self._camera_offset(pane)
+            for line, axis in zip(self._line_src[pane], in_plane):
+                p1 = list(self._ijk); p2 = list(self._ijk)
+                p1[axis] = extent[2 * axis]
+                p2[axis] = extent[2 * axis + 1]
+                line.SetPoint1(*w(p1, off))
+                line.SetPoint2(*w(p2, off))
+                line.Modified()
 
         # Trigger re-render
         self.render_window.Render()
@@ -668,24 +795,12 @@ class CatImageViewer:
                     pass
             self._surface_contours[vi] = []
 
-        i, j, k = self._ijk
-        # Compute world-space normals using voxel-to-world matrix if available
-        normals = [(0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
-        if self._vox2world is not None:
-            m = self._vox2world
-            # columns of linear part are world directions of i,j,k axes
-            normals = [
-                (m[0][2], m[1][2], m[2][2]),  # k axis for XY
-                (m[0][0], m[1][0], m[2][0]),  # i axis for YZ
-                (m[0][1], m[1][1], m[2][1]),  # j axis for XZ
-            ]
+        # World-space normal of the voxel axis each pane slices along
+        dirs = self._voxel_axis_directions()
+        normals = [dirs[self._pane_axis[vi]] for vi in range(3)]
         # Origins must match the actual slice location used by the image actors,
         # which slices at integer voxel indices. Do NOT add the +0.5 voxel-center shift here.
-        origins = [
-            self._world_from_index((i, j, k)),
-            self._world_from_index((i, j, k)),
-            self._world_from_index((i, j, k)),
-        ]
+        origins = [self._world_from_index(tuple(self._ijk))] * 3
 
         for (poly, color) in self.surfaces:
             for vi in range(3):
@@ -702,6 +817,9 @@ class CatImageViewer:
                 actor.GetProperty().SetColor(color)
                 actor.GetProperty().SetLineWidth(1.2)
                 actor.GetProperty().LightingOff()
+                # The contour lies exactly in the slice plane, where the image
+                # would win the depth test; nudge it towards the camera
+                actor.SetPosition(*self._camera_offset(vi))
                 self.renderers[vi].AddActor(actor)
                 self._surface_contours[vi].append({'plane': plane, 'cutter': cutter, 'actor': actor})
 
@@ -727,18 +845,17 @@ class CatImageViewer:
     def _set_slices_from_index(self):
         """Update each image actor's display extent to show the current
         slice, then re-render."""
-        i, j, k = self._ijk
-        ext = self._image.GetExtent()
+        ext = list(self._image.GetExtent())
 
-        # Axial (view 0): XY plane at Z = k
-        self._image_actors[0].SetDisplayExtent(
-            ext[0], ext[1], ext[2], ext[3], k, k)
-        # Sagittal (view 1): YZ plane at X = i
-        self._image_actors[1].SetDisplayExtent(
-            i, i, ext[2], ext[3], ext[4], ext[5])
-        # Coronal (view 2): XZ plane at Y = j
-        self._image_actors[2].SetDisplayExtent(
-            ext[0], ext[1], j, j, ext[4], ext[5])
+        for pane in range(3):
+            axis = self._pane_axis[pane]
+            display = list(ext)
+            display[2 * axis] = display[2 * axis + 1] = self._ijk[axis]
+            self._image_actors[pane].SetDisplayExtent(*display)
+
+        # A zoomed view stays centred on the cursor
+        if self._fov_mm:
+            self._apply_field_of_view()
 
         # Keep clipping valid but do not move camera/focal point.
         for ren in self.renderers:
@@ -765,20 +882,10 @@ class CatImageViewer:
         p2 = _display_to_world(x, y, 1)
 
         # --- Intersect ray with the current slice plane ---------------
-        i0, j0, k0 = self._ijk
-        # Plane normals per view (k-axis for Axial, i for Sagittal,
-        # j for Coronal)
-        if self._vox2world is not None:
-            m = self._vox2world
-            normals = [
-                (m[0][2], m[1][2], m[2][2]),
-                (m[0][0], m[1][0], m[2][0]),
-                (m[0][1], m[1][1], m[2][1]),
-            ]
-        else:
-            normals = [(0, 0, 1), (1, 0, 0), (0, 1, 0)]
-        n = normals[view_idx]
-        p0 = self._world_from_index((i0, j0, k0))
+        # The plane normal is the world direction of the voxel axis this pane
+        # slices along
+        n = self._voxel_axis_directions()[self._pane_axis[view_idx]]
+        p0 = self._world_from_index(tuple(self._ijk))
 
         # Line-plane intersection:  p = p1 + t * (p2 - p1)
         v = (p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2])
@@ -804,13 +911,81 @@ class CatImageViewer:
         self._ijk = [i, j, k]
         self._set_slices_from_index()
         self._update_crosshair_lines()
+        self._notify_position()
         if self.verbose:
-            print(f"[cat_viewimage] Click -> ijk=({i},{j},{k})")
+            print(f"[cat_vol_view] Click -> ijk=({i},{j},{k})")
+
+    # ---------- Cursor position ----------
+    def _notify_position(self):
+        """Report the current cursor to a linked viewer, if one is attached."""
+        cb = self.on_position_changed
+        if cb is None:
+            return
+        world = self.get_world_position()
+        if world is None:
+            return
+        try:
+            cb(world)
+        except Exception:
+            pass
+
+    def get_index(self) -> Optional[Tuple[int, int, int]]:
+        """Current cursor as voxel indices, or None before setup()."""
+        if self._ijk is None:
+            return None
+        return (int(self._ijk[0]), int(self._ijk[1]), int(self._ijk[2]))
+
+    def get_world_position(self) -> Optional[Tuple[float, float, float]]:
+        """Current cursor in world (mm) coordinates, or None before setup()."""
+        if self._ijk is None or self._image is None:
+            return None
+        return self._world_from_index(tuple(self._ijk))
+
+    def get_value_at_index(self, ijk: Optional[Tuple[int, int, int]] = None):
+        """Image intensity at *ijk* (default: the cursor), None if unavailable."""
+        if self._image is None:
+            return None
+        if ijk is None:
+            ijk = self.get_index()
+        if ijk is None:
+            return None
+        try:
+            return float(self._image.GetScalarComponentAsDouble(
+                int(ijk[0]), int(ijk[1]), int(ijk[2]), 0))
+        except Exception:
+            return None
+
+    def set_index(self, i: int, j: int, k: int, notify: bool = False):
+        """Move the cursor to a voxel index, clamped to the image extent."""
+        if self._image is None:
+            return
+        ext = self._image.GetExtent()
+        self._ijk = [
+            max(ext[0], min(ext[1], int(round(i)))),
+            max(ext[2], min(ext[3], int(round(j)))),
+            max(ext[4], min(ext[5], int(round(k)))),
+        ]
+        self._set_slices_from_index()
+        self._update_crosshair_lines()
+        if notify:
+            self._notify_position()
+
+    def set_world_position(self, world: Tuple[float, float, float],
+                           notify: bool = False):
+        """Move the cursor to a world (mm) position.
+
+        This is the entry point used to link the viewer to another window:
+        picking a point on the surface in CAT_SurfView moves the slices here.
+        """
+        if self._image is None:
+            return
+        i, j, k = self._index_from_world(tuple(world))
+        self.set_index(i, j, k, notify=notify)
 
     # ---------- Public API ----------
     def load_image(self, image_path: str):
         if self.verbose:
-            print(f"[cat_viewimage] Loading image: {image_path}")
+            print(f"[cat_vol_view] Loading image: {image_path}")
         reader = _guess_image_reader(image_path)
         reader.Update()
         self._image = reader.GetOutput()
@@ -818,14 +993,14 @@ class CatImageViewer:
             raise RuntimeError(f"Failed to load image: {image_path}")
         dims = self._image.GetDimensions()
         if self.verbose:
-            print(f"[cat_viewimage] Image dimensions: {dims}")
+            print(f"[cat_vol_view] Image dimensions: {dims}")
             try:
-                print("[cat_viewimage] VTK image origin:", self._image.GetOrigin())
-                print("[cat_viewimage] VTK image spacing:", self._image.GetSpacing())
+                print("[cat_vol_view] VTK image origin:", self._image.GetOrigin())
+                print("[cat_vol_view] VTK image spacing:", self._image.GetSpacing())
                 dm = self._image.GetDirectionMatrix()
                 if dm is not None:
                     D = [[dm.GetElement(r, c) for c in range(3)] for r in range(3)]
-                    print("[cat_viewimage] VTK image direction:")
+                    print("[cat_vol_view] VTK image direction:")
                     for r in D:
                         print("    ", r)
             except Exception:
@@ -834,8 +1009,45 @@ class CatImageViewer:
             raise RuntimeError(
                 f"Image appears empty or unreadable (dims={dims}): {image_path}"
             )
-        # Build voxel->world from VTK image properties (origin/spacing/direction)
-        try:
+        # Voxel-to-world: NIfTI keeps the anatomical (mm) mapping in the
+        # sform/qform, which VTK reports separately instead of baking it into
+        # the image — the image itself stays in voxel space.  Taking it from
+        # the header is what puts the slices, the crosshair and any surface
+        # into the same millimetre space, which in turn is what makes the
+        # cursor linking with a surface viewer meaningful.
+        self._vox2world = None
+        self._actor_matrix = None
+        self._world_from_header = False
+        for getter in ("GetSFormMatrix", "GetQFormMatrix"):
+            try:
+                m = getattr(reader, getter)()
+            except Exception:
+                m = None
+            if m is None:
+                continue
+            M = [[float(m.GetElement(r, c)) for c in range(4)] for r in range(4)]
+            if all(abs(M[r][c]) < 1e-12 for r in range(3) for c in range(3)):
+                continue  # unset form
+            # VTK reports this transform normalized: it maps *data* coordinates
+            # (voxel index times spacing) to world.  The image actors apply the
+            # spacing themselves, so they take it as it is, while index-based
+            # coordinate maths has to fold the spacing in — without that every
+            # position is off by the voxel size in each axis.
+            self._actor_matrix = M
+            spacing = self._image.GetSpacing()
+            self._vox2world = [
+                [M[r][c] * spacing[c] for c in range(3)] + [M[r][3]]
+                for r in range(4)
+            ]
+            self._world_from_header = True
+            if self.verbose:
+                print(f"[cat_vol_view] Using voxel->world from {getter[3:-6]}:")
+                for row in self._vox2world:
+                    print("    ", row)
+            break
+        if self._vox2world is None:
+            # No usable header transform: fall back to the geometry VTK
+            # applied to the image itself (origin/spacing/direction).
             ox, oy, oz = self._image.GetOrigin()
             sx, sy, sz = self._image.GetSpacing()
             try:
@@ -843,42 +1055,29 @@ class CatImageViewer:
                 D = [[dm.GetElement(r, c) for c in range(3)] for r in range(3)]
             except Exception:
                 D = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-            M = [
+            self._vox2world = [
                 [D[0][0]*sx, D[0][1]*sy, D[0][2]*sz, ox],
                 [D[1][0]*sx, D[1][1]*sy, D[1][2]*sz, oy],
                 [D[2][0]*sx, D[2][1]*sy, D[2][2]*sz, oz],
                 [0.0, 0.0, 0.0, 1.0],
             ]
-            self._vox2world = M
             if self.verbose:
-                print("[cat_viewimage] Using voxel->world from VTK image properties:")
-                for r in self._vox2world:
-                    print("    ", r)
-        except Exception:
-            # Fallback to qform/sform via nibabel
-            self._vox2world = None
+                print("[cat_vol_view] Using voxel->world from VTK image properties:")
+                for row in self._vox2world:
+                    print("    ", row)
+        else:
+            # Origin and orientation come from the header transform the actors
+            # carry (see setup()); the image keeps its spacing, which that
+            # transform expects the actors to have applied already.
+            self._image.SetOrigin(0.0, 0.0, 0.0)
             try:
-                if nib is not None:
-                    img = nib.load(image_path)
-                    aff = None
-                    if hasattr(img, 'header'):
-                        s = img.header.get_sform(coded=True)
-                        q = img.header.get_qform(coded=True)
-                        if s is not None and s[1] > 0:
-                            aff = s[0]
-                        elif q is not None and q[1] > 0:
-                            aff = q[0]
-                    if aff is None and hasattr(img, 'affine'):
-                        aff = img.affine
-                    if aff is not None:
-                        self._vox2world = [[float(aff[r, c]) for c in range(4)] for r in range(4)]
-                        if self.verbose:
-                            print("[cat_viewimage] Using voxel->world from qform/sform (fallback):")
-                            for r in self._vox2world:
-                                print("    ", r)
-            except Exception as e:
-                if self.verbose:
-                    print(f"[cat_viewimage] qform/sform read failed: {e}")
+                ident = vtkMatrix3x3()
+                ident.Identity()
+                self._image.SetDirectionMatrix(ident)
+            except Exception:
+                pass
+        self._assign_pane_axes()
+
         # Window/level – prefer percentile-based scaling
         rng = self._image.GetScalarRange()
         self._wl = (float(rng[1] - rng[0]),
@@ -896,13 +1095,13 @@ class CatImageViewer:
                                      float(0.5 * (hi_pct + lo_pct)))
                         if self.verbose:
                             print(
-                                f"[cat_viewimage] Percentile "
+                                f"[cat_vol_view] Percentile "
                                 f"{self.percentile_range}: "
                                 f"window={self._wl[0]:.1f}, "
                                 f"level={self._wl[1]:.1f}")
             except Exception as exc:
                 if self.verbose:
-                    print(f"[cat_viewimage] Percentile scaling failed: {exc}")
+                    print(f"[cat_vol_view] Percentile scaling failed: {exc}")
         return self
 
     def add_surface(self, surface: "str | vtkPolyData", color: Tuple[float, float, float]):
@@ -915,11 +1114,14 @@ class CatImageViewer:
         if self.mirror_surfaces:
             poly = _mirror_polydata_x(poly)
             if self.verbose:
-                print("[cat_viewimage] Applied surface mirroring (scale -1,1,1)")
+                print("[cat_vol_view] Applied surface mirroring (scale -1,1,1)")
         # Heuristic: if the surface center is far from the image center in world coords,
         # translate it so centers coincide (common when surfaces are in 0..FOV vs centered at 0).
+        # Skipped once the image carries its own millimetre transform: surface
+        # and image then share one space and must not be nudged apart.
         try:
-            if self._image is not None and self._vox2world is not None:
+            if (self._image is not None and self._vox2world is not None
+                    and not self._world_from_header):
                 extent = self._image.GetExtent()
                 cx = 0.5 * (extent[0] + extent[1])
                 cy = 0.5 * (extent[2] + extent[3])
@@ -947,7 +1149,7 @@ class CatImageViewer:
                     f.Update()
                     poly = f.GetOutput()
                     if self.verbose:
-                        print(f"[cat_viewimage] Recentered surface by translation (dx,dy,dz)=({dx:.3f},{dy:.3f},{dz:.3f})")
+                        print(f"[cat_vol_view] Recentered surface by translation (dx,dy,dz)=({dx:.3f},{dy:.3f},{dz:.3f})")
         except Exception:
             pass
         self.surfaces.append((poly, color))
@@ -967,7 +1169,7 @@ class CatImageViewer:
             f.SetTransform(t)
             f.Update()
             if self.verbose:
-                print("[cat_viewimage] Converted surface from LPS to RAS (flip X,Y)")
+                print("[cat_vol_view] Converted surface from LPS to RAS (flip X,Y)")
             return f.GetOutput()
         # conv == "ras" -> assume already RAS
         return poly
@@ -983,10 +1185,16 @@ class CatImageViewer:
         if self._image is None:
             raise RuntimeError("No image loaded. Call load_image() first.")
 
-        # Compute proportional viewports & pixel window size
+        # Compute proportional viewports & pixel window size.  An embedded
+        # viewer only takes the viewport layout; size and title belong to the
+        # host widget.
         win_w, win_h = self._compute_viewports()
-        self.render_window.SetSize(win_w, win_h)
-        self.render_window.SetWindowName(window_title or "Ortho Viewer")
+        # Kept so an embedding host can size its widget with the same
+        # proportions the standalone window would use
+        self.window_pixel_size = (win_w, win_h)
+        if not self.embedded:
+            self.render_window.SetSize(win_w, win_h)
+            self.render_window.SetWindowName(window_title or "Ortho Viewer")
 
         ext = self._image.GetExtent()
 
@@ -1008,6 +1216,10 @@ class CatImageViewer:
                     prop.SetColorLevel(self._wl[1])
                 except Exception:
                     pass
+            if self._world_from_header:
+                # The image was reset to voxel geometry in load_image(), so the
+                # actor carries the millimetre transform from the NIfTI header
+                actor.SetUserMatrix(self._world_matrix())
             self._image_actors[i] = actor
 
             ren = self.renderers[i]
@@ -1018,7 +1230,7 @@ class CatImageViewer:
 
             if self.verbose:
                 names = ["Axial", "Sagittal", "Coronal"]
-                print(f"[cat_viewimage] Configured {names[i]} "
+                print(f"[cat_vol_view] Configured {names[i]} "
                       f"viewport {self._viewports[i]}")
 
         # Background renderer for the empty bottom-right quadrant
@@ -1030,18 +1242,14 @@ class CatImageViewer:
         self.render_window.AddRenderer(bg_ren)
 
         # Set initial crosshair to the centre of the volume
-        cx = (ext[0] + ext[1]) // 2
-        cy = (ext[2] + ext[3]) // 2
-        cz = (ext[4] + ext[5]) // 2
-        self._ijk = [cx, cy, cz]
+        self._ijk = [
+            (ext[0] + ext[1]) // 2,
+            (ext[2] + ext[3]) // 2,
+            (ext[4] + ext[5]) // 2,
+        ]
 
         # Set display extents so actors have valid bounds for ResetCamera
-        self._image_actors[0].SetDisplayExtent(
-            ext[0], ext[1], ext[2], ext[3], cz, cz)
-        self._image_actors[1].SetDisplayExtent(
-            cx, cx, ext[2], ext[3], ext[4], ext[5])
-        self._image_actors[2].SetDisplayExtent(
-            ext[0], ext[1], cy, cy, ext[4], ext[5])
+        self._set_slices_from_index()
 
         # Reset cameras to fill each viewport, then enforce SPM12
         for ren in self.renderers:
@@ -1051,11 +1259,15 @@ class CatImageViewer:
 
         # Connect interactor AFTER creating actors to avoid any
         # internal event-observer interference
-        self.interactor.SetRenderWindow(self.render_window)
+        if not self.embedded:
+            self.interactor.SetRenderWindow(self.render_window)
         style = _OrthoStyle(self)
         self.interactor.SetInteractorStyle(style)
         self._ortho_style = style  # prevent garbage collection
-        self.interactor.Initialize()
+        try:
+            self.interactor.Initialize()
+        except Exception:
+            pass
         self._bind_interaction_events()
 
         # Crosshair overlays & surface contours
@@ -1110,11 +1322,11 @@ class CatImageViewer:
             writer.SetInputConnection(w2i.GetOutputPort())
             writer.Write()
             if self.verbose:
-                print(f"[cat_viewimage] Wrote screenshot: {screenshot}")
+                print(f"[cat_vol_view] Wrote screenshot: {screenshot}")
 
         if not headless:
             if self.verbose:
-                print("[cat_viewimage] Starting interactor…")
+                print("[cat_vol_view] Starting interactor…")
             self.interactor.Start()
 
 
@@ -1145,8 +1357,163 @@ class _OrthoStyle(vtkInteractorStyleImage):
     def OnLeftButtonUp(self):
         super().OnLeftButtonUp()
 
+    # -- right button: the host shows a context menu when embedded, so the
+    #    inherited drag-to-zoom must not start underneath it --
+    def OnRightButtonDown(self):
+        if getattr(self._parent, 'embedded', False):
+            return
+        super().OnRightButtonDown()
+
+    def OnRightButtonUp(self):
+        if getattr(self._parent, 'embedded', False):
+            return
+        super().OnRightButtonUp()
+
     def OnMouseMove(self):
         super().OnMouseMove()
+
+
+# ------------------------------------------------------------------ #
+#  Qt window                                                          #
+# ------------------------------------------------------------------ #
+
+class VolumeViewerWindow(QtWidgets.QMainWindow):
+    """Window around :class:`CatImageViewer`.
+
+    Used by ``CAT_VolView`` and, with *on_position_changed* wired up, as the
+    volume window of CAT_SurfView, so both offer the same slices, status line
+    and context menu.
+
+    Args:
+        image_path: Volume to display.
+        surfaces: Surface files or ``vtkPolyData`` drawn as outlines on the
+            slices; they must be in the millimetre space of the image.
+        on_position_changed: Called as ``callback(world_xyz, window)`` when the
+            user moves the cursor by clicking or scrolling.
+        viewer_kwargs: Passed on to :class:`CatImageViewer`.
+    """
+
+    #: Zoom levels of the context menu: label and bounding-box edge length in
+    #: mm, following the ortho viewer of SPM (None = whole volume).
+    ZOOM_LEVELS = (
+        ("Full volume", None),
+        ("160 x 160 mm", 160.0),
+        ("80 x 80 mm", 80.0),
+        ("40 x 40 mm", 40.0),
+        ("20 x 20 mm", 20.0),
+        ("10 x 10 mm", 10.0),
+    )
+
+    SURFACE_COLORS = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.6, 1.0))
+
+    def __init__(self, image_path: str, parent=None, on_position_changed=None,
+                 surfaces: Sequence = (), **viewer_kwargs):
+        super().__init__(parent)
+        self.image_path = image_path
+        self.setWindowTitle(f"Volume: {os.path.basename(image_path)}")
+        self.on_position_changed = on_position_changed
+
+        central = QtWidgets.QWidget(self)
+        box = QtWidgets.QVBoxLayout(central)
+        box.setContentsMargins(0, 0, 0, 0)
+        self.setCentralWidget(central)
+        self.vtk_widget = QVTKRenderWindowInteractor(central)
+        box.addWidget(self.vtk_widget, 1)
+        try:
+            self.vtk_widget.setAttribute(QtCore.Qt.WidgetAttribute.WA_NativeWindow, True)
+        except Exception:
+            pass
+
+        render_window = self.vtk_widget.GetRenderWindow()
+        self.viewer = CatImageViewer(
+            render_window=render_window,
+            interactor=render_window.GetInteractor(),
+            **viewer_kwargs,
+        )
+        self.viewer.load_image(image_path)
+        for i, surface in enumerate(surfaces):
+            self.viewer.add_surface(
+                surface, self.SURFACE_COLORS[i % len(self.SURFACE_COLORS)])
+        self.viewer.setup(window_title=os.path.basename(image_path))
+        self.viewer.on_position_changed = self._position_changed
+
+        self._label = QtWidgets.QLabel("")
+        self.statusBar().addWidget(self._label)
+        self._update_label()
+
+        width, height = getattr(self.viewer, 'window_pixel_size', (700, 700))
+        self.resize(int(width), int(height) + 24)
+
+        try:
+            policy = QtCore.Qt.ContextMenuPolicy.CustomContextMenu
+        except AttributeError:
+            policy = QtCore.Qt.CustomContextMenu
+        self.vtk_widget.setContextMenuPolicy(policy)
+        self.vtk_widget.customContextMenuRequested.connect(self._show_context_menu)
+
+        # The interactor may only be initialised once the widget has a window
+        QtCore.QTimer.singleShot(0, self._post_show)
+
+    def _post_show(self):
+        try:
+            self.vtk_widget.Initialize()
+            self.vtk_widget.GetRenderWindow().Render()
+        except Exception:
+            pass
+
+    # -------- context menu --------
+    def _show_context_menu(self, pos):
+        """Right-click menu of the slice views."""
+        menu = QtWidgets.QMenu(self)
+        current = self.viewer.get_field_of_view()
+
+        zoom_menu = menu.addMenu("Zoom")
+        for label, mm in self.ZOOM_LEVELS:
+            action = zoom_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(current == mm)
+            action.triggered.connect(lambda _checked=False, v=mm: self.set_zoom(v))
+        # Further sections (window/level, overlays, …) go here
+
+        menu.exec(self.vtk_widget.mapToGlobal(pos))
+
+    def set_zoom(self, mm: Optional[float]):
+        """Zoom the slices to an mm bounding box around the cursor."""
+        try:
+            self.viewer.set_field_of_view(mm)
+        except Exception:
+            pass
+
+    # -------- cursor --------
+    def _update_label(self):
+        ijk = self.viewer.get_index()
+        world = self.viewer.get_world_position()
+        if ijk is None or world is None:
+            self._label.setText("")
+            return
+        value = self.viewer.get_value_at_index(ijk)
+        text = (f"voxel [{ijk[0]}, {ijk[1]}, {ijk[2]}]    "
+                f"mm ({world[0]:.1f}, {world[1]:.1f}, {world[2]:.1f})")
+        if value is not None:
+            text += f"    value {value:g}"
+        self._label.setText(text)
+
+    def _position_changed(self, world_xyz: Tuple[float, float, float]):
+        """Report a position picked in a slice to whoever is linked."""
+        self._update_label()
+        if self.on_position_changed is not None:
+            try:
+                self.on_position_changed(world_xyz, self)
+            except Exception:
+                pass
+
+    def set_world_position(self, world_xyz: Tuple[float, float, float]):
+        """Move the slices to a world (mm) position picked elsewhere."""
+        try:
+            self.viewer.set_world_position(world_xyz)
+            self._update_label()
+        except Exception:
+            pass
 
 
 # ------------------------------------------------------------------ #
@@ -1174,8 +1541,12 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         help="Approximate half-width of the window in pixels",
     )
     p.add_argument(
+        "--mirror", action="store_true",
+        help="Mirror surfaces along x (scale -1,1,1)",
+    )
+    p.add_argument(
         "--no-mirror", action="store_true",
-        help="Disable mirroring (scale -1,1,1)",
+        help=argparse.SUPPRESS,  # now the default; kept for compatibility
     )
     p.add_argument(
         "--headless", action="store_true",
@@ -1215,26 +1586,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
 
     pct = None if args.no_percentile else tuple(args.percentile)
-
-    viewer = CatImageViewer(
+    options = dict(
         window_size=args.size,
-        mirror_surfaces=not args.no_mirror,
+        # Surfaces and image share the millimetre space of the NIfTI header,
+        # so mirroring is opt-in
+        mirror_surfaces=bool(args.mirror) and not args.no_mirror,
         verbose=args.verbose,
         surface_convention=args.surface_convention,
         percentile_range=pct,
     )
-    viewer.load_image(args.image)
+    surfaces = list(args.surfaces[:3])
 
-    colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
-    for i, surf in enumerate(args.surfaces[:3]):
-        viewer.add_surface(surf, colors[i])
+    if args.screenshot or args.headless:
+        # Batch mode renders without a window, so no Qt application is needed
+        viewer = CatImageViewer(**options)
+        viewer.load_image(args.image)
+        for i, surf in enumerate(surfaces):
+            viewer.add_surface(surf, VolumeViewerWindow.SURFACE_COLORS[i])
+        viewer.setup(window_title=os.path.basename(args.image))
+        viewer.render(screenshot=args.screenshot, headless=True)
+        return 0
 
-    viewer.setup(window_title=os.path.basename(args.image))
-    viewer.render(
-        screenshot=args.screenshot,
-        headless=args.headless or bool(args.screenshot),
-    )
-    return 0
+    app = QtWidgets.QApplication(sys.argv)
+    window = VolumeViewerWindow(args.image, surfaces=surfaces, **options)
+    window.show()
+    return int(app.exec())
 
 
 if __name__ == "__main__":
