@@ -116,6 +116,7 @@ t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
 CAT_SurfView lh.central.gii        # surface viewer (no arguments prints the help)
 CAT_SurfView -output view.png lh.thickness.sub-01   # batch: render a PNG and exit
 CAT_VolView T1.nii.gz              # volume viewer (3 orthogonal slices)
+CAT_VolView T1.nii.gz p1T1.nii.gz  # up to 3 volumes, one window each, linked
 ```
 
 > The `T1Prep` command is the bash orchestrator (full features incl. `--multi`

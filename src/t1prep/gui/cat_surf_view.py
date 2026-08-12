@@ -73,7 +73,7 @@ if _headless:
 
 # --- Qt setup (PySide6 only) ---
 from PySide6 import QtWidgets
-from PySide6.QtCore import Qt, QTimer, qInstallMessageHandler, QtMsgType
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QPainter, QColor, QPen, QBrush, QSurfaceFormat
 
 # Qt compatibility shims
@@ -119,9 +119,9 @@ from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
 # The volume window is shared with the standalone CAT_VolView tool.  It also
 # selects the QVTKRWIBase used below, so it is imported before the widget.
 try:
-    from .cat_vol_view import VolumeViewerWindow
+    from .cat_vol_view import VolumeViewerWindow, install_qt_message_filter
 except ImportError:  # direct invocation as a script (no package context)
-    from cat_vol_view import VolumeViewerWindow
+    from cat_vol_view import VolumeViewerWindow, install_qt_message_filter
 
 # Qt interactor & backends
 import vtkmodules.qt as vtk_qt
@@ -4333,21 +4333,10 @@ class HistogramWindow(QtWidgets.QMainWindow):
         self._canvas.set_data(data, value_range)
 
 # ---- Entrypoint ----
-def _qt_message_filter(mode, context, message):
-    # Suppress a harmless Qt warning emitted when the VTK render-to-texture
-    # (native OpenGL) widget's paint device is touched by Qt's backing store.
-    if "Paint device returned engine == 0" in message:
-        return
-    stream = sys.stderr if mode in (QtMsgType.QtWarningMsg,
-                                    QtMsgType.QtCriticalMsg,
-                                    QtMsgType.QtFatalMsg) else sys.stdout
-    print(message, file=stream)
-
-
 def main(argv: Optional[List[str]] = None):
     if argv is None:
         argv = sys.argv[1:]
-    qInstallMessageHandler(_qt_message_filter)
+    install_qt_message_filter()
     opts = parse_args(argv)
     # Ensure a compatible OpenGL surface format before QApplication is created.
     try:

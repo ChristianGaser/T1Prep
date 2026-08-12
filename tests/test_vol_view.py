@@ -16,7 +16,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     import nibabel as nib
-    from t1prep.gui.cat_vol_view import CatImageViewer, VolumeViewerWindow
+    from t1prep.gui.cat_vol_view import (
+        CatImageViewer,
+        VolumeViewerWindow,
+        _split_inputs,
+        link_windows,
+        MAX_VOLUMES,
+    )
 except Exception as exc:  # pragma: no cover - depends on optional deps
     raise unittest.SkipTest(f"cat_vol_view unavailable: {exc}")
 
@@ -166,9 +172,18 @@ class TestCursorApi(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_set_and_get_world_position(self):
-        """A position sent in comes back unchanged (it is on the voxel grid)."""
+        """A position sent in comes back unchanged."""
         self.viewer.set_world_position((70.0, -106.0, -62.0))
         self.assertEqual(self.viewer.get_world_position(), (70.0, -106.0, -62.0))
+
+    def test_position_is_not_snapped_to_the_voxel_grid(self):
+        """The cursor keeps the picked position; only the slices are voxel-wise."""
+        self.viewer.set_world_position((70.4, -105.7, -62.2))
+        world = self.viewer.get_world_position()
+        self.assertEqual(tuple(round(v, 3) for v in world), (70.4, -105.7, -62.2))
+        # the voxel used for slices and intensity is the one it falls into
+        self.assertEqual(self.viewer.get_index(),
+                         tuple(int(round(v)) for v in self.viewer.get_index_exact()))
 
     def test_position_is_clamped_to_the_volume(self):
         self.viewer.set_world_position((1e6, 1e6, 1e6))
@@ -205,6 +220,12 @@ class TestCursorApi(unittest.TestCase):
         for ren in self.viewer.renderers:
             self.assertEqual(tuple(ren.GetActiveCamera().GetFocalPoint()),
                              (72.0, -104.0, -60.0))
+
+        # …including a position between voxels
+        self.viewer.set_world_position((72.4, -104.3, -60.8))
+        for ren in self.viewer.renderers:
+            focal = tuple(round(v, 3) for v in ren.GetActiveCamera().GetFocalPoint())
+            self.assertEqual(focal, (72.4, -104.3, -60.8))
 
         self.viewer.set_field_of_view(None)
         self.assertIsNone(self.viewer.get_field_of_view())
@@ -354,6 +375,68 @@ class TestInfoPanel(unittest.TestCase):
         self.viewer.set_info_visible(True)
         self.assertTrue(self.viewer._info_actor.GetVisibility())
 
+    def test_interpolation_can_be_switched_to_nearest(self):
+        """Raw voxels on demand, e.g. to judge segmentation edges."""
+        self.assertTrue(self.viewer.interpolate)
+        self.assertTrue(all(a.GetInterpolate() for a in self.viewer._image_actors))
+
+        self.viewer.set_interpolation(False)
+        self.assertFalse(self.viewer.interpolate)
+        for actor in self.viewer._image_actors:
+            self.assertFalse(actor.GetInterpolate())
+            self.assertEqual(actor.GetProperty().GetInterpolationTypeAsString(),
+                             "Nearest")
+
+        self.viewer.set_interpolation(True)
+        self.assertTrue(all(a.GetInterpolate() for a in self.viewer._image_actors))
+
+
+class TestSampling(unittest.TestCase):
+    """The reported intensity follows how the slices are drawn."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        # Voxel values equal their own world x, so the exact answer is known
+        shape = (12, 12, 12)
+        affine = np.diag([2.0, 2.0, 2.0, 1.0])
+        affine[:3, 3] = [-10.0, -10.0, -10.0]
+        i = np.arange(shape[0])[:, None, None] * np.ones(shape)
+        data = (affine[0, 0] * i + affine[0, 3]).astype(np.float32)
+        path = Path(self._tmp.name) / "ramp.nii.gz"
+        nib.save(nib.Nifti1Image(data, affine), str(path))
+
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(path))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_interpolated_value_matches_the_cursor(self):
+        self.viewer.set_interpolation(True)
+        for x in (-4.0, -3.0, -2.5, -1.0, 3.7):
+            self.viewer.set_world_position((x, 0.0, 0.0))
+            self.assertAlmostEqual(self.viewer.get_value(), x, places=3, msg=f"x={x}")
+
+    def test_raw_value_is_the_voxel_the_cursor_is_in(self):
+        self.viewer.set_interpolation(False)
+        for x in (-3.0, -2.5, -1.0):
+            self.viewer.set_world_position((x, 0.0, 0.0))
+            self.assertEqual(self.viewer.get_value(), self.viewer.get_value_at_index())
+
+    def test_switching_mode_changes_the_reported_value(self):
+        self.viewer.set_world_position((-3.0, 0.0, 0.0))
+        self.viewer.set_interpolation(True)
+        interpolated = self.viewer.get_value()
+        self.viewer.set_interpolation(False)
+        self.assertNotAlmostEqual(interpolated, self.viewer.get_value())
+        # between voxels the raw value is one of the neighbours
+        self.assertEqual(self.viewer.get_value(), self.viewer.get_value_at_index())
+
 
 class TestNeurologicalOrientation(unittest.TestCase):
     """Slices are shown "left is left" (neurological), not mirrored."""
@@ -398,6 +481,48 @@ class TestNeurologicalOrientation(unittest.TestCase):
     def test_axial_has_anterior_up(self):
         cam = self.viewer.renderers[CatImageViewer.VIEW_AXIAL].GetActiveCamera()
         self.assertEqual(tuple(cam.GetViewUp()), (0.0, 1.0, 0.0))
+
+
+class TestSeveralVolumes(unittest.TestCase):
+    """Several volumes open one window each, with linked cursors."""
+
+    class _Stub:
+        """Stands in for a window: records what it was told to show."""
+
+        def __init__(self):
+            self.on_position_changed = None
+            self.seen = []
+
+        def set_world_position(self, world):
+            self.seen.append(tuple(world))
+
+    def test_inputs_are_split_by_type(self):
+        volumes, surfaces = _split_inputs(
+            ["a.nii.gz", "lh.central.gii", "b.nii", "c.mnc", "x.vtp"])
+        self.assertEqual(volumes, ["a.nii.gz", "b.nii", "c.mnc"])
+        self.assertEqual(surfaces, ["lh.central.gii", "x.vtp"])
+
+    def test_at_most_three_volumes(self):
+        self.assertEqual(MAX_VOLUMES, 3)
+
+    def test_a_pick_moves_the_other_windows(self):
+        windows = [self._Stub() for _ in range(3)]
+        link_windows(windows)
+        windows[0].on_position_changed((1.0, 2.0, 3.0), windows[0])
+        self.assertEqual(windows[0].seen, [])          # never itself
+        self.assertEqual(windows[1].seen, [(1.0, 2.0, 3.0)])
+        self.assertEqual(windows[2].seen, [(1.0, 2.0, 3.0)])
+
+        windows[2].on_position_changed((4.0, 5.0, 6.0), windows[2])
+        self.assertEqual(windows[0].seen, [(4.0, 5.0, 6.0)])
+        self.assertEqual(windows[2].seen, [(1.0, 2.0, 3.0)])
+
+    def test_moving_a_window_does_not_echo_back(self):
+        """set_world_position must not report, or the windows would loop."""
+        windows = [self._Stub() for _ in range(2)]
+        link_windows(windows)
+        windows[0].on_position_changed((1.0, 2.0, 3.0), windows[0])
+        self.assertEqual(len(windows[1].seen), 1)
 
 
 class TestWindowContract(unittest.TestCase):

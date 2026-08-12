@@ -22,8 +22,12 @@ and the region name when an atlas has been selected.
 Display intensities are scaled to the 3rd--97th percentile range by default.
 
 Usage (CLI):
-    CAT_VolView <image> [surf1] [surf2] [surf3] \
+    CAT_VolView <image> [more images…] [surf1] [surf2] [surf3] \
         --size 400 [--percentile 3 97]
+
+    Up to three volumes may be given; each opens its own window and their
+    cursors are linked, so a click in one moves the others to the same
+    millimetre position.
 
     # source checkout
     python src/t1prep/gui/cat_vol_view.py <image> [surf1] [surf2] [surf3]
@@ -45,6 +49,7 @@ Notes:
 from __future__ import annotations
 
 import itertools
+import math
 import os
 import sys
 import argparse
@@ -86,6 +91,7 @@ except Exception:  # pragma: no cover - optional
     vtk_to_numpy = None  # type: ignore
 
 from vtkmodules.vtkRenderingCore import (
+    VTK_CURSOR_CROSSHAIR,
     vtkActor,
     vtkImageActor,
     vtkPolyDataMapper,
@@ -324,6 +330,7 @@ class CatImageViewer:
         render_window: Optional[vtkRenderWindow] = None,
         interactor: Optional[vtkRenderWindowInteractor] = None,
         show_info: bool = True,
+        interpolate: bool = True,
     ):
         """Create the viewer.
 
@@ -331,6 +338,8 @@ class CatImageViewer:
             show_info: Fill the free quadrant with image information (name,
                 dimensions, voxel size, orientation, data type, intensity
                 range) and the values under the cursor.
+            interpolate: Smooth the slices (linear); False draws the raw
+                voxels (nearest neighbour).
             render_window: Render window to draw into.  Pass the one of a Qt
                 ``QVTKRenderWindowInteractor`` to embed the viewer in another
                 application (CAT_SurfView does this); a standalone window is
@@ -363,6 +372,8 @@ class CatImageViewer:
         self._pane_axis: List[int] = [2, 0, 1]
         # Edge length in mm the panes are zoomed to (None = whole volume)
         self._fov_mm: Optional[float] = None
+        # Slices smoothed (linear) or as raw voxels (nearest neighbour)
+        self.interpolate = bool(interpolate)
         # Information panel in the free quadrant
         self.show_info = bool(show_info)
         self._info_actor: Optional[vtkTextActor] = None
@@ -397,7 +408,9 @@ class CatImageViewer:
 
         # Surfaces to overlay: list of (polydata, colour)
         self.surfaces: List[Tuple[vtkPolyData, Tuple[float, float, float]]] = []
-        # Crosshair / shared state
+        # Cursor: the exact world (mm) position is the truth, the voxel index
+        # is derived from it for the displayed slices and the intensity readout
+        self._cursor: Optional[List[float]] = None
         self._ijk: Optional[List[int]] = None
         # Surface contour pipelines per view
         self._surface_contours: List[List] = [[], [], []]
@@ -513,6 +526,15 @@ class CatImageViewer:
         win_h = max(int(total_h * scale), 200)
         return win_w, win_h
 
+    def _apply_viewports(self):
+        """Hand the computed viewport rectangles to the renderers."""
+        for i, ren in enumerate(self.renderers):
+            ren.SetViewport(*self._viewports[i])
+        if getattr(self, '_info_renderer', None) is not None:
+            col_edge = self._viewports[0][2] + 0.003
+            row_edge = self._viewports[0][3] + 0.003
+            self._info_renderer.SetViewport(col_edge, 0.0, 1.0, row_edge)
+
     # -------- Viewport query --------
     def _get_active_view(self, x: int, y: int) -> int:
         """Return the viewer index whose viewport contains *(x, y)*.
@@ -539,15 +561,14 @@ class CatImageViewer:
     # -------- Scroll handler --------
     def _on_scroll(self, view_idx: int, delta: int):
         """Advance the slice in *view_idx* by *delta* steps."""
-        if self._ijk is None or not (0 <= view_idx < 3):
+        index = self.get_index_exact()
+        if index is None or not (0 <= view_idx < 3):
             return
         axis = self._pane_axis[view_idx]
-        ext = self._image.GetExtent()
-        lo, hi = ext[2 * axis], ext[2 * axis + 1]
-        self._ijk[axis] = max(lo, min(hi, self._ijk[axis] + delta))
-        self._set_slices_from_index()
-        self._update_crosshair_lines()
-        self._notify_position()
+        # Step whole slices, keeping the position within the plane
+        index = list(index)
+        index[axis] = round(index[axis]) + delta
+        self._set_cursor(index, notify=True)
 
     def _dispatch_pointer(self, x: int, y: int):
         """Route a pointer position to the appropriate view and update slices."""
@@ -662,7 +683,12 @@ class CatImageViewer:
         self.render_window.Render()
 
     def _apply_field_of_view(self):
-        """Point every camera at the region the current zoom asks for."""
+        """Point every camera at the region the current zoom asks for.
+
+        While zoomed the panes follow the cursor, so the picked point stays in
+        the middle of the view.  It lands exactly there because the cursor is
+        not rounded to the voxel grid (see :meth:`_set_cursor`).
+        """
         if self._image is None:
             return
         ext = self._image.GetExtent()
@@ -723,11 +749,9 @@ class CatImageViewer:
             self._line_act.append(la)
 
         # Initial crosshair position: center index
-        cx = int(0.5 * (extent[0] + extent[1]))
-        cy = int(0.5 * (extent[2] + extent[3]))
-        cz = int(0.5 * (extent[4] + extent[5]))
-        self._ijk = [cx, cy, cz]
-        self._update_crosshair_lines()
+        self._set_cursor([0.5 * (extent[0] + extent[1]),
+                          0.5 * (extent[2] + extent[3]),
+                          0.5 * (extent[4] + extent[5])])
 
     def _world_from_index(self, ijk: Tuple[int, int, int]):
         i, j, k = ijk
@@ -833,19 +857,24 @@ class CatImageViewer:
 
     def _update_crosshair_lines(self):
         extent = self._image.GetExtent()
+        exact = self.get_index_exact() or self._ijk
 
         def w(ijk, off):
             wx, wy, wz = self._world_from_index(tuple(ijk))
             return (wx + off[0], wy + off[1], wz + off[2])
 
         # Each pane gets one line along either in-plane voxel axis, both
-        # crossing at the cursor and spanning the whole image.
+        # crossing at the cursor and spanning the whole image.  In the plane
+        # the exact cursor is used, across it the displayed slice, so the lines
+        # stay on the image they are drawn over.
         for pane in range(3):
             fixed = self._pane_axis[pane]
             in_plane = [a for a in range(3) if a != fixed]
             off = self._camera_offset(pane)
+            base = list(exact)
+            base[fixed] = self._ijk[fixed]
             for line, axis in zip(self._line_src[pane], in_plane):
-                p1 = list(self._ijk); p2 = list(self._ijk)
+                p1 = list(base); p2 = list(base)
                 p1[axis] = extent[2 * axis]
                 p2[axis] = extent[2 * axis + 1]
                 line.SetPoint1(*w(p1, off))
@@ -972,21 +1001,10 @@ class CatImageViewer:
         wz = p1[2] + t * v[2]
 
         # --- Convert world position to voxel indices ------------------
-        ii, jj, kk = self._index_from_world((wx, wy, wz))
-        i = int(round(ii))
-        j = int(round(jj))
-        k = int(round(kk))
-        ext = self._image.GetExtent()
-        i = max(ext[0], min(ext[1], i))
-        j = max(ext[2], min(ext[3], j))
-        k = max(ext[4], min(ext[5], k))
-
-        self._ijk = [i, j, k]
-        self._set_slices_from_index()
-        self._update_crosshair_lines()
-        self._notify_position()
+        # Kept fractional, so the crosshair sits exactly under the mouse
+        self._set_cursor(self._index_from_world((wx, wy, wz)), notify=True)
         if self.verbose:
-            print(f"[cat_vol_view] Click -> ijk=({i},{j},{k})")
+            print(f"[cat_vol_view] Click -> ijk={self.get_index()}")
 
     # ---------- Atlas lookup ----------
     @staticmethod
@@ -1133,7 +1151,7 @@ class CatImageViewer:
         world = self.get_world_position()
         if ijk is None or world is None:
             return []
-        value = self.get_value_at_index(ijk)
+        value = self.get_value()
         lines = [
             "",
             f"voxel       [{ijk[0]}, {ijk[1]}, {ijk[2]}]",
@@ -1146,6 +1164,25 @@ class CatImageViewer:
             lines.append(f"region      {region or '-'}")
         return lines
 
+    def _fit_info_font(self, lines: Sequence[str]):
+        """Size the panel text so the longest line fits its quadrant.
+
+        Long file names, atlas region names and small windows all change what
+        fits, so the size is derived from the text rather than fixed.
+        """
+        if self._info_actor is None:
+            return
+        try:
+            width = self.render_window.GetSize()[0] * (1.0 - self._viewports[0][2])
+            # VTK scales the point size with the window DPI, and Courier glyphs
+            # are about 0.6 em wide
+            scale = float(self.render_window.GetDPI() or 72) / 72.0
+            longest = max((len(line) for line in lines), default=1)
+            size = 0.9 * width / max(1.0, longest * 0.6 * scale)
+            self._info_actor.GetTextProperty().SetFontSize(int(max(7, min(16, size))))
+        except Exception:
+            pass
+
     def _update_info_text(self):
         """Redraw the information panel in the free quadrant."""
         if self._info_actor is None or self._image is None:
@@ -1154,13 +1191,35 @@ class CatImageViewer:
             self._info_actor.SetVisibility(False)
             return
         self._info_actor.SetVisibility(True)
-        self._info_actor.SetInput(
-            "\n".join(self._static_info_lines() + self._cursor_info_lines()))
+        lines = self._static_info_lines() + self._cursor_info_lines()
+        self._fit_info_font(lines)
+        self._info_actor.SetInput("\n".join(lines))
 
     def set_info_visible(self, visible: bool):
         """Show or hide the information panel."""
         self.show_info = bool(visible)
         self._update_info_text()
+        self.render_window.Render()
+
+    # ---------- Display ----------
+    def _apply_interpolation(self):
+        for actor in self._image_actors:
+            if actor is None:
+                continue
+            try:
+                actor.SetInterpolate(1 if self.interpolate else 0)
+            except Exception:
+                pass
+
+    def set_interpolation(self, interpolate: bool):
+        """Draw the slices smoothed (linear) or as raw voxels (nearest).
+
+        Nearest neighbour shows the data as it is stored, which is what you
+        want when judging segmentation edges or resampling artefacts.
+        """
+        self.interpolate = bool(interpolate)
+        self._apply_interpolation()
+        self._update_info_text()   # the reported value follows the display
         self.render_window.Render()
 
     # ---------- Cursor position ----------
@@ -1178,19 +1237,34 @@ class CatImageViewer:
             pass
 
     def get_index(self) -> Optional[Tuple[int, int, int]]:
-        """Current cursor as voxel indices, or None before setup()."""
+        """Voxel the cursor is in, or None before setup().
+
+        This is the rounded position; the cursor itself is not tied to the
+        voxel grid (see :meth:`get_world_position`).
+        """
         if self._ijk is None:
             return None
         return (int(self._ijk[0]), int(self._ijk[1]), int(self._ijk[2]))
 
-    def get_world_position(self) -> Optional[Tuple[float, float, float]]:
-        """Current cursor in world (mm) coordinates, or None before setup()."""
-        if self._ijk is None or self._image is None:
+    def get_index_exact(self) -> Optional[Tuple[float, float, float]]:
+        """Cursor in (fractional) voxel index coordinates."""
+        if self._cursor is None or self._image is None:
             return None
-        return self._world_from_index(tuple(self._ijk))
+        return tuple(self._index_from_world(self._cursor))
+
+    def get_world_position(self) -> Optional[Tuple[float, float, float]]:
+        """Current cursor in world (mm) coordinates, or None before setup().
+
+        The position is exact: it is where the user clicked, not the centre of
+        the voxel that was hit.  Only the slices shown and the intensity read
+        out use the rounded index, because those are voxel-wise by nature.
+        """
+        if self._cursor is None:
+            return None
+        return tuple(self._cursor)
 
     def get_value_at_index(self, ijk: Optional[Tuple[int, int, int]] = None):
-        """Image intensity at *ijk* (default: the cursor), None if unavailable."""
+        """Raw image intensity at *ijk* (default: the cursor's voxel)."""
         if self._image is None:
             return None
         if ijk is None:
@@ -1203,20 +1277,66 @@ class CatImageViewer:
         except Exception:
             return None
 
-    def set_index(self, i: int, j: int, k: int, notify: bool = False):
-        """Move the cursor to a voxel index, clamped to the image extent."""
+    def get_value(self):
+        """Intensity at the cursor, sampled the way the slices are drawn.
+
+        With smoothing on this is the trilinear value at the exact cursor
+        position, so the number matches what is displayed; with raw voxels
+        selected it is the untouched value of the voxel the cursor is in.
+        """
+        if self._image is None:
+            return None
+        if not self.interpolate:
+            return self.get_value_at_index()
+        index = self.get_index_exact()
+        if index is None:
+            return None
+        ext = self._image.GetExtent()
+        base, frac = [], []
+        for axis in range(3):
+            lo, hi = ext[2 * axis], ext[2 * axis + 1]
+            pos = min(max(index[axis], lo), hi)
+            low = min(int(math.floor(pos)), hi - 1) if hi > lo else lo
+            base.append(low)
+            frac.append(pos - low)
+        try:
+            value = 0.0
+            for di, dj, dk in itertools.product((0, 1), repeat=3):
+                weight = ((1.0 - frac[0] if di == 0 else frac[0])
+                          * (1.0 - frac[1] if dj == 0 else frac[1])
+                          * (1.0 - frac[2] if dk == 0 else frac[2]))
+                if weight == 0.0:
+                    continue
+                value += weight * self._image.GetScalarComponentAsDouble(
+                    min(base[0] + di, ext[1]),
+                    min(base[1] + dj, ext[3]),
+                    min(base[2] + dk, ext[5]), 0)
+            return float(value)
+        except Exception:
+            return None
+
+    def _set_cursor(self, index: Sequence[float], notify: bool = False):
+        """Place the cursor at a (fractional) voxel index, clamped to the image.
+
+        The exact position is kept: the crosshair, the reported millimetres and
+        a zoomed view all use it, so a click lands where it was made.  The
+        rounded index drives the displayed slices and the intensity readout.
+        """
         if self._image is None:
             return
         ext = self._image.GetExtent()
-        self._ijk = [
-            max(ext[0], min(ext[1], int(round(i)))),
-            max(ext[2], min(ext[3], int(round(j)))),
-            max(ext[4], min(ext[5], int(round(k)))),
-        ]
+        exact = [max(ext[2 * a], min(ext[2 * a + 1], float(index[a])))
+                 for a in range(3)]
+        self._cursor = list(self._world_from_index(tuple(exact)))
+        self._ijk = [int(round(v)) for v in exact]
         self._set_slices_from_index()
         self._update_crosshair_lines()
         if notify:
             self._notify_position()
+
+    def set_index(self, i: float, j: float, k: float, notify: bool = False):
+        """Move the cursor to a voxel index, clamped to the image extent."""
+        self._set_cursor((i, j, k), notify=notify)
 
     def set_world_position(self, world: Tuple[float, float, float],
                            notify: bool = False):
@@ -1227,8 +1347,7 @@ class CatImageViewer:
         """
         if self._image is None:
             return
-        i, j, k = self._index_from_world(tuple(world))
-        self.set_index(i, j, k, notify=notify)
+        self._set_cursor(self._index_from_world(tuple(world)), notify=notify)
 
     # ---------- Public API ----------
     def load_image(self, image_path: str):
@@ -1429,7 +1548,6 @@ class CatImageViewer:
 
             ren = self.renderers[i]
             ren.AddActor(actor)
-            ren.SetViewport(*self._viewports[i])
             ren.SetBackground(0, 0, 0)
             self.render_window.AddRenderer(ren)
 
@@ -1440,13 +1558,11 @@ class CatImageViewer:
 
         # The free bottom-right quadrant carries the image information
         info_ren = vtkRenderer()
-        col_edge = self._viewports[0][2] + 0.003
-        row_edge = self._viewports[0][3] + 0.003
-        info_ren.SetViewport(col_edge, 0.0, 1.0, row_edge)
         info_ren.SetBackground(0, 0, 0)
         info_ren.SetInteractive(0)
         self.render_window.AddRenderer(info_ren)
         self._info_renderer = info_ren
+        self._apply_viewports()
 
         info = vtkTextActor()
         prop = info.GetTextProperty()
@@ -1460,14 +1576,11 @@ class CatImageViewer:
         info_ren.AddViewProp(info)
         self._info_actor = info
 
-        # Set initial crosshair to the centre of the volume
-        self._ijk = [
-            (ext[0] + ext[1]) // 2,
-            (ext[2] + ext[3]) // 2,
-            (ext[4] + ext[5]) // 2,
-        ]
-
-        # Set display extents so actors have valid bounds for ResetCamera
+        # Set initial crosshair to the centre of the volume; this also gives
+        # the actors a display extent, so ResetCamera has valid bounds
+        self._ijk = [(ext[0] + ext[1]) // 2, (ext[2] + ext[3]) // 2,
+                     (ext[4] + ext[5]) // 2]
+        self._cursor = list(self._world_from_index(tuple(self._ijk)))
         self._set_slices_from_index()
 
         # Reset cameras to fill each viewport, then enforce SPM12
@@ -1488,6 +1601,8 @@ class CatImageViewer:
         except Exception:
             pass
         self._bind_interaction_events()
+
+        self._apply_interpolation()
 
         # Crosshair overlays & surface contours
         self._init_crosshair()
@@ -1596,6 +1711,25 @@ class _OrthoStyle(vtkInteractorStyleImage):
 #  Qt window                                                          #
 # ------------------------------------------------------------------ #
 
+def install_qt_message_filter():
+    """Silence the harmless QPainter warning of the VTK widget.
+
+    Qt's backing store touches the paint device of the render-to-texture
+    (native OpenGL) widget, which has no paint engine, and complains once per
+    paint: "QPainter::begin: Paint device returned engine == 0".  Everything
+    else is passed through.  Both viewers install this before their
+    QApplication.
+    """
+    def _filter(mode, context, message):
+        if "Paint device returned engine == 0" in message:
+            return
+        stream = sys.stderr if mode in (QtCore.QtMsgType.QtWarningMsg,
+                                        QtCore.QtMsgType.QtCriticalMsg,
+                                        QtCore.QtMsgType.QtFatalMsg) else sys.stdout
+        print(message, file=stream)
+
+    QtCore.qInstallMessageHandler(_filter)
+
 class VolumeViewerWindow(QtWidgets.QMainWindow):
     """Window around :class:`CatImageViewer`.
 
@@ -1625,11 +1759,11 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
 
     SURFACE_COLORS = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.6, 1.0))
 
-    def __init__(self, image_path: str, parent=None, on_position_changed=None,
+    def __init__(self, image_path, parent=None, on_position_changed=None,
                  surfaces: Sequence = (), **viewer_kwargs):
         super().__init__(parent)
-        self.image_path = image_path
-        self.setWindowTitle(f"Volume: {os.path.basename(image_path)}")
+        self.image_path = str(image_path)
+        self.setWindowTitle(f"Volume: {os.path.basename(self.image_path)}")
         self.on_position_changed = on_position_changed
 
         central = QtWidgets.QWidget(self)
@@ -1644,16 +1778,24 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             pass
 
         render_window = self.vtk_widget.GetRenderWindow()
+        # A cross is much easier to place on a voxel than the arrow tip.  It is
+        # set on the render window as well, because the widget re-derives the
+        # Qt cursor from there whenever VTK reports a cursor change.
+        try:
+            render_window.SetCurrentCursor(VTK_CURSOR_CROSSHAIR)
+            self.vtk_widget.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+        except Exception:
+            pass
         self.viewer = CatImageViewer(
             render_window=render_window,
             interactor=render_window.GetInteractor(),
             **viewer_kwargs,
         )
-        self.viewer.load_image(image_path)
+        self.viewer.load_image(self.image_path)
         for i, surface in enumerate(surfaces):
             self.viewer.add_surface(
                 surface, self.SURFACE_COLORS[i % len(self.SURFACE_COLORS)])
-        self.viewer.setup(window_title=os.path.basename(image_path))
+        self.viewer.setup(window_title=os.path.basename(self.image_path))
         self.viewer.on_position_changed = self._position_changed
 
         self._label = QtWidgets.QLabel("")
@@ -1677,6 +1819,13 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         try:
             self.vtk_widget.Initialize()
             self.vtk_widget.GetRenderWindow().Render()
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            self.viewer._update_info_text()   # the panel text follows the size
         except Exception:
             pass
 
@@ -1710,6 +1859,13 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         atlas_menu.addSeparator()
         atlas_menu.addAction("Other…").triggered.connect(self._choose_atlas)
 
+        menu.addSeparator()
+        raw_action = menu.addAction("Raw voxels (nearest neighbour)")
+        raw_action.setCheckable(True)
+        raw_action.setChecked(not self.viewer.interpolate)
+        raw_action.triggered.connect(
+            lambda checked=False: self.set_interpolation(not checked))
+
         info_action = menu.addAction("Image information")
         info_action.setCheckable(True)
         info_action.setChecked(self.viewer.show_info)
@@ -1723,6 +1879,14 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         """Zoom the slices to an mm bounding box around the cursor."""
         try:
             self.viewer.set_field_of_view(mm)
+        except Exception:
+            pass
+
+    def set_interpolation(self, interpolate: bool):
+        """Smooth the slices, or draw the raw voxels."""
+        try:
+            self.viewer.set_interpolation(interpolate)
+            self._update_label()   # the reported value follows the display
         except Exception:
             pass
 
@@ -1748,7 +1912,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         if ijk is None or world is None:
             self._label.setText("")
             return
-        value = self.viewer.get_value_at_index(ijk)
+        value = self.viewer.get_value()
         text = (f"voxel [{ijk[0]}, {ijk[1]}, {ijk[2]}]    "
                 f"mm ({world[0]:.1f}, {world[1]:.1f}, {world[2]:.1f})")
         if value is not None:
@@ -1786,12 +1950,11 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
-        "image",
-        help="Input image: .nii(.gz), .mnc, .mha/.mhd, .nrrd, …",
-    )
-    p.add_argument(
-        "surfaces", nargs="*",
-        help="0-3 surface files (.gii, .vtk, .vtp, .obj, .stl)",
+        "inputs", nargs="+",
+        help=("Volumes (.nii(.gz), .mnc, .mha/.mhd, .nrrd, …) and up to three "
+              "surfaces (.gii, .vtk, .vtp, .obj, .stl) drawn as outlines. "
+              "Several volumes are stepped through with the ←/→ keys, "
+              "keeping the cursor position."),
     )
     p.add_argument(
         "--size", type=int, default=400,
@@ -1813,6 +1976,10 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     p.add_argument(
         "--no-info", action="store_true",
         help="Leave the information panel out of the free quadrant",
+    )
+    p.add_argument(
+        "--nearest", action="store_true",
+        help="Draw the raw voxels instead of smoothing the slices",
     )
     p.add_argument(
         "--headless", action="store_true",
@@ -1847,6 +2014,75 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     return p.parse_args(argv)
 
 
+#: Files that hold a surface rather than a volume
+SURFACE_SUFFIXES = ('.gii', '.vtk', '.vtp', '.obj', '.stl', '.ply')
+
+#: Volumes opened at once, one window each; more would not fit side by side
+MAX_VOLUMES = 3
+
+
+def _split_inputs(inputs: Sequence[str]) -> Tuple[List[str], List[str]]:
+    """Sort the positional arguments into volumes and surfaces by extension."""
+    volumes, surfaces = [], []
+    for item in inputs:
+        (surfaces if str(item).lower().endswith(SURFACE_SUFFIXES) else volumes).append(str(item))
+    return volumes, surfaces
+
+
+def link_windows(windows: Sequence["VolumeViewerWindow"]):
+    """Keep the cursor of several viewer windows on the same world position.
+
+    Each window reports where the user clicked or scrolled, and the others are
+    moved to that millimetre position.  They are only told to move, never to
+    report back, so this cannot loop.
+    """
+    windows = list(windows)
+
+    def _follow(world_xyz, source=None):
+        for window in windows:
+            if window is not source:
+                window.set_world_position(world_xyz)
+
+    for window in windows:
+        window.on_position_changed = _follow
+    return windows
+
+
+def _place_windows(windows: Sequence["VolumeViewerWindow"]):
+    """Lay the windows out side by side, shrinking them to fit the screen.
+
+    Comparing volumes means seeing them next to each other, so the windows are
+    scaled down (keeping their proportions) until the row fits; only when that
+    would make them unusably small are they cascaded instead.
+    """
+    if len(windows) < 2:
+        return
+    try:
+        available = QtWidgets.QApplication.primaryScreen().availableGeometry()
+    except Exception:
+        return
+
+    count = len(windows)
+    gap = 12
+    width = max(w.width() for w in windows)
+    height = max(w.height() for w in windows)
+    scale = min(1.0,
+                (available.width() - (count - 1) * gap) / float(count * width),
+                available.height() / float(height))
+    if width * scale < 300:
+        for i, window in enumerate(windows):   # too narrow to tile
+            window.move(available.left() + 40 * i, available.top() + 40 * i)
+        return
+
+    width = int(width * scale)
+    height = int(height * scale)
+    total = count * width + (count - 1) * gap
+    left = available.left() + max(0, (available.width() - total) // 2)
+    for i, window in enumerate(windows):
+        window.resize(width, height)
+        window.move(left + i * (width + gap), available.top())
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI entry-point."""
     args = _parse_args(argv)
@@ -1861,26 +2097,49 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         surface_convention=args.surface_convention,
         percentile_range=pct,
         show_info=not args.no_info,
+        interpolate=not args.nearest,
     )
-    surfaces = list(args.surfaces[:3])
+    volumes, surfaces = _split_inputs(args.inputs)
+    if not volumes:
+        print("[cat_vol_view] No volume among the given files", file=sys.stderr)
+        return 2
+    if len(volumes) > MAX_VOLUMES:
+        print(f"[cat_vol_view] Only the first {MAX_VOLUMES} volumes are shown; "
+              f"ignoring {', '.join(os.path.basename(v) for v in volumes[MAX_VOLUMES:])}",
+              file=sys.stderr)
+        volumes = volumes[:MAX_VOLUMES]
+    surfaces = surfaces[:3]
 
     if args.screenshot or args.headless:
         # Batch mode renders without a window, so no Qt application is needed
-        viewer = CatImageViewer(**options)
-        viewer.load_image(args.image)
-        for i, surf in enumerate(surfaces):
-            viewer.add_surface(surf, VolumeViewerWindow.SURFACE_COLORS[i])
-        viewer.setup(window_title=os.path.basename(args.image))
-        if args.atlas:
-            viewer.set_atlas(args.atlas)
-        viewer.render(screenshot=args.screenshot, headless=True)
+        for i, volume in enumerate(volumes):
+            viewer = CatImageViewer(**options)
+            viewer.load_image(volume)
+            for s, surf in enumerate(surfaces):
+                viewer.add_surface(surf, VolumeViewerWindow.SURFACE_COLORS[s])
+            viewer.setup(window_title=os.path.basename(volume))
+            if args.atlas:
+                viewer.set_atlas(args.atlas)
+            screenshot = args.screenshot
+            if screenshot and len(volumes) > 1:
+                stem, ext = os.path.splitext(screenshot)
+                screenshot = f"{stem}_{i + 1}{ext or '.png'}"
+            viewer.render(screenshot=screenshot, headless=True)
         return 0
 
+    install_qt_message_filter()
     app = QtWidgets.QApplication(sys.argv)
-    window = VolumeViewerWindow(args.image, surfaces=surfaces, **options)
-    if args.atlas:
-        window.set_atlas(args.atlas)
-    window.show()
+    # One window per volume, with their cursors linked
+    windows = []
+    for volume in volumes:
+        window = VolumeViewerWindow(volume, surfaces=surfaces, **options)
+        if args.atlas:
+            window.set_atlas(args.atlas)
+        windows.append(window)
+    link_windows(windows)
+    for window in windows:
+        window.show()
+    _place_windows(windows)
     return int(app.exec())
 
 

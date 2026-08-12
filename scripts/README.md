@@ -226,6 +226,9 @@ CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii
 
 # Volume with surface outlines drawn onto the slices
 CAT_VolView T1.nii.gz lh.central.gii rh.central.gii
+
+# Up to three volumes: one window each, cursors linked
+CAT_VolView T1.nii.gz p1T1.nii.gz p2T1.nii.gz
 ```
 
 **Linked volume view.** `-volume <image>` (or the *Open NIfTI…* button) opens the three
@@ -236,16 +239,27 @@ offer the identical slices and right-click menu. Slices are shown in neurologica
 orientation (left is left) in the millimetre space of the NIfTI sform/qform, and
 `--screenshot` writes a PNG without opening a window.
 
+Up to three volumes can be given at once: each opens its own window, the windows are tiled
+side by side, and their cursors are linked — clicking in one moves the others to the same
+millimetre position, so the same anatomical point is shown even when the volumes differ in
+grid, voxel size or orientation.
+
 The free quadrant carries an information panel: file name, dimensions, voxel size,
 orientation code, data type and intensity range, plus the voxel index, mm coordinates and
 value under the cursor. The right-click menu holds:
 
-- **Zoom** — full volume or a 160/80/40/20/10 mm bounding box centred on the cursor, as in
-  the SPM ortho viewer.
+- **Zoom** — full volume or a 160/80/40/20/10 mm bounding box, as in the SPM ortho viewer;
+  a zoomed view follows the cursor, keeping the picked point in the middle of the pane.
+  The cursor itself is not rounded to the voxel grid, so it sits exactly where it was
+  placed — only the displayed slices and the intensity readout are voxel-wise.
 - **Atlas** — name the region under the cursor from any atlas shipped with T1Prep (or one
   of your own via *Other…*, or `--atlas` on the command line). The atlas is sampled at the
   mm position of the cursor, so pick one only when the displayed image is registered to its
   space; *None* switches the lookup off.
+- **Raw voxels (nearest neighbour)** — draw the slices unsmoothed to see the data as
+  stored, useful for segmentation edges and resampling artefacts (`--nearest`). The
+  reported intensity follows: trilinear at the exact cursor position while smoothing
+  is on, the untouched voxel value with raw voxels selected.
 - **Image information** — hide or show the panel (`--no-info` starts without it).
 
 **Statistic results.** When the overlay name contains `log` (CAT12/SPM `logP_*` files), the
