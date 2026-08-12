@@ -221,6 +221,12 @@ six-view montage. Run it without arguments to print the full help.
 ./scripts/CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii
 ```
 
+**Statistic results.** When the overlay name contains `log` (CAT12/SPM `logP_*` files), the
+colorbar is labelled with p-values instead of the raw -log10(p) values, as in
+`cat_surf_results`: `1.3` → `0.05`, `2` → `0.01`, `3` → `0.001`, and `1e-08` beyond `p<1e-7`.
+Thresholded maps (`-clip -1.3 1.3`) get their first tick at exactly ±log10(0.05). Use `-log`
+to force the p-value labels for files that do not follow the naming convention.
+
 **How the surface is found.** An overlay file does not reference the surface it belongs to,
 so it is resolved in this order:
 
@@ -230,10 +236,11 @@ so it is resolved in this order:
    `central`/`midthickness` surface in the same folder,
 3. the number of values, matched against the shipped 4k/32k/164k templates.
 
-Step 3 is what makes free-form names work — most notably CAT12/SPM statistic folders where
-the results sit next to an `SPM.mat` (`logP_age_(...)_pFWE0.1_k0.gii`). Because the lookup
-runs for every overlay, files from different folders, subjects and mesh resolutions can be
-mixed in a single call. The right hemisphere is added when an `rh.`/`right`/`_hemi-R_` file
+Step 3 is what makes free-form names work — most notably CAT12/SPM statistic results
+(`logP_age_(...)_pFWE0.1_k0.gii`, `TFCE_log_pFWE_0001.gii`). Any `.gii` that holds values but
+no surface is treated as an overlay, so such results also load when they were copied away
+from their `SPM.mat`. Because the lookup runs for every overlay, files from different
+folders, subjects and mesh resolutions can be mixed in a single call. The right hemisphere is added when an `rh.`/`right`/`_hemi-R_` file
 sits next to the left one, or when an overlay holds both hemispheres back to back.
 
 **Batch use.** `-output` renders the view, writes the PNG and exits, so the viewer can be

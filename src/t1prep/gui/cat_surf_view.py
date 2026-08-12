@@ -9,6 +9,8 @@ Features:
   • Six-view montage (lat/med/sup/inf/ant/post) by cloning actors with transforms.
   • Colormaps: C1, C2, C3, JET, FIRE, BIPOLAR, GRAY. Discrete levels, inverse, clip window.
   • Colorbar (VTK 9.5-compatible AddViewProp), optional stats in title.
+    Overlays holding -log10(p) values (name contains "log", or -log) are labelled
+    with the p-values they stand for (1.3 -> 0.05, 2 -> 0.01, 3 -> 0.001).
   • Right-side docked control panel: range, clip, colorbar toggle, overlay picker, opacity, bkg range, stats, inverse.
   • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, g screenshot, plus standard VTK keys.
 
@@ -26,6 +28,7 @@ Direct invocation:
 """
 from __future__ import annotations
 import argparse
+import math
 import os
 import sys
 import re
@@ -79,7 +82,7 @@ DOCK_LEFT = Qt.DockWidgetArea.LeftDockWidgetArea
 
 # --- VTK imports (module-accurate for common wheels) ---
 from vtkmodules.util.numpy_support import vtk_to_numpy
-from vtkmodules.vtkCommonCore import vtkLookupTable, vtkDoubleArray, vtkPoints
+from vtkmodules.vtkCommonCore import vtkLookupTable, vtkDoubleArray, vtkPoints, vtkVariant
 from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray
 from vtkmodules.vtkFiltersGeneral import vtkCurvatures
 from vtkmodules.vtkRenderingCore import (
@@ -224,8 +227,11 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
     """
     overlay_path = Path(overlay_filename)
 
-    # SPM analysis overlays map to the template LH mesh
+    # SPM analysis overlays map to the template mesh they were computed on
     if is_spm_surface_overlay(overlay_filename):
+        tpl = _template_mesh_for_points(_gifti_scalar_count(overlay_filename))
+        if tpl is not None:
+            return str(tpl)
         template_dir = _get_template_surface_dir()
         lh_template = template_dir / 'lh.central.freesurfer.gii'
         if lh_template.exists():
@@ -333,7 +339,15 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
         if mesh_name is not None:
             mesh_candidate = overlay_path.parent / mesh_name
 
-    return str(mesh_candidate or overlay_path)
+    result = mesh_candidate or overlay_path
+    # No usable surface from the name — statistic results (TFCE_*, logP_*, …)
+    # follow no convention and may sit in a folder without any surface.  Their
+    # value count still identifies the template they were computed on.
+    if _gifti_point_count(str(result)) <= 0:
+        tpl = _template_mesh_for_points(_gifti_scalar_count(str(overlay_path)))
+        if tpl is not None:
+            return str(tpl)
+    return str(result)
 
 def is_overlay_file(filename: str) -> bool:
     """Heuristic check whether a path is an overlay (texture/label) rather than a mesh."""
@@ -353,6 +367,10 @@ def is_overlay_file(filename: str) -> bool:
 
     # SPM surface analysis overlays
     if is_spm_surface_overlay(filename):
+        return True
+
+    # A .gii that holds values but no surface can only be an overlay
+    if _is_scalars_only_gifti(filename):
         return True
 
     # Combined-hemisphere 'mesh.' overlays (e.g. s12.mesh.thickness.rest.gii)
@@ -375,6 +393,90 @@ def detect_overlay_kind(filename: str) -> Optional[str]:
     if '_desc-pbt' in name or '.pbt.' in name or name.endswith('pbt'):
         return 'pbt'
     return None
+
+
+# -log10(0.05) = 1.30103, the usual p<0.05 threshold of CAT12 statistic results
+LOG10_P005 = -math.log10(0.05)
+
+
+def is_logp_overlay(filename: Optional[str]) -> bool:
+    """Return True when the overlay holds -log10(p) values.
+
+    Same heuristic as ``cat_surf_results``: the file name contains 'log'
+    (e.g. ``logP_age_pFWE0.05_k0.gii``).
+    """
+    if not filename:
+        return False
+    return 'log' in Path(filename).name.lower()
+
+
+def format_p_value_label(value: float, compact: bool = False) -> str:
+    """Convert a -log10(p) tick to the p-value it stands for.
+
+    Mirrors the tick labels of ``cat_surf_results``: 1.3 -> ``0.05``,
+    2 -> ``0.01``, 3 -> ``0.001``; beyond 1e-7 the exponential notation is
+    used, and negative values (the other tail of a two-sided contrast) keep a
+    leading minus sign.
+
+    Args:
+        value: Tick position in -log10(p) units.
+        compact: Switch to the exponential form from 1e-4 on.  Needed when
+            many ticks share the bar, where '0.0000001' would overlap its
+            neighbour.
+    """
+    mag = abs(float(value))
+    if mag == 0.0:
+        return ''
+    p = 10.0 ** (-mag)
+    if mag > (3 if compact else 7):
+        exp = round(mag)
+        label = f'1e-{exp:02d}' if abs(mag - exp) < 1e-6 else f'{p:.0e}'
+    else:
+        # Trailing zeros of the fixed-point form are dropped, so -log10(0.05)
+        # prints as '0.05' rather than '0.0500000'.
+        label = f'{p:.7f}'.rstrip('0')
+    return f'-{label}' if value < 0 else label
+
+
+def logp_colorbar_ticks(
+    vmin: float, vmax: float, clip: Optional[Tuple[float, float]] = None, max_ticks: int = 8
+) -> List[float]:
+    """Tick positions (in -log10(p) units) for a log-p colorbar.
+
+    Follows ``cat_surf_results``: integer steps over the displayed range, but
+    when the overlay is thresholded at p<0.05 the first tick above (and below)
+    zero is moved to exactly ±log10(0.05) so it is labelled '0.05'.
+    """
+    if not (vmax > vmin):
+        return []
+    c0 = c1 = None
+    if clip is not None and clip[1] > clip[0]:
+        c0, c1 = float(clip[0]), float(clip[1])
+    step = max(1, int(math.ceil((vmax - vmin) / max(1, max_ticks))))
+    lo, hi = int(round(vmin)), int(round(vmax))
+
+    if c1 is not None and 1.3 <= abs(c1) <= 1.4:
+        if c0 is not None and -1.4 <= c0 <= -1.3 and vmin < 0:
+            ticks = [float(v) for v in range(lo, hi + 1, step)]
+            if 0.0 in ticks:
+                mid = ticks.index(0.0)
+                if 0 < mid < len(ticks) - 1:
+                    ticks[mid - 1] = -LOG10_P005
+                    ticks[mid + 1] = LOG10_P005
+            else:
+                ticks = [
+                    -LOG10_P005 if v == -1.0 else (LOG10_P005 if v == 1.0 else v)
+                    for v in ticks
+                ]
+        else:
+            ticks = [float(v) for v in range(0, hi + 1, step)]
+            if len(ticks) > 1:
+                ticks[1] = LOG10_P005
+    else:
+        ticks = [float(v) for v in range(math.floor(vmin), math.ceil(vmax) + 1, step)]
+
+    # Zero has no p-value; keep only ticks that fall inside the shown range
+    return [v for v in ticks if v != 0.0 and vmin <= v <= vmax]
 
 
 def _is_gifti_mesh_by_name(filename: str) -> bool:
@@ -483,6 +585,50 @@ def _gifti_point_count(filename: str) -> int:
         return 0
 
 
+@lru_cache(maxsize=64)
+def _gifti_scalar_count(filename: str) -> int:
+    """Return the number of scalar values in a ``.gii`` overlay.
+
+    Returns 0 for surfaces (they hold geometry only) and for unreadable files.
+    The array dimensions are taken from the XML header, so the companion
+    ``.dat`` of an ExternalFileBinary pair does not have to be read.
+    """
+    if not str(filename).lower().endswith('.gii'):
+        return 0
+    try:
+        g = _nib_load_gifti(filename)
+    except Exception:
+        return 0
+    for d in getattr(g, 'darrays', []):
+        code = int(getattr(d, 'intent', getattr(d, 'intent_code', -1)) or -1)
+        if code in (1008, 1009):  # POINTSET / TRIANGLE – geometry, not values
+            continue
+        try:
+            dims = [int(v) for v in getattr(d, 'dims', []) if int(v) > 0]
+            if dims:
+                return int(np.prod(dims))
+            return int(np.asarray(d.data).size)
+        except Exception:
+            continue
+    return 0
+
+
+def _is_scalars_only_gifti(filename: str) -> bool:
+    """True for an existing ``.gii`` that holds values but no surface.
+
+    Such a file can only be an overlay, whatever it is called.  CAT12/TFCE
+    statistic results (``TFCE_log_pFWE_0001.gii`` plus its ``.dat``) are the
+    common case: the name follows no convention, and the ``SPM.mat`` that
+    would otherwise mark the directory is not always kept next to them.
+    """
+    try:
+        if not str(filename).lower().endswith('.gii') or not Path(filename).exists():
+            return False
+    except Exception:
+        return False
+    return _gifti_point_count(str(filename)) <= 0 and _gifti_scalar_count(str(filename)) > 0
+
+
 def _mesh_point_capacity(mesh_path: Path) -> Tuple[int, int]:
     """Return (points of *mesh_path*, points of both hemispheres together).
 
@@ -533,8 +679,10 @@ def is_spm_surface_overlay(filename: str) -> bool:
     3. Any non-mesh ``.gii`` inside a directory that holds an ``SPM.mat``.
        CAT12 writes its thresholded results there under free-form names such
        as ``logP_age_(polynomial_of_degree_3)_pFWE0.1_k0.gii``, which no
-       naming rule can recognise — the ``SPM.mat`` sibling is the only
-       dependable marker.
+       naming rule can recognise.
+
+    Results copied away from their ``SPM.mat`` are still recognised by
+    :func:`is_overlay_file`, which falls back to the file content.
 
     Args:
         filename: Path to a potential SPM surface overlay file
@@ -1111,7 +1259,7 @@ def parse_args(argv: List[str]) -> Options:
             '       or a central/midthickness surface in the same folder,\n'
             '    3. the number of values, matched against the 4k/32k/164k templates.\n'
             '  Step 3 is what makes free-form names work, e.g. CAT12/SPM statistic folders\n'
-            '  (logP_*.gii next to an SPM.mat), and it is re-run for every overlay, so files\n'
+            '  (logP_*.gii, TFCE_*.gii), and it is re-run for every overlay, so files\n'
             '  from different folders, subjects or mesh resolutions can be mixed in one call.\n'
             '  The right hemisphere is added when an rh./right/_hemi-R_ file sits next to the\n'
             '  left one, or when an overlay holds both hemispheres back to back.\n'
@@ -1159,7 +1307,9 @@ def parse_args(argv: List[str]) -> Options:
                    help='Show the colorbar (only has an effect with an overlay)')
     p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=0,
                    help='Number of discrete color levels (0 = continuous)')
-    p.add_argument('-log', action='store_true', help=argparse.SUPPRESS)  # accepted, not implemented
+    p.add_argument('-log', action='store_true',
+                   help='Label the colorbar with p-values (-log10(p) overlay).\n'
+                        'Applied automatically when the file name contains "log".')
     p.add_argument('-white', action='store_true', help='Use a white background')
     # Control panel visibility (default: hidden)
     p.add_argument('-panel', dest='panel', action='store_true', help='Start with the control panel shown')
@@ -3275,9 +3425,9 @@ class Viewer(QtWidgets.QMainWindow):
 
         Overlay files carry no reference to their surface, so it is normally
         derived from the filename.  That heuristic fails for free-form names —
-        most notably CAT12/SPM statistic folders (``logP_*.gii`` next to an
-        ``SPM.mat``) — and when overlays from several folders are passed in one
-        call.  The value count is the one unambiguous clue, so when the current
+        most notably CAT12/SPM statistic results (``logP_*.gii``,
+        ``TFCE_*.gii``) — and when overlays from several folders are passed in
+        one call.  The value count is the one unambiguous clue, so when the current
         mesh does not fit, candidates are tried in order of reliability:
 
         1. geometry embedded in the overlay file itself,
@@ -3377,6 +3527,45 @@ class Viewer(QtWidgets.QMainWindow):
         if self.opts.colorbar:
             self._ensure_colorbar()
 
+    def _uses_logp_scale(self) -> bool:
+        """True when the current overlay should be labelled with p-values."""
+        return bool(getattr(self.opts, 'log', False)) or is_logp_overlay(self.opts.overlay)
+
+    def _apply_logp_labels(self, sb: vtkScalarBarActor, lut_cb: vtkLookupTable):
+        """Label the colorbar with p-values for -log10(p) overlays.
+
+        The ticks are attached as LUT annotations, so VTK places them at their
+        value position instead of at evenly spaced steps.  For every other
+        overlay the plain numeric tick labels are restored.
+        """
+        ticks = []
+        if self._uses_logp_scale():
+            ticks = logp_colorbar_ticks(
+                self.overlay_range[0], self.overlay_range[1], self.opts.clip
+            )
+        try:
+            lut_cb.ResetAnnotations()
+            if not ticks:
+                sb.SetDrawAnnotations(False)
+                sb.SetDrawTickLabels(True)
+                return
+            # Dense bars need the short exponential form to stay readable
+            compact = len(ticks) > 5
+            for value in ticks:
+                lut_cb.SetAnnotation(
+                    vtkVariant(float(value)), format_p_value_label(value, compact)
+                )
+            sb.SetDrawAnnotations(True)
+            sb.SetDrawTickLabels(False)
+            sb.SetFixedAnnotationLeaderLineColor(True)
+            tp = sb.GetLabelTextProperty()
+            atp = sb.GetAnnotationTextProperty()
+            atp.SetFontSize(tp.GetFontSize())
+            atp.SetColor(tp.GetColor())
+            atp.SetItalic(False)
+        except Exception:
+            pass
+
     def _ensure_colorbar(self):
         """Create the scalar bar if needed and update its properties.
 
@@ -3431,6 +3620,8 @@ class Viewer(QtWidgets.QMainWindow):
                 self.scalar_bar.SetAnnotationTextScaling(False)
             except Exception:
                 pass
+            # Statistic overlays (logP_*) are labelled with p-values
+            self._apply_logp_labels(self.scalar_bar, lut_cb)
             # Mark actor modified; do not force visibility here
             try:
                 self.scalar_bar.Modified()
@@ -3487,6 +3678,9 @@ class Viewer(QtWidgets.QMainWindow):
             sb.SetAnnotationTextScaling(False)
         except Exception:
             pass
+
+        # Statistic overlays (logP_*) are labelled with p-values
+        self._apply_logp_labels(sb, lut_cb)
 
         # Store; caller manages attaching/detaching
         self.scalar_bar = sb
