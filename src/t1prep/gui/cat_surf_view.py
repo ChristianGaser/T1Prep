@@ -3,7 +3,8 @@
 CAT_SurfView — PySide6 + VTK port with right-side control panel
 
 Features:
-  • Load LH mesh (.gii). Auto-detect RH mesh via name pattern ("lh."→"rh.", "left"→"right").
+  • Load LH mesh (.gii). Auto-detect RH mesh via name pattern ("lh."→"rh.", "left"→"right")
+    or split a combined surface holding both hemispheres (CAT12 "mesh.central.*").
   • Optional overlay scalars (.gii; FreeSurfer morph: thickness/curv/sulc; or text one value/line).
   • Optional background scalars for curvature shading.
   • Six-view montage (lat/med/sup/inf/ant/post) by cloning actors with transforms.
@@ -12,6 +13,10 @@ Features:
     Overlays holding -log10(p) values (name contains "log", or -log) are labelled
     with the p-values they stand for (1.3 -> 0.05, 2 -> 0.01, 3 -> 0.001).
   • Right-side docked control panel: range, clip, colorbar toggle, overlay picker, opacity, bkg range, stats, inverse.
+  • Optional volume window (-volume) with three orthogonal slices, linked to the
+    surface in both directions: clicking the surface moves the slices, clicking
+    a slice marks the closest surface point.  Right-click for the zoom levels.
+    It is the same viewer as the standalone CAT_VolView tool (cat_vol_view.py).
   • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, g screenshot, plus standard VTK keys.
 
 Requires: vtk (>=9), PySide6; nibabel (for GIFTI fallback + FreeSurfer textures if VTK lacks vtkGIFTIReader).
@@ -104,14 +109,19 @@ except Exception:
     HAVE_VTK_GIFTI = False
 
 # Saving screenshots
-from vtkmodules.vtkIOImage import vtkPNGWriter, vtkNIFTIImageReader
-from vtkmodules.vtkRenderingCore import vtkImageActor, vtkPropPicker
+from vtkmodules.vtkIOImage import vtkPNGWriter
 from vtkmodules.vtkRenderingCore import vtkCellPicker
-from vtkmodules.vtkFiltersSources import vtkLineSource
-from vtkmodules.vtkImagingCore import vtkImageReslice
-from vtkmodules.vtkImagingColor import vtkImageMapToWindowLevelColors
+from vtkmodules.vtkFiltersSources import vtkSphereSource
 from vtkmodules.vtkCommonMath import vtkMatrix4x4
-from vtkmodules.vtkInteractionStyle import vtkInteractorStyleImage
+from vtkmodules.vtkCommonTransforms import vtkTransform
+from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
+
+# The volume window is shared with the standalone CAT_VolView tool.  It also
+# selects the QVTKRWIBase used below, so it is imported before the widget.
+try:
+    from .cat_vol_view import VolumeViewerWindow
+except ImportError:  # direct invocation as a script (no package context)
+    from cat_vol_view import VolumeViewerWindow
 
 # Qt interactor & backends
 import vtkmodules.qt as vtk_qt
@@ -179,6 +189,13 @@ def get_lookup_table(colormap: int, alpha: float) -> LookupTableWithEnabling:
     return lut
 
 # ---- Naming helpers ----
+# Surface types that CAT12/FreeSurfer put in the second dot-token of a mesh
+# file name (lh.central.subj.gii, mesh.inflated.freesurfer.gii, …).
+MESH_TYPE_TOKENS = frozenset(
+    {'central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc'}
+)
+
+
 def detect_naming_scheme(filename: str) -> bool:
     """
     Detect whether a filename uses BIDS naming convention.
@@ -355,7 +372,7 @@ def is_overlay_file(filename: str) -> bool:
     filename_lower = filename_only.lower()
 
     parts = filename_lower.split('.')
-    mesh_types = ['central','pial','white','inflated','sphere','patch','mc','sqrtsulc']
+    mesh_types = MESH_TYPE_TOKENS
     # Case A: lh.kind.subject (>=3 parts)
     if len(parts) >= 3 and parts[0] in ('lh', 'rh'):
         if parts[1] not in mesh_types:
@@ -737,10 +754,7 @@ def _parse_mesh_combined_overlay(filename: str) -> Optional[Tuple[str, str]]:
         name = name[:-4]
     parts = name.split('.')
 
-    mesh_types = {
-        'central', 'pial', 'white', 'inflated', 'sphere',
-        'patch', 'mc', 'sqrtsulc',
-    }
+    mesh_types = MESH_TYPE_TOKENS
 
     # Find the 'mesh' token
     mesh_idx = None
@@ -829,6 +843,73 @@ def split_combined_mesh(
         return pd
 
     return _build_poly(0, n_left), _build_poly(n_left, n_right)
+
+
+def is_combined_hemisphere_mesh(filename: str) -> bool:
+    """True for a surface file name that holds both hemispheres.
+
+    CAT12 replaces the ``lh``/``rh`` token with ``mesh`` for files covering
+    both sides, e.g. ``mesh.central.Template_T1.gii`` or
+    ``mesh.inflated.freesurfer.gii``.
+    """
+    parts = [p.lower() for p in Path(filename).name.split('.')]
+    return any(
+        p == 'mesh' and parts[i + 1] in MESH_TYPE_TOKENS
+        for i, p in enumerate(parts[:-1])
+    )
+
+
+def split_hemispheres(poly: vtkPolyData, filename: str) -> Optional[Tuple[vtkPolyData, vtkPolyData]]:
+    """Split a surface that stores LH and RH back to back, if it is one.
+
+    Three cues are accepted: the CAT12 ``mesh.*`` naming of surfaces
+    (``mesh.central.*``) and of overlays carrying their geometry
+    (``s12.mesh.thickness.*``), and a vertex count of twice a shipped
+    template.  The split is only used when the two halves are self-contained:
+    a single hemisphere would lose every triangle crossing the split, which is
+    how a false cue is detected.
+
+    Returns:
+        (poly_l, poly_r), or None when the surface is a single hemisphere.
+    """
+    n_total = poly.GetNumberOfPoints()
+    half = n_total // 2
+    if n_total < 2 or n_total % 2:
+        return None
+    if not (
+        is_combined_hemisphere_mesh(filename)
+        or _parse_mesh_combined_overlay(filename) is not None
+        or half in TEMPLATE_HEMI_POINTS
+    ):
+        return None
+    try:
+        poly_l, poly_r = split_combined_mesh(poly, half)
+    except Exception:
+        return None
+    kept = poly_l.GetNumberOfPolys() + poly_r.GetNumberOfPolys()
+    if poly_r.GetNumberOfPolys() == 0 or kept != poly.GetNumberOfPolys():
+        return None
+    return poly_l, poly_r
+
+
+def read_mesh_pair(mesh_path: str) -> Tuple[vtkPolyData, Optional[vtkPolyData]]:
+    """Load a surface together with its right-hemisphere counterpart.
+
+    The counterpart is either a sibling file (``lh.`` -> ``rh.``) or the second
+    half of a combined ``mesh.*`` surface.  Without one, the right entry is
+    None and only the left column of the montage is drawn.
+    """
+    poly = read_gifti_mesh(str(mesh_path))
+    pair = split_hemispheres(poly, str(mesh_path))
+    if pair is not None:
+        return pair
+    other = _hemi_counterpart(Path(mesh_path))
+    if other is not None and other.exists():
+        try:
+            return poly, read_gifti_mesh(str(other))
+        except Exception:
+            return poly, None
+    return poly, None
 
 
 # ---- I/O helpers ----
@@ -1262,7 +1343,8 @@ def parse_args(argv: List[str]) -> Options:
             '  (logP_*.gii, TFCE_*.gii), and it is re-run for every overlay, so files\n'
             '  from different folders, subjects or mesh resolutions can be mixed in one call.\n'
             '  The right hemisphere is added when an rh./right/_hemi-R_ file sits next to the\n'
-            '  left one, or when an overlay holds both hemispheres back to back.\n'
+            '  left one, or when a mesh (mesh.central.*) or overlay holds both hemispheres\n'
+            '  back to back.\n'
             '\n'
             'Keys:\n'
             '  ←/→ previous/next overlay (or mesh)   u/d/l/r rotate   o reset view\n'
@@ -1283,7 +1365,9 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
     p.add_argument('-overlays', dest='overlays', nargs='+', help='Multiple overlay files for navigation')
     p.add_argument('-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
-    p.add_argument('-volume','-vol','--nifti', dest='volume', help='3D NIfTI volume to display in a separate orthogonal view window')
+    p.add_argument('-volume','-vol','--nifti', dest='volume',
+                   help='3D NIfTI volume to show in a linked orthogonal slice window.\n'
+                        'Clicking the surface moves the slices and vice versa.')
     p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0],
                    help='Overlay value range (min max); omit for auto-scaling.\n'
                         'Given explicitly, it also overrides the thickness/pbt presets.')
@@ -1903,7 +1987,9 @@ class Viewer(QtWidgets.QMainWindow):
             self._handle_key(sym)
         self.iren.AddObserver("KeyPressEvent", _on_keypress)
 
-        # Clicking on the surface forwards the picked world position to any open volume windows
+        # Clicking on the surface marks the spot and moves any open slice viewer
+        self._cursor_actors: List[vtkActor] = []
+
         def _on_left_click(_obj, _evt):
             try:
                 x, y = self.iren.GetEventPosition()
@@ -1911,6 +1997,7 @@ class Viewer(QtWidgets.QMainWindow):
                 return
             mm = self._surface_click_to_mm(x, y)
             if mm is not None:
+                self._set_surface_cursor(mm)
                 self._broadcast_world_pick(mm)
         self.iren.AddObserver("LeftButtonPressEvent", _on_left_click)
 
@@ -1960,10 +2047,7 @@ class Viewer(QtWidgets.QMainWindow):
             else:
                 # Input is a mesh file
                 left_mesh_path = input_path
-            self.poly_l = read_gifti_mesh(str(left_mesh_path))
-            rh_candidate = _hemi_counterpart(left_mesh_path)
-            if rh_candidate is not None and rh_candidate.exists():
-                self.poly_r = read_gifti_mesh(str(rh_candidate))
+            self.poly_l, self.poly_r = read_mesh_pair(str(left_mesh_path))
             # Normalize Y-origin similar to C++ utility
             self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
             if self.poly_r is not None:
@@ -2116,6 +2200,11 @@ class Viewer(QtWidgets.QMainWindow):
     # (0 = left, 1 = right) an individual view is cloned from.
     _MONTAGE_ORDER = (0, 1, 0, 1, 0, 1)
 
+    # Marker linking the surface to the slice viewer: radius in mm, and how
+    # far from the surface a picked point may be before it is ignored.
+    _CURSOR_RADIUS = 3.0
+    _CURSOR_MAX_DIST = 20.0
+
     def _ensure_hemisphere_actors(self) -> bool:
         """Create the background/overlay actors for hemispheres that have data.
 
@@ -2173,6 +2262,8 @@ class Viewer(QtWidgets.QMainWindow):
         order = self._MONTAGE_ORDER
         views = len(order)
 
+        # The cursor markers are placed with the matrices of the old clones
+        self._clear_surface_cursor()
         # Drop clones of a previous scene
         for attr in ('_montage_bkg', '_montage_ov'):
             for actor in (getattr(self, attr, None) or []):
@@ -3213,12 +3304,9 @@ class Viewer(QtWidgets.QMainWindow):
             pass
         # Capture camera before changing geometry
         self._capture_camera_state()
-        # Load left mesh plus its opposite-hemisphere sibling (best-effort)
-        poly_l = read_gifti_mesh(str(p))
-        poly_r = None
-        rh_candidate = _hemi_counterpart(p)
-        if rh_candidate is not None and rh_candidate.exists():
-            poly_r = read_gifti_mesh(str(rh_candidate))
+        # Load left mesh plus its opposite hemisphere (sibling file or, for
+        # combined mesh.* surfaces, the second half of the same file)
+        poly_l, poly_r = read_mesh_pair(str(p))
         self._set_meshes(poly_l, poly_r)
         # Update window title to mesh name if no overlay is active
         if not self.opts.overlay:
@@ -3407,16 +3495,9 @@ class Viewer(QtWidgets.QMainWindow):
             return False
         if poly is None or poly.GetNumberOfPoints() != n_scal:
             return False
-        half = n_scal // 2
-        # Split when the file holds both hemispheres: either the CAT12 'mesh.'
-        # naming says so, or the size matches twice a known template hemisphere.
-        if n_scal % 2 == 0 and (
-            _parse_mesh_combined_overlay(str(ov_path)) is not None
-            or half in TEMPLATE_HEMI_POINTS
-        ):
-            poly_l, poly_r = split_combined_mesh(poly, half)
-        else:
-            poly_l, poly_r = poly, None
+        # Split when the file holds both hemispheres back to back
+        pair = split_hemispheres(poly, str(ov_path))
+        poly_l, poly_r = pair if pair is not None else (poly, None)
         self._set_meshes(poly_l, poly_r)
         return True
 
@@ -3974,7 +4055,9 @@ class Viewer(QtWidgets.QMainWindow):
 
     def _open_volume(self, volume_path: str):
         try:
-            win = OrthoVolumeWindow(volume_path, parent=self)
+            win = VolumeViewerWindow(volume_path, parent=self,
+                                     on_position_changed=self._on_volume_pick,
+                                     surfaces=self._surface_outlines())
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to open volume:\n{e}")
             return
@@ -3995,18 +4078,127 @@ class Viewer(QtWidgets.QMainWindow):
             pass
         win.show()
 
-    def _broadcast_world_pick(self, world_xyz: Tuple[float, float, float]):
-        """Send a picked world coordinate to all open OrthoVolumeWindow instances."""
+    def _surface_outlines(self) -> List[vtkPolyData]:
+        """The displayed hemispheres, in the mm space of a volume.
+
+        Drawn as outlines on the slices of the volume window.  The viewer
+        normalizes the Y origin of every mesh it displays, which has to be
+        undone first.  This is a snapshot taken when the window opens;
+        switching the surface afterwards does not redraw the outlines.
+        """
+        out: List[vtkPolyData] = []
+        hemis = ((self.poly_l, getattr(self, '_y_shift_l', 0.0)),
+                 (self.poly_r, getattr(self, '_y_shift_r', 0.0)))
+        for poly, y_shift in hemis:
+            if poly is None or poly.GetNumberOfPoints() == 0:
+                continue
+            try:
+                transform = vtkTransform()
+                transform.Translate(0.0, -float(y_shift), 0.0)
+                filt = vtkTransformPolyDataFilter()
+                filt.SetInputData(poly)
+                filt.SetTransform(transform)
+                filt.Update()
+                out.append(filt.GetOutput())
+            except Exception:
+                continue
+        return out
+
+    def _broadcast_world_pick(self, world_xyz: Tuple[float, float, float], exclude=None):
+        """Send a picked world coordinate to all open volume windows.
+
+        *exclude* skips the window a position came from, so a click in one
+        slice viewer moves the others without echoing back into itself.
+        """
         if not hasattr(self, '_volume_windows'):
             return
         # prune closed windows
         self._volume_windows = [w for w in self._volume_windows if w is not None and w.isVisible()]
         for w in list(self._volume_windows):
             try:
-                if w is not None:
+                if w is not None and w is not exclude:
                     w.set_world_position(world_xyz)
             except Exception:
                 continue
+
+    def _on_volume_pick(self, world_xyz: Tuple[float, float, float], source=None):
+        """Handle a position picked in a slice viewer (volume -> surface)."""
+        self._set_surface_cursor(world_xyz)
+        self._broadcast_world_pick(world_xyz, exclude=source)
+
+    def _clear_surface_cursor(self):
+        """Remove the cursor markers from the montage."""
+        for actor in getattr(self, '_cursor_actors', None) or []:
+            try:
+                self.ren.RemoveActor(actor)
+            except Exception:
+                pass
+        self._cursor_actors = []
+
+    def _set_surface_cursor(self, world_xyz: Optional[Tuple[float, float, float]]):
+        """Mark the surface vertex closest to a world (mm) position.
+
+        The marker is what links the two windows visually: it is placed by a
+        click on the surface as well as by a click in the volume viewer, and it
+        is repeated in every montage view that shows the hemisphere it belongs
+        to.
+
+        Returns:
+            The mm position of the marked vertex, or None when nothing was
+            close enough (or no surface is loaded).
+        """
+        self._clear_surface_cursor()
+        if world_xyz is None or self.poly_l is None:
+            return None
+
+        best = None  # (squared distance, side, vertex in mesh coordinates)
+        hemis = ((0, self.poly_l, getattr(self, '_y_shift_l', 0.0)),
+                 (1, self.poly_r, getattr(self, '_y_shift_r', 0.0)))
+        for side, poly, y_shift in hemis:
+            if poly is None or poly.GetNumberOfPoints() == 0:
+                continue
+            points = vtk_to_numpy(poly.GetPoints().GetData())
+            # Mesh coordinates are the mm position plus the Y normalization
+            target = np.array([world_xyz[0], world_xyz[1] + float(y_shift), world_xyz[2]])
+            d2 = ((points - target) ** 2).sum(axis=1)
+            idx = int(np.argmin(d2))
+            if best is None or d2[idx] < best[0]:
+                best = (float(d2[idx]), side, tuple(float(v) for v in points[idx]))
+        if best is None:
+            return None
+        dist2, side, vertex = best
+        if dist2 > self._CURSOR_MAX_DIST ** 2:
+            # The point is nowhere near the surface (e.g. deep white matter);
+            # showing a marker on the closest vertex would be misleading.
+            return None
+
+        sphere = vtkSphereSource()
+        sphere.SetCenter(*vertex)
+        sphere.SetRadius(self._CURSOR_RADIUS)
+        sphere.SetThetaResolution(16)
+        sphere.SetPhiResolution(16)
+        sphere.Update()
+        marker = sphere.GetOutput()
+
+        # One marker per montage view showing this hemisphere; the clone's
+        # matrix places it exactly like the surface it sits on.
+        for i, clone in enumerate(getattr(self, '_montage_bkg', None) or []):
+            if clone is None or self._MONTAGE_ORDER[i] != side:
+                continue
+            mapper = vtkPolyDataMapper(); mapper.SetInputData(marker)
+            actor = vtkActor(); actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(0.0, 1.0, 0.0)
+            actor.GetProperty().SetAmbient(0.6)
+            matrix = vtkMatrix4x4(); matrix.DeepCopy(clone.GetMatrix())
+            actor.SetUserMatrix(matrix)
+            self.ren.AddActor(actor)
+            self._cursor_actors.append(actor)
+        try:
+            self.rw.Render()
+        except Exception:
+            pass
+        y_shift = self._y_shift_r if side == 1 else self._y_shift_l
+        return (vertex[0], vertex[1] - float(y_shift), vertex[2])
 
     def _surface_click_to_mm(self, x: int, y: int) -> Optional[Tuple[float, float, float]]:
         """Pick a point on the surface and convert to original mm coordinates (undo actor transforms and Y-shift)."""
@@ -4053,363 +4245,6 @@ class Viewer(QtWidgets.QMainWindow):
             return (ox, oy - float(y_shift), oz)
         except Exception:
             return None
-
-class OrthoVolumeWindow(QtWidgets.QMainWindow):
-    """Orthogonal slice viewer for a 3D NIfTI volume with three views in one row."""
-    def __init__(self, volume_path: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Volume: {_title_from_path(volume_path)}")
-        self.resize(1200, 420)
-
-        # Central layout with three VTK widgets
-        central = QtWidgets.QWidget(self)
-        hbox = QtWidgets.QHBoxLayout(central)
-        hbox.setContentsMargins(0, 0, 0, 0)
-        hbox.setSpacing(2)
-        self.setCentralWidget(central)
-
-    # Read the NIfTI image
-        reader = vtkNIFTIImageReader()
-        reader.SetFileName(volume_path)
-        reader.Update()
-        img = reader.GetOutput()
-        self._img = img
-
-    # Auto window/level mapping from image range
-        rng = img.GetScalarRange()
-        wl = vtkImageMapToWindowLevelColors()
-        wl.SetInputData(img)
-        w = float(rng[1] - rng[0]) if rng[1] > rng[0] else 1.0
-        l = float(0.5 * (rng[0] + rng[1]))
-        wl.SetWindow(w)
-        wl.SetLevel(l)
-        wl.Update()
-        self._wl = wl
-
-        # Build ijk->world from NIfTI header if available (sform preferred, then qform), else fallback
-        self._M_ijk_to_world: Optional[vtkMatrix4x4] = None
-        self._M_world_to_ijk: Optional[vtkMatrix4x4] = None
-        try:
-            m_s = reader.GetSFormMatrix()
-        except Exception:
-            m_s = None
-        try:
-            m_q = reader.GetQFormMatrix()
-        except Exception:
-            m_q = None
-        if m_s is not None:
-            self._M_ijk_to_world = m_s
-        elif m_q is not None:
-            self._M_ijk_to_world = m_q
-        else:
-            # Fallback: origin/spacing/direction
-            origin = img.GetOrigin(); spacing = img.GetSpacing()
-            axes = None
-            try:
-                axes = img.GetDirectionMatrix()
-            except Exception:
-                axes = None
-            M = vtkMatrix4x4(); M.Identity()
-            if axes is not None:
-                for i in range(3):
-                    for j in range(3):
-                        M.SetElement(i, j, axes.GetElement(i, j) * spacing[j])
-            else:
-                for i in range(3):
-                    M.SetElement(i, i, spacing[i])
-            for i in range(3):
-                M.SetElement(i, 3, origin[i])
-            self._M_ijk_to_world = M
-        # Invert to get world->ijk
-        try:
-            self._M_world_to_ijk = vtkMatrix4x4()
-            vtkMatrix4x4.Invert(self._M_ijk_to_world, self._M_world_to_ijk)
-        except Exception:
-            self._M_world_to_ijk = None
-
-        # Extent and center slice indices
-        x0, x1, y0, y1, z0, z1 = img.GetExtent()
-        self._iex = (x0, x1, y0, y1, z0, z1)
-        cx = int(0.5 * (x0 + x1))
-        cy = int(0.5 * (y0 + y1))
-        cz = int(0.5 * (z0 + z1))
-        self._cx, self._cy, self._cz = cx, cy, cz
-
-        # Helper to construct a reslice for each orientation
-        def make_reslice(orientation: str, index: int):
-            res = vtkImageReslice()
-            res.SetInputConnection(self._wl.GetOutputPort())
-            res.SetInterpolationModeToLinear()
-            res.SetOutputDimensionality(2)
-            res.SetBackgroundLevel(0.0)
-            axes = vtkMatrix4x4()
-            # Start as identity
-            for i in range(4):
-                for j in range(4):
-                    axes.SetElement(i, j, 1.0 if i == j else 0.0)
-            if orientation == 'axial':
-                # Output X->input X, Output Y->input Y, normal->input Z
-                axes.SetElement(2, 3, float(index))  # translate along input Z
-                res.SetOutputExtent(x0, x1, y0, y1, 0, 0)
-            elif orientation == 'coronal':
-                # Output X->input X, Output Y->input Z, normal->input Y
-                axes.SetElement(1, 1, 0.0); axes.SetElement(2, 2, 0.0)
-                axes.SetElement(1, 2, 1.0); axes.SetElement(2, 1, 1.0)
-                axes.SetElement(1, 3, float(index))  # translate along input Y
-                res.SetOutputExtent(x0, x1, z0, z1, 0, 0)
-            elif orientation == 'sagittal':
-                # Output X->input Y, Output Y->input Z, normal->input X
-                axes.SetElement(0, 0, 0.0); axes.SetElement(1, 1, 0.0); axes.SetElement(2, 2, 0.0)
-                axes.SetElement(0, 1, 1.0); axes.SetElement(1, 2, 1.0)
-                axes.SetElement(2, 0, 1.0)
-                axes.SetElement(0, 3, float(index))  # translate along input X
-                res.SetOutputExtent(y0, y1, z0, z1, 0, 0)
-            res.SetResliceAxes(axes)
-            res.Update()
-            return res, axes
-
-        self._views = {}
-        configs = [('axial', cz), ('coronal', cy), ('sagittal', cx)]
-        for name, idx in configs:
-            w = QVTKRenderWindowInteractor(central)
-            hbox.addWidget(w, 1)
-            ren = vtkRenderer(); ren.SetBackground(0, 0, 0)
-            rw = w.GetRenderWindow(); rw.AddRenderer(ren)
-            iren = rw.GetInteractor()
-            try:
-                iren.SetInteractorStyle(vtkInteractorStyleImage())
-            except Exception:
-                pass
-            reslice, axes = make_reslice(name, idx)
-            out_img = reslice.GetOutput()
-            extent_out = out_img.GetExtent()  # 2D image: (0..Nx-1, 0..Ny-1, 0, 0)
-            actor = vtkImageActor(); actor.SetInputData(out_img)
-            ren.AddActor(actor)
-            ren.ResetCamera(); rw.Render()
-
-            # Store view components
-            self._views[name] = {
-                'widget': w,
-                'renderer': ren,
-                'iren': iren,
-                'reslice': reslice,
-                'axes': axes,
-                'actor': actor,
-                'extent': extent_out,
-            }
-
-            # Center camera on this slice view after registration
-            self._center_view(name)
-
-            # Click picking: update slices to picked world position
-            picker = vtkPropPicker()
-            def _make_click_handler(local_picker, local_ren):
-                def _on_left_button(_obj, _evt):
-                    try:
-                        x, y = _obj.GetEventPosition()
-                    except Exception:
-                        return
-                    ok = local_picker.Pick(x, y, 0, local_ren)
-                    if not ok:
-                        return
-                    wx, wy, wz = local_picker.GetPickPosition()
-                    ijk = self._world_to_index((wx, wy, wz))
-                    if ijk is None:
-                        return
-                    ix, iy, iz = ijk
-                    self._set_slices(ix, iy, iz)
-                return _on_left_button
-            iren.AddObserver("LeftButtonPressEvent", _make_click_handler(picker, ren))
-
-            # Crosshair overlays (two lines) per view
-            def build_crosshair():
-                lv = vtkLineSource(); lh = vtkLineSource()
-                mv = vtkPolyDataMapper(); mh = vtkPolyDataMapper()
-                mv.SetInputConnection(lv.GetOutputPort()); mh.SetInputConnection(lh.GetOutputPort())
-                av = vtkActor(); ah = vtkActor(); av.SetMapper(mv); ah.SetMapper(mh)
-                for a in (av, ah):
-                    a.GetProperty().SetColor(1.0, 1.0, 0.0)
-                    a.GetProperty().SetLineWidth(1.5)
-                ren.AddActor(av); ren.AddActor(ah)
-                return lv, lh, av, ah
-            lv, lh, av, ah = build_crosshair()
-            self._views[name]['cross_v'] = (lv, av)
-            self._views[name]['cross_h'] = (lh, ah)
-            # Initialize crosshair positions for current indices
-            self._update_crosshair_for_view(name)
-
-            # Scroll wheel changes slice for this view
-            def _make_wheel(delta_sign: int, vname: str):
-                def _on_wheel(_obj, _evt):
-                    ix, iy, iz = self._cx, self._cy, self._cz
-                    x0, x1, y0, y1, z0, z1 = self._iex
-                    if vname == 'axial':
-                        iz = max(z0, min(z1, iz + delta_sign))
-                    elif vname == 'coronal':
-                        iy = max(y0, min(y1, iy + delta_sign))
-                    elif vname == 'sagittal':
-                        ix = max(x0, min(x1, ix + delta_sign))
-                    self._set_slices(ix, iy, iz)
-                return _on_wheel
-            iren.AddObserver("MouseWheelForwardEvent", _make_wheel(+1, name))
-            iren.AddObserver("MouseWheelBackwardEvent", _make_wheel(-1, name))
-
-    def _center_view(self, name: str):
-        v = self._views.get(name)
-        if not v:
-            return
-        actor = v['actor']; ren: vtkRenderer = v['renderer']
-        b = [0.0]*6
-        actor.GetBounds(b)
-        cx = 0.5*(b[0]+b[1]); cy = 0.5*(b[2]+b[3]); cz = 0.5*(b[4]+b[5])
-        dx = abs(b[1]-b[0]); dy = abs(b[3]-b[2]); dz = abs(b[5]-b[4])
-        cam = ren.GetActiveCamera()
-        try:
-            cam.SetParallelProjection(True)
-        except Exception:
-            pass
-        dist = max(dx, dy, dz) * 2.0 + 1.0
-        # Important: all vtkImageReslice outputs are displayed as 2D images in
-        # their own XY output plane (z ~= constant). Therefore all three views
-        # must be viewed along +Z. Orientation differences are already encoded
-        # in each view's reslice matrix, not in the camera direction.
-        cam.SetFocalPoint(cx, cy, cz)
-        cam.SetPosition(cx, cy, cz + dist)
-        cam.SetViewUp(0, 1, 0)
-        try:
-            # ParallelScale is half the visible height. To avoid horizontal
-            # clipping in narrow/tall panes, include renderer aspect ratio.
-            try:
-                aspect = float(ren.GetTiledAspectRatio())
-            except Exception:
-                aspect = 1.0
-            if aspect <= 1e-6:
-                aspect = 1.0
-            needed_half_height = 0.5 * max(dy, dx / aspect)
-            cam.SetParallelScale(needed_half_height)
-        except Exception:
-            pass
-        ren.ResetCameraClippingRange()
-
-    def _world_to_index(self, world_xyz: Tuple[float, float, float]) -> Optional[Tuple[int, int, int]]:
-        """Convert a world coordinate (x,y,z) to image IJK indices (ints).
-        Uses NIfTI sform/qform if available; falls back to origin/spacing/direction.
-        """
-        if self._img is None:
-            return None
-        wx, wy, wz = map(float, world_xyz)
-        if self._M_world_to_ijk is not None:
-            # Homogeneous multiply
-            w = [wx, wy, wz, 1.0]
-            ijk_h = [0.0, 0.0, 0.0, 1.0]
-            for i in range(4):
-                ijk_h[i] = sum(self._M_world_to_ijk.GetElement(i, j) * w[j] for j in range(4))
-            ix = int(round(ijk_h[0])); iy = int(round(ijk_h[1])); iz = int(round(ijk_h[2]))
-        else:
-            # Fallback path (origin/spacing/direction)
-            origin = self._img.GetOrigin()
-            spacing = self._img.GetSpacing()
-            R = None
-            try:
-                Rm = self._img.GetDirectionMatrix()
-                if Rm is not None:
-                    R = [[Rm.GetElement(i, j) for j in range(3)] for i in range(3)]
-            except Exception:
-                R = None
-            dx = (wx - origin[0]); dy = (wy - origin[1]); dz = (wz - origin[2])
-            if R is not None:
-                vx = R[0][0]*dx + R[1][0]*dy + R[2][0]*dz
-                vy = R[0][1]*dx + R[1][1]*dy + R[2][1]*dz
-                vz = R[0][2]*dx + R[1][2]*dy + R[2][2]*dz
-            else:
-                vx, vy, vz = dx, dy, dz
-            def safe_div(a, b):
-                return a / b if abs(b) > 1e-12 else 0.0
-            ix = int(round(safe_div(vx, spacing[0])))
-            iy = int(round(safe_div(vy, spacing[1])))
-            iz = int(round(safe_div(vz, spacing[2])))
-        # Clamp to image extent
-        x0, x1, y0, y1, z0, z1 = self._img.GetExtent()
-        ix = max(x0, min(x1, ix))
-        iy = max(y0, min(y1, iy))
-        iz = max(z0, min(z1, iz))
-        return ix, iy, iz
-
-    def _set_slices(self, ix: int, iy: int, iz: int):
-        """Update axial/coronal/sagittal slices to given indices and render."""
-        self._cx, self._cy, self._cz = ix, iy, iz
-        # Update reslice axes translations
-        v = self._views
-        if 'axial' in v:
-            axes = v['axial']['axes']; axes.SetElement(2, 3, float(iz))
-            v['axial']['reslice'].SetResliceAxes(axes); v['axial']['reslice'].Update()
-            v['axial']['actor'].SetInputData(v['axial']['reslice'].GetOutput())
-        if 'coronal' in v:
-            axes = v['coronal']['axes']; axes.SetElement(1, 3, float(iy))
-            v['coronal']['reslice'].SetResliceAxes(axes); v['coronal']['reslice'].Update()
-            v['coronal']['actor'].SetInputData(v['coronal']['reslice'].GetOutput())
-        if 'sagittal' in v:
-            axes = v['sagittal']['axes']; axes.SetElement(0, 3, float(ix))
-            v['sagittal']['reslice'].SetResliceAxes(axes); v['sagittal']['reslice'].Update()
-            v['sagittal']['actor'].SetInputData(v['sagittal']['reslice'].GetOutput())
-        # Keep each pane centered and clipping stable after updates
-        for name in ('axial', 'coronal', 'sagittal'):
-            self._center_view(name)
-        # Update crosshair lines per view
-        self._update_crosshair_for_view('axial')
-        self._update_crosshair_for_view('coronal')
-        self._update_crosshair_for_view('sagittal')
-        # Render all
-        for name in ('axial', 'coronal', 'sagittal'):
-            if name in v:
-                try:
-                    v[name]['renderer'].GetRenderWindow().Render()
-                except Exception:
-                    pass
-
-    def _update_crosshair_for_view(self, name: str):
-        if name not in getattr(self, '_views', {}):
-            return
-        v = self._views[name]
-        lv, av = v.get('cross_v', (None, None))
-        lh, ah = v.get('cross_h', (None, None))
-        if lv is None or lh is None:
-            return
-        # Draw in reslice output coordinates (the same frame shown by vtkImageActor).
-        out_img = v['reslice'].GetOutput()
-        ox0, ox1, oy0, oy1, _oz0, _oz1 = out_img.GetExtent()
-        ix, iy, iz = self._cx, self._cy, self._cz
-        zc = 0.01
-        # Build endpoints per orientation in output coords
-        if name == 'axial':
-            p1 = (float(ix), float(oy0), zc)
-            p2 = (float(ix), float(oy1), zc)
-            q1 = (float(ox0), float(iy), zc)
-            q2 = (float(ox1), float(iy), zc)
-        elif name == 'coronal':
-            p1 = (float(ix), float(oy0), zc)
-            p2 = (float(ix), float(oy1), zc)
-            q1 = (float(ox0), float(iz), zc)
-            q2 = (float(ox1), float(iz), zc)
-        else:  # sagittal
-            p1 = (float(iy), float(oy0), zc)
-            p2 = (float(iy), float(oy1), zc)
-            q1 = (float(ox0), float(iz), zc)
-            q2 = (float(ox1), float(iz), zc)
-        lv.SetPoint1(*p1); lv.SetPoint2(*p2)
-        lh.SetPoint1(*q1); lh.SetPoint2(*q2)
-        try:
-            lv.Update(); lh.Update()
-        except Exception:
-            pass
-
-    # Public API for linking from surface picks
-    def set_world_position(self, world_xyz: Tuple[float, float, float]):
-        ijk = self._world_to_index(world_xyz)
-        if ijk is None:
-            return
-        self._set_slices(*ijk)
-
 
 class HistogramCanvas(QtWidgets.QWidget):
     """Simple widget to draw a histogram of given data using QPainter."""
