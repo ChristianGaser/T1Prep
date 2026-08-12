@@ -157,6 +157,47 @@ class TestScalarsOnlyGifti(unittest.TestCase):
         self.assertFalse(is_overlay_file(str(template)))
 
 
+class TestPresets(unittest.TestCase):
+    """-preset applies several options at once."""
+
+    MESH = str(_SRC / "t1prep" / "data" / "templates_surfaces_32k"
+               / "lh.central.freesurfer.gii")
+
+    def _opts(self, *args):
+        return parse_args([self.MESH, *args])
+
+    def test_preset_one(self):
+        from t1prep.gui.cat_surf_view import C3
+        opts = self._opts("-preset", "1")
+        self.assertEqual(opts.colormap, C3)
+        self.assertEqual(opts.discrete, 16)
+
+    def test_defaults_are_untouched_without_a_preset(self):
+        from t1prep.gui.cat_surf_view import JET
+        opts = self._opts()
+        self.assertEqual(opts.colormap, JET)
+        self.assertEqual(opts.discrete, 0)
+
+    def test_explicit_options_win(self):
+        """A preset must not overrule what the user typed, in either order."""
+        from t1prep.gui.cat_surf_view import FIRE
+        self.assertEqual(self._opts("-preset", "1", "-dsc", "8").discrete, 8)
+        self.assertEqual(self._opts("-preset", "1", "-fire").colormap, FIRE)
+        self.assertEqual(self._opts("-fire", "-preset", "1").colormap, FIRE)
+        # …and the rest of the preset still applies
+        self.assertEqual(self._opts("-preset", "1", "-fire").discrete, 16)
+
+    def test_unknown_preset_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._opts("-preset", "99")
+
+    def test_every_preset_is_documented(self):
+        from t1prep.gui.cat_surf_view import PRESETS, PRESET_HELP
+        self.assertEqual(sorted(PRESETS), sorted(PRESET_HELP))
+        for number in PRESETS:
+            self.assertTrue(PRESET_HELP[number].strip(), number)
+
+
 class TestCombinedHemisphereMesh(unittest.TestCase):
     """CAT12 stores both hemispheres in one file (mesh.central.*).
 

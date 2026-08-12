@@ -1291,6 +1291,24 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
         return super().OnLeftButtonDown()
 
 # ---- Options & CLI ----
+#: Option sets selected with ``-preset``.  Keys are the command-line option
+#: names, so a preset is written the way it would be typed; options given
+#: explicitly on the command line keep precedence over the preset.
+#: (Not called "style": Qt claims -style for its widget style.)
+PRESETS = {
+    1: {'c3': True, 'discrete': 16},
+}
+
+#: One-line description per preset, shown in the help
+PRESET_HELP = {
+    1: 'C3 colormap with 16 discrete levels',
+}
+
+#: The colormap options form one group: a preset must not override a colormap
+#: the user asked for, whichever of the flags it was
+_COLORMAP_FLAGS = ('fire', 'bipolar', 'c1', 'c2', 'c3')
+
+
 @dataclass
 class Options:
     mesh_left: Optional[str]
@@ -1330,6 +1348,7 @@ def parse_args(argv: List[str]) -> Options:
             '  CAT_SurfView lh.central.subj.gii -overlay lh.thickness.subj\n'
             '  CAT_SurfView sub-*/lh.thickness.*                many overlays, ←/→ to step through\n'
             '  CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii\n'
+            '  CAT_SurfView -preset 1 lh.thickness.subj         predefined settings\n'
             '  CAT_SurfView -output view.png lh.thickness.subj  write a PNG and exit\n'
             '\n'
             'How the surface is determined:\n'
@@ -1405,6 +1424,11 @@ def parse_args(argv: List[str]) -> Options:
     p.add_argument('-c1', action='store_true', help='Use custom colormap 1')
     p.add_argument('-c2', action='store_true', help='Use custom colormap 2')
     p.add_argument('-c3', action='store_true', help='Use custom colormap 3')
+    p.add_argument('-preset', dest='preset', type=int, default=0, metavar='N',
+                   help='Predefined settings:\n'
+                        + '\n'.join(f'  {n} = {PRESET_HELP.get(n, "")}'
+                                    for n in sorted(PRESETS))
+                        + '\nOptions given explicitly take precedence.')
     p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true',
                    help='Keep the range of the first overlay for all following ones')
     p.add_argument('-debug', action='store_true', help=argparse.SUPPRESS)  # accepted, not implemented
@@ -1507,6 +1531,21 @@ def parse_args(argv: List[str]) -> Options:
                 cfg = _load_defaults_file(str(c))
                 _apply_defaults_cfg(cfg, a, defaults_ns)
                 break
+
+    # A preset sets several options at once, without overriding anything the
+    # user gave on the command line
+    if a.preset:
+        preset = PRESETS.get(int(a.preset))
+        if preset is None:
+            p.error(f"Unknown -preset {a.preset}; available: "
+                    f"{', '.join(str(n) for n in sorted(PRESETS))}")
+        preset = dict(preset)
+        if any(getattr(a, flag, False) for flag in _COLORMAP_FLAGS):
+            for flag in _COLORMAP_FLAGS:
+                preset.pop(flag, None)
+        for key, value in preset.items():
+            if getattr(a, key, None) == getattr(defaults_ns, key, None):
+                setattr(a, key, value)
 
     cm = JET
     if a.fire: cm = FIRE
@@ -4350,7 +4389,10 @@ def main(argv: Optional[List[str]] = None):
             QtWidgets.QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
         except Exception:
             pass
-    app = QtWidgets.QApplication(sys.argv)
+    # Only the program name goes to Qt: it parses argv itself and would
+    # claim options of its own (-style, -stylesheet, -platform, …), which
+    # clash with ours
+    app = QtWidgets.QApplication(sys.argv[:1])
     win = Viewer(opts); win.show()
     sys.exit(app.exec())
 

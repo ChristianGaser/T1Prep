@@ -224,6 +224,9 @@ CAT_SurfView sub-*/lh.thickness.*
 # CAT12/SPM statistic results with a fixed range and everything up to 6 hidden
 CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii
 
+# Predefined settings (-preset 1: C3 colormap with 16 discrete levels)
+CAT_SurfView -preset 1 -colorbar lh.thickness.subj
+
 # Volume with surface outlines drawn onto the slices
 CAT_VolView T1.nii.gz lh.central.gii rh.central.gii
 
@@ -263,6 +266,11 @@ value under the cursor. The right-click menu holds:
   reported intensity follows: trilinear at the exact cursor position while smoothing
   is on, the untouched voxel value with raw voxels selected.
 - **Image information** — hide or show the panel (`--no-info` starts without it).
+
+**Presets.** `-preset N` applies a predefined set of options — currently `1` for the C3
+colormap with 16 discrete levels. Anything given explicitly on the command line takes
+precedence, so `-preset 1 -fire` keeps the fire colormap and the 16 levels. Further presets
+are added in the `PRESETS` table of `src/t1prep/gui/cat_surf_view.py`.
 
 **Statistic results.** When the overlay name contains `log` (CAT12/SPM `logP_*` files), the
 colorbar is labelled with p-values instead of the raw -log10(p) values, as in

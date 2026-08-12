@@ -2167,7 +2167,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     install_qt_message_filter()
-    app = QtWidgets.QApplication(sys.argv)
+    # Only the program name goes to Qt: it parses argv itself and would
+    # claim options of its own (-style, -stylesheet, -platform, …), which
+    # clash with ours
+    app = QtWidgets.QApplication(sys.argv[:1])
     # One window per volume, with their cursors linked
     windows = []
     for volume in volumes:
