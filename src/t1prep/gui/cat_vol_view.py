@@ -331,6 +331,7 @@ class CatImageViewer:
         interactor: Optional[vtkRenderWindowInteractor] = None,
         show_info: bool = True,
         interpolate: bool = True,
+        recenter: bool = True,
     ):
         """Create the viewer.
 
@@ -340,6 +341,7 @@ class CatImageViewer:
                 range) and the values under the cursor.
             interpolate: Smooth the slices (linear); False draws the raw
                 voxels (nearest neighbour).
+            recenter: Let a zoomed view follow the cursor.
             render_window: Render window to draw into.  Pass the one of a Qt
                 ``QVTKRenderWindowInteractor`` to embed the viewer in another
                 application (CAT_SurfView does this); a standalone window is
@@ -370,8 +372,11 @@ class CatImageViewer:
         self._world_from_header = False
         # Voxel axis each pane slices along; recomputed per image
         self._pane_axis: List[int] = [2, 0, 1]
-        # Edge length in mm the panes are zoomed to (None = whole volume)
+        # Edge length in mm the panes are zoomed to (None = whole volume), the
+        # position a zoomed view is centred on, and whether it follows the cursor
         self._fov_mm: Optional[float] = None
+        self._fov_center: Optional[Tuple[float, float, float]] = None
+        self.recenter = bool(recenter)
         # Slices smoothed (linear) or as raw voxels (nearest neighbour)
         self.interpolate = bool(interpolate)
         # Information panel in the free quadrant
@@ -679,25 +684,41 @@ class CatImageViewer:
         whole volume again.
         """
         self._fov_mm = float(mm) if mm else None
-        self._apply_field_of_view()
+        self._apply_field_of_view(recenter=True)
         self.render_window.Render()
 
-    def _apply_field_of_view(self):
+    def set_recenter(self, recenter: bool):
+        """Whether a zoomed view follows the cursor.
+
+        On (the default) the picked point stays in the middle of the pane; off
+        keeps the view where it is, so the surroundings do not move away while
+        clicking around.
+        """
+        self.recenter = bool(recenter)
+        self._apply_field_of_view(recenter=self.recenter)
+        self.render_window.Render()
+
+    def _apply_field_of_view(self, recenter: bool = False):
         """Point every camera at the region the current zoom asks for.
 
         While zoomed the panes follow the cursor, so the picked point stays in
-        the middle of the view.  It lands exactly there because the cursor is
-        not rounded to the voxel grid (see :meth:`_set_cursor`).
+        the middle of the view; it lands exactly there because the cursor is
+        not rounded to the voxel grid (see :meth:`_set_cursor`).  With
+        :attr:`recenter` switched off the view stays where it is and only
+        picking a zoom level (*recenter*) moves it.
         """
         if self._image is None:
             return
         ext = self._image.GetExtent()
 
         if self._fov_mm:
-            # Zoomed: centre on the cursor, same box in every pane
-            focus = self.get_world_position()
+            # Zoomed: same box in every pane, centred on the cursor
+            if recenter or self.recenter or self._fov_center is None:
+                self._fov_center = self.get_world_position()
+            focus = self._fov_center
             scales = [0.5 * self._fov_mm] * 3
         else:
+            self._fov_center = None
             focus = None
             # Largest in-plane dimension per view, with a small margin
             lengths = self._voxel_axis_lengths()
@@ -1841,6 +1862,12 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             action.setCheckable(True)
             action.setChecked(current == mm)
             action.triggered.connect(lambda _checked=False, v=mm: self.set_zoom(v))
+        zoom_menu.addSeparator()
+        follow_action = zoom_menu.addAction("Re-centre on cursor")
+        follow_action.setCheckable(True)
+        follow_action.setChecked(self.viewer.recenter)
+        follow_action.triggered.connect(
+            lambda checked=False: self.set_recenter(checked))
 
         # Naming the region under the cursor only makes sense when the image is
         # registered to the atlas, so the atlas is picked by hand
@@ -1879,6 +1906,13 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         """Zoom the slices to an mm bounding box around the cursor."""
         try:
             self.viewer.set_field_of_view(mm)
+        except Exception:
+            pass
+
+    def set_recenter(self, recenter: bool):
+        """Whether a zoomed view follows the cursor."""
+        try:
+            self.viewer.set_recenter(recenter)
         except Exception:
             pass
 
@@ -1980,6 +2014,10 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     p.add_argument(
         "--nearest", action="store_true",
         help="Draw the raw voxels instead of smoothing the slices",
+    )
+    p.add_argument(
+        "--no-recenter", action="store_true",
+        help="Keep a zoomed view in place instead of following the cursor",
     )
     p.add_argument(
         "--headless", action="store_true",
@@ -2098,6 +2136,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         percentile_range=pct,
         show_info=not args.no_info,
         interpolate=not args.nearest,
+        recenter=not args.no_recenter,
     )
     volumes, surfaces = _split_inputs(args.inputs)
     if not volumes:

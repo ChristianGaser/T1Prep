@@ -232,6 +232,30 @@ class TestCursorApi(unittest.TestCase):
         for ren, scale in zip(self.viewer.renderers, full):
             self.assertAlmostEqual(ren.GetActiveCamera().GetParallelScale(), scale)
 
+    def test_recentering_can_be_switched_off(self):
+        """A zoomed view can be pinned instead of following the cursor."""
+        self.viewer.set_world_position((70.0, -106.0, -62.0))
+        self.viewer.set_field_of_view(20.0)
+        self.viewer.set_recenter(False)
+
+        self.viewer.set_world_position((74.0, -102.0, -58.0))
+        for ren in self.viewer.renderers:
+            self.assertEqual(tuple(ren.GetActiveCamera().GetFocalPoint()),
+                             (70.0, -106.0, -62.0))
+
+        # Picking a zoom level is an explicit request and still centres
+        self.viewer.set_field_of_view(40.0)
+        for ren in self.viewer.renderers:
+            self.assertEqual(tuple(ren.GetActiveCamera().GetFocalPoint()),
+                             (74.0, -102.0, -58.0))
+
+        # Switching it back on catches up with the cursor
+        self.viewer.set_world_position((76.0, -100.0, -56.0))
+        self.viewer.set_recenter(True)
+        for ren in self.viewer.renderers:
+            self.assertEqual(tuple(ren.GetActiveCamera().GetFocalPoint()),
+                             (76.0, -100.0, -56.0))
+
     def test_value_at_cursor(self):
         self.viewer.set_index(3, 4, 5)
         value = self.viewer.get_value_at_index()

@@ -250,8 +250,10 @@ value under the cursor. The right-click menu holds:
 
 - **Zoom** — full volume or a 160/80/40/20/10 mm bounding box, as in the SPM ortho viewer;
   a zoomed view follows the cursor, keeping the picked point in the middle of the pane.
-  The cursor itself is not rounded to the voxel grid, so it sits exactly where it was
-  placed — only the displayed slices and the intensity readout are voxel-wise.
+  *Re-centre on cursor* in the same submenu turns that off (`--no-recenter`), so the view
+  stays where it is and only picking a zoom level moves it. The cursor itself is not
+  rounded to the voxel grid, so it sits exactly where it was placed — only the displayed
+  slices and the intensity readout are voxel-wise.
 - **Atlas** — name the region under the cursor from any atlas shipped with T1Prep (or one
   of your own via *Other…*, or `--atlas` on the command line). The atlas is sampled at the
   mm position of the cursor, so pick one only when the displayed image is registered to its
