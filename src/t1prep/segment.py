@@ -1171,21 +1171,22 @@ def save_results(
                 is_label_atlas=True,
             )
 
-            # Get the ribbon mask using lh and rh and masking GM
             lh, rh = get_partition(p0_large, atlas)
-            ribbon_value = lh + rh
-            ribbon_value = (ribbon_value > 2.5) & (ribbon_value < 3.5)
-            ribbon_large = nib.Nifti1Image(ribbon_value, p0_large.affine, p0_large.header)
-            ribbon_name = code_vars.get("ribbon_volume", "")
-            resample_and_save_nifti(
-                ribbon_large,
-                grid_native,
-                mask.affine,
-                mask.header,
-                f"{mri_dir}/{ribbon_name}",
-                round=True,
-            )
-
+            
+            if save_fmriprep:
+                # Get the ribbon mask using lh and rh and masking GM
+                ribbon_value = lh + rh
+                ribbon_value = (ribbon_value > 2.5) & (ribbon_value < 3.5)
+                ribbon_large = nib.Nifti1Image(ribbon_value, p0_large.affine, p0_large.header)
+                ribbon_name = code_vars.get("ribbon_volume", "")
+                resample_and_save_nifti(
+                    ribbon_large,
+                    grid_native,
+                    mask.affine,
+                    mask.header,
+                    f"{mri_dir}/{ribbon_name}",
+                    round=True,
+                )
 
             # Compute Euler numbers at GM/WM boundary for QA
             euler_lh = compute_euler_number(lh, threshold=2.5)
