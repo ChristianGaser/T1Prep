@@ -21,10 +21,12 @@ try:
         _is_scalars_only_gifti,
         convert_filename_to_mesh,
         format_p_value_label,
+        is_combined_hemisphere_mesh,
         is_logp_overlay,
         is_overlay_file,
         logp_colorbar_ticks,
         parse_args,
+        read_mesh_pair,
     )
 except Exception as exc:  # pragma: no cover - depends on optional GUI deps
     raise unittest.SkipTest(f"cat_surf_view unavailable: {exc}")
@@ -153,6 +155,40 @@ class TestScalarsOnlyGifti(unittest.TestCase):
             self.skipTest("template surfaces not installed")
         self.assertFalse(_is_scalars_only_gifti(str(template)))
         self.assertFalse(is_overlay_file(str(template)))
+
+
+class TestCombinedHemisphereMesh(unittest.TestCase):
+    """CAT12 stores both hemispheres in one file (mesh.central.*).
+
+    Without splitting them, the viewer treated the pair as a single left
+    hemisphere and the six-view montage showed only part of the surface.
+    """
+
+    TEMPLATES = _SRC / "t1prep" / "data" / "templates_surfaces_32k"
+
+    def setUp(self):
+        if not self.TEMPLATES.exists():  # pragma: no cover - depends on packaged data
+            self.skipTest("template surfaces not installed")
+
+    def test_name_detection(self):
+        self.assertTrue(is_combined_hemisphere_mesh("mesh.central.Template_T1.gii"))
+        self.assertTrue(is_combined_hemisphere_mesh("mesh.inflated.freesurfer.gii"))
+        self.assertFalse(is_combined_hemisphere_mesh("lh.central.freesurfer.gii"))
+        self.assertFalse(is_combined_hemisphere_mesh("s12.mesh.thickness.subj.gii"))
+
+    def test_combined_mesh_is_split(self):
+        poly_l, poly_r = read_mesh_pair(str(self.TEMPLATES / "mesh.central.Template_T1.gii"))
+        self.assertIsNotNone(poly_r)
+        self.assertEqual(poly_l.GetNumberOfPoints(), 32492)
+        self.assertEqual(poly_r.GetNumberOfPoints(), 32492)
+        # No triangle may be lost when the halves are separated
+        self.assertEqual(poly_l.GetNumberOfPolys() + poly_r.GetNumberOfPolys(), 129960)
+
+    def test_single_hemisphere_keeps_its_sibling(self):
+        poly_l, poly_r = read_mesh_pair(str(self.TEMPLATES / "lh.central.freesurfer.gii"))
+        self.assertIsNotNone(poly_r)
+        self.assertEqual(poly_l.GetNumberOfPoints(), 32492)
+        self.assertEqual(poly_r.GetNumberOfPoints(), 32492)
 
 
 if __name__ == "__main__":
