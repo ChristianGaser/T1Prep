@@ -271,7 +271,10 @@ value under the cursor. The right-click menu holds:
 - **Overlay** — draw a second volume in colour on top (`--overlay`, or *Open…*). It has to
   be on the same voxel grid (same dimensions and voxel size); anything else is refused
   rather than silently resampled. The reported intensity is then the overlay's, with the
-  image value kept on a `background` line.
+  image value kept on a `background` line. The overlay is always drawn with nearest
+  neighbour, so a thresholded map keeps its edges; clipped values and voxels the map has
+  no value for (NaN outside a statistic mask) are left unpainted, so the image shows
+  through them.
 - **Controls** — the control panel of `CAT_SurfView`, wired to the overlay: value range,
   clip window, p-value thresholds for `log`-named overlays, image intensity range,
   opacity, colormap, discrete levels and inversion.

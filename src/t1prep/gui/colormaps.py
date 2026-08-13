@@ -159,6 +159,9 @@ def build_overlay_lut(colormap: int, opacity: float, value_range=None,
     into bands, with the values inside *clip* made transparent.
     """
     lut = get_lookup_table(colormap, opacity)
+    # Voxels a map has no value for — statistic maps carry NaN outside their
+    # mask — must not be painted at all; VTK would use its dark red NaN colour
+    lut.SetNanColor(0.0, 0.0, 0.0, 0.0)
     if inverse:
         invert_lut(lut)
     if discrete:

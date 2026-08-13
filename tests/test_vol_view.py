@@ -547,9 +547,29 @@ class TestOverlayVolume(unittest.TestCase):
         self.viewer.overlay_clip = (-10.0, 10.0)
         lut = self.viewer._overlay_lut()
         self.assertEqual(tuple(round(v, 3) for v in lut.GetTableRange()), (0.0, 100.0))
-        # values inside the clip window are transparent
+        # values inside the clip window are transparent, so the background shows
         self.assertEqual(lut.GetTableValue(0)[3], 0.0)
         self.assertGreater(lut.GetTableValue(int(0.8 * lut.GetNumberOfTableValues()))[3], 0.0)
+
+    def test_image_stays_visible_under_the_overlay(self):
+        self.viewer.set_overlay(self.overlay)
+        for actor in self.viewer._image_actors:
+            self.assertTrue(actor.GetVisibility())
+
+    def test_voxels_without_a_value_are_not_painted(self):
+        """NaN outside a statistic mask must not show VTK's dark red."""
+        lut = self.viewer._overlay_lut()
+        self.assertEqual(tuple(lut.GetNanColor()), (0.0, 0.0, 0.0, 0.0))
+
+    def test_overlay_is_never_smoothed(self):
+        """Interpolating a thresholded map would invent values at its edges."""
+        self.viewer.set_overlay(self.overlay)
+        for interpolate in (True, False):
+            self.viewer.set_interpolation(interpolate)
+            for actor in self.viewer._overlay_actors:
+                self.assertFalse(actor.GetInterpolate())
+            for actor in self.viewer._image_actors:
+                self.assertEqual(bool(actor.GetInterpolate()), interpolate)
 
 
 class TestNeurologicalOrientation(unittest.TestCase):

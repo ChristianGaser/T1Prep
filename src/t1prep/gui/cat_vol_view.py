@@ -1341,7 +1341,11 @@ class CatImageViewer:
         self._overlay_colors = [None, None, None]
 
     def _overlay_lut(self):
-        """Lookup table for the overlay — the same one the surface viewer uses."""
+        """Lookup table for the overlay — the same one the surface viewer uses.
+
+        Clipped values are transparent, so the image shows through them, and
+        voxels the overlay has no value for (NaN) are not painted at all.
+        """
         return build_overlay_lut(
             self.overlay_colormap, self.overlay_opacity,
             value_range=self.overlay_range, clip=self.overlay_clip,
@@ -1393,11 +1397,20 @@ class CatImageViewer:
 
     # ---------- Display ----------
     def _apply_interpolation(self):
-        for actor in self._image_actors + self._overlay_actors:
+        for actor in self._image_actors:
             if actor is None:
                 continue
             try:
                 actor.SetInterpolate(1 if self.interpolate else 0)
+            except Exception:
+                pass
+        # The overlay is never smoothed: interpolating a thresholded map would
+        # invent values across its edges
+        for actor in self._overlay_actors:
+            if actor is None:
+                continue
+            try:
+                actor.SetInterpolate(0)
             except Exception:
                 pass
 
@@ -2117,6 +2130,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             viewer.overlay_discrete = 16 if checked else 0
             viewer.refresh_overlay()
         self.ctrl.cb_discrete.toggled.connect(_discrete_changed)
+
 
         self._sync_control_panel()
 
