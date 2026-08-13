@@ -203,6 +203,42 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 These scripts provide user-friendly wrappers around the compiled CAT-Surface binaries in `src/t1prep/bin/` for post-processing tasks (surface parameters, resampling, ROI extraction, volume smoothing). The main T1Prep pipeline uses the `cat-surf` Python package instead of these binaries. They support batch processing with built-in parallelization via `parallelize`.
 
+### `make_macos_apps.sh`
+
+Builds macOS application bundles for the two viewers, so they can be started from the Dock,
+Spotlight or Finder instead of a terminal.
+
+```bash
+# into /Applications (or ~/Applications when that is not writable)
+./scripts/make_macos_apps.sh
+
+# somewhere else, or against another installation
+./scripts/make_macos_apps.sh -o ~/Desktop -p /path/to/env/bin
+```
+
+The bundles are thin: each one only launches the installed `CAT_SurfView` / `CAT_VolView`
+entry point, so they follow every update of that installation (and stop working if it is
+removed). Double-clicking an app asks for a file; dropping files on its icon, or *Open
+With* in Finder, opens them directly. The T1Prep logo is used as icon when macOS can
+render it.
+
+**File types.** Finder routes documents by Uniform Type Identifier, not by extension, so
+the bundles declare them: `CAT_VolView` imports the system type `gov.nih.nifti-1` (`.nii`)
+and `CAT_SurfView` exports its own for `.gii` and `.annot`, which nothing else on macOS
+declares. `.mnc`, `.nrrd` and `.mha/.mhd` are registered by extension only.
+
+**`.nii.gz` is a special case:** macOS looks at the last extension only, so such a file is
+a gzip archive (`org.gnu.gnu-zip-archive`). `CAT_VolView` registers for that type as an
+*alternate* handler — it appears under *Open With* for `.nii.gz` without claiming every
+`.gz` file on the system.
+
+**Always open with the viewer.** Which app owns a type is a user setting. Either select a
+file in Finder, press ⌘I, pick the app under *Open with* and click *Change All…* (once for
+`.nii`, once for `.nii.gz`), or install [duti](https://github.com/moretension/duti)
+(`brew install duti`) and re-run the script with `-d`, which sets the defaults for you.
+The apps also have to live where Launch Services looks — `/Applications` or
+`~/Applications`; the script registers them with `lsregister` either way.
+
 ### `CAT_SurfView` / `CAT_VolView`
 
 The two viewers (PySide6/VTK) are installed as console scripts, not as wrappers in this

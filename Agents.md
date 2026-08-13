@@ -35,6 +35,7 @@ T1Prep/
 │   ├── T1Prep_ui                   # Web UI dev launcher (installed: t1prep-ui)
 │   ├── activate_env.sh             # Source to activate the venv
 │   ├── run_with_env.sh             # Run any Python script with venv
+│   ├── make_macos_apps.sh          # macOS .app bundles for the viewers
 │   ├── install.sh                  # Bash bootstrapper: download release + set up venv
 │   #                                 (alternative to `pip install T1Prep` from PyPI)
 │   ├── dice.sh                     # Dice similarity metric wrapper

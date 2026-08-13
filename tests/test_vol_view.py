@@ -679,3 +679,43 @@ class TestWindowContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAppLaunch(unittest.TestCase):
+    """Starting from the macOS app bundle rather than a shell."""
+
+    def test_app_flag(self):
+        from t1prep.gui.cat_vol_view import APP_BUNDLE_ENV, running_as_app
+        previous = os.environ.pop(APP_BUNDLE_ENV, None)
+        try:
+            self.assertFalse(running_as_app())
+            os.environ[APP_BUNDLE_ENV] = "1"
+            self.assertTrue(running_as_app())
+        finally:
+            os.environ.pop(APP_BUNDLE_ENV, None)
+            if previous is not None:
+                os.environ[APP_BUNDLE_ENV] = previous
+
+    def test_files_from_finder_are_collected(self):
+        """Finder passes documents as events, not on the command line."""
+        try:
+            from PySide6 import QtCore, QtGui, QtWidgets
+        except Exception as exc:  # pragma: no cover - needs Qt
+            self.skipTest(f"Qt unavailable: {exc}")
+        from t1prep.gui.cat_vol_view import files_opened_by_finder
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        QtCore.QTimer.singleShot(0, lambda: app.postEvent(
+            app, QtGui.QFileOpenEvent(QtCore.QUrl.fromLocalFile("/tmp/a.nii.gz"))))
+        self.assertEqual(files_opened_by_finder(app, timeout_ms=1500),
+                         ["/tmp/a.nii.gz"])
+
+    def test_no_files_when_none_arrive(self):
+        try:
+            from PySide6 import QtWidgets
+        except Exception as exc:  # pragma: no cover - needs Qt
+            self.skipTest(f"Qt unavailable: {exc}")
+        from t1prep.gui.cat_vol_view import files_opened_by_finder
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.assertEqual(files_opened_by_finder(app, timeout_ms=100), [])

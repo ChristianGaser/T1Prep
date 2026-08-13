@@ -120,9 +120,15 @@ from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
 # The volume window is shared with the standalone CAT_VolView tool.  It also
 # selects the QVTKRWIBase used below, so it is imported before the widget.
 try:
-    from .cat_vol_view import VolumeViewerWindow, install_qt_message_filter
+    from .cat_vol_view import (
+        VolumeViewerWindow, ask_for_files, install_qt_message_filter,
+        qt_application, running_as_app,
+    )
 except ImportError:  # direct invocation as a script (no package context)
-    from cat_vol_view import VolumeViewerWindow, install_qt_message_filter
+    from cat_vol_view import (
+        VolumeViewerWindow, ask_for_files, install_qt_message_filter,
+        qt_application, running_as_app,
+    )
 
 # The control panel is shared with the volume viewer
 try:
@@ -4041,6 +4047,14 @@ def main(argv: Optional[List[str]] = None):
     if argv is None:
         argv = sys.argv[1:]
     install_qt_message_filter()
+    if not argv and running_as_app():
+        # Double-clicked in Finder: ask for a surface or overlay rather than
+        # printing the command-line help into nowhere
+        app = qt_application()
+        argv = ask_for_files(app, "Open surface or overlay",
+                             "Surfaces and overlays (*.gii *.annot *.txt);;All files (*)")
+        if not argv:
+            return
     opts = parse_args(argv)
     # Ensure a compatible OpenGL surface format before QApplication is created.
     try:
@@ -4054,10 +4068,7 @@ def main(argv: Optional[List[str]] = None):
             QtWidgets.QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
         except Exception:
             pass
-    # Only the program name goes to Qt: it parses argv itself and would
-    # claim options of its own (-style, -stylesheet, -platform, …), which
-    # clash with ours
-    app = QtWidgets.QApplication(sys.argv[:1])
+    app = qt_application()
     win = Viewer(opts); win.show()
     sys.exit(app.exec())
 

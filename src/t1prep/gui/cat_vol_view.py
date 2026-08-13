@@ -1931,6 +1931,63 @@ class _OrthoStyle(vtkInteractorStyleImage):
 #  Qt window                                                          #
 # ------------------------------------------------------------------ #
 
+#: Set by the macOS app bundles, so a double-click asks for a file instead of
+#: printing the command-line help
+APP_BUNDLE_ENV = "T1PREP_APP"
+
+
+def running_as_app() -> bool:
+    """True when started from the macOS application bundle."""
+    return bool(os.environ.get(APP_BUNDLE_ENV))
+
+
+def files_opened_by_finder(app, timeout_ms: int = 400) -> List[str]:
+    """Files macOS sent as open-document events, e.g. a drop on the app icon.
+
+    Finder does not pass them on the command line; they arrive as Qt
+    ``FileOpen`` events shortly after launch, so the event loop is given a
+    moment to deliver them.
+    """
+    collected: List[str] = []
+
+    class _Filter(QtCore.QObject):
+        def eventFilter(self, obj, event):
+            if event.type() == QtCore.QEvent.Type.FileOpen:
+                name = event.file()
+                if name:
+                    collected.append(name)
+                return True
+            return False
+
+    filter_ = _Filter()
+    app.installEventFilter(filter_)
+    deadline = QtCore.QElapsedTimer()
+    deadline.start()
+    while deadline.elapsed() < timeout_ms and not collected:
+        app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+    app.removeEventFilter(filter_)
+    return collected
+
+
+def ask_for_files(app, caption: str, patterns: str) -> List[str]:
+    """Files to open when the app was started without any (double-click)."""
+    files = files_opened_by_finder(app)
+    if files:
+        return files
+    chosen, _ = QtWidgets.QFileDialog.getOpenFileNames(
+        None, caption, str(Path.home()), patterns)
+    return list(chosen)
+
+
+def qt_application():
+    """The QApplication, created once.
+
+    A second instance raises, and both viewers may need one early — to ask for
+    a file when started from the macOS app bundle — and again for the window.
+    """
+    return QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
+
+
 def install_qt_message_filter():
     """Silence the harmless QPainter warning of the VTK widget.
 
@@ -2511,6 +2568,17 @@ def _place_windows(windows: Sequence["VolumeViewerWindow"]):
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI entry-point."""
+    if argv is None and running_as_app() and len(sys.argv) < 2:
+        # Double-clicked in Finder: ask for the volume instead of failing on
+        # the missing argument
+        install_qt_message_filter()
+        app = qt_application()
+        chosen = ask_for_files(app, "Open volume",
+                               "Volumes (*.nii *.nii.gz *.mnc *.mha *.mhd *.nrrd);;"
+                               "All files (*)")
+        if not chosen:
+            return 0
+        argv = chosen
     args = _parse_args(argv)
 
     pct = None if args.no_percentile else tuple(args.percentile)
@@ -2557,10 +2625,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     install_qt_message_filter()
-    # Only the program name goes to Qt: it parses argv itself and would
-    # claim options of its own (-style, -stylesheet, -platform, …), which
-    # clash with ours
-    app = QtWidgets.QApplication(sys.argv[:1])
+    app = qt_application()
     # One window per volume, with their cursors linked
     windows = []
     for volume in volumes:

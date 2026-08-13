@@ -119,6 +119,12 @@ CAT_VolView T1.nii.gz              # volume viewer (3 orthogonal slices)
 CAT_VolView T1.nii.gz p1T1.nii.gz  # up to 3 volumes, one window each, linked
 ```
 
+On macOS, `scripts/make_macos_apps.sh` wraps both viewers as `.app` bundles for the
+Dock and Finder (double-click to pick a file, or drop files onto the icon).
+
+```bash
+```
+
 > The `T1Prep` command is the bash orchestrator (full features incl. `--multi`
 > batch parallelism); `t1prep-run` is the equivalent single-subject Python
 > entry. Add the environment's `bin/` to `PATH` and you never need to call

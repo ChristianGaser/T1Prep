@@ -64,6 +64,7 @@ Always use the wrapper scripts – they auto-activate the virtual environment:
 | `scripts/run_with_env.sh <script>` | Run any Python script with correct env |
 | `scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py` | Surface viewer from a checkout (installed: `CAT_SurfView`) |
 | `scripts/run_with_env.sh src/t1prep/gui/cat_vol_view.py` | Volume viewer from a checkout (installed: `CAT_VolView`) |
+| `scripts/make_macos_apps.sh` | Build macOS `.app` bundles for both viewers |
 | `scripts/T1Prep_ui` | Launch Web UI (installed: `t1prep-ui`) |
 
 See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
