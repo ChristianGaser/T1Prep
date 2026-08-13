@@ -124,6 +124,12 @@ try:
 except ImportError:  # direct invocation as a script (no package context)
     from cat_vol_view import VolumeViewerWindow, install_qt_message_filter
 
+# The control panel is shared with the volume viewer
+try:
+    from .controls import ControlPanel, LOGP_THRESHOLDS
+except ImportError:  # direct invocation as a script
+    from controls import ControlPanel, LOGP_THRESHOLDS
+
 # Qt interactor & backends
 import vtkmodules.qt as vtk_qt
 vtk_qt.QVTKRWIBase = "QOpenGLWidget"
@@ -131,63 +137,24 @@ from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 import vtkmodules.vtkRenderingOpenGL2   # registers OpenGL2 backend (fixes vtkShaderProperty)
 import vtkmodules.vtkRenderingFreeType  # text rendering for labels/ScalarBar
 
-# --- Enums & defaults ---
-C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY = range(8)
+# --- Defaults ---
 DEFAULT_WINDOW_SIZE = (1800, 800)
 
-# ---- Lookup table helper ----
-class LookupTableWithEnabling(vtkLookupTable):
-    """Plain VTK lookup table; clipping is applied by zeroing table alphas."""
-
-
-def _fill_from_ctf(lut: LookupTableWithEnabling, points, alpha: float):
-    # points: list of (pos0..100, r,g,b)
-    xs = [p[0] for p in points]
-    rs = [p[1] for p in points]
-    gs = [p[2] for p in points]
-    bs = [p[3] for p in points]
-    def interp(x, xs, ys):
-        if x <= xs[0]: return ys[0]
-        if x >= xs[-1]: return ys[-1]
-        for i in range(1, len(xs)):
-            if x <= xs[i]:
-                t = (x - xs[i-1])/(xs[i]-xs[i-1])
-                return ys[i-1]*(1-t) + ys[i]*t
-        return ys[-1]
-    lut.SetNumberOfTableValues(256)
-    for i in range(256):
-        val = (i/255.0)*100.0
-        r = interp(val, xs, rs); g = interp(val, xs, gs); b = interp(val, xs, bs)
-        lut.SetTableValue(i, r, g, b, alpha)
-
-def get_lookup_table(colormap: int, alpha: float) -> LookupTableWithEnabling:
-    lut = LookupTableWithEnabling()
-    if colormap == C1:
-        pts = [
-            (0.0, 50/255.0,136/255.0,189/255.0), (12.5, 102/255.0,194/255.0,165/255.0),
-            (25, 171/255.0,221/255.0,164/255.0), (37.5, 230/255.0,245/255.0,152/255.0),
-            (50, 1.0,1.0,191/255.0), (62.5, 254/255.0,224/255.0,139/255.0),
-            (75, 253/255.0,174/255.0,97/255.0), (82.5, 244/255.0,109/255.0,67/255.0),
-            (100.0,213/255.0,62/255.0,79/255.0),
-        ]; _fill_from_ctf(lut, pts, alpha)
-    elif colormap == C2:
-        pts = [(0,0,0.6,1),(25,0.5,1,0.5),(50,1,1,0.5),(75,1,0.75,0.5),(100,1,0.5,0.5)]; _fill_from_ctf(lut, pts, alpha)
-    elif colormap == C3:
-        pts = [(0,0/255,143/255,213/255),(25,111/255,190/255,70/255),(50,1,220/255,45/255),(75,252/255,171/255,23/255),(100,238/255,28/255,58/255)]; _fill_from_ctf(lut, pts, alpha)
-    elif colormap == JET:
-        pts = [(0,0,0,0.5625),(16.67,0,0,1),(33.33,0,1,1),(50,0.5,1,0.5),(66.67,1,1,0),(83.33,1,0,0),(100,0.5,0,0)]; _fill_from_ctf(lut, pts, alpha)
-    elif colormap == HOT:
-        # Classic HOT: black -> red -> yellow -> white
-        pts = [(0,0,0,0),(33.33,1,0,0),(66.67,1,1,0),(100,1,1,1)]; _fill_from_ctf(lut, pts, alpha)
-    elif colormap == FIRE:
-        pts = [(0,0,0,0),(25,0.5,0,0),(50,1,0,0),(75,1,0.5,0),(100,1,1,0)]; _fill_from_ctf(lut, pts, alpha)
-    elif colormap == BIPOLAR:
-        pts = [(0,0,1,1),(25,0,0,1),(50,0.1,0.1,0.1),(62.5,0.5,0,0),(75,1,0,0),(87.5,1,0.5,0),(100,1,1,0)]; _fill_from_ctf(lut, pts, alpha)
-    elif colormap == GRAY:
-        lut.SetHueRange(0.0, 0.0); lut.SetSaturationRange(0.0, 0.0); lut.SetValueRange(0.0, 1.0); lut.Build()
-    else:
-        lut.Build()
-    return lut
+# Colormaps live in a shared module (the volume viewer needs them too)
+try:
+    from .colormaps import (
+        C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY,
+        COLORMAP_NAMES, COLORMAP_ORDER,
+        LookupTableWithEnabling, apply_discrete, build_overlay_lut,
+        clipped_lut_indices, get_lookup_table, invert_lut,
+    )
+except ImportError:  # direct invocation as a script
+    from colormaps import (
+        C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY,
+        COLORMAP_NAMES, COLORMAP_ORDER,
+        LookupTableWithEnabling, apply_discrete, build_overlay_lut,
+        clipped_lut_indices, get_lookup_table, invert_lut,
+    )
 
 # ---- Naming helpers ----
 # Surface types that CAT12/FreeSurfer put in the second dot-token of a mesh
@@ -415,17 +382,6 @@ def detect_overlay_kind(filename: str) -> Optional[str]:
 
 # -log10(0.05) = 1.30103, the usual p<0.05 threshold of CAT12 statistic results
 LOG10_P005 = -math.log10(0.05)
-
-#: Thresholds offered for -log10(p) overlays, as in cat_surf_results: the label
-#: shown in the control panel and the value in -log10(p) units.  Selecting one
-#: hides everything between -value and +value.
-LOGP_THRESHOLDS = (
-    ('none', 0.0),
-    ('p<0.05', -math.log10(0.05)),
-    ('p<0.01', -math.log10(0.01)),
-    ('p<0.001', -math.log10(0.001)),
-)
-
 
 def is_logp_overlay(filename: Optional[str]) -> bool:
     """Return True when the overlay holds -log10(p) values.
@@ -1686,309 +1642,6 @@ def parse_args(argv: List[str]) -> Options:
     )
 
 # ---- Control Panel ----
-class ControlPanel(QtWidgets.QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumWidth(320)
-        self.layout = QtWidgets.QVBoxLayout(self)
-        self.layout.setContentsMargins(10,10,10,10)
-        form = QtWidgets.QFormLayout()
-        # Internal bounds for slider mapping (min,max)
-        self._overlay_bounds = (-1.0, 1.0)
-        self._clip_bounds = (-1.0, 1.0)
-        self._bkg_bounds = (-1.0, 1.0)
-
-        # Overlay selector (editable combo for long names + direct selection) — FIRST ROW
-        self.overlay_combo = QtWidgets.QComboBox()
-        self.overlay_combo.setEditable(True)
-        self.overlay_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.overlay_combo.setMinimumContentsLength(50)
-        try:
-            # Widen dropdown popup for long paths
-            self.overlay_combo.view().setMinimumWidth(600)
-        except Exception:
-            pass
-        self.overlay_btn = QtWidgets.QPushButton("…")
-        ov_box = QtWidgets.QHBoxLayout(); ov_box.addWidget(self.overlay_combo, 1); ov_box.addWidget(self.overlay_btn)
-        form.addRow("Overlay", self._wrap(ov_box))
-
-        # Volume (orthogonal view) — simple button
-        self.volume_btn = QtWidgets.QPushButton("Open NIfTI…")
-        form.addRow("Volume", self.volume_btn)
-
-        # Range (overlay)
-        self.range_min = QtWidgets.QDoubleSpinBox(); self.range_min.setDecimals(6); self.range_min.setRange(-1e9, 1e9)
-        self.range_max = QtWidgets.QDoubleSpinBox(); self.range_max.setDecimals(6); self.range_max.setRange(-1e9, 1e9)
-        self.range_slider_min = QtWidgets.QSlider(ORIENT_H); self.range_slider_min.setRange(0, 1000)
-        self.range_slider_max = QtWidgets.QSlider(ORIENT_H); self.range_slider_max.setRange(0, 1000)
-        range_box = QtWidgets.QHBoxLayout(); range_box.addWidget(self.range_min); range_box.addWidget(self.range_slider_min); range_box.addWidget(self.range_slider_max); range_box.addWidget(self.range_max)
-        form.addRow("Range (overlay)", self._wrap(range_box))
-
-        # Clip
-        self.clip_min = QtWidgets.QDoubleSpinBox(); self.clip_min.setDecimals(6); self.clip_min.setRange(-1e9, 1e9)
-        self.clip_max = QtWidgets.QDoubleSpinBox(); self.clip_max.setDecimals(6); self.clip_max.setRange(-1e9, 1e9)
-        self.clip_slider_min = QtWidgets.QSlider(ORIENT_H); self.clip_slider_min.setRange(0, 1000)
-        self.clip_slider_max = QtWidgets.QSlider(ORIENT_H); self.clip_slider_max.setRange(0, 1000)
-        clip_box = QtWidgets.QHBoxLayout(); clip_box.addWidget(self.clip_min); clip_box.addWidget(self.clip_slider_min); clip_box.addWidget(self.clip_slider_max); clip_box.addWidget(self.clip_max)
-        form.addRow("Clip window", self._wrap(clip_box))
-
-        # Threshold for -log10(p) overlays, as in cat_surf_results.  The row is
-        # only shown for such overlays, where these are the values that matter.
-        self.threshold = QtWidgets.QComboBox()
-        self.threshold.addItems([label for label, _ in LOGP_THRESHOLDS])
-        thr_box = QtWidgets.QHBoxLayout()
-        thr_box.addWidget(self.threshold)
-        thr_box.addStretch(1)
-        self.threshold_row = self._wrap(thr_box)
-        self.threshold_label = QtWidgets.QLabel("Threshold")
-        form.addRow(self.threshold_label, self.threshold_row)
-        self.set_threshold_visible(False)
-
-        # Range bkg
-        self.bkg_min = QtWidgets.QDoubleSpinBox(); self.bkg_min.setDecimals(6); self.bkg_min.setRange(-1e9, 1e9)
-        self.bkg_max = QtWidgets.QDoubleSpinBox(); self.bkg_max.setDecimals(6); self.bkg_max.setRange(-1e9, 1e9)
-        self.bkg_slider_min = QtWidgets.QSlider(ORIENT_H); self.bkg_slider_min.setRange(0, 1000)
-        self.bkg_slider_max = QtWidgets.QSlider(ORIENT_H); self.bkg_slider_max.setRange(0, 1000)
-        bkg_box = QtWidgets.QHBoxLayout(); bkg_box.addWidget(self.bkg_min); bkg_box.addWidget(self.bkg_slider_min); bkg_box.addWidget(self.bkg_slider_max); bkg_box.addWidget(self.bkg_max)
-        form.addRow("Range (bkg)", self._wrap(bkg_box))
-        # Opacity
-        self.opacity = QtWidgets.QSlider(ORIENT_H); self.opacity.setRange(0,100); self.opacity.setValue(80)
-        form.addRow("Opacity", self.opacity)
-        # Toggles
-        self.cb_colorbar = QtWidgets.QCheckBox("Show colorbar")
-        self.cb_discrete = QtWidgets.QCheckBox("Discrete")
-        # Colormap selector
-        self.colormap = QtWidgets.QComboBox()
-        self.colormap.addItems(["JET","HOT","FIRE","BIPOLAR","GRAY","C1","C2","C3"])  # order visible to user
-        # Title mode selector (shape | stats | none)
-        self.title_mode = QtWidgets.QComboBox(); self.title_mode.addItems(["shape","stats","none"])
-        self.cb_inverse = QtWidgets.QCheckBox("Inverse (flip sign)")
-        self.cb_fix_scaling = QtWidgets.QCheckBox("Fix scaling")
-        self.cb_histogram = QtWidgets.QCheckBox("Show histogram")
-        # Put Show colorbar and Colorbar title on one row (aligned with other checkboxes)
-        row = QtWidgets.QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(8)
-        row.addWidget(self.cb_colorbar)
-        row.addWidget(self.cb_discrete)
-        row.addStretch(1)
-        row.addWidget(QtWidgets.QLabel("Colormap"))
-        row.addWidget(self.colormap)
-        row.addWidget(QtWidgets.QLabel("Colorbar title"))
-        row.addWidget(self.title_mode)
-        form.addRow(self._wrap(row))
-        form.addRow(self.cb_inverse)
-        form.addRow(self.cb_fix_scaling)
-        form.addRow(self.cb_histogram)
-        self.layout.addLayout(form)
-        # Action buttons (none for now)
-        self.layout.addStretch(1)
-
-        # --- Wiring: bidirectional sync between sliders and spin boxes ---
-        # Overlay range
-        self.range_slider_min.valueChanged.connect(lambda v: self._slider_to_spin('overlay', 'min', v))
-        self.range_slider_max.valueChanged.connect(lambda v: self._slider_to_spin('overlay', 'max', v))
-        self.range_min.valueChanged.connect(lambda v: self._spin_to_slider('overlay', 'min', float(v)))
-        self.range_max.valueChanged.connect(lambda v: self._spin_to_slider('overlay', 'max', float(v)))
-        # Clip window
-        self.clip_slider_min.valueChanged.connect(lambda v: self._slider_to_spin('clip', 'min', v))
-        self.clip_slider_max.valueChanged.connect(lambda v: self._slider_to_spin('clip', 'max', v))
-        self.clip_min.valueChanged.connect(lambda v: self._spin_to_slider('clip', 'min', float(v)))
-        self.clip_max.valueChanged.connect(lambda v: self._spin_to_slider('clip', 'max', float(v)))
-        # Background
-        self.bkg_slider_min.valueChanged.connect(lambda v: self._slider_to_spin('bkg', 'min', v))
-        self.bkg_slider_max.valueChanged.connect(lambda v: self._slider_to_spin('bkg', 'max', v))
-        self.bkg_min.valueChanged.connect(lambda v: self._spin_to_slider('bkg', 'min', float(v)))
-        self.bkg_max.valueChanged.connect(lambda v: self._spin_to_slider('bkg', 'max', float(v)))
-
-    def _wrap(self, hbox: QtWidgets.QHBoxLayout) -> QtWidgets.QWidget:
-        w = QtWidgets.QWidget(); w.setLayout(hbox); return w
-
-    def set_threshold_visible(self, visible: bool):
-        """Show the p-value threshold row (only useful for -log10(p) overlays)."""
-        for widget in (self.threshold_label, self.threshold_row):
-            widget.setVisible(bool(visible))
-
-    def set_threshold_from_clip(self, clip: Tuple[float, float]):
-        """Select the entry matching *clip*, or 'none' for anything else."""
-        index = 0
-        if clip[1] > clip[0]:
-            for i, (_, value) in enumerate(LOGP_THRESHOLDS):
-                if value and abs(clip[1] - value) < 0.05 and abs(clip[0] + value) < 0.05:
-                    index = i
-                    break
-        self.threshold.blockSignals(True)
-        self.threshold.setCurrentIndex(index)
-        self.threshold.blockSignals(False)
-
-
-    def set_overlay_controls_enabled(self, enabled: bool):
-        """Enable or disable overlay-related controls based on whether an overlay is loaded."""
-        # Ensure a strict boolean is used (avoid None/[] leaking from callers)
-        enabled = bool(enabled)
-        # Range controls
-        self.range_min.setEnabled(enabled)
-        self.range_max.setEnabled(enabled)
-        self.range_slider_min.setEnabled(enabled)
-        self.range_slider_max.setEnabled(enabled)
-        # Clip controls
-        self.clip_min.setEnabled(enabled)
-        self.clip_max.setEnabled(enabled)
-        self.clip_slider_min.setEnabled(enabled)
-        self.clip_slider_max.setEnabled(enabled)
-        # Colorbar and title controls
-        self.cb_colorbar.setEnabled(enabled)
-        # Discrete applies to the overlay LUT regardless of colorbar visibility
-        self.cb_discrete.setEnabled(enabled)
-        # Title is relevant only when the colorbar is shown
-        self.title_mode.setEnabled(enabled and self.cb_colorbar.isChecked())
-        # Colormap selector
-        self.colormap.setEnabled(enabled)
-        # Inverse control
-        self.cb_inverse.setEnabled(enabled)
-        # Background and opacity are also not meaningful until data is loaded
-        self.bkg_min.setEnabled(enabled)
-        self.bkg_max.setEnabled(enabled)
-        self.bkg_slider_min.setEnabled(enabled)
-        self.bkg_slider_max.setEnabled(enabled)
-        self.opacity.setEnabled(enabled)
-        # Fix scaling only makes sense with at least one overlay
-        self.cb_fix_scaling.setEnabled(enabled)
-        # Histogram available only when overlay is loaded
-        self.cb_histogram.setEnabled(enabled)
-        if not enabled:
-            try:
-                self.cb_histogram.blockSignals(True)
-                self.cb_histogram.setChecked(False)
-            finally:
-                self.cb_histogram.blockSignals(False)
-
-    # ---- Slider helpers ----
-    def _bounds(self, which: str):
-        return {
-            'overlay': self._overlay_bounds,
-            'clip': self._clip_bounds,
-            'bkg': self._bkg_bounds,
-        }[which]
-
-    @staticmethod
-    def _to_slider(value: float, bounds: tuple) -> int:
-        a, b = bounds
-        if b <= a:
-            return 0
-        t = (float(value) - float(a)) / (float(b) - float(a))
-        t = max(0.0, min(1.0, t))
-        return int(round(t * 1000.0))
-
-    @staticmethod
-    def _from_slider(ticks: int, bounds: tuple) -> float:
-        a, b = bounds
-        if b <= a:
-            return float(a)
-        t = max(0, min(1000, int(ticks))) / 1000.0
-        return float(a) + t * (float(b) - float(a))
-
-    def _slider_to_spin(self, which: str, part: str, ticks: int):
-        bounds = self._bounds(which)
-        val = self._from_slider(ticks, bounds)
-        if which == 'overlay':
-            if part == 'min':
-                # Enforce min <= max
-                if self.range_slider_min.value() > self.range_slider_max.value():
-                    self.range_slider_max.blockSignals(True)
-                    self.range_slider_max.setValue(self.range_slider_min.value())
-                    self.range_slider_max.blockSignals(False)
-                self.range_min.blockSignals(True); self.range_min.setValue(val); self.range_min.blockSignals(False)
-            else:
-                if self.range_slider_max.value() < self.range_slider_min.value():
-                    self.range_slider_min.blockSignals(True)
-                    self.range_slider_min.setValue(self.range_slider_max.value())
-                    self.range_slider_min.blockSignals(False)
-                self.range_max.blockSignals(True); self.range_max.setValue(val); self.range_max.blockSignals(False)
-        elif which == 'clip':
-            if part == 'min':
-                if self.clip_slider_min.value() > self.clip_slider_max.value():
-                    self.clip_slider_max.blockSignals(True)
-                    self.clip_slider_max.setValue(self.clip_slider_min.value())
-                    self.clip_slider_max.blockSignals(False)
-                self.clip_min.blockSignals(True); self.clip_min.setValue(val); self.clip_min.blockSignals(False)
-            else:
-                if self.clip_slider_max.value() < self.clip_slider_min.value():
-                    self.clip_slider_min.blockSignals(True)
-                    self.clip_slider_min.setValue(self.clip_slider_max.value())
-                    self.clip_slider_min.blockSignals(False)
-                self.clip_max.blockSignals(True); self.clip_max.setValue(val); self.clip_max.blockSignals(False)
-        elif which == 'bkg':
-            if part == 'min':
-                if self.bkg_slider_min.value() > self.bkg_slider_max.value():
-                    self.bkg_slider_max.blockSignals(True)
-                    self.bkg_slider_max.setValue(self.bkg_slider_min.value())
-                    self.bkg_slider_max.blockSignals(False)
-                self.bkg_min.blockSignals(True); self.bkg_min.setValue(val); self.bkg_min.blockSignals(False)
-            else:
-                if self.bkg_slider_max.value() < self.bkg_slider_min.value():
-                    self.bkg_slider_min.blockSignals(True)
-                    self.bkg_slider_min.setValue(self.bkg_slider_max.value())
-                    self.bkg_slider_min.blockSignals(False)
-                self.bkg_max.blockSignals(True); self.bkg_max.setValue(val); self.bkg_max.blockSignals(False)
-
-    def _spin_to_slider(self, which: str, part: str, value: float):
-        bounds = self._bounds(which)
-        ticks = self._to_slider(value, bounds)
-        if which == 'overlay':
-            if part == 'min':
-                if ticks > self.range_slider_max.value():
-                    self.range_slider_max.blockSignals(True)
-                    self.range_slider_max.setValue(ticks)
-                    self.range_slider_max.blockSignals(False)
-                self.range_slider_min.blockSignals(True); self.range_slider_min.setValue(ticks); self.range_slider_min.blockSignals(False)
-            else:
-                if ticks < self.range_slider_min.value():
-                    self.range_slider_min.blockSignals(True)
-                    self.range_slider_min.setValue(ticks)
-                    self.range_slider_min.blockSignals(False)
-                self.range_slider_max.blockSignals(True); self.range_slider_max.setValue(ticks); self.range_slider_max.blockSignals(False)
-        elif which == 'clip':
-            if part == 'min':
-                if ticks > self.clip_slider_max.value():
-                    self.clip_slider_max.blockSignals(True)
-                    self.clip_slider_max.setValue(ticks)
-                    self.clip_slider_max.blockSignals(False)
-                self.clip_slider_min.blockSignals(True); self.clip_slider_min.setValue(ticks); self.clip_slider_min.blockSignals(False)
-            else:
-                if ticks < self.clip_slider_min.value():
-                    self.clip_slider_min.blockSignals(True)
-                    self.clip_slider_min.setValue(ticks)
-                    self.clip_slider_min.blockSignals(False)
-                self.clip_slider_max.blockSignals(True); self.clip_slider_max.setValue(ticks); self.clip_slider_max.blockSignals(False)
-        elif which == 'bkg':
-            if part == 'min':
-                if ticks > self.bkg_slider_max.value():
-                    self.bkg_slider_max.blockSignals(True)
-                    self.bkg_slider_max.setValue(ticks)
-                    self.bkg_slider_max.blockSignals(False)
-                self.bkg_slider_min.blockSignals(True); self.bkg_slider_min.setValue(ticks); self.bkg_slider_min.blockSignals(False)
-            else:
-                if ticks < self.bkg_slider_min.value():
-                    self.bkg_slider_min.blockSignals(True)
-                    self.bkg_slider_min.setValue(ticks)
-                    self.bkg_slider_min.blockSignals(False)
-                self.bkg_slider_max.blockSignals(True); self.bkg_slider_max.setValue(ticks); self.bkg_slider_max.blockSignals(False)
-
-    # Public: set slider bounds (min,max) and align slider positions to current spin values
-    def set_overlay_bounds(self, vmin: float, vmax: float):
-        self._overlay_bounds = (float(vmin), float(vmax))
-        self._spin_to_slider('overlay', 'min', float(self.range_min.value()))
-        self._spin_to_slider('overlay', 'max', float(self.range_max.value()))
-
-    def set_clip_bounds(self, vmin: float, vmax: float):
-        self._clip_bounds = (float(vmin), float(vmax))
-        self._spin_to_slider('clip', 'min', float(self.clip_min.value()))
-        self._spin_to_slider('clip', 'max', float(self.clip_max.value()))
-
-    def set_bkg_bounds(self, vmin: float, vmax: float):
-        self._bkg_bounds = (float(vmin), float(vmax))
-        self._spin_to_slider('bkg', 'min', float(self.bkg_min.value()))
-        self._spin_to_slider('bkg', 'max', float(self.bkg_max.value()))
-
 # ---- Viewer ----
 class Viewer(QtWidgets.QMainWindow):
     def __init__(self, opts: Options):
@@ -2989,25 +2642,8 @@ class Viewer(QtWidgets.QMainWindow):
 
     # --- LUT helpers ---
     def _apply_discrete_to_overlay_lut(self, lut: vtkLookupTable):
-        """Flatten LUT into 'levels' discrete bands if discrete > 0.
-
-        Interprets opts.discrete as the number of bands (1..4). For N levels,
-        the 256-entry table is divided into N segments and each segment is
-        filled with a representative color sampled at its start index.
-        
-        NOTE: This is for overlay LUTs applied to surfaces (no gaps).
-        """
-        levels = int(getattr(self.opts, 'discrete', 0) or 0)
-        if levels <= 0:
-            return
-        levels = max(1, min(256, levels))
-        n = 256
-        for k in range(levels):
-            start = int(k * n / levels)
-            end = int((k + 1) * n / levels) if k < levels - 1 else n
-            r, g, b, a = lut.GetTableValue(start)
-            for i in range(start, end):
-                lut.SetTableValue(i, r, g, b, a)
+        """Flatten the LUT into opts.discrete bands (no gaps, unlike the colorbar)."""
+        apply_discrete(lut, int(getattr(self.opts, 'discrete', 0) or 0))
 
     def _apply_discrete_to_colorbar_lut(self, lut: vtkLookupTable):
         """Apply discrete bands with gaps to colorbar LUT only.
@@ -3056,18 +2692,9 @@ class Viewer(QtWidgets.QMainWindow):
                 lut.SetTableValue(i, r, g, b, a)
 
     def _invert_lut(self, lut: vtkLookupTable):
-        """Reverse the order of colors in a LUT in-place.
-
-        This flips how scalars map to colors without changing data values
-        or scalar ranges. Alpha values are preserved with their colors.
-        """
+        """Reverse the order of colors in a LUT in-place."""
         try:
-            n = int(lut.GetNumberOfTableValues())
-            for i in range(n // 2):
-                r1, g1, b1, a1 = lut.GetTableValue(i)
-                r2, g2, b2, a2 = lut.GetTableValue(n - 1 - i)
-                lut.SetTableValue(i, r2, g2, b2, a2)
-                lut.SetTableValue(n - 1 - i, r1, g1, b1, a1)
+            invert_lut(lut)
         except Exception:
             pass
 
@@ -3077,43 +2704,17 @@ class Viewer(QtWidgets.QMainWindow):
         Any clip transparency previously baked into the LUT alpha is dropped;
         call :meth:`_apply_clip_to_overlay_luts` afterwards to re-apply it.
         """
-        self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
-        if self.opts.inverse:
-            self._invert_lut(self.lut_overlay_l)
-            self._invert_lut(self.lut_overlay_r)
-        self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
-        self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
+        self.lut_overlay_l = build_overlay_lut(
+            self.opts.colormap, self.opts.opacity,
+            inverse=self.opts.inverse, discrete=self.opts.discrete)
+        self.lut_overlay_r = build_overlay_lut(
+            self.opts.colormap, self.opts.opacity,
+            inverse=self.opts.inverse, discrete=self.opts.discrete)
 
     @staticmethod
     def _clipped_lut_indices(n: int, smin: float, smax: float, c0: float, c1: float) -> List[int]:
-        """Return the LUT indices covered by the clip window (c0, c1).
-
-        Entry ``i`` of an ``n``-entry table represents the scalar
-        ``smin + i/(n-1) * (smax - smin)``.  VTK clamps values outside
-        ``[smin, smax]`` onto the first/last entry, so those two entries are
-        also clipped once the clip window reaches the corresponding range
-        boundary.  That makes ``-range 6 16 -clip -100 6`` behave like
-        ``-clip -100 6.00001`` instead of clipping nothing.
-        """
-        if n <= 0 or not (c1 > c0):
-            return []
-        span = abs(smax - smin)
-        eps = (span if span > 0 else 1.0) * 1e-9
-        out: List[int] = []
-        for i in range(n):
-            t = i / (n - 1) if n > 1 else 0.0
-            val = smin + t * (smax - smin)
-            inside = (c0 < val < c1)
-            if not inside and i == 0:
-                # Everything below smin is clamped onto entry 0
-                inside = (c0 - eps) <= smin <= (c1 + eps)
-            if not inside and i == n - 1:
-                # Everything above smax is clamped onto the last entry
-                inside = (c0 - eps) <= smax <= (c1 + eps)
-            if inside:
-                out.append(i)
-        return out
+        """LUT indices covered by the clip window (see colormaps module)."""
+        return clipped_lut_indices(n, smin, smax, c0, c1)
 
     def _apply_clip_to_overlay_luts(self):
         """Make values inside the clip range transparent and gray in colorbar.

@@ -232,6 +232,9 @@ CAT_VolView T1.nii.gz lh.central.gii rh.central.gii
 
 # Up to three volumes: one window each, cursors linked
 CAT_VolView T1.nii.gz p1T1.nii.gz p2T1.nii.gz
+
+# Statistic map in colour on top of a T1 (same voxel grid)
+CAT_VolView T1.nii.gz --overlay TFCE_log_pFWE.nii.gz
 ```
 
 **Linked volume view.** `-volume <image>` (or the *Open NIfTI…* button) opens the three
@@ -265,6 +268,13 @@ value under the cursor. The right-click menu holds:
   stored, useful for segmentation edges and resampling artefacts (`--nearest`). The
   reported intensity follows: trilinear at the exact cursor position while smoothing
   is on, the untouched voxel value with raw voxels selected.
+- **Overlay** — draw a second volume in colour on top (`--overlay`, or *Open…*). It has to
+  be on the same voxel grid (same dimensions and voxel size); anything else is refused
+  rather than silently resampled. The reported intensity is then the overlay's, with the
+  image value kept on a `background` line.
+- **Controls** — the control panel of `CAT_SurfView`, wired to the overlay: value range,
+  clip window, p-value thresholds for `log`-named overlays, image intensity range,
+  opacity, colormap, discrete levels and inversion.
 - **Image information** — hide or show the panel (`--no-info` starts without it).
 
 **Presets.** `-preset N` applies a predefined set of options — currently `1` for the C3

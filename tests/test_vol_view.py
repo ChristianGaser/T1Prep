@@ -462,6 +462,96 @@ class TestSampling(unittest.TestCase):
         self.assertEqual(self.viewer.get_value(), self.viewer.get_value_at_index())
 
 
+class TestOverlayVolume(unittest.TestCase):
+    """A second volume drawn in colour on top of the displayed one."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self.affine = np.array([[-1.0, 0, 0, 10.0],
+                                [0, 1.0, 0, -12.0],
+                                [0, 0, 1.0, -14.0],
+                                [0, 0, 0, 1.0]])
+        self.image = str(_write_volume(tmp / "image.nii.gz", self.affine))
+        # Same grid, values 10x the image's, so the two are told apart
+        data = 10.0 * np.arange(20 * 24 * 28, dtype=np.float32).reshape(20, 24, 28)
+        nib.save(nib.Nifti1Image(data, self.affine), str(tmp / "overlay.nii.gz"))
+        self.overlay = str(tmp / "overlay.nii.gz")
+        # Different grid
+        nib.save(nib.Nifti1Image(np.zeros((10, 12, 14), np.float32),
+                                 self.affine @ np.diag([2, 2, 2, 1])),
+                 str(tmp / "coarse.nii.gz"))
+        self.coarse = str(tmp / "coarse.nii.gz")
+        # Same dimensions, different voxel size
+        stretched = self.affine.copy()
+        stretched[:, :3] *= 2
+        nib.save(nib.Nifti1Image(np.zeros((20, 24, 28), np.float32), stretched),
+                 str(tmp / "stretched.nii.gz"))
+        self.stretched = str(tmp / "stretched.nii.gz")
+
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(self.image)
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_none_by_default(self):
+        self.assertIsNone(self.viewer.overlay_path)
+        self.assertIsNone(self.viewer.get_overlay_value())
+
+    def test_reported_intensity_comes_from_the_overlay(self):
+        self.viewer.set_world_position((4.0, -6.0, -8.0))
+        background = self.viewer.get_value()
+        self.viewer.set_overlay(self.overlay)
+        self.assertEqual(self.viewer.overlay_path, self.overlay)
+        self.assertAlmostEqual(self.viewer.get_value(), 10.0 * background, places=3)
+        # the image underneath is still readable
+        self.assertAlmostEqual(self.viewer.get_background_value(), background, places=3)
+
+    def test_removing_it_restores_the_image_value(self):
+        self.viewer.set_world_position((4.0, -6.0, -8.0))
+        background = self.viewer.get_value()
+        self.viewer.set_overlay(self.overlay)
+        self.viewer.set_overlay(None)
+        self.assertIsNone(self.viewer.overlay_path)
+        self.assertAlmostEqual(self.viewer.get_value(), background, places=3)
+
+    def test_grid_must_match(self):
+        """Resampling is out of scope, so a different grid is refused."""
+        with self.assertRaises(ValueError) as caught:
+            self.viewer.set_overlay(self.coarse)
+        self.assertIn("dimensions", str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            self.viewer.set_overlay(self.stretched)
+        self.assertIn("voxel size", str(caught.exception))
+        self.assertIsNone(self.viewer.overlay_path)
+
+    def test_actors_follow_the_slices(self):
+        self.viewer.set_overlay(self.overlay)
+        self.assertEqual(len([a for a in self.viewer._overlay_actors if a]), 3)
+        self.viewer.set_index(5, 6, 7)
+        for pane, actor in enumerate(self.viewer._overlay_actors):
+            self.assertEqual(actor.GetDisplayExtent(),
+                             self.viewer._image_actors[pane].GetDisplayExtent())
+
+    def test_settings_reach_the_lookup_table(self):
+        from t1prep.gui.colormaps import FIRE
+        self.viewer.set_overlay(self.overlay)
+        self.viewer.overlay_colormap = FIRE
+        self.viewer.overlay_range = [0.0, 100.0]
+        self.viewer.overlay_clip = (-10.0, 10.0)
+        lut = self.viewer._overlay_lut()
+        self.assertEqual(tuple(round(v, 3) for v in lut.GetTableRange()), (0.0, 100.0))
+        # values inside the clip window are transparent
+        self.assertEqual(lut.GetTableValue(0)[3], 0.0)
+        self.assertGreater(lut.GetTableValue(int(0.8 * lut.GetNumberOfTableValues()))[3], 0.0)
+
+
 class TestNeurologicalOrientation(unittest.TestCase):
     """Slices are shown "left is left" (neurological), not mirrored."""
 

@@ -14,6 +14,11 @@ Layout (SPM12-like)::
     |  (bot-L) | info     |
     +----------+----------+
 
+A second volume on the same voxel grid can be drawn in colour on top
+(``--overlay``), with range, clip, colormap, opacity, inversion and the
+p-value thresholds set from the control panel the surface viewer uses; the
+reported intensity is then the overlay's.
+
 Slices are shown in neurological orientation (left is left).  The information
 panel lists file name, dimensions, voxel size, orientation code, data type and
 intensity range, plus voxel index, mm position and value under the cursor —
@@ -114,6 +119,23 @@ import vtkmodules.vtkInteractionStyle  # noqa: F401
 import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleImage
 from vtkmodules.vtkFiltersSources import vtkLineSource
+from vtkmodules.vtkImagingCore import vtkImageMapToColors
+
+# Control panel and colormaps are shared with the surface viewer
+try:
+    from .controls import ControlPanel, LOGP_THRESHOLDS
+except ImportError:  # direct invocation as a script
+    from controls import ControlPanel, LOGP_THRESHOLDS
+
+# Colormaps are shared with the surface viewer
+try:
+    from .colormaps import (
+        JET, COLORMAP_NAMES, COLORMAP_ORDER, build_overlay_lut,
+    )
+except ImportError:  # direct invocation as a script
+    from colormaps import (
+        JET, COLORMAP_NAMES, COLORMAP_ORDER, build_overlay_lut,
+    )
 
 # Qt window + interactor.  QVTKRWIBase has to be chosen before the widget is
 # imported; CAT_SurfView imports this module and relies on the same setting.
@@ -387,6 +409,18 @@ class CatImageViewer:
         # Atlas selected for naming the region under the cursor
         self.atlas_path: Optional[str] = None
         self._atlas: Optional[dict] = None
+        # Overlay volume drawn on top, with its own colour settings
+        self.overlay_path: Optional[str] = None
+        self.overlay_name = ""
+        self._overlay_image = None
+        self._overlay_actors: List[Optional[vtkImageActor]] = [None, None, None]
+        self._overlay_colors: List = [None, None, None]
+        self.overlay_range: List[float] = [0.0, 0.0]
+        self.overlay_clip: Tuple[float, float] = (0.0, 0.0)
+        self.overlay_colormap = JET
+        self.overlay_opacity = 0.8
+        self.overlay_inverse = False
+        self.overlay_discrete = 0
 
         # Three renderers + image actors (one per orthogonal view)
         self.renderers: List[vtkRenderer] = [
@@ -973,6 +1007,8 @@ class CatImageViewer:
             display = list(ext)
             display[2 * axis] = display[2 * axis + 1] = self._ijk[axis]
             self._image_actors[pane].SetDisplayExtent(*display)
+            if self._overlay_actors[pane] is not None:
+                self._overlay_actors[pane].SetDisplayExtent(*display)
 
         # A zoomed view stays centred on the cursor
         if self._fov_mm:
@@ -1179,6 +1215,12 @@ class CatImageViewer:
             f"mm          ({world[0]:.1f}, {world[1]:.1f}, {world[2]:.1f})",
             f"value       {value:g}" if value is not None else "value       -",
         ]
+        if self._overlay_image is not None:
+            # 'value' is the overlay above; keep the image underneath visible
+            background = self.get_background_value()
+            lines.append(f"background  {background:g}" if background is not None
+                         else "background  -")
+            lines.insert(1, f"overlay     {self.overlay_name}")
         if self._atlas:
             region = self._atlas_region()
             lines.append(f"atlas       {self._atlas['name']}")
@@ -1222,9 +1264,136 @@ class CatImageViewer:
         self._update_info_text()
         self.render_window.Render()
 
+    # ---------- Display range of the image ----------
+    def get_window_level(self) -> Tuple[float, float]:
+        """Window and level the image is displayed with."""
+        return (float(self._wl[0]), float(self._wl[1]))
+
+    def set_window_level(self, window: float, level: float):
+        """Change the displayed intensity range of the image."""
+        self._wl = (float(window), float(level))
+        for filt in self._wl_filters:
+            if filt is not None:
+                filt.SetWindow(self._wl[0])
+                filt.SetLevel(self._wl[1])
+        self._update_info_text()
+        self.render_window.Render()
+
+    # ---------- Overlay volume ----------
+    def set_overlay(self, overlay_path: Optional[str]):
+        """Colour a second volume on top of the displayed one.
+
+        The overlay has to sit on the same voxel grid as the image (same
+        dimensions and voxel size); anything else would need resampling, which
+        this viewer deliberately does not do.  Pass None to remove it.
+
+        Raises:
+            ValueError: when the file cannot be read or the grids differ.
+        """
+        self._remove_overlay_actors()
+        self.overlay_path = None
+        self.overlay_name = ""
+        self._overlay_image = None
+        if not overlay_path:
+            self._update_info_text()
+            self.render_window.Render()
+            return
+
+        reader = _guess_image_reader(overlay_path)
+        reader.Update()
+        image = reader.GetOutput()
+        if image is None or image.GetDimensions() == (0, 0, 0):
+            raise ValueError(f"cannot read {os.path.basename(overlay_path)}")
+        dims, own = image.GetDimensions(), self._image.GetDimensions()
+        if dims != own:
+            raise ValueError(f"dimensions {dims} differ from {own}")
+        spacing, own_spacing = image.GetSpacing(), self._image.GetSpacing()
+        if any(abs(a - b) > 1e-4 for a, b in zip(spacing, own_spacing)):
+            raise ValueError(
+                f"voxel size {tuple(round(v, 3) for v in spacing)} differs from "
+                f"{tuple(round(v, 3) for v in own_spacing)}")
+
+        # Same grid, so the geometry of the displayed image applies to both
+        image.SetOrigin(0.0, 0.0, 0.0)
+        try:
+            ident = vtkMatrix3x3()
+            ident.Identity()
+            image.SetDirectionMatrix(ident)
+        except Exception:
+            pass
+        self._overlay_image = image
+        self.overlay_path = overlay_path
+        self.overlay_name = os.path.basename(overlay_path)
+        lo, hi = image.GetScalarRange()
+        self.overlay_range = [float(lo), float(hi)]
+        self._build_overlay_actors()
+        self._update_info_text()
+        self.render_window.Render()
+
+    def _remove_overlay_actors(self):
+        for pane, actor in enumerate(self._overlay_actors):
+            if actor is not None:
+                try:
+                    self.renderers[pane].RemoveActor(actor)
+                except Exception:
+                    pass
+        self._overlay_actors = [None, None, None]
+        self._overlay_colors = [None, None, None]
+
+    def _overlay_lut(self):
+        """Lookup table for the overlay — the same one the surface viewer uses."""
+        return build_overlay_lut(
+            self.overlay_colormap, self.overlay_opacity,
+            value_range=self.overlay_range, clip=self.overlay_clip,
+            inverse=self.overlay_inverse, discrete=self.overlay_discrete)
+
+    def _build_overlay_actors(self):
+        """One coloured slice actor per pane, drawn over the image."""
+        self._remove_overlay_actors()
+        if self._overlay_image is None:
+            return
+        lut = self._overlay_lut()
+        for pane in range(3):
+            colors = vtkImageMapToColors()
+            colors.SetInputData(self._overlay_image)
+            colors.SetLookupTable(lut)
+            colors.SetOutputFormatToRGBA()
+            colors.Update()
+            actor = vtkImageActor()
+            actor.GetMapper().SetInputConnection(colors.GetOutputPort())
+            # Lift it off the image plane so it wins the depth test.  The shift
+            # has to go into the world transform: a plain position would be
+            # taken in the actor's own frame, where the header transform can
+            # turn it away from the camera again.
+            offset = self._camera_offset(pane, 0.25)
+            if self._world_from_header:
+                matrix = self._world_matrix()
+                for row in range(3):
+                    matrix.SetElement(row, 3, matrix.GetElement(row, 3) + offset[row])
+                actor.SetUserMatrix(matrix)
+            else:
+                actor.SetPosition(*offset)
+            self.renderers[pane].AddActor(actor)
+            self._overlay_actors[pane] = actor
+            self._overlay_colors[pane] = colors
+        self._apply_interpolation()
+        self._set_slices_from_index()
+
+    def refresh_overlay(self):
+        """Re-colour the overlay after range, clip or colormap changed."""
+        if self._overlay_image is None:
+            return
+        lut = self._overlay_lut()
+        for colors in self._overlay_colors:
+            if colors is not None:
+                colors.SetLookupTable(lut)
+                colors.Modified()
+        self._update_info_text()
+        self.render_window.Render()
+
     # ---------- Display ----------
     def _apply_interpolation(self):
-        for actor in self._image_actors:
+        for actor in self._image_actors + self._overlay_actors:
             if actor is None:
                 continue
             try:
@@ -1298,21 +1467,24 @@ class CatImageViewer:
         except Exception:
             return None
 
-    def get_value(self):
-        """Intensity at the cursor, sampled the way the slices are drawn.
+    def _sample(self, image):
+        """Intensity of *image* at the cursor, sampled the way it is drawn.
 
         With smoothing on this is the trilinear value at the exact cursor
         position, so the number matches what is displayed; with raw voxels
         selected it is the untouched value of the voxel the cursor is in.
         """
-        if self._image is None:
-            return None
-        if not self.interpolate:
-            return self.get_value_at_index()
         index = self.get_index_exact()
-        if index is None:
+        if image is None or index is None:
             return None
-        ext = self._image.GetExtent()
+        ext = image.GetExtent()
+        if not self.interpolate:
+            ijk = [max(ext[2 * a], min(ext[2 * a + 1], int(round(index[a]))))
+                   for a in range(3)]
+            try:
+                return float(image.GetScalarComponentAsDouble(*ijk, 0))
+            except Exception:
+                return None
         base, frac = [], []
         for axis in range(3):
             lo, hi = ext[2 * axis], ext[2 * axis + 1]
@@ -1328,13 +1500,27 @@ class CatImageViewer:
                           * (1.0 - frac[2] if dk == 0 else frac[2]))
                 if weight == 0.0:
                     continue
-                value += weight * self._image.GetScalarComponentAsDouble(
+                value += weight * image.GetScalarComponentAsDouble(
                     min(base[0] + di, ext[1]),
                     min(base[1] + dj, ext[3]),
                     min(base[2] + dk, ext[5]), 0)
             return float(value)
         except Exception:
             return None
+
+    def get_value(self):
+        """Intensity at the cursor: the overlay's when one is loaded."""
+        if self._overlay_image is not None:
+            return self._sample(self._overlay_image)
+        return self._sample(self._image)
+
+    def get_background_value(self):
+        """Intensity of the displayed image, even when an overlay covers it."""
+        return self._sample(self._image)
+
+    def get_overlay_value(self):
+        """Overlay intensity at the cursor, or None without an overlay."""
+        return self._sample(self._overlay_image)
 
     def _set_cursor(self, index: Sequence[float], notify: bool = False):
         """Place the cursor at a (fractional) voxel index, clamped to the image.
@@ -1781,7 +1967,8 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
     SURFACE_COLORS = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.6, 1.0))
 
     def __init__(self, image_path, parent=None, on_position_changed=None,
-                 surfaces: Sequence = (), **viewer_kwargs):
+                 surfaces: Sequence = (), overlay: Optional[str] = None,
+                 **viewer_kwargs):
         super().__init__(parent)
         self.image_path = str(image_path)
         self.setWindowTitle(f"Volume: {os.path.basename(self.image_path)}")
@@ -1823,6 +2010,10 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         self.statusBar().addWidget(self._label)
         self._update_label()
 
+        self._build_control_panel()
+        if overlay:
+            self.set_overlay(overlay)
+
         width, height = getattr(self.viewer, 'window_pixel_size', (700, 700))
         self.resize(int(width), int(height) + 24)
 
@@ -1835,6 +2026,158 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
 
         # The interactor may only be initialised once the widget has a window
         QtCore.QTimer.singleShot(0, self._post_show)
+
+    # -------- control panel --------
+    def _build_control_panel(self):
+        """Dock the shared control panel, wired to the overlay volume."""
+        self.ctrl = ControlPanel()
+        self.ctrl.configure_for_volume()
+        self.ctrl.set_labels_for_volume()
+        self.dock_controls = QtWidgets.QDockWidget("Controls", self)
+        self.dock_controls.setWidget(self.ctrl)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea,
+                           self.dock_controls)
+        # Floating, next to the window: docking it would squeeze the slices
+        self.dock_controls.setFloating(True)
+
+        def _place_dock(event, dock=self.dock_controls):
+            QtWidgets.QDockWidget.showEvent(dock, event)
+            if dock.isFloating():
+                own = self.geometry()
+                size = dock.sizeHint()
+                dock.setGeometry(own.x() + own.width() + 8, own.y(),
+                                 size.width(), size.height())
+        self.dock_controls.showEvent = _place_dock
+        self.dock_controls.hide()          # shown from the context menu
+
+        viewer = self.viewer
+        self.ctrl.overlay_btn.clicked.connect(self._choose_overlay)
+        self.ctrl.overlay_combo.setEditable(False)
+        self.ctrl.overlay_combo.currentIndexChanged.connect(
+            lambda i: self.set_overlay(self.ctrl.overlay_combo.itemData(i)))
+
+        def _range_changed():
+            viewer.overlay_range = [float(self.ctrl.range_min.value()),
+                                    float(self.ctrl.range_max.value())]
+            viewer.refresh_overlay()
+
+        def _clip_changed():
+            c0 = float(self.ctrl.clip_min.value()); c1 = float(self.ctrl.clip_max.value())
+            viewer.overlay_clip = (c0, c1) if c1 > c0 else (0.0, 0.0)
+            self.ctrl.set_threshold_from_clip(viewer.overlay_clip)
+            viewer.refresh_overlay()
+
+        def _bkg_changed():
+            lo = float(self.ctrl.bkg_min.value()); hi = float(self.ctrl.bkg_max.value())
+            if hi > lo:
+                viewer.set_window_level(hi - lo, 0.5 * (hi + lo))
+
+        for widget, slot in ((self.ctrl.range_min, _range_changed),
+                             (self.ctrl.range_max, _range_changed),
+                             (self.ctrl.clip_min, _clip_changed),
+                             (self.ctrl.clip_max, _clip_changed),
+                             (self.ctrl.bkg_min, _bkg_changed),
+                             (self.ctrl.bkg_max, _bkg_changed)):
+            widget.editingFinished.connect(slot)
+        for slider, slot in ((self.ctrl.range_slider_min, _range_changed),
+                             (self.ctrl.range_slider_max, _range_changed),
+                             (self.ctrl.clip_slider_min, _clip_changed),
+                             (self.ctrl.clip_slider_max, _clip_changed),
+                             (self.ctrl.bkg_slider_min, _bkg_changed),
+                             (self.ctrl.bkg_slider_max, _bkg_changed)):
+            slider.sliderReleased.connect(slot)
+
+        def _threshold_changed(index: int):
+            try:
+                value = LOGP_THRESHOLDS[int(index)][1]
+            except Exception:
+                return
+            for spin, v in ((self.ctrl.clip_min, -value), (self.ctrl.clip_max, value)):
+                spin.blockSignals(True); spin.setValue(v); spin.blockSignals(False)
+            viewer.overlay_clip = (-value, value) if value else (0.0, 0.0)
+            viewer.refresh_overlay()
+        self.ctrl.threshold.currentIndexChanged.connect(_threshold_changed)
+
+        def _colormap_changed(index: int):
+            viewer.overlay_colormap = COLORMAP_ORDER[int(index)]
+            viewer.refresh_overlay()
+        self.ctrl.colormap.currentIndexChanged.connect(_colormap_changed)
+
+        def _opacity_changed(value: int):
+            viewer.overlay_opacity = max(0.0, min(1.0, value / 100.0))
+            viewer.refresh_overlay()
+        self.ctrl.opacity.valueChanged.connect(_opacity_changed)
+
+        def _inverse_changed(checked: bool):
+            viewer.overlay_inverse = bool(checked)
+            viewer.refresh_overlay()
+        self.ctrl.cb_inverse.toggled.connect(_inverse_changed)
+
+        def _discrete_changed(checked: bool):
+            viewer.overlay_discrete = 16 if checked else 0
+            viewer.refresh_overlay()
+        self.ctrl.cb_discrete.toggled.connect(_discrete_changed)
+
+        self._sync_control_panel()
+
+    def _sync_control_panel(self):
+        """Show the current overlay settings in the panel."""
+        viewer = self.viewer
+        has_overlay = viewer.overlay_path is not None
+        self.ctrl.set_overlay_controls_enabled(has_overlay)
+        lo, hi = viewer.overlay_range if has_overlay else (0.0, 0.0)
+        image_lo, image_hi = viewer._image.GetScalarRange()
+        for widget in (self.ctrl.range_min, self.ctrl.range_max, self.ctrl.clip_min,
+                       self.ctrl.clip_max, self.ctrl.bkg_min, self.ctrl.bkg_max,
+                       self.ctrl.colormap, self.ctrl.opacity, self.ctrl.threshold):
+            widget.blockSignals(True)
+        self.ctrl.set_overlay_bounds(lo, hi)
+        self.ctrl.set_clip_bounds(lo, hi)
+        self.ctrl.set_bkg_bounds(float(image_lo), float(image_hi))
+        self.ctrl.range_min.setValue(lo); self.ctrl.range_max.setValue(hi)
+        self.ctrl.clip_min.setValue(viewer.overlay_clip[0])
+        self.ctrl.clip_max.setValue(viewer.overlay_clip[1])
+        window, level = viewer.get_window_level()
+        self.ctrl.bkg_min.setValue(level - 0.5 * window)
+        self.ctrl.bkg_max.setValue(level + 0.5 * window)
+        self.ctrl.colormap.setCurrentIndex(
+            COLORMAP_ORDER.index(viewer.overlay_colormap)
+            if viewer.overlay_colormap in COLORMAP_ORDER else 0)
+        self.ctrl.opacity.setValue(int(round(viewer.overlay_opacity * 100)))
+        for widget in (self.ctrl.range_min, self.ctrl.range_max, self.ctrl.clip_min,
+                       self.ctrl.clip_max, self.ctrl.bkg_min, self.ctrl.bkg_max,
+                       self.ctrl.colormap, self.ctrl.opacity, self.ctrl.threshold):
+            widget.blockSignals(False)
+        # p-value thresholds only for -log10(p) overlays, as in the surface viewer
+        self.ctrl.set_threshold_visible(bool(viewer.overlay_path)
+                                        and is_logp_name(viewer.overlay_path))
+        self.ctrl.set_threshold_from_clip(viewer.overlay_clip)
+
+    def set_overlay(self, path: Optional[str]):
+        """Load (or clear) the overlay volume and refresh the panel."""
+        try:
+            self.viewer.set_overlay(path)
+        except ValueError as exc:
+            QtWidgets.QMessageBox.warning(
+                self, "Overlay", f"Cannot overlay {os.path.basename(path or '')}:\n{exc}")
+            return
+        if path:
+            combo = self.ctrl.overlay_combo
+            if combo.findData(path) < 0:
+                combo.blockSignals(True)
+                combo.addItem(os.path.basename(path), path)
+                combo.setCurrentIndex(combo.count() - 1)
+                combo.blockSignals(False)
+        self._sync_control_panel()
+        self._update_label()
+
+    def _choose_overlay(self):
+        start = os.path.dirname(self.viewer.overlay_path or self.image_path)
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Choose overlay volume", start,
+            "NIfTI (*.nii *.nii.gz);;All files (*)")
+        if path:
+            self.set_overlay(path)
 
     def _post_show(self):
         try:
@@ -1892,6 +2235,25 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         raw_action.setChecked(not self.viewer.interpolate)
         raw_action.triggered.connect(
             lambda checked=False: self.set_interpolation(not checked))
+
+        overlay_menu = menu.addMenu("Overlay")
+        current_overlay = self.viewer.overlay_path
+        none_action = overlay_menu.addAction("None")
+        none_action.setCheckable(True)
+        none_action.setChecked(current_overlay is None)
+        none_action.triggered.connect(lambda _checked=False: self.set_overlay(None))
+        if current_overlay:
+            shown = overlay_menu.addAction(os.path.basename(current_overlay))
+            shown.setCheckable(True)
+            shown.setChecked(True)
+        overlay_menu.addSeparator()
+        overlay_menu.addAction("Open…").triggered.connect(self._choose_overlay)
+
+        panel_action = menu.addAction("Controls")
+        panel_action.setCheckable(True)
+        panel_action.setChecked(self.dock_controls.isVisible())
+        panel_action.triggered.connect(
+            lambda checked=False: self.dock_controls.setVisible(checked))
 
         info_action = menu.addAction("Image information")
         info_action.setCheckable(True)
@@ -2003,6 +2365,11 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         help=argparse.SUPPRESS,  # now the default; kept for compatibility
     )
     p.add_argument(
+        "--overlay", type=str, default=None,
+        help=("Volume drawn in colour on top of the image; it must be on the "
+              "same voxel grid (same dimensions and voxel size)"),
+    )
+    p.add_argument(
         "--atlas", type=str, default=None,
         help=("Atlas volume naming the region under the cursor; also "
               "selectable from the right-click menu"),
@@ -2057,6 +2424,13 @@ SURFACE_SUFFIXES = ('.gii', '.vtk', '.vtp', '.obj', '.stl', '.ply')
 
 #: Volumes opened at once, one window each; more would not fit side by side
 MAX_VOLUMES = 3
+
+
+def is_logp_name(filename: Optional[str]) -> bool:
+    """True when a file name marks a -log10(p) map ('log', as in CAT12)."""
+    if not filename:
+        return False
+    return 'log' in os.path.basename(str(filename)).lower()
 
 
 def _split_inputs(inputs: Sequence[str]) -> Tuple[List[str], List[str]]:
@@ -2157,6 +2531,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             for s, surf in enumerate(surfaces):
                 viewer.add_surface(surf, VolumeViewerWindow.SURFACE_COLORS[s])
             viewer.setup(window_title=os.path.basename(volume))
+            if args.overlay:
+                viewer.set_overlay(args.overlay)
             if args.atlas:
                 viewer.set_atlas(args.atlas)
             screenshot = args.screenshot
@@ -2174,7 +2550,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # One window per volume, with their cursors linked
     windows = []
     for volume in volumes:
-        window = VolumeViewerWindow(volume, surfaces=surfaces, **options)
+        window = VolumeViewerWindow(volume, surfaces=surfaces,
+                                    overlay=args.overlay, **options)
         if args.atlas:
             window.set_atlas(args.atlas)
         windows.append(window)
