@@ -25,7 +25,7 @@ Run in background automatically:
 
 Entry points are installed into the environment's `bin/` (the canonical way to
 run T1Prep): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python
-single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`. The
+single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`. The
 `scripts/` folder
 is a source-tree/dev fallback and should not be put on `PATH`.
 
@@ -64,7 +64,7 @@ Always use the wrapper scripts – they auto-activate the virtual environment:
 | `scripts/run_with_env.sh <script>` | Run any Python script with correct env |
 | `scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py` | Surface viewer from a checkout (installed: `CAT_SurfView`) |
 | `scripts/run_with_env.sh src/t1prep/gui/cat_vol_view.py` | Volume viewer from a checkout (installed: `CAT_VolView`) |
-| `scripts/make_macos_apps.sh` | Build macOS `.app` bundles for both viewers |
+| `scripts/make_macos_apps.sh` | Build macOS `.app` bundles (installed: `t1prep-make-apps`) |
 | `scripts/T1Prep_ui` | Launch Web UI (installed: `t1prep-ui`) |
 
 See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.

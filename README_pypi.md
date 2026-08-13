@@ -51,6 +51,7 @@ following commands are available:
 | `t1prep-run` | single-subject Python entry |
 | `CAT_SurfView` | surface viewer |
 | `CAT_VolView` | volume viewer (3 orthogonal slices) |
+| `t1prep-make-apps` | macOS: build .app bundles for the viewers |
 | `t1prep-download-models` | fetch model weights |
 
 ### Download model weights

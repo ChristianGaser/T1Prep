@@ -206,15 +206,21 @@ These scripts provide user-friendly wrappers around the compiled CAT-Surface bin
 ### `make_macos_apps.sh`
 
 Builds macOS application bundles for the two viewers, so they can be started from the Dock,
-Spotlight or Finder instead of a terminal.
+Spotlight or Finder instead of a terminal. The script is a thin wrapper around the
+installed `t1prep-make-apps` command (`src/t1prep/gui/make_apps.py`).
 
 ```bash
-# into /Applications (or ~/Applications when that is not writable)
-./scripts/make_macos_apps.sh
-
-# somewhere else, or against another installation
-./scripts/make_macos_apps.sh -o ~/Desktop -p /path/to/env/bin
+t1prep-make-apps                          # installed: /Applications or ~/Applications
+./scripts/make_macos_apps.sh              # same, from a source checkout
+t1prep-make-apps -o ~/Desktop -p /path/to/env/bin -d
 ```
+
+**They also appear on their own:** the first interactive start of `CAT_SurfView` or
+`CAT_VolView` on macOS creates the bundles if none exist yet, so `pip install` plus one run
+is enough. `T1PREP_NO_APPS=1` switches that off, and batch runs (`--screenshot`,
+`-output`) never do it. There is no hook in `pip install` itself — wheels have no
+post-install step, and files placed outside the environment could not be removed by
+`pip uninstall`.
 
 The bundles are thin: each one only launches the installed `CAT_SurfView` / `CAT_VolView`
 entry point, so they follow every update of that installation (and stop working if it is

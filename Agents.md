@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Overview
-This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`.
+This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`.
 
 ## Project Structure
 
@@ -23,6 +23,7 @@ T1Prep/
 │       │   └── atlases_surfaces_32k/           # Surface atlases + .txt descriptions
 │       ├── gui/                    # PySide6/VTK visualization tools
 │       │   ├── cat_surf_view.py    # Surface viewer (CAT_SurfView)
+│       │   ├── make_apps.py        # macOS .app bundles (t1prep-make-apps)
 │       │   └── cat_vol_view.py     # Orthogonal volume viewer (CAT_VolView),
 │       │                           # also embedded in CAT_SurfView's -volume window
 │       └── webui/                  # Flask web UI (t1prep-ui)
@@ -35,7 +36,7 @@ T1Prep/
 │   ├── T1Prep_ui                   # Web UI dev launcher (installed: t1prep-ui)
 │   ├── activate_env.sh             # Source to activate the venv
 │   ├── run_with_env.sh             # Run any Python script with venv
-│   ├── make_macos_apps.sh          # macOS .app bundles for the viewers
+│   ├── make_macos_apps.sh          # macOS .app bundles (installed: t1prep-make-apps)
 │   ├── install.sh                  # Bash bootstrapper: download release + set up venv
 │   #                                 (alternative to `pip install T1Prep` from PyPI)
 │   ├── dice.sh                     # Dice similarity metric wrapper

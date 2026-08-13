@@ -116,11 +116,14 @@ t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
 CAT_SurfView lh.central.gii        # surface viewer (no arguments prints the help)
 CAT_SurfView -output view.png lh.thickness.sub-01   # batch: render a PNG and exit
 CAT_VolView T1.nii.gz              # volume viewer (3 orthogonal slices)
+t1prep-make-apps                   # macOS: build the viewer .app bundles
 CAT_VolView T1.nii.gz p1T1.nii.gz  # up to 6 volumes, one window each, linked
 ```
 
-On macOS, `scripts/make_macos_apps.sh` wraps both viewers as `.app` bundles for the
-Dock and Finder (double-click to pick a file, or drop files onto the icon).
+On macOS, `t1prep-make-apps` wraps both viewers as `.app` bundles for the Dock and
+Finder (double-click to pick a file, or drop files onto the icon). The first interactive
+start of either viewer creates them in `~/Applications` by itself; set `T1PREP_NO_APPS=1`
+to prevent that.
 
 ```bash
 ```
@@ -241,7 +244,8 @@ pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
 Either way the entry points (`T1Prep`, `t1prep-ui`, `t1prep-run`,
-`CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`) are placed in `env/bin`. Activating
+`CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`) are
+placed in `env/bin`. Activating
 the venv — or adding `env/bin` to your `PATH` — is all that is needed; the
 source `scripts/` folder is only a dev fallback and should not be put on `PATH`.
 

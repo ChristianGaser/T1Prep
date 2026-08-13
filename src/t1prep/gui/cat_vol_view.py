@@ -123,6 +123,11 @@ from vtkmodules.vtkImagingCore import vtkImageMapToColors
 
 # Control panel and colormaps are shared with the surface viewer
 try:
+    from .make_apps import ensure_apps_exist
+except ImportError:  # direct invocation as a script
+    from make_apps import ensure_apps_exist
+
+try:
     from .controls import ControlPanel, LOGP_THRESHOLDS
 except ImportError:  # direct invocation as a script
     from controls import ControlPanel, LOGP_THRESHOLDS
@@ -2640,7 +2645,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             viewer.render(screenshot=screenshot, headless=True)
         return 0
 
+    # Interactive start only: a batch render should have no side effects
     install_qt_message_filter()
+    ensure_apps_exist()      # macOS: leaves the app bundles behind, once
     app = qt_application()
     # One window per volume, with their cursors linked
     windows = []

@@ -64,6 +64,7 @@ t1prep-run = "t1prep.t1prep:main"
 t1prep-ui = "t1prep.webui.app:main"
 CAT_SurfView = "t1prep.gui.cat_surf_view:main"
 CAT_VolView = "t1prep.gui.cat_vol_view:main"
+t1prep-make-apps = "t1prep.gui.make_apps:main"
 t1prep-download-models = "t1prep._models:main"
 
 [project.urls]
@@ -116,6 +117,7 @@ t1prep = [
     "data/*.csv",
     "data/*.txt",
     "data/*.png",
+    "data/*.svg",
     "data/atlases_surfaces_32k/**",
     "data/templates_MNI152NLin2009cAsym/**",
     "data/templates_surfaces/**",

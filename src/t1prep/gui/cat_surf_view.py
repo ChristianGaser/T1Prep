@@ -132,6 +132,11 @@ except ImportError:  # direct invocation as a script (no package context)
 
 # The control panel is shared with the volume viewer
 try:
+    from .make_apps import ensure_apps_exist
+except ImportError:  # direct invocation as a script
+    from make_apps import ensure_apps_exist
+
+try:
     from .controls import ControlPanel, LOGP_THRESHOLDS
 except ImportError:  # direct invocation as a script
     from controls import ControlPanel, LOGP_THRESHOLDS
@@ -4047,6 +4052,7 @@ def main(argv: Optional[List[str]] = None):
     if argv is None:
         argv = sys.argv[1:]
     install_qt_message_filter()
+    ensure_apps_exist()      # macOS: leaves the app bundles behind, once
     if not argv and running_as_app():
         # Double-clicked in Finder: ask for a surface or overlay rather than
         # printing the command-line help into nowhere
