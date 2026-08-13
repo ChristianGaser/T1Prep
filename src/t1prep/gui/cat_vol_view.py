@@ -30,9 +30,9 @@ Usage (CLI):
     CAT_VolView <image> [more images…] [surf1] [surf2] [surf3] \
         --size 400 [--percentile 3 97]
 
-    Up to three volumes may be given; each opens its own window and their
-    cursors are linked, so a click in one moves the others to the same
-    millimetre position.
+    Up to six volumes may be given; each opens its own window (tiled three per
+    row) and their cursors are linked, so a click in one moves the others to
+    the same millimetre position.
 
     # source checkout
     python src/t1prep/gui/cat_vol_view.py <image> [surf1] [surf2] [surf3]
@@ -2254,6 +2254,10 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         try:
             self.vtk_widget.Initialize()
             self.vtk_widget.GetRenderWindow().Render()
+            # Only now does the render window know its real size and DPI, which
+            # is what the panel text is sized from
+            self.viewer._update_info_text()
+            self.vtk_widget.GetRenderWindow().Render()
         except Exception:
             pass
 
@@ -2261,6 +2265,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         super().resizeEvent(event)
         try:
             self.viewer._update_info_text()   # the panel text follows the size
+            self.vtk_widget.GetRenderWindow().Render()
         except Exception:
             pass
 
@@ -2493,8 +2498,11 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
 #: Files that hold a surface rather than a volume
 SURFACE_SUFFIXES = ('.gii', '.vtk', '.vtp', '.obj', '.stl', '.ply')
 
-#: Volumes opened at once, one window each; more would not fit side by side
-MAX_VOLUMES = 3
+#: Volumes opened at once, one window each
+MAX_VOLUMES = 6
+
+#: Windows per row when they are tiled; the rest go into further rows
+WINDOWS_PER_ROW = 3
 
 
 def is_logp_name(filename: Optional[str]) -> bool:
@@ -2532,11 +2540,12 @@ def link_windows(windows: Sequence["VolumeViewerWindow"]):
 
 
 def _place_windows(windows: Sequence["VolumeViewerWindow"]):
-    """Lay the windows out side by side, shrinking them to fit the screen.
+    """Tile the windows over the screen, shrinking them until they fit.
 
-    Comparing volumes means seeing them next to each other, so the windows are
-    scaled down (keeping their proportions) until the row fits; only when that
-    would make them unusably small are they cascaded instead.
+    Comparing volumes means seeing them next to each other: up to three go
+    side by side, more fill a second row below (four to six windows give three
+    on top and the rest underneath).  Only when the tiles would become
+    unusably small are the windows cascaded instead.
     """
     if len(windows) < 2:
         return
@@ -2546,24 +2555,31 @@ def _place_windows(windows: Sequence["VolumeViewerWindow"]):
         return
 
     count = len(windows)
+    columns = min(WINDOWS_PER_ROW, count)
+    rows = -(-count // columns)          # ceil
     gap = 12
     width = max(w.width() for w in windows)
     height = max(w.height() for w in windows)
     scale = min(1.0,
-                (available.width() - (count - 1) * gap) / float(count * width),
-                available.height() / float(height))
-    if width * scale < 300:
-        for i, window in enumerate(windows):   # too narrow to tile
+                (available.width() - (columns - 1) * gap) / float(columns * width),
+                (available.height() - (rows - 1) * gap) / float(rows * height))
+    if scale < 1.0 and width * scale < 300:
+        for i, window in enumerate(windows):   # shrinking would make them useless
             window.move(available.left() + 40 * i, available.top() + 40 * i)
         return
 
     width = int(width * scale)
     height = int(height * scale)
-    total = count * width + (count - 1) * gap
-    left = available.left() + max(0, (available.width() - total) // 2)
+    top = available.top() + max(0, (available.height() - rows * height
+                                    - (rows - 1) * gap) // 2)
     for i, window in enumerate(windows):
+        row, column = divmod(i, columns)
+        # A short last row is centred under the ones above
+        in_row = min(columns, count - row * columns)
+        row_width = in_row * width + (in_row - 1) * gap
+        left = available.left() + max(0, (available.width() - row_width) // 2)
         window.resize(width, height)
-        window.move(left + i * (width + gap), available.top())
+        window.move(left + column * (width + gap), top + row * (height + gap))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

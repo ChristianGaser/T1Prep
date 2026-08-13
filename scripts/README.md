@@ -239,6 +239,11 @@ file in Finder, press ⌘I, pick the app under *Open with* and click *Change All
 The apps also have to live where Launch Services looks — `/Applications` or
 `~/Applications`; the script registers them with `lsregister` either way.
 
+**When an app does not start.** Finder throws away whatever the program prints, so each
+launcher writes it to `~/Library/Logs/T1Prep/<name>.log` — check there first. The bundles
+point at the entry points of the environment they were built from, so re-run the script
+after moving or reinstalling that environment.
+
 ### `CAT_SurfView` / `CAT_VolView`
 
 The two viewers (PySide6/VTK) are installed as console scripts, not as wrappers in this
@@ -266,7 +271,7 @@ CAT_SurfView -preset 1 -colorbar lh.thickness.subj
 # Volume with surface outlines drawn onto the slices
 CAT_VolView T1.nii.gz lh.central.gii rh.central.gii
 
-# Up to three volumes: one window each, cursors linked
+# Up to six volumes: one window each, tiled, cursors linked
 CAT_VolView T1.nii.gz p1T1.nii.gz p2T1.nii.gz
 
 # Statistic map in colour on top of a T1 (same voxel grid)
@@ -281,8 +286,8 @@ offer the identical slices and right-click menu. Slices are shown in neurologica
 orientation (left is left) in the millimetre space of the NIfTI sform/qform, and
 `--screenshot` writes a PNG without opening a window.
 
-Up to three volumes can be given at once: each opens its own window, the windows are tiled
-side by side, and their cursors are linked — clicking in one moves the others to the same
+Up to six volumes can be given at once: each opens its own window, the windows are tiled
+three per row (four to six fill a second row below), and their cursors are linked — clicking in one moves the others to the same
 millimetre position, so the same anatomical point is shown even when the volumes differ in
 grid, voxel size or orientation.
 

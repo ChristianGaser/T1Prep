@@ -636,8 +636,11 @@ class TestSeveralVolumes(unittest.TestCase):
         self.assertEqual(volumes, ["a.nii.gz", "b.nii", "c.mnc"])
         self.assertEqual(surfaces, ["lh.central.gii", "x.vtp"])
 
-    def test_at_most_three_volumes(self):
-        self.assertEqual(MAX_VOLUMES, 3)
+    def test_volume_limit(self):
+        from t1prep.gui.cat_vol_view import WINDOWS_PER_ROW
+        self.assertGreaterEqual(MAX_VOLUMES, WINDOWS_PER_ROW)
+        # they are tiled in full rows
+        self.assertEqual(MAX_VOLUMES % WINDOWS_PER_ROW, 0)
 
     def test_a_pick_moves_the_other_windows(self):
         windows = [self._Stub() for _ in range(3)]
@@ -719,3 +722,129 @@ class TestAppLaunch(unittest.TestCase):
 
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         self.assertEqual(files_opened_by_finder(app, timeout_ms=100), [])
+
+    def test_double_click_reuses_the_application(self):
+        """The file dialog and the window must share one QApplication.
+
+        Creating a second one raises, which made the macOS app die on launch
+        with no visible error.
+        """
+        try:
+            from PySide6 import QtWidgets
+        except Exception as exc:  # pragma: no cover - needs Qt
+            self.skipTest(f"Qt unavailable: {exc}")
+        from t1prep.gui import cat_vol_view
+
+        first = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.assertIs(cat_vol_view.qt_application(), first)
+
+        seen = {}
+        original_ask, original_argv = cat_vol_view.ask_for_files, sys.argv
+        previous = os.environ.get(cat_vol_view.APP_BUNDLE_ENV)
+        os.environ[cat_vol_view.APP_BUNDLE_ENV] = "1"
+        try:
+            def _ask(app, caption, patterns):
+                seen['app'] = app
+                return []
+            cat_vol_view.ask_for_files = _ask
+            sys.argv = ['CAT_VolView']
+            self.assertEqual(cat_vol_view.main(), 0)   # cancelled dialog, no crash
+        finally:
+            cat_vol_view.ask_for_files, sys.argv = original_ask, original_argv
+            os.environ.pop(cat_vol_view.APP_BUNDLE_ENV, None)
+            if previous is not None:
+                os.environ[cat_vol_view.APP_BUNDLE_ENV] = previous
+        self.assertIs(seen.get('app'), first)
+        self.assertIs(QtWidgets.QApplication.instance(), first)
+
+
+class TestWindowLayout(unittest.TestCase):
+    """Several viewer windows are tiled, up to three per row."""
+
+    class _Stub:
+        """Only the geometry calls _place_windows uses."""
+
+        def __init__(self, size=(200, 200)):
+            self._w, self._h = size
+            self._x = self._y = 0
+
+        def width(self):
+            return self._w
+
+        def height(self):
+            return self._h
+
+        def resize(self, w, h):
+            self._w, self._h = w, h
+
+        def move(self, x, y):
+            self._x, self._y = x, y
+
+    def _positions(self, count):
+        try:
+            from PySide6 import QtWidgets
+        except Exception as exc:  # pragma: no cover - needs Qt
+            self.skipTest(f"Qt unavailable: {exc}")
+        from t1prep.gui.cat_vol_view import _place_windows
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        screen = app.primaryScreen().availableGeometry()
+        # small enough that three fit side by side on any test screen
+        size = (max(60, screen.width() // 6), max(60, screen.height() // 6))
+        windows = [self._Stub(size) for _ in range(count)]
+        _place_windows(windows)
+        return [(w._x, w._y) for w in windows]
+
+    def test_three_go_in_one_row(self):
+        rows = {y for _, y in self._positions(3)}
+        columns = {x for x, _ in self._positions(3)}
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(columns), 3)
+
+    def test_six_fill_two_rows_of_three(self):
+        positions = self._positions(6)
+        rows = sorted({y for _, y in positions})
+        self.assertEqual(len(rows), 2)
+        top = [x for x, y in positions if y == rows[0]]
+        bottom = [x for x, y in positions if y == rows[1]]
+        self.assertEqual(len(top), 3)
+        self.assertEqual(len(bottom), 3)
+        self.assertEqual(sorted(top), sorted(bottom))   # aligned columns
+
+    def test_four_put_the_rest_below(self):
+        positions = self._positions(4)
+        rows = sorted({y for _, y in positions})
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len([x for x, y in positions if y == rows[0]]), 3)
+        self.assertEqual(len([x for x, y in positions if y == rows[1]]), 1)
+
+
+class TestInfoFontSize(unittest.TestCase):
+    """The panel text is sized from the render window, which grows on show."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        path = _write_volume(Path(self._tmp.name) / "vol.nii.gz", np.eye(4))
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(path))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_font_follows_the_window_size(self):
+        """A window that is still tiny gave a font that stayed tiny."""
+        def font_for(width, height):
+            self.viewer.render_window.SetSize(width, height)
+            self.viewer._update_info_text()
+            return self.viewer._info_actor.GetTextProperty().GetFontSize()
+
+        small = font_for(200, 60)
+        large = font_for(1600, 1200)
+        self.assertLess(small, large)
+        self.assertGreaterEqual(small, 7)
+        self.assertLessEqual(large, 16)
