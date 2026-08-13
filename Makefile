@@ -16,8 +16,8 @@
 #   - Dockerfile          → installs T1Prep from PyPI (pin via build-arg
 #                            T1PREP_VERSION=$(VERSION) at `docker build` time)
 # ---------------------------------------------------------------------------
-PREV_VERSION := 0.5.6
-VERSION      := 0.5.7
+PREV_VERSION := 0.5.8
+VERSION      := 0.5.9
 
 ZIPFILE = T1Prep_$(VERSION).zip
 
@@ -59,6 +59,7 @@ zip: release
 # don't auto-derive.  Uses exact-match seds so nothing unrelated can be hit.
 # When PREV_VERSION == VERSION (e.g. fresh checkout, no bump yet) this is a
 # safe no-op.
+update: release
 release: clean
 	-@if [ "$(PREV_VERSION)" = "$(VERSION)" ]; then \
 	    echo "PREV_VERSION == VERSION ($(VERSION)) — nothing to bump."; \
