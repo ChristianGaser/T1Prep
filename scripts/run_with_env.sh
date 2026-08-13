@@ -20,6 +20,12 @@ fi
 SCRIPT_NAME="$1"
 shift  # Remove first argument, keep the rest
 
+# Paths may be given relative to the project or absolute
+if [[ "$SCRIPT_NAME" = /* && -f "$SCRIPT_NAME" ]]; then
+    SCRIPT_NAME="$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' \
+                   "$SCRIPT_NAME" "$PROJECT_DIR" 2>/dev/null || echo "$SCRIPT_NAME")"
+fi
+
 # Check if script exists
 if [[ ! -f "$PROJECT_DIR/$SCRIPT_NAME" ]]; then
     echo "❌ Error: Script not found: $PROJECT_DIR/$SCRIPT_NAME"

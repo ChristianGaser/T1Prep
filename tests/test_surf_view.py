@@ -250,6 +250,32 @@ class TestPresets(unittest.TestCase):
             self.assertTrue(PRESET_HELP[number].strip(), number)
 
 
+class TestMeshTitle(unittest.TestCase):
+    """Several surfaces are numbered in the title, like several overlays."""
+
+    def _title(self, path, meshes, index=0, custom=None):
+        import types
+        from t1prep.gui.cat_surf_view import Viewer
+        stub = types.SimpleNamespace(
+            opts=types.SimpleNamespace(title=custom),
+            mesh_list=list(meshes),
+            current_mesh_index=index,
+        )
+        return Viewer._mesh_title(stub, path)
+
+    def test_single_surface_has_no_counter(self):
+        self.assertNotIn("(", self._title("/data/lh.central.gii", ["/data/lh.central.gii"]))
+
+    def test_several_surfaces_are_counted(self):
+        meshes = [f"/data/sub-{i}/lh.central.gii" for i in range(4)]
+        self.assertTrue(self._title(meshes[0], meshes).endswith("(1/4)"))
+        self.assertTrue(self._title(meshes[3], meshes, index=3).endswith("(4/4)"))
+
+    def test_explicit_title_wins(self):
+        meshes = ["/data/a.gii", "/data/b.gii"]
+        self.assertEqual(self._title(meshes[0], meshes, custom="my title"), "my title")
+
+
 class TestCombinedHemisphereMesh(unittest.TestCase):
     """CAT12 stores both hemispheres in one file (mesh.central.*).
 

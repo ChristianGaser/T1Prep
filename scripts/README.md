@@ -207,7 +207,9 @@ These scripts provide user-friendly wrappers around the compiled CAT-Surface bin
 
 Builds macOS application bundles for the two viewers, so they can be started from the Dock,
 Spotlight or Finder instead of a terminal. The script is a thin wrapper around the
-installed `t1prep-make-apps` command (`src/t1prep/gui/make_apps.py`).
+installed `t1prep-make-apps` command (`src/t1prep/gui/make_apps.py`); it uses that entry
+point when it is on `PATH`, otherwise the project venv, otherwise plain `python3` — the
+implementation needs nothing but the standard library.
 
 ```bash
 t1prep-make-apps                          # installed: /Applications or ~/Applications

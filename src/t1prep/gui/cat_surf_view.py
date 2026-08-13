@@ -2094,6 +2094,24 @@ class Viewer(QtWidgets.QMainWindow):
         global_pos = self.vtk_widget.mapToGlobal(pos)
         menu.exec(global_pos)
 
+    def _fit_camera(self):
+        """Frame the whole scene, keeping the direction it is viewed from.
+
+        ResetCamera only moves the camera and adjusts the scale, so a rotated
+        montage stays as the user left it.
+        """
+        self.ren.ResetCamera()
+        self.ren.GetActiveCamera().Zoom(2.0)
+        self._capture_camera_state()
+
+    def _mesh_title(self, path: str) -> str:
+        """Window title for a surface, numbered when several were given."""
+        name = self.opts.title or _title_from_path(path)
+        meshes = getattr(self, 'mesh_list', None) or []
+        if self.opts.title or len(meshes) < 2:
+            return name
+        return f"{name} ({self.current_mesh_index + 1}/{len(meshes)})"
+
     def _post_init_render(self):
         try:
             self.vtk_widget.Initialize()
@@ -2101,10 +2119,10 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             pass
         try:
-            self.ren.ResetCamera()
-            self.ren.GetActiveCamera().Zoom(2.0)
-            self._capture_camera_state()
+            self._fit_camera()
             self._base_cam_state = dict(self._cam_state) if self._cam_state else None
+            if not self.opts.overlay:
+                self.setWindowTitle(self._mesh_title(self.opts.mesh_left or ""))
             self.rw.Render()
         except Exception:
             pass
@@ -3000,7 +3018,8 @@ class Viewer(QtWidgets.QMainWindow):
     def _switch_mesh(self, new_mesh_path: str):
         """Switch the underlying mesh to a new file path and update actors.
 
-        Preserves camera state and Y-origin normalization. Overlay actors are
+        Keeps the Y-origin normalization and the direction the scene is viewed
+        from, but re-frames it for the new surface.  Overlay actors are
         preserved as-is (this entrypoint is used when there is no overlay).
         """
         if not new_mesh_path:
@@ -3020,19 +3039,20 @@ class Viewer(QtWidgets.QMainWindow):
         # combined mesh.* surfaces, the second half of the same file)
         poly_l, poly_r = read_mesh_pair(str(p))
         self._set_meshes(poly_l, poly_r)
-        # Update window title to mesh name if no overlay is active
-        if not self.opts.overlay:
-            try:
-                self.setWindowTitle(self.opts.title or _title_from_path(new_mesh_path))
-            except Exception:
-                pass
         # Update stored mesh_left
         try:
             self.opts.mesh_left = str(p)
         except Exception:
             pass
-        # Restore camera and render
-        self._apply_camera_state()
+        # Update window title to mesh name if no overlay is active
+        if not self.opts.overlay:
+            try:
+                self.setWindowTitle(self._mesh_title(new_mesh_path))
+            except Exception:
+                pass
+        # Surfaces differ in size and position, so the view is framed for the
+        # new one instead of keeping the framing of the previous surface
+        self._fit_camera()
         self.rw.Render()
 
     def _next_mesh(self):
