@@ -67,6 +67,7 @@ from cat_surf import cli as cs_cli
 # Shared utilities (NameTable and ProgressBar live in utils to avoid duplication)
 # ---------------------------------------------------------------------------
 from .utils import NameTable, ProgressBar
+from .vessels import suppress_vessels_for_surface
 
 
 # ===========================================================================
@@ -304,8 +305,13 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
         img = nib.load(hemi_vol)
         vol = img.get_fdata().astype(np.float32)
         if vessel:
-            vol = cat_surf.vol_blood_vessel_correction(
-                vol, voxelsize=img.header.get_zooms()[:3])
+            # Two nets, in the order CAT12 applies them.  The connectivity
+            # test removes bright islands the region growing cannot reach;
+            # the divergence test then catches the tubular residue that is
+            # still attached to the cortex, which is what breaks PBT.
+            zooms = img.header.get_zooms()[:3]
+            vol = cat_surf.vol_blood_vessel_correction(vol, voxelsize=zooms)
+            vol = suppress_vessels_for_surface(vol, zooms, strength=float(vessel))
         gmt, ppm, dcsf, dwm = cat_surf.vol_thickness_pbt(
             vol,
             voxelsize=img.header.get_zooms()[:3],

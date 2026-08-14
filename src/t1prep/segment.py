@@ -61,7 +61,6 @@ from .report import write_t1prep_report
 from .qa import estimate_qa
 from scipy.ndimage import (
     binary_closing,
-    binary_dilation,
     generate_binary_structure,
 )
 from .utils import (
@@ -84,11 +83,15 @@ from ._segment_utils import (
     get_partition,
     compute_euler_number,
     cleanup_vessels,
-    get_regions_mask,
     correct_label_map,
     apply_LAS,
     handle_lesions,
     normalize_to_sum1,
+)
+from .vessels import (
+    apply_blood_vessel_correction,
+    blood_vessel_prior,
+    protected_regions,
 )
 from ._models import (
     MODEL_DIR,
@@ -613,6 +616,10 @@ def run_amap_segmentation(
     ext: str,
     verbose: bool,
     debug: bool,
+    vessel: float = 0.0,
+    protect: np.ndarray = None,
+    bv_prior: np.ndarray = None,
+    device: str = "cpu",
 ):
     """Execute the AMAP segmentation pipeline."""
 
@@ -621,6 +628,25 @@ def run_amap_segmentation(
 
     p0_large, brain_large = correct_label_map(brain_large, p0_large)
     brain_large = apply_LAS(brain_large, p0_large, verbose=bool(verbose and debug))
+
+    # Blood vessel correction runs between LAS and AMAP, as in CAT12
+    # (cat_main.m l. 399-444), so AMAP is fitted on an image where vessels no
+    # longer sit at WM intensity.  Correcting the labels afterwards cannot
+    # recover the tissue peaks AMAP has already been biased by.
+    if vessel > 0:
+        brain_large, p0_large = apply_blood_vessel_correction(
+            brain_large,
+            p0_large,
+            strength=vessel,
+            protect=protect,
+            bv_prior=bv_prior,
+            device=device,
+            verbose=verbose,
+            debug=debug,
+            mri_dir=mri_dir,
+            out_name=out_name,
+            ext=ext,
+        )
 
     nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large.{ext}")
     nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
@@ -1431,9 +1457,25 @@ def run_segment():
 
     p0_large_orig = p0_large
 
+    # Regions the vessel correction must not touch, and the MRA-derived
+    # spatial prior.  Both only depend on the grid, so they are built once
+    # here and reused by the post-segmentation cleanup further down.
+    if vessel > 0:
+        protect = protected_regions(t1, affine, p0_large, device)
+        try:
+            bv_prior = blood_vessel_prior(
+                p0_large.affine, p0_large.shape, device=device
+            )
+        except (FileNotFoundError, OSError) as exc:
+            if verbose:
+                print(f"Blood vessel prior unavailable ({exc}); continuing without it")
+            bv_prior = None
+    else:
+        protect, bv_prior = None, None
+
     if use_amap:
         if verbose:
-            count = shell_progress(count, end_count, 
+            count = shell_progress(count, end_count,
                 "Amap segmentation            ")
         brain_large, p0_large = run_amap_segmentation(
             p0_large,
@@ -1443,9 +1485,31 @@ def run_segment():
             ext,
             verbose,
             debug,
+            vessel=vessel,
+            protect=protect,
+            bv_prior=bv_prior,
+            device=device,
         )
     else:
         brain_large = apply_LAS(brain_large, p0_large, verbose=bool(verbose and debug))
+
+        # The deepmriprep path refines p1/p2/p3 from p0_large in
+        # run_segment_nogm below, so the correction has to land before that
+        # call for the vessel removal to reach the tissue maps at all.
+        if vessel > 0:
+            brain_large, p0_large = apply_blood_vessel_correction(
+                brain_large,
+                p0_large,
+                strength=vessel,
+                protect=protect,
+                bv_prior=bv_prior,
+                device=device,
+                verbose=verbose,
+                debug=debug,
+                mri_dir=mri_dir,
+                out_name=out_name,
+                ext=ext,
+            )
 
     if debug:
         nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
@@ -1515,57 +1579,11 @@ def run_segment():
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) 
     # to refine segmentation
     if vessel > 0:
-        atlas = get_atlas(
-            t1,
-            affine,
-            p0_large.header,
-            p0_large.affine,
-            "Neuromorphometrics",
-            None,
-            device,
-            is_label_atlas=True,
-        )
-        
-        # Exclude cerebellum + subcortical areas + hippocampus + amygdala
-        excl_regions = get_regions_mask(atlas, "Neuromorphometrics",
-            [
-                "Left Cerebellum White Matter",
-                "Right Cerebellum White Matter",
-                "Left Cerebellum Exterior",
-                "Right Cerebellum Exterior",
-                "Cerebellar Vermal Lobules I-V",
-                "Cerebellar Vermal Lobules VI-VII",
-                "Cerebellar Vermal Lobules VIII-X",
-                "4th Ventricle",
-                "Left Amygdala",
-                "Right Amygdala",
-                "Left Caudate",
-                "Right Caudate",
-                "Left Hippocampus",
-                "Right Hippocampus",
-                "Left Pallidum",
-                "Right Pallidum",
-                "Left Putamen",
-                "Right Putamen",
-                "Left Thalamus Proper",
-                "Right Thalamus Proper",
-                "Left Ventral DC",
-                "Right Ventral DC",
-            ],
-        )
-        excl_regions = binary_dilation(excl_regions, generate_binary_structure(3, 3), 2)
-
-        excl_ventricle = get_regions_mask(atlas, "Neuromorphometrics",
-            [
-                "Left Inf Lat Vent",
-                "Right Inf Lat Vent",
-                "Left Lateral Ventricle",
-                "Right Lateral Ventricle",
-                "Brain Stem",
-            ],
-        )
-        excl_ventricle = binary_dilation(excl_ventricle, generate_binary_structure(3, 3), 5)
-        excl_regions |= excl_ventricle
+        # Same protection mask the pre-AMAP correction used; the grid has not
+        # changed, so it is only rebuilt if something upstream resampled.
+        excl_regions = protect
+        if excl_regions is None or excl_regions.shape != p0_large.shape:
+            excl_regions = protected_regions(t1, affine, p0_large, device)
 
         p0_value_original = p0_large.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
