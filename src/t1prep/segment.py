@@ -501,10 +501,18 @@ def setup_device() -> tuple[torch.device, bool]:
 
 
 def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
-    """Denoise and align the input volume and create the preprocessing object."""
+    """Denoise and align the input volume and create the preprocessing object.
+
+    Returns:
+        Tuple ``(t1, t1_raw, prep, ras_affine)``.  ``t1`` is denoised and used
+        for the whole pipeline; ``t1_raw`` shares its grid but keeps the
+        original intensities and is only used for the image quality measures,
+        which have to describe the acquisition rather than the denoised data
+        (CAT12 reads the original file from disk for the same reason).
+    """
 
     vol = t1.get_fdata().copy()
-    vol = np.squeeze(vol)    
+    vol = np.squeeze(vol)
 
     vol, affine_resamp, header_resamp, ras_affine = align_brain(
         vol, t1.affine, t1.header, np.eye(4), do_flip=0
@@ -513,15 +521,18 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     prep = CustomPreprocess(no_gpu=no_gpu)
 
     denoised = cat_surf.vol_sanlm(t1.get_fdata().astype(np.float32))
+    # Keep the un-denoised intensities on the same grid (float32 to halve the
+    # extra memory) — only the quality measures use them.
+    t1_raw = nib.Nifti1Image(vol.astype(np.float32), t1.affine, t1.header)
     t1 = nib.Nifti1Image(denoised, t1.affine, t1.header)
- 
+
 
     # This is a bit faster since for initial segmentation the sinc-interpolation
     # of the segmentations does not help and is slower.
     # Furthermore, CustomBrainSegmentation supports mps device
     prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
 
-    return t1, prep, ras_affine
+    return t1, t1_raw, prep, ras_affine
 
 
 def skull_strip(
@@ -827,6 +838,7 @@ def save_results(
     affine_resamp,
     header_resamp,
     atlas_list,
+    t1_raw=None,
 ) -> None:
     """Save segmentation and atlas results to disk."""
 
@@ -987,13 +999,17 @@ def save_results(
         mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
 
     # Estimate image quality measures at native acquisition resolution.
-    # CAT12 reads the ORIGINAL file (varargin{2}); the branch that would use
-    # the already bias-corrected image is permanently disabled with "if 0".
-    # estimate_qa therefore expects the raw intensities and removes the bias
-    # field itself (cat_vol_approx, lines 293-298 of cat_vol_qa201901x.m) —
-    # passing a pre-corrected image would void the ICR measure.
-    # Resample p0 to native space; pass t1 (original) as the intensity image.
-    vx_vol_orig = np.array(t1.header.get_zooms()[:3], dtype=np.float64)
+    # CAT12 reads the ORIGINAL file (varargin{2}); both branches that would use
+    # processed data are permanently disabled with "if 0", because the measures
+    # have to describe the acquisition, not the pipeline output.  We therefore
+    # pass ``t1_raw`` — same grid as ``t1`` but before SANLM denoising, which
+    # otherwise removes exactly the high-frequency component NCR measures and
+    # compresses the rating scale (a 9 % noise scan would rate like a 1 % one).
+    # The bias field is *not* removed here either: estimate_qa approximates and
+    # divides it out itself (cat_vol_approx, cat_vol_qa201901x.m:293-298) and
+    # reports its strength as ICR, which a pre-corrected input would void.
+    t1_qa = t1_raw if t1_raw is not None else t1
+    vx_vol_orig = np.array(t1_qa.header.get_zooms()[:3], dtype=np.float64)
     p0_native = F.grid_sample(
         nifti_to_tensor(p0_large)[None, None],
         grid_native,
@@ -1002,7 +1018,7 @@ def save_results(
     # t1 has negative-diagonal affine after align_brain (do_flip=0); grid_native
     # produces p0_native in as_closest_canonical space (positive/RAS axes).
     # Must canonicalise t1 the same way so tissue masks align with intensities.
-    t1_canonical = nib.as_closest_canonical(t1).get_fdata().astype(np.float32)
+    t1_canonical = nib.as_closest_canonical(t1_qa).get_fdata().astype(np.float32)
     qa_result = estimate_qa(
         p0_native,
         t1_canonical,
@@ -1333,7 +1349,7 @@ def run_segment():
     prepare_model_files()
 
     # Preprocess volume and create preprocess object
-    t1, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap)
+    t1, t1_raw, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap)
 
     # Step 1: Skull-stripping (or skip)
     if skip_skullstrip:
@@ -1624,6 +1640,7 @@ def run_segment():
         affine_resamp,
         header_resamp,
         atlas_list,
+        t1_raw,
     )
 
     final_cleanup(mri_dir, out_name, ext, use_amap, save_lesions, debug)

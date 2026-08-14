@@ -102,7 +102,7 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 
 ## Coding Style
 
-- Python 3.10–3.12, PEP 8, 4-space indentation
+- Python 3.9–3.12, PEP 8, 4-space indentation
 - Docstrings for all public functions and classes
 - Format with `black`, lint with `flake8`/`ruff`, check shell scripts with `shellcheck`
 - For compute-heavy voxel-wise operations consider PyTorch or Numba; optimize only after measuring
