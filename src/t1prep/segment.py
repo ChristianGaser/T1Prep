@@ -987,9 +987,11 @@ def save_results(
         mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
 
     # Estimate image quality measures at native acquisition resolution.
-    # CAT12 reads the ORIGINAL file (varargin{2}) and normalises to WM≈1 via
-    # cat_vol_approx (lines 293-298 of cat_vol_qa201901x.m; the branch that
-    # would use the bias-corrected image is permanently disabled with "if 0").
+    # CAT12 reads the ORIGINAL file (varargin{2}); the branch that would use
+    # the already bias-corrected image is permanently disabled with "if 0".
+    # estimate_qa therefore expects the raw intensities and removes the bias
+    # field itself (cat_vol_approx, lines 293-298 of cat_vol_qa201901x.m) —
+    # passing a pre-corrected image would void the ICR measure.
     # Resample p0 to native space; pass t1 (original) as the intensity image.
     vx_vol_orig = np.array(t1.header.get_zooms()[:3], dtype=np.float64)
     p0_native = F.grid_sample(

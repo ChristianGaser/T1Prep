@@ -48,6 +48,9 @@ python -m compileall src
 # Tests
 pytest
 
+# Recalibrate the QA rating bounds from a processed BrainWeb Phantom set
+python scripts/qa_calibrate.py /path/to/BWP/report
+
 # Linting / formatting
 black src scripts
 flake8 src scripts       # or: ruff check src scripts

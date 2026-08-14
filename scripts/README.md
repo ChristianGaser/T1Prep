@@ -197,6 +197,23 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 **Geometry:** the NIfTI affine (`sform`/`qform`) of both images is honoured. If `--pred` differs from `--gt` in shape, voxel size, orientation or rotation, it is resampled onto the grid of `--gt` — nearest neighbour for label maps, trilinear with `--soft` — and a note is written to stderr. Pass `--no-resample` to disable this and compare voxel-to-voxel.
 
+### `qa_calibrate.py`
+
+Derives the rating bounds of the image quality measures (`_RATING_BOUNDS` in `src/t1prep/qa.py`) from a processed BrainWeb Phantom (BWP) set. This is the Python counterpart of CAT12's `calc_limits_QA.m`: a robust line is fitted through each measure as a function of the simulated degradation level and evaluated at level 1 (mark 1, "best") and level 6 (mark 6, "worst").
+
+```bash
+# Process the BWP volumes first, then calibrate from their report JSONs
+T1Prep --out-dir /data/BWP /data/BWP/BWPC_HC_T1_pn*_rf*.nii.gz
+python scripts/qa_calibrate.py /data/BWP/report
+
+# Only a single measure
+python scripts/qa_calibrate.py /data/BWP/report --measure NCR
+```
+
+**Input:** report JSON files whose names contain the BWP noise and inhomogeneity levels (e.g. `log_BWPC_HC_T1_pn3_rf040pA_vx100x100x100.json`). `pn1..pn9` and `rf020..rf100` are mapped linearly onto a 1–5 degradation scale.
+
+**Output:** per measure the fitted line, its `R²`, the leakage of the *other* degradation factor (how much inhomogeneity contaminates the noise measure and vice versa), and a ready-to-paste `_RATING_BOUNDS` entry.
+
 ---
 
 ## CAT Surface & Volume Tools

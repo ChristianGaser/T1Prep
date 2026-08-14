@@ -40,6 +40,7 @@ T1Prep/
 │   ├── install.sh                  # Bash bootstrapper: download release + set up venv
 │   #                                 (alternative to `pip install T1Prep` from PyPI)
 │   ├── dice.sh                     # Dice similarity metric wrapper
+│   ├── qa_calibrate.py             # Derive QA rating bounds from BrainWeb Phantom runs
 │   ├── process_longitudinal.sh     # Batch longitudinal processing
 │   ├── realign_longitudinal.sh     # Longitudinal rigid realignment
 │   ├── CAT_GrepJson                # Extract fields from JSON reports
