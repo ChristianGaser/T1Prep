@@ -359,9 +359,11 @@ Step 3 is what makes free-form names work — most notably CAT12/SPM statistic r
 (`logP_age_(...)_pFWE0.1_k0.gii`, `TFCE_log_pFWE_0001.gii`). Any `.gii` that holds values but
 no surface is treated as an overlay, so such results also load when they were copied away
 from their `SPM.mat`. Because the lookup runs for every overlay, files from different
-folders, subjects and mesh resolutions can be mixed in a single call. The right hemisphere is added when an `rh.`/`right`/`_hemi-R_` file
-sits next to the left one, or when a mesh (`mesh.central.*`) or overlay holds both
-hemispheres back to back — those are split so all six views are shown.
+folders, subjects and mesh resolutions can be mixed in a single call. The other hemisphere
+is added when its file sits next to the selected one — `lh.`/`rh.`, `left`/`right` or
+`_hemi-L_`/`_hemi-R_`, in either direction, so picking the right hemisphere finds the left
+one just as well — or when a mesh (`mesh.central.*`) or overlay holds both hemispheres back
+to back, which are split so all six views are shown.
 
 **Batch use.** `-output` renders the view, writes the PNG and exits, so the viewer can be
 called from a loop without any interaction:

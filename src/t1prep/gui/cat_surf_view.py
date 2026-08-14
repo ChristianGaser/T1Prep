@@ -3,8 +3,9 @@
 CAT_SurfView — PySide6 + VTK port with right-side control panel
 
 Features:
-  • Load LH mesh (.gii). Auto-detect RH mesh via name pattern ("lh."→"rh.", "left"→"right")
-    or split a combined surface holding both hemispheres (CAT12 "mesh.central.*").
+  • Load a hemisphere mesh (.gii).  The other one is found from the name in either
+    direction ("lh."↔"rh.", "left"↔"right", "_hemi-L_"↔"_hemi-R_"), or split off a
+    combined surface holding both hemispheres (CAT12 "mesh.central.*").
   • Optional overlay scalars (.gii; FreeSurfer morph: thickness/curv/sulc; or text one value/line).
   • Optional background scalars for curvature shading.
   • Six-view montage (lat/med/sup/inf/ant/post) by cloning actors with transforms.
@@ -540,20 +541,53 @@ def _get_template_surface_dir(n_points: Optional[int] = None) -> Path:
     return data_dir / DEFAULT_TEMPLATE_DIR
 
 
-def _hemi_counterpart(path: Path) -> Optional[Path]:
-    """Return the right-hemisphere sibling of a left-hemisphere file.
+#: How a file name says which hemisphere it holds, left form and right form
+HEMI_MARKERS = (('lh.', 'rh.'), ('_hemi-L_', '_hemi-R_'), ('left', 'right'))
 
-    Handles the FreeSurfer/CAT12 (``lh.``), plain (``left``) and BIDS
-    (``_hemi-L_``) conventions.  Files that do not name the left hemisphere
-    return None — the viewer always treats the given file as the primary
-    (left-column) surface and only looks for its right-hand partner.  The
-    returned path is not checked for existence.
+
+def hemisphere_of(filename) -> Optional[str]:
+    """``'lh'`` or ``'rh'`` when the name names a hemisphere, else None.
+
+    Covers the FreeSurfer/CAT12 (``lh.``), BIDS (``_hemi-L_``) and plain
+    (``left``) conventions.
+    """
+    name = Path(filename).name
+    for left, right in HEMI_MARKERS:
+        if left in name:
+            return 'lh'
+        if right in name:
+            return 'rh'
+    return None
+
+
+def _hemi_counterpart(path: Path) -> Optional[Path]:
+    """Return the file of the other hemisphere, in either direction.
+
+    Picking ``rh.central.subj.gii`` looks for ``lh.central.subj.gii`` just as
+    the other way round; which side the given file is decides where the pair
+    ends up (see :func:`read_mesh_pair`).  The returned path is not checked
+    for existence, and files that name no hemisphere return None.
     """
     name = path.name
-    for left, right in (('lh.', 'rh.'), ('left', 'right'), ('_hemi-L_', '_hemi-R_')):
+    for left, right in HEMI_MARKERS:
         if left in name:
             return path.with_name(name.replace(left, right))
+        if right in name:
+            return path.with_name(name.replace(right, left))
     return None
+
+
+def order_by_hemisphere(filename, own, other):
+    """Sort a pair of loaded objects into (left, right).
+
+    *own* belongs to *filename* and *other* to its counterpart, so the name
+    decides which of the two is the left hemisphere.
+    """
+    if other is None:
+        return own, None
+    if hemisphere_of(filename) == 'rh':
+        return other, own
+    return own, other
 
 
 def _split_scalars(arr: vtkDoubleArray, n_left: int, n_right: int) -> Tuple[vtkDoubleArray, vtkDoubleArray]:
@@ -871,11 +905,12 @@ def split_hemispheres(poly: vtkPolyData, filename: str) -> Optional[Tuple[vtkPol
 
 
 def read_mesh_pair(mesh_path: str) -> Tuple[vtkPolyData, Optional[vtkPolyData]]:
-    """Load a surface together with its right-hemisphere counterpart.
+    """Load a surface together with the surface of the other hemisphere.
 
-    The counterpart is either a sibling file (``lh.`` -> ``rh.``) or the second
-    half of a combined ``mesh.*`` surface.  Without one, the right entry is
-    None and only the left column of the montage is drawn.
+    The counterpart is either a sibling file (``lh.`` <-> ``rh.``, in either
+    direction) or the second half of a combined ``mesh.*`` surface.  Without
+    one, the right entry is None and only the left column of the montage is
+    drawn.
     """
     poly = read_gifti_mesh(str(mesh_path))
     pair = split_hemispheres(poly, str(mesh_path))
@@ -884,7 +919,7 @@ def read_mesh_pair(mesh_path: str) -> Tuple[vtkPolyData, Optional[vtkPolyData]]:
     other = _hemi_counterpart(Path(mesh_path))
     if other is not None and other.exists():
         try:
-            return poly, read_gifti_mesh(str(other))
+            return order_by_hemisphere(mesh_path, poly, read_gifti_mesh(str(other)))
         except Exception:
             return poly, None
     return poly, None
@@ -1339,9 +1374,9 @@ def parse_args(argv: List[str]) -> Options:
             '  Step 3 is what makes free-form names work, e.g. CAT12/SPM statistic folders\n'
             '  (logP_*.gii, TFCE_*.gii), and it is re-run for every overlay, so files\n'
             '  from different folders, subjects or mesh resolutions can be mixed in one call.\n'
-            '  The right hemisphere is added when an rh./right/_hemi-R_ file sits next to the\n'
-            '  left one, or when a mesh (mesh.central.*) or overlay holds both hemispheres\n'
-            '  back to back.\n'
+            '  The other hemisphere is added when its file sits next to the selected one —\n'
+            '  lh./rh., left/right or _hemi-L_/_hemi-R_, in either direction — or when a mesh\n'
+            '  (mesh.central.*) or overlay holds both hemispheres back to back.\n'
             '\n'
             'Keys:\n'
             '  ←/→ previous/next overlay (or mesh)   u/d/l/r rotate   o reset view\n'
@@ -1819,9 +1854,10 @@ class Viewer(QtWidgets.QMainWindow):
         self.bkg_scalar_l = None; self.bkg_scalar_r = None
         if opts.overlay_bkg:
             self.bkg_scalar_l = read_scalars(opts.overlay_bkg)
-            rh_overlay_bkg = _hemi_counterpart(Path(opts.overlay_bkg))
-            if rh_overlay_bkg is not None and rh_overlay_bkg.exists() and self.poly_r is not None:
-                self.bkg_scalar_r = read_scalars(str(rh_overlay_bkg))
+            other_bkg = _hemi_counterpart(Path(opts.overlay_bkg))
+            if other_bkg is not None and other_bkg.exists() and self.poly_r is not None:
+                self.bkg_scalar_l, self.bkg_scalar_r = order_by_hemisphere(
+                    opts.overlay_bkg, self.bkg_scalar_l, read_scalars(str(other_bkg)))
             elif self.poly_r is not None and self.bkg_scalar_l is not None and self.bkg_scalar_l.GetNumberOfTuples() == (self.poly_l.GetNumberOfPoints()+self.poly_r.GetNumberOfPoints()):
                 self.bkg_scalar_l, self.bkg_scalar_r = _split_scalars(
                     self.bkg_scalar_l,
@@ -1908,7 +1944,7 @@ class Viewer(QtWidgets.QMainWindow):
         self.scalar_bar = None
         self._scalar_bar_added = False
         self._ensure_colorbar()
-        has_overlay_initial = (self.scal_l is not None)
+        has_overlay_initial = (self.scal_l is not None or self.scal_r is not None)
         self._colorbar_intent = bool(self.opts.colorbar)
         self.opts.colorbar = bool(self._colorbar_intent and has_overlay_initial)
         if self.opts.colorbar:
@@ -2268,7 +2304,8 @@ class Viewer(QtWidgets.QMainWindow):
             disc = int(getattr(self.opts, 'discrete', 0) or 0)
             self.ctrl.cb_discrete.setChecked(disc > 0)
         # Enable/disable overlay controls based on whether overlay is loaded
-        has_overlay = bool((self.overlay_list or self.opts.overlay) and (self.scal_l is not None))
+        has_overlay = bool((self.overlay_list or self.opts.overlay)
+                           and self._overlay_scalars() is not None)
         self.ctrl.set_overlay_controls_enabled(has_overlay)
         # Ensure fix scaling checkbox state reflects current overlay count/availability
         self._enforce_fix_scaling_policy()
@@ -3265,7 +3302,7 @@ class Viewer(QtWidgets.QMainWindow):
                 self._remember_mesh_for_overlay(ov_path, self.opts.mesh_left)
                 return
 
-        tpl = _template_mesh_for_points(n_scal)
+        tpl = _template_mesh_for_points(n_scal, hemisphere_of(ov_path) or 'lh')
         if tpl is not None:
             self._switch_mesh(str(tpl))
             if self._mesh_fits_scalars(n_scal):
@@ -3416,9 +3453,10 @@ class Viewer(QtWidgets.QMainWindow):
             title_mode = self.opts.title_mode
             if title_mode == 'none':
                 self.scalar_bar.SetTitle(" ")
-            elif title_mode == 'stats' or (self.opts.stats and self.scal_l is not None):
-                if self.scal_l is not None:
-                    info = f"Mean={get_mean(self.scal_l):.3f} Median={get_median(self.scal_l):.3f} SD={get_std(self.scal_l):.3f}"
+            elif title_mode == 'stats' or (self.opts.stats and self._overlay_scalars() is not None):
+                values = self._overlay_scalars()
+                if values is not None:
+                    info = f"Mean={get_mean(values):.3f} Median={get_median(values):.3f} SD={get_std(values):.3f}"
                     self.scalar_bar.SetTitle(info)
                 else:
                     self.scalar_bar.SetTitle("")
@@ -3478,9 +3516,10 @@ class Viewer(QtWidgets.QMainWindow):
         title_mode = self.opts.title_mode
         if title_mode == 'none':
             sb.SetTitle(" ")
-        elif title_mode == 'stats' or (self.opts.stats and self.scal_l is not None):
-            if self.scal_l is not None:
-                info = f"Mean={get_mean(self.scal_l):.3f} Median={get_median(self.scal_l):.3f} SD={get_std(self.scal_l):.3f}"
+        elif title_mode == 'stats' or (self.opts.stats and self._overlay_scalars() is not None):
+            values = self._overlay_scalars()
+            if values is not None:
+                info = f"Mean={get_mean(values):.3f} Median={get_median(values):.3f} SD={get_std(values):.3f}"
                 sb.SetTitle(info)
             else:
                 sb.SetTitle("")
@@ -3545,10 +3584,12 @@ class Viewer(QtWidgets.QMainWindow):
             # make sure the displayed mesh has room for exactly these values.
             self._ensure_mesh_for_scalars(ov_path, n_scal)
 
-            # Prefer a separate RH overlay sitting next to the selected file
-            rh_path = _hemi_counterpart(ov_path)
-            if rh_path is not None and rh_path.exists() and self.poly_r is not None:
-                scal_r = read_scalars(str(rh_path))
+            # Prefer the overlay of the other hemisphere sitting next to the
+            # selected file — an rh.* file finds its lh.* partner just as well
+            other_path = _hemi_counterpart(ov_path)
+            if other_path is not None and other_path.exists() and self.poly_r is not None:
+                scal_l, scal_r = order_by_hemisphere(
+                    ov_path, scal_l, read_scalars(str(other_path)))
             # Or: a single overlay holds LH and RH values back to back
             elif self.poly_r is not None and scal_l is not None and n_scal == (
                 self.poly_l.GetNumberOfPoints() + self.poly_r.GetNumberOfPoints()
@@ -3558,6 +3599,12 @@ class Viewer(QtWidgets.QMainWindow):
                     self.poly_l.GetNumberOfPoints(),
                     self.poly_r.GetNumberOfPoints(),
                 )
+            elif (hemisphere_of(ov_path) == 'rh' and self.poly_r is not None
+                  and scal_l is not None
+                  and n_scal == self.poly_r.GetNumberOfPoints()):
+                # A right-hemisphere overlay without its left partner: show it
+                # on the right surface rather than on the left one
+                scal_l, scal_r = None, scal_l
         except Exception as e:
             # If loading fails, clear the overlay and disable controls
             print(f"Failed to load overlay: {e}")
@@ -3590,8 +3637,10 @@ class Viewer(QtWidgets.QMainWindow):
             pass
         else:
             # Auto-scale: always recompute overlay range from data
-            if self.scal_l is not None:
-                r = [0.0, 0.0]; self.poly_l.GetScalarRange(r)
+            poly = self.poly_l if self.scal_l is not None else (
+                self.poly_r if self.scal_r is not None else None)
+            if poly is not None:
+                r = [0.0, 0.0]; poly.GetScalarRange(r)
                 self.overlay_range = r
         # The new overlay may cover a hemisphere that had no actor yet
         if self._ensure_hemisphere_actors() and hasattr(self, '_montage_ov'):
@@ -3676,6 +3725,10 @@ class Viewer(QtWidgets.QMainWindow):
                 except Exception:
                     pass
                 self._hist_win = None
+
+    def _overlay_scalars(self):
+        """The overlay values, from whichever hemisphere carries them."""
+        return self.scal_l if self.scal_l is not None else getattr(self, 'scal_r', None)
 
     def _update_histogram_window(self):
         """If histogram window is open, refresh with current overlay scalars."""

@@ -250,6 +250,56 @@ class TestPresets(unittest.TestCase):
             self.assertTrue(PRESET_HELP[number].strip(), number)
 
 
+class TestHemisphereLookup(unittest.TestCase):
+    """The partner surface is found from either side."""
+
+    def test_hemisphere_is_recognised(self):
+        from t1prep.gui.cat_surf_view import hemisphere_of
+        for name, side in (("lh.central.subj.gii", "lh"),
+                           ("rh.central.subj.gii", "rh"),
+                           ("sub-01_hemi-L_midthickness.surf.gii", "lh"),
+                           ("sub-01_hemi-R_midthickness.surf.gii", "rh"),
+                           ("left_hemisphere.gii", "lh"),
+                           ("right_hemisphere.gii", "rh"),
+                           ("mesh.central.gii", None),
+                           ("TFCE_log_pFWE_0001.gii", None)):
+            self.assertEqual(hemisphere_of(name), side, name)
+
+    def test_counterpart_works_in_both_directions(self):
+        from t1prep.gui.cat_surf_view import _hemi_counterpart
+        pairs = (("lh.central.subj.gii", "rh.central.subj.gii"),
+                 ("sub-01_hemi-L_desc-thickness.gii", "sub-01_hemi-R_desc-thickness.gii"),
+                 ("left_hemisphere.gii", "right_hemisphere.gii"))
+        for left, right in pairs:
+            self.assertEqual(_hemi_counterpart(Path(left)).name, right)
+            self.assertEqual(_hemi_counterpart(Path(right)).name, left)
+
+    def test_no_hemisphere_has_no_counterpart(self):
+        from t1prep.gui.cat_surf_view import _hemi_counterpart
+        self.assertIsNone(_hemi_counterpart(Path("mesh.central.Template_T1.gii")))
+
+    def test_pair_is_ordered_left_then_right(self):
+        """What was selected decides which of the two is the left one."""
+        from t1prep.gui.cat_surf_view import order_by_hemisphere
+        self.assertEqual(order_by_hemisphere("lh.central.gii", "own", "other"),
+                         ("own", "other"))
+        self.assertEqual(order_by_hemisphere("rh.central.gii", "own", "other"),
+                         ("other", "own"))
+        # nothing to order without a partner
+        self.assertEqual(order_by_hemisphere("rh.central.gii", "own", None),
+                         ("own", None))
+
+    def test_template_follows_the_hemisphere(self):
+        """A right-hemisphere overlay falls back to the right template."""
+        from t1prep.gui.cat_surf_view import _template_mesh_for_points
+        left = _template_mesh_for_points(32492, "lh")
+        right = _template_mesh_for_points(32492, "rh")
+        if left is None or right is None:  # pragma: no cover - packaged data
+            self.skipTest("template surfaces not installed")
+        self.assertTrue(left.name.startswith("lh."))
+        self.assertTrue(right.name.startswith("rh."))
+
+
 class TestMeshTitle(unittest.TestCase):
     """Several surfaces are numbered in the title, like several overlays."""
 
