@@ -1461,7 +1461,7 @@ def run_segment():
     # spatial prior.  Both only depend on the grid, so they are built once
     # here and reused by the post-segmentation cleanup further down.
     if vessel > 0:
-        protect = protected_regions(t1, affine, p0_large, device)
+        protect = protected_regions(p0_large.affine, p0_large.shape, device)
         try:
             bv_prior = blood_vessel_prior(
                 p0_large.affine, p0_large.shape, device=device
@@ -1583,7 +1583,9 @@ def run_segment():
         # changed, so it is only rebuilt if something upstream resampled.
         excl_regions = protect
         if excl_regions is None or excl_regions.shape != p0_large.shape:
-            excl_regions = protected_regions(t1, affine, p0_large, device)
+            excl_regions = protected_regions(
+                p0_large.affine, p0_large.shape, device
+            )
 
         p0_value_original = p0_large.get_fdata().copy()
         p0_large, p1_large, p2_large, p3_large = cleanup_vessels(

@@ -88,11 +88,15 @@ class BloodVesselCorrectionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.affine = np.diag(list(VX) + [1.0])
         cls.image, cls.label, cls.vessel, cls.blade, cls.radius = _phantom(True)
-        # The phantom is not in MNI space, so the shipped spatial prior would
-        # be meaningless here; a neutral prior isolates the local cues.
+        # The phantom is not in MNI space, so neither the shipped spatial
+        # prior nor the atlas protection mask means anything here: both are
+        # supplied explicitly so the tests exercise the local cues alone.
+        # In the pipeline both are built from the real template grid.
         cls.neutral = np.ones_like(cls.image)
+        cls.unprotected = np.zeros(cls.image.shape, dtype=bool)
         cls.weight = vessels.vessel_weight(
-            cls.image, cls.label, VX, bv_prior=cls.neutral
+            cls.image, cls.label, VX, bv_prior=cls.neutral,
+            protect=cls.unprotected,
         )
         cls.gm = (cls.label > 1.5) & (cls.label < 2.5) & ~cls.vessel
         cls.crown = cls.gm & (cls.radius > 27)
@@ -158,6 +162,7 @@ class BloodVesselCorrectionTests(unittest.TestCase):
             nib.Nifti1Image(label, self.affine),
             strength=1.0,
             bv_prior=self.neutral,
+            protect=self.unprotected,
         )
         np.testing.assert_array_equal(label_out.get_fdata(), label)
         np.testing.assert_array_equal(brain_out.get_fdata(), image)
@@ -165,7 +170,8 @@ class BloodVesselCorrectionTests(unittest.TestCase):
     def test_gate_blocks_a_sub_threshold_detection(self):
         """The phantom tree is 763 mm^3, below CAT12's 1000 mm^3 gate."""
         brain_out, _ = vessels.apply_blood_vessel_correction(
-            self._brain(), self._label(), strength=1.0, bv_prior=self.neutral
+            self._brain(), self._label(), strength=1.0, bv_prior=self.neutral,
+            protect=self.unprotected,
         )
         np.testing.assert_array_equal(brain_out.get_fdata(), self.image)
 
@@ -185,6 +191,7 @@ class BloodVesselCorrectionTests(unittest.TestCase):
             self._label(),
             strength=1.0,
             bv_prior=self.neutral,
+            protect=self.unprotected,
             min_volume=300.0,
         )
 
@@ -218,22 +225,53 @@ class BloodVesselCorrectionTests(unittest.TestCase):
         self.assertTrue((brain_out.get_fdata() <= self.image + 1e-5).all())
 
 
-class GeodesicIsolationTests(unittest.TestCase):
-    """The cue that separates an attached vessel from ordinary tissue."""
+class ProtectionTests(unittest.TestCase):
+    """The cerebellum must never be corrected.
 
-    @classmethod
-    def setUpClass(cls):
-        cls.image, cls.label, cls.vessel, cls.blade, cls.radius = _phantom(True)
+    Its folia are thin bright laminae separated by CSF -- the exact
+    configuration the admission gate keys on -- so nothing in the cue set can
+    be relied on to spare them and a mask has to.
+    """
 
-    def test_vessel_is_more_isolated_than_grey_matter(self):
-        ym3 = self.image * 3
-        seed = (ym3 >= 1.7) & (self.label > 1.0) & ~self.vessel
-        detour = vessels.geodesic_isolation(
-            ym3, seed, ym3 < 1.7, VX, limit_strict=0.03, limit_loose=0.5
+    def test_protect_mask_is_honoured_exactly(self):
+        image, label, vessel, _, _ = _phantom(True)
+        protect = np.zeros(image.shape, dtype=bool)
+        protect[vessel] = True  # stand in for cerebellar tissue
+        weight = vessels.vessel_weight(
+            image, label, VX, bv_prior=np.ones_like(image), protect=protect
         )
-        gm = (self.label > 1.5) & (self.label < 2.5) & ~self.vessel
-        self.assertGreater(detour[self.vessel].mean(), 4.0)
-        self.assertLess(detour[gm].mean(), 0.5)
+        self.assertEqual(weight[protect].max(), 0.0)
+
+    def test_protected_regions_covers_the_cerebellum(self):
+        """Built on the real template grid, where the atlas is meaningful."""
+        from t1prep._segment_utils import _resolve_template_file
+
+        template = nib.as_closest_canonical(
+            nib.load(_resolve_template_file("Template_05mm_bet", ".nii.gz"))
+        )
+        mask = vessels.protected_regions(template.affine, template.shape)
+        labels = np.round(
+            vessels._resample_to(
+                nib.load(_resolve_template_file("Neuromorphometrics", ".nii.gz")),
+                template.affine,
+                template.shape,
+                nearest=True,
+            )
+        )
+        atlas = nib.Nifti1Image(labels.astype(np.int16), template.affine)
+        cerebellum = vessels.get_regions_mask(
+            atlas, "Neuromorphometrics", list(vessels.CEREBELLUM_REGIONS)
+        )
+        self.assertGreater(cerebellum.sum(), 0)
+        # every cerebellar voxel, plus a margin, must be protected
+        self.assertTrue(bool(mask[cerebellum].all()))
+        self.assertGreater(mask.sum(), cerebellum.sum())
+        # ...but the mask must not swallow the brain.  Interpolating label ids
+        # linearly instead of nearest-neighbour invents labels between
+        # unrelated regions and silently balloons this to near-everything,
+        # which once cut detection by a factor of sixty.
+        brain = np.asanyarray(template.dataobj) > 0.3
+        self.assertLess(mask[brain].mean(), 0.45)
 
 
 class SurfaceNetTests(unittest.TestCase):

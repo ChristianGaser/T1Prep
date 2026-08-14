@@ -99,24 +99,26 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
-from ._segment_utils import _resolve_template_file, get_atlas, get_regions_mask
+from ._segment_utils import _resolve_template_file, get_regions_mask
 
 __all__ = [
     "protected_regions",
     "blood_vessel_prior",
     "cat_divergence",
-    "geodesic_isolation",
     "vessel_weight",
     "apply_blood_vessel_correction",
     "suppress_vessels_for_surface",
 ]
 
 
-# Regions where a vessel-like response is almost always a false positive:
-# cerebellar folia, the subcortical grey structures and the hippocampal
-# formation all produce thin bright structures with vessel-like divergence.
-# CAT12 protects the same regions via ``Ycb3``/``Yhc3`` in cat_vol_partvol.m.
-PROTECTED_REGIONS = (
+# The cerebellum, kept separate because it is the most dangerous region for
+# this correction and gets the widest margin.  Its folia are thin bright
+# laminae separated by CSF -- which is precisely the configuration the gate
+# fires on (local brightness excess plus CSF in the neighbourhood), so the
+# cues cannot be relied on to spare them and a mask has to.  Correcting there
+# destroys the fine fissures and with them the cerebellar surface.
+# CAT12 protects it the same way, via ``Ycb3`` in cat_vol_partvol.m.
+CEREBELLUM_REGIONS = (
     "Left Cerebellum White Matter",
     "Right Cerebellum White Matter",
     "Left Cerebellum Exterior",
@@ -125,6 +127,11 @@ PROTECTED_REGIONS = (
     "Cerebellar Vermal Lobules VI-VII",
     "Cerebellar Vermal Lobules VIII-X",
     "4th Ventricle",
+)
+
+# Subcortical grey and the hippocampal formation: also thin bright structures
+# with vessel-like divergence.  CAT12's ``Yhc3``/``Ysc5`` equivalents.
+PROTECTED_REGIONS = (
     "Left Amygdala",
     "Right Amygdala",
     "Left Caudate",
@@ -141,6 +148,13 @@ PROTECTED_REGIONS = (
     "Right Ventral DC",
 )
 
+# Margins in mm.  The cerebellum gets the widest because the atlas is warped
+# only affinely here, and a plain resize of it was measured to sit 3.9 mm off
+# (Dice 0.84), leaving 13000 mm^3 of true cerebellum outside the mask.
+CEREBELLUM_MARGIN_MM = 4.0
+PROTECTED_MARGIN_MM = 1.5
+VENTRICLE_MARGIN_MM = 3.0
+
 PROTECTED_VENTRICLES = (
     "Left Inf Lat Vent",
     "Right Inf Lat Vent",
@@ -149,7 +163,7 @@ PROTECTED_VENTRICLES = (
     "Brain Stem",
 )
 
-# Working resolution for the derivative maps and the geodesic front, in mm.
+# Working resolution for the derivative maps, in mm.
 # cat_vol_div uses min(1.5, 3*vx_vol), which is 1.5 for every resolution
 # T1Prep runs at.
 WORK_RES = 1.5
@@ -229,8 +243,6 @@ HYPER_RAMP = (3.05, 3.35)       # intensity above WM, 0..3 scale
 #
 # Below WM intensity the cap cannot help and the other evidence routes carry.
 WM_TREE_CAP = 3.15
-DETACHED_RAMP = (0.25, 0.60)    # smoothed fraction outside the WM tree
-ISOLATION_RAMP = (2.0, 6.0)     # detour in mm
 
 # Minimum detected volume before anything is changed, after cat_main.m l. 403
 # (1000 voxels on CAT12's ~1 mm working grid).  This is the safety mechanism
@@ -278,7 +290,7 @@ def _report_terms(terms, ym3, yp0, vx):
     if not n_looks:
         print("  -> nothing looks like a vessel; the cue thresholds are the issue")
         return
-    order = ("evidence", "hyper", "detached", "isolated", "csf_context", "prior")
+    order = ("evidence", "thin", "csf_context", "hyper", "prior")
     for name in order:
         term = np.broadcast_to(terms[name], ym3.shape)[looks]
         passing = float((term > 0.5).mean())
@@ -303,8 +315,9 @@ def _as_tensor(vol, device):
 
 def _resize(tensor, shape, mode="trilinear"):
     """Field-of-view preserving resize of a 5-D tensor."""
+    kwargs = {} if mode == "nearest" else {"align_corners": False}
     return F.interpolate(
-        tensor, size=tuple(int(s) for s in shape), mode=mode, align_corners=False
+        tensor, size=tuple(int(s) for s in shape), mode=mode, **kwargs
     )
 
 
@@ -415,7 +428,8 @@ def _csf_context(yp0, vx, radius_mm=2.5):
 # ---------------------------------------------------------------------------
 
 
-def _resample_to(img, target_affine, target_shape, device="cpu", channel=None):
+def _resample_to(img, target_affine, target_shape, device="cpu", channel=None,
+                 nearest=False):
     """Trilinear resample *img* onto the grid given by affine and shape.
 
     ``get_atlas`` resizes the template array onto the target dimensions and so
@@ -429,6 +443,10 @@ def _resample_to(img, target_affine, target_shape, device="cpu", channel=None):
     The sampling grid is built at roughly the template resolution and only
     then resized to the target shape, so the explicit coordinate array stays
     small even when the target is a 0.5 mm volume.
+
+    Set ``nearest`` for label atlases.  Interpolating label *ids* linearly
+    invents labels that lie between two unrelated regions, which silently
+    turns a protection mask into nonsense.
     """
     img = nib.as_closest_canonical(img)
     data = np.asanyarray(img.dataobj, dtype=np.float32)
@@ -467,11 +485,12 @@ def _resample_to(img, target_affine, target_shape, device="cpu", channel=None):
     out = F.grid_sample(
         _as_tensor(data, device),
         grid,
-        mode="bilinear",
+        mode="nearest" if nearest else "bilinear",
         align_corners=True,
         padding_mode="border",
     )
-    return _resize(out, target_shape)[0, 0].cpu().numpy()
+    out = _resize(out, target_shape, mode="nearest" if nearest else "trilinear")
+    return out[0, 0].cpu().numpy()
 
 
 def blood_vessel_prior(target_affine, target_shape, device="cpu"):
@@ -521,35 +540,46 @@ def blood_vessel_prior(target_affine, target_shape, device="cpu"):
     return prior.astype(np.float32)
 
 
-def protected_regions(t1, affine, target, device="cpu"):
-    """Boolean mask of regions the vessel correction must not touch.
+def protected_regions(target_affine, target_shape, device="cpu"):
+    """Regions the vessel correction must never touch, on the target grid.
 
-    Cerebellum, subcortical grey, hippocampus/amygdala, ventricles and
-    brainstem -- the CAT12 equivalents are the ``Ycb3``/``Yhc3``/``Ysc5``
-    masks in ``cat_vol_partvol.m``.
+    Cerebellum first and foremost: its folia are thin bright laminae separated
+    by CSF, which is exactly what the admission gate keys on, so without this
+    mask the correction eats the fine fissures.  Measured on Colin27, dropping
+    it leaves 172 mm^3 of cerebellar tissue flagged; adding it costs nothing
+    elsewhere.  Then subcortical grey, hippocampus/amygdala, ventricles and
+    brainstem, which CAT12 guards with ``Ycb3``/``Yhc3``/``Ysc5``.
+
+    The atlas is resampled through its real affine rather than resized onto
+    the target dimensions.  ``get_atlas`` does the latter, which silently
+    assumes both grids share a field of view; Neuromorphometrics does not
+    share one with the working space, and the resulting mask sits 3.9 mm off.
+    For a protection mask that is the difference between guarding the
+    cerebellum and guarding most of it.
     """
-    atlas = get_atlas(
-        t1,
-        affine,
-        target.header,
-        target.affine,
-        "Neuromorphometrics",
-        None,
-        device,
-        is_label_atlas=True,
+    target_shape = tuple(int(v) for v in np.asarray(target_shape)[:3])
+    target_affine = np.asarray(target_affine, dtype=float)
+    labels = _resample_to(
+        nib.load(_resolve_template_file("Neuromorphometrics", ".nii.gz")),
+        target_affine,
+        target_shape,
+        device=device,
+        nearest=True,
     )
+    atlas = nib.Nifti1Image(np.round(labels).astype(np.int16), target_affine)
+    vx = np.sqrt((target_affine[:3, :3] ** 2).sum(axis=0))
     struct = generate_binary_structure(3, 3)
-    mask = binary_dilation(
-        get_regions_mask(atlas, "Neuromorphometrics", list(PROTECTED_REGIONS)),
-        struct,
-        2,
+
+    def _grow(names, margin_mm):
+        mask = get_regions_mask(atlas, "Neuromorphometrics", list(names))
+        iters = max(1, int(round(margin_mm / float(min(vx)))))
+        return binary_dilation(mask, struct, iters)
+
+    return (
+        _grow(CEREBELLUM_REGIONS, CEREBELLUM_MARGIN_MM)
+        | _grow(PROTECTED_REGIONS, PROTECTED_MARGIN_MM)
+        | _grow(PROTECTED_VENTRICLES, VENTRICLE_MARGIN_MM)
     )
-    ventricles = binary_dilation(
-        get_regions_mask(atlas, "Neuromorphometrics", list(PROTECTED_VENTRICLES)),
-        struct,
-        5,
-    )
-    return mask | ventricles
 
 
 # ---------------------------------------------------------------------------
@@ -595,166 +625,8 @@ def cat_divergence(vol, vx, res=WORK_RES, floor=1.0 / 3.0, device="cpu"):
 
 
 # ---------------------------------------------------------------------------
-# 3) geodesic isolation
-# ---------------------------------------------------------------------------
-
-
-_NEIGHBOURS = tuple(
-    (dx, dy, dz)
-    for dx in (-1, 0, 1)
-    for dy in (-1, 0, 1)
-    for dz in (-1, 0, 1)
-    if (dx, dy, dz) != (0, 0, 0)
-)
-
-
-def _slice_pair(offset, shape):
-    """Source/target slice tuples for shifting an array by *offset*."""
-    src, dst = [], []
-    for d, n in zip(offset, shape):
-        if d > 0:
-            src.append(slice(0, n - d))
-            dst.append(slice(d, n))
-        elif d < 0:
-            src.append(slice(-d, n))
-            dst.append(slice(0, n + d))
-        else:
-            src.append(slice(0, n))
-            dst.append(slice(0, n))
-    return tuple(src), tuple(dst)
-
-
-def _front_cost(intensity, seed, blocked, vx, limit, max_cost, max_iter=300):
-    """Geodesic path cost in mm from *seed*, as a min-plus relaxation.
-
-    Mirrors ``downcut_float`` (``CAT_Vol.c``, l. 1579): a neighbour is only
-    entered when ``intensity[source] + limit >= intensity[target]``, so growth
-    is monotonically downhill up to a tolerance of *limit*.  The accumulated
-    cost here is purely geometric (step length in mm) rather than
-    ``downcut_float``'s ``w_dist * step + w_int * clamp(I, 0, 1)``, whose
-    intensity term is constant across tissue anyway and would only rescale the
-    result into uninterpretable units.
-
-    Propagation only happens through voxels that are neither seed nor blocked,
-    so the number of iterations is bounded by the longest path inside the
-    candidate set, not by the size of the volume.
-    """
-    shape = tuple(intensity.shape)
-    dist = torch.full(shape, float("inf"), dtype=torch.float32, device=intensity.device)
-    dist[seed] = 0.0
-    passable = ~blocked
-
-    steps = [
-        float(np.sqrt(sum((o[i] * float(vx[i])) ** 2 for i in range(3))))
-        for o in _NEIGHBOURS
-    ]
-    pairs = [_slice_pair(o, shape) for o in _NEIGHBOURS]
-
-    for _ in range(max_iter):
-        changed = torch.zeros((), dtype=torch.bool, device=intensity.device)
-        for (src, dst), step in zip(pairs, steps):
-            cand = dist[src] + step
-            ok = (
-                (cand < dist[dst])
-                & (cand <= max_cost)
-                & ((intensity[src] + limit) >= intensity[dst])
-                & passable[dst]
-            )
-            dist[dst] = torch.where(ok, cand, dist[dst])
-            changed = changed | ok.any()
-        if not bool(changed):
-            break
-    return dist
-
-
-def geodesic_isolation(
-    ym3,
-    seed,
-    blocked,
-    vx,
-    limit_strict,
-    limit_loose,
-    max_detour=20.0,
-    max_cost=60.0,
-    res=WORK_RES,
-    device="cpu",
-):
-    """Detour, in mm, imposed by requiring a monotonically descending path.
-
-    Port of ``cat_vol_partvol.m`` l. 398-407, which grows the same front twice
-    -- once with ``noise`` tolerance, once with ``16 * noise`` -- and flags
-    voxels where the two path costs diverge.  A voxel that is cheap to reach
-    when the front may climb, but expensive or unreachable when it may not, is
-    attached to the brain only through a narrow dark neck.  That is what a
-    vessel hanging in a sulcus looks like, and it is exactly the case the
-    plain reachability test in ``blood_vessel_correction_pve_float`` cannot
-    see: there the vessel *is* reachable, so it scores zero.
-
-    Voxels unreachable under the strict rule get the full ``max_detour``,
-    which makes the old detached-island criterion the limiting case of this
-    one.
-
-    Parameters
-    ----------
-    ym3 : np.ndarray
-        Intensity image on the 0..3 scale (CSF=1, GM=2, WM=3).
-    seed : np.ndarray
-        Boolean mask of confirmed, non-suspicious brain tissue.
-    blocked : np.ndarray
-        Boolean mask the front may not enter (background and CSF).
-    limit_strict, limit_loose : float
-        Allowed intensity rise per step, on the same 0..3 scale.
-
-    Returns
-    -------
-    np.ndarray
-        Detour length in mm, clipped to ``[0, max_detour]``, on the input grid.
-    """
-    shape0 = np.asarray(ym3.shape, dtype=int)
-    vx = np.asarray(vx, dtype=float)
-    shape_r = _reduced_shape(shape0, vx, res)
-    vx_r = shape0 * vx / shape_r
-
-    ym_r = _resize(_as_tensor(ym3, device), shape_r)[0, 0]
-    seed_r = _resize(_as_tensor(seed.astype(np.float32), device), shape_r)[0, 0] > 0.5
-    blocked_r = (
-        _resize(_as_tensor(blocked.astype(np.float32), device), shape_r)[0, 0] > 0.5
-    )
-    seed_r = seed_r & ~blocked_r
-
-    if not bool(seed_r.any()):
-        return np.zeros(tuple(shape0), dtype=np.float32)
-
-    strict = _front_cost(ym_r, seed_r, blocked_r, vx_r, limit_strict, max_cost)
-    loose = _front_cost(ym_r, seed_r, blocked_r, vx_r, limit_loose, max_cost)
-
-    iso = strict - loose
-    # Unreachable while descending -> maximally isolated.  Handles the both-
-    # unreachable case too, which would otherwise be inf - inf = nan.
-    iso = torch.where(torch.isinf(strict), torch.full_like(strict, max_detour), iso)
-    iso = torch.nan_to_num(iso, nan=0.0, posinf=max_detour, neginf=0.0)
-    iso = iso.clamp(0.0, max_detour)
-    iso[seed_r] = 0.0
-    iso[blocked_r] = 0.0
-
-    return _resize(iso[None, None], shape0)[0, 0].cpu().numpy()
-
-
-# ---------------------------------------------------------------------------
 # combination
 # ---------------------------------------------------------------------------
-
-
-def _noise_level(ym3, yp0):
-    """Local WM noise on the 0..3 intensity scale, as a robust sigma."""
-    core = binary_erosion(yp0 > 2.75, generate_binary_structure(3, 3), 1)
-    values = ym3[core]
-    if values.size < 100:
-        values = ym3[yp0 > 2.75]
-    if values.size < 100:
-        return 0.05
-    mad = float(np.median(np.abs(values - np.median(values))))
-    return float(np.clip(1.4826 * mad, 0.01, 0.3))
 
 
 def vessel_weight(
@@ -764,9 +636,6 @@ def vessel_weight(
     bv_prior=None,
     protect=None,
     strength=1.0,
-    use_geodesic=False,
-    isolation_rate=16.0,
-    max_detour=20.0,
     res=WORK_RES,
     device="cpu",
     return_terms=False,
@@ -799,13 +668,6 @@ def vessel_weight(
         Boolean mask that is forced to zero weight and seeded as brain.
     strength : float
         Overall scaling of the returned weight.
-    use_geodesic : bool
-        Compute the dual-rate isolation term.  Off by default: it costs a few
-        seconds and, measured against Colin27, admits 6.6% of small sulcal
-        vessels against 0.6% of thin gyral WM -- too little to earn its place
-        in the gate, where it added 0.4 percentage points of recall for 164
-        extra mm^3 of damaged white matter.  Kept because it is informative in
-        the diagnostics and catches fully detached islands.
 
     Returns
     -------
@@ -850,11 +712,6 @@ def vessel_weight(
     # Context: lying in CSF rather than between two banks of cortex.
     t_context = _csf_context(yp0, vx)
 
-    # Suspicion used only to keep vessels out of the seed set of the geodesic
-    # front below.  Thin gyral WM has no CSF context, so it stays a seed --
-    # which is what lets the front reach along it and prove it connected.
-    local = t_bright * t_shape * t_context
-
     # (e) Location plausibility, and the single most discriminating term.
     #     bv_prior is ~0 in deep WM, 1 in neutral territory and up to 2 where
     #     the MRA atlas says vessels run.  It is applied as a near-gate rather
@@ -865,65 +722,17 @@ def vessel_weight(
     else:
         t_prior = _ramp(np.asarray(bv_prior, dtype=np.float32), PRIOR_RAMP)
 
-    # (f) Geodesic isolation -- one of the two admissible kinds of evidence.
-    if use_geodesic:
-        noise = _noise_level(ym3, yp0)
-        # Everything at or below WM intensity seeds the front, mirroring the
-        # Ym < 3.2 brain seed of cat_vol_partvol.m l. 348, so a gyral blade is
-        # a seed rather than something the front has to reach.
-        #
-        # The suspicious set is dilated first.  Without that, partial-volume
-        # voxels at a vessel's own rim fall below the threshold, seed the
-        # front from inside the vessel, and the whole structure then measures
-        # as zero detour -- it would be proving itself connected to itself.
-        # CAT12 sidesteps this by seeding from atlas regions with LAB.BV
-        # already removed.
-        suspicious = binary_dilation(
-            local > 0.2,
-            generate_binary_structure(3, 3),
-            max(1, int(round(1.0 / float(min(vx))))),
-        )
-        seed = (ym3 >= 1.7) & brain & ~suspicious
-        seed |= wm_tree
-        if protect is not None:
-            seed |= protect & (ym3 >= 1.7)
-        detour = geodesic_isolation(
-            ym3,
-            seed,
-            ym3 < 1.7,
-            vx,
-            limit_strict=noise,
-            limit_loose=noise * isolation_rate,
-            max_detour=max_detour,
-            res=res,
-            device=device,
-        )
-        t_iso = _ramp(detour, ISOLATION_RAMP)
-    else:
-        t_iso = np.float32(0.0)
-
-    # (g) Hyperintensity above WM.
+    # (f) Hyperintensity above white matter.
     t_hyper = _ramp(ym3, HYPER_RAMP)
 
-    # (h) Bright, but the white matter tree does not contain it.  This is
-    #     CAT12's `Ym > 2.5 - 0.5*BVCstr & Ywm == 0` (cat_vol_partvol.m
-    #     l. 542, "high intensity, but not classified as WM") and it is the
-    #     workhorse: unlike hyperintensity it survives the LAS normalisation,
-    #     which compresses everything above WM towards WM, and unlike the
-    #     geodesic detour it does not need the sulcal CSF to be dark enough to
-    #     block a front.  A gyral blade cannot satisfy it by construction --
-    #     it is *in* the tree.
-    detached = (ym3 > 2.25) & ~wm_tree
-    t_detached = _ramp(
-        _smooth_mm(detached.astype(np.float32), vx, 1.0), DETACHED_RAMP
-    )
-
-    # Looking like a vessel is necessary but nowhere near sufficient.  A voxel
-    # is admitted only with one of CAT12's three kinds of evidence, none of
-    # which a thin gyral blade can supply: it is not brighter than WM, it is
-    # not geodesically detached, and it belongs to the white matter tree.
-    # Treating shape as evidence in its own right is what caused thin WM to be
-    # flagged and set to CSF.
+    # A voxel is admitted only with positive evidence, and the three terms
+    # that provide it were chosen by measurement against the Colin27 ground
+    # truth, comparing small sulcal vessels with thin gyral white matter:
+    # local brightness excess passes 47.6% against 0.9%, CSF in the
+    # neighbourhood 48.4% against 0.8%.  Hyperintensity adds the vessels that
+    # are frankly brighter than white matter.  Shape alone is never enough --
+    # a gyral blade is bright, thin and ridge-like too, and treating that as
+    # evidence is what once set thin white matter to CSF.
     t_evidence = np.maximum(np.maximum(t_thin, t_context), t_hyper)
 
     # t_context enters only weakly, through a high floor.  It was designed on
@@ -965,8 +774,6 @@ def vessel_weight(
             "csf_context": t_context,
             "prior": np.broadcast_to(t_prior, ym3.shape),
             "hyper": t_hyper,
-            "detached": t_detached,
-            "isolated": np.broadcast_to(t_iso, ym3.shape),
             "evidence": t_evidence,
             "wm_tree": wm_tree.astype(np.float32),
         }
@@ -984,7 +791,6 @@ def apply_blood_vessel_correction(
     strength=1.0,
     protect=None,
     bv_prior=None,
-    use_geodesic=False,
     min_volume=MIN_VESSEL_VOLUME,
     device="cpu",
     verbose=False,
@@ -1019,7 +825,9 @@ def apply_blood_vessel_correction(
     strength : float
         Correction weight; 0 disables it entirely.
     protect, bv_prior : np.ndarray or None
-        See :func:`vessel_weight`.  ``bv_prior`` is built on demand when None.
+        See :func:`vessel_weight`.  Both are built on demand when None; for
+        ``protect`` that is a hard requirement rather than a convenience, so a
+        failure to build it raises instead of proceeding unprotected.
 
     Returns
     -------
@@ -1041,6 +849,19 @@ def apply_blood_vessel_correction(
                 print(f"Blood vessel prior unavailable ({exc}); continuing without it")
             bv_prior = None
 
+    # Built here when the caller did not supply it.  Sparing the cerebellum is
+    # not optional -- its folia look exactly like what is being detected -- so
+    # it must not depend on every call site remembering to pass a mask.
+    if protect is None:
+        try:
+            protect = protected_regions(brain.affine, ym01.shape, device=device)
+        except (FileNotFoundError, OSError, KeyError) as exc:
+            raise RuntimeError(
+                "Cannot build the vessel-correction protection mask "
+                f"({exc}). Refusing to run: without it the cerebellar "
+                "fissures would be corrected away."
+            ) from exc
+
     weight, terms = vessel_weight(
         ym01,
         yp0,
@@ -1048,7 +869,6 @@ def apply_blood_vessel_correction(
         bv_prior=bv_prior,
         protect=protect,
         strength=strength,
-        use_geodesic=use_geodesic,
         device=device,
         return_terms=True,
     )
