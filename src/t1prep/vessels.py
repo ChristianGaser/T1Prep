@@ -13,28 +13,34 @@ The hard part is not finding vessels, it is not destroying thin gyral white
 matter while doing so.  A 2 mm blade running out into a gyrus is bright, thin
 and ridge-like: every *local* cue a vessel gives, it gives too.  So the
 central rule of this module is that **looking like a vessel is never
-sufficient**.  A voxel is admitted only with evidence of one of the three
-kinds CAT12 accepts, none of which a blade can supply:
+sufficient**.  A voxel is admitted only with positive evidence, and which
+evidence works was settled by measurement rather than by argument.
 
-* **outside the connected white matter** -- ``cat_vol_partvol.m`` l. 542,
-  ``Ym > 2.5 - 0.5*BVCstr & Ywm == 0``, where ``Ywm`` is a deliberately
-  generous region-grown white matter mask.  This is the workhorse, because a
-  gyral blade is *in* that mask by construction while a vessel in the sulcal
-  CSF is cut off from it by cortex;
-* **brighter than white matter** -- l. 348 seeds everything with ``Ym < 3.2``
-  as *brain* and then lets brain and vessel seeds compete in a
-  ``cat_vol_downcut`` region growing, so anything at or below WM intensity is
-  claimed by the brain front however vessel-like it looks; or
-* **geodesically detached** -- l. 398-407, which grows the same front twice at
-  different rates and flags voxels reachable only via a long detour.
+Three topological criteria were tried first, following CAT12 closely: outside
+the region-grown white matter (``cat_vol_partvol.m`` l. 542), brighter than
+white matter (l. 348), and geodesically detached (l. 398-407).  Against the
+Colin27 ground truth they turned out to be nearly useless for the vessels that
+matter -- small ones inside sulci -- because those sit at 2.46 on the 0..3
+scale, *darker* than the 3.00 of white matter, and are anatomically continuous
+with vasculature entering the parenchyma.  Together they admitted 14.5% of
+them.  What separates a sulcal vessel from a gyral blade is local:
 
-The corresponding failure mode is worth naming, because both directions were
-hit while building this.  Make the white matter mask too tight -- by eroding
-it, opening it, or dropping "small dots" -- and thin gyral blades fall out of
-it, satisfy the detachment criterion, and get set to CSF.  Make it too loose
--- or leave its intensity cap off, so that one contact point absorbs a whole
-vessel tree through transitive connectivity -- and nothing is corrected at
-all.  :func:`_wm_tree` documents which way each of its steps errs.
+    term                small sulcal vessel   thin gyral WM
+    local brightness excess     47.6%              0.9%
+    CSF in the neighbourhood    48.4%              0.8%
+    MRA spatial prior           93.9%             27.6%
+    the three topological ones  14.5%              1.1%
+
+so the gate is built from the first two plus hyperintensity, and the prior is
+applied as a near-gate.  The white matter tree survives only as a floor over
+its eroded interior: masking the whole tree cost six times the sensitivity on
+small sulcal vessels *and* increased white matter damage, because half of
+those vessels belong to the tree topologically.
+
+The failure mode is worth naming, because both directions were hit while
+building this.  Lean on local shape alone and thin gyral blades -- bright,
+thin, ridge-like, indistinguishable by any local cue -- get set to CSF.  Lean
+on topology and nothing is corrected at all.
 
 Thresholds are calibrated against the Colin27 fuzzy phantom, which ships a
 ground-truth ``VESSELS`` class at 0.5 mm.  Its own vessels are dark (1.5 in
@@ -42,8 +48,9 @@ tissue units, i.e. flow voids), so they serve as the specificity control,
 while the sensitivity cases raise those same voxels to a range of intensities
 and segment them as WM or as GM.  The GM case matters for thickness in
 particular: a vessel mislabelled GM inside a sulcus is exactly what PBT
-follows.  The measured trades are recorded at :data:`CSF_CONTEXT_FLOOR`,
-:data:`WM_TREE_CAP` and :data:`MIN_VESSEL_VOLUME`.
+follows.  The measured trades are recorded at :data:`PRIOR_RAMP`,
+:data:`WM_TREE_CAP` and :data:`MIN_VESSEL_VOLUME`, and in the docstrings of
+:func:`_wm_tree` and :func:`vessel_weight`.
 
 Around that gate sit the supporting pieces, also from CAT12:
 
@@ -85,7 +92,6 @@ from scipy.ndimage import (
     binary_closing,
     binary_dilation,
     binary_erosion,
-    binary_opening,
     gaussian_filter,
     generate_binary_structure,
     label as _connected_components,
@@ -185,24 +191,11 @@ CSF_CONTEXT_RAMP = (0.0, 0.30)  # surrounding CSF fraction minus GM fraction
 # brighter than the tree cap.  Location is what separates them.
 PRIOR_RAMP = (0.85, 1.05)
 
-# How strongly the CSF context is allowed to suppress a detection: the factor
-# is `floor + (1 - floor) * t_context`, so 1.0 disables it entirely.  Swept
-# against Colin27's ground-truth vessels; "damage" is white matter wrongly
-# flagged, out of 654000 mm^3, and "clean" is the same brain with only its own
-# dark vessels, i.e. a subject with no vessel problem:
-#
-#     floor   found (3.2x as WM)   found (GM/WM as GM)   WM damage   clean
-#      0.40        9401 mm^3             1356 mm^3          56 mm^3   116 mm^3
-#      0.60       16426                  5163              285        413
-#      0.85       22775                 12107              402        784
-#      1.00       25097                 15599              455       1066
-#
-# The benefit/damage ratio is flat (~56:1) above 0.6, so this is purely a
-# sensitivity dial; the gate is what protects clean subjects.  0.85 keeps
-# thin gyral white matter damage at 0.7% of the 41000 mm^3 present while
-# recovering most of the vessels segmented as GM, which is the case that
-# inflates PBT thickness.
-CSF_CONTEXT_FLOOR = 0.85
+# The CSF context is no longer a suppressing factor -- it is one of the terms
+# the admission gate is built from, because on real anatomy it is among the
+# few that actually separate a sulcal vessel from a gyral blade (48.4% against
+# 0.8%).  Using it as a multiplier instead, as an earlier version did, made it
+# suppress real vessels rather than false positives.
 SURFACE_RIDGE_RAMP = (0.35, 0.70)  # -divergence x CSF context, 0..3 map
 
 # The three independent routes by which CAT12 admits a voxel as vessel.  Every
@@ -353,51 +346,43 @@ def _smooth_mm(vol, vx, fwhm_mm):
 
 
 def _wm_tree(yp0, ym3, vx, close_mm=0.5, cap=WM_TREE_CAP):
-    """The connected white matter, built generously -- CAT12's ``Ywm``.
+    """The connected white matter, used to protect its deep interior.
 
-    Everything in this module turns on this mask, so it is worth being explicit
-    about what it is for.  A 2 mm blade of gyral white matter is bright, thin
-    and ridge-like: every *local* cue a vessel gives, it gives too.  The one
-    thing that separates them is that the blade stays **continuous with the
-    rest of the white matter**, while a vessel in the sulcal CSF is cut off
-    from it by cortex.  So the tree is both the protected region and, by its
-    complement, the primary detector.
+    Built by connected components on a generous seed.  CAT12 instead grows
+    ``Ywm`` by downhill-constrained region growing (``cat_vol_partvol.m``
+    l. 533), which is the principled version -- reaching a sulcal vessel from
+    white matter means descending through cortex and climbing back up, and the
+    climb is refused.  That was implemented and measured against this, and it
+    was **worse on both axes**: it still absorbed 55% of small sulcal vessels
+    (against 52%) while protecting only 96% of thin gyral white matter
+    (against 99%).  The reason is anatomical rather than algorithmic -- the
+    vessel tree is continuous with vasculature entering the parenchyma, so the
+    front reaches sulcal segments along the vessel itself, never having to
+    climb.  Connectivity is kept because it is cheaper and measured better.
 
-    Follows ``cat_vol_partvol.m`` l. 527-530, and follows it in being
-    *deliberately inclusive*: the threshold is 2.25 rather than 2.5, the mask
-    is dilated once and then closed.  Every one of those widens the tree, and
-    every one of them protects more white matter.
-
-    Two things this must not do, both learned the hard way:
-
-    * **No erosion.**  An erosion deep enough to remove vessels removes thin
-      gyral blades too, and a distal blade is then far from what is left while
-      still being connected to it -- so it reads as detached, its ridge
-      response is maximal, and it gets corrected as vessel.
-    * **No opening.**  An opening was tried to stop a vessel that touches
-      white matter from merging into the tree.  It removed 99% of a 1 mm blade
-      on the test phantom.  A vessel wrongly protected costs one missed
-      vessel; a blade wrongly unprotected costs white matter set to CSF.
-
-    The intensity cap is what stops a bright vessel from joining the tree,
-    and it matters far more than it looks: connectivity is transitive, so a
-    single contact point between a vessel and white matter would otherwise
-    absorb the whole vessel tree.  On Colin27 that is the difference between
-    85% and 3% of ground-truth vessels being swallowed.  CAT12 gets the same
-    effect from `Ym < 3.2` plus downhill-only region growing.
+    Only the eroded interior of this mask is protected (:func:`_deep_wm`).
+    Protecting the whole tree was measured to cost six times the sensitivity
+    on small sulcal vessels while *increasing* white matter damage, because
+    the cue that actually separates a blade from a vessel is local, not
+    topological -- see the gate built in :func:`vessel_weight`.
     """
     struct = generate_binary_structure(3, 3)
     init = (yp0 > 2.25) & (ym3 > 2.25) & (yp0 < 3.1) & (ym3 < cap)
-    # A closing bridges partial-volume gaps *within* white matter.  It is kept
-    # short on purpose: CAT12 closes with radius 2, but at 0.5 mm that reaches
-    # across a sulcus and swallows the vessel inside it into the tree.
     iters = max(1, int(round(close_mm / float(min(vx)))))
-    tree = _largest_component(binary_closing(init, struct, iters))
-    # CAT12 follows this with `Ywm(smooth3(Ywm)<0.5)=0` to drop small dots.
-    # That is not reproduced: smooth3 is a 3x3x3 box at CAT12's ~1 mm, and the
-    # equivalent at 0.5 mm removed 65% of a 1 mm gyral blade on the phantom.
-    # Dropping stray voxels is not worth un-protecting thin white matter.
-    return tree
+    return _largest_component(binary_closing(init, struct, iters))
+
+
+def _deep_wm(yp0, ym3, vx, erode_mm=2.0):
+    """Interior of the white matter, which must never be corrected.
+
+    An erosion this deep also removes thin gyral blades, which is exactly why
+    it is used only as a floor and not as the main protection: blades are kept
+    safe by the cues, not by this mask.
+    """
+    iters = max(1, int(round(erode_mm / float(min(vx)))))
+    return binary_erosion(
+        _wm_tree(yp0, ym3, vx), generate_binary_structure(3, 3), iters
+    )
 
 
 def _csf_context(yp0, vx, radius_mm=2.5):
@@ -779,7 +764,7 @@ def vessel_weight(
     bv_prior=None,
     protect=None,
     strength=1.0,
-    use_geodesic=True,
+    use_geodesic=False,
     isolation_rate=16.0,
     max_detour=20.0,
     res=WORK_RES,
@@ -815,10 +800,12 @@ def vessel_weight(
     strength : float
         Overall scaling of the returned weight.
     use_geodesic : bool
-        Enable the dual-rate isolation term (the expensive part).  Disabling
-        it does not merely make detection cheaper -- isolation is one of the
-        two admissible kinds of evidence, so without it only vessels that are
-        genuinely brighter than white matter can be found at all.
+        Compute the dual-rate isolation term.  Off by default: it costs a few
+        seconds and, measured against Colin27, admits 6.6% of small sulcal
+        vessels against 0.6% of thin gyral WM -- too little to earn its place
+        in the gate, where it added 0.4 percentage points of recall for 164
+        extra mm^3 of damaged white matter.  Kept because it is informative in
+        the diagnostics and catches fully detached islands.
 
     Returns
     -------
@@ -937,20 +924,15 @@ def vessel_weight(
     # not geodesically detached, and it belongs to the white matter tree.
     # Treating shape as evidence in its own right is what caused thin WM to be
     # flagged and set to CSF.
-    t_evidence = np.maximum(np.maximum(t_hyper, t_iso), t_detached)
+    t_evidence = np.maximum(np.maximum(t_thin, t_context), t_hyper)
 
     # t_context enters only weakly, through a high floor.  It was designed on
     # a phantom whose vessel sat in a clean CSF shell; on real anatomy a
     # vessel lies in a narrow sulcus flanked by cortex, so csf_frac - gm_frac
     # is near zero and it passes on only 11-28% of Colin27's ground-truth
     # vessels.  As a strong factor it therefore suppresses real vessels rather
-    # than false positives -- see CSF_CONTEXT_FLOOR for the measurements.
-    raw = np.clip(
-        t_evidence * t_bright * t_shape * t_prior
-        * (CSF_CONTEXT_FLOOR + (1.0 - CSF_CONTEXT_FLOOR) * t_context),
-        0.0,
-        1.0,
-    )
+    # than false positives, so it is a gate term here rather than a factor.
+    raw = np.clip(t_evidence * t_bright * t_shape * t_prior, 0.0, 1.0)
 
     # CAT12 smooths, sharpens with a fourth power and smooths again
     # (cat_main.m l. 417-423) to drop scattered weak responses while keeping
@@ -965,10 +947,12 @@ def vessel_weight(
     if protect is not None:
         weight[protect] = 0.0
 
-    # Never touch the connected white matter tree.  This is an independent
-    # guard on top of the evidence requirement above: thin gyral blades are
-    # part of the tree, so they are excluded twice over.
-    weight[wm_tree] = 0.0
+    # Only the deep interior of the white matter is protected outright.  The
+    # gate above is what keeps gyral blades safe; masking the whole tree was
+    # measured to cost six times the sensitivity on small sulcal vessels while
+    # increasing white matter damage, because half of those vessels are
+    # topologically part of the tree.
+    weight[_deep_wm(yp0, ym3, vx)] = 0.0
     weight = weight.astype(np.float32)
 
     if return_terms:
@@ -1000,7 +984,7 @@ def apply_blood_vessel_correction(
     strength=1.0,
     protect=None,
     bv_prior=None,
-    use_geodesic=True,
+    use_geodesic=False,
     min_volume=MIN_VESSEL_VOLUME,
     device="cpu",
     verbose=False,
