@@ -49,15 +49,26 @@ class HistogramWidget(QtWidgets.QWidget):
     def __init__(self, parent=None, bins: int = 128):
         super().__init__(parent)
         self.setMinimumHeight(70)
+        self.setMinimumWidth(160)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
                            QtWidgets.QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.SizeHorCursor)
+        self.setToolTip("Drag the two handles to set the displayed intensity "
+                        "range; double-click for the full range")
         self._bins = int(bins)
         self._counts: list = []
         self._low = 0.0
         self._high = 1.0
         self._window = (0.0, 1.0)
         self._dragging = None       # 'low', 'high' or None
+
+    def sizeHint(self):
+        """A form layout gives a field its size hint, and without one — which
+        is what a plain QWidget reports — the histogram ends up 0 px wide."""
+        return QtCore.QSize(320, 90)
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(160, 70)
 
     # ---- data ----
     def set_values(self, values, low: float = None, high: float = None):
@@ -302,6 +313,13 @@ class ControlPanel(QtWidgets.QWidget):
                        self.cb_fix_scaling, self.cb_histogram):
             widget.setVisible(False)
         self.form.labelForField(self._bkg_row).setText("Range (image)")
+        # macOS leaves form fields at their size hint, which would keep the
+        # histogram narrower than the row it belongs to
+        try:
+            self.form.setFieldGrowthPolicy(
+                QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        except Exception:
+            pass
         self.set_histogram_visible(True)
 
     def set_labels_for_volume(self):

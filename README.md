@@ -122,8 +122,10 @@ CAT_VolView T1.nii.gz p1T1.nii.gz  # up to 6 volumes, one window each, linked
 
 In `CAT_VolView`, a right-click opens the display settings — zoom, atlas, overlay,
 contours, raw voxels, crosshair, orientation letters, image information — and they
-apply to all open volumes. The same menu opens a **montage** of slices for a report
-figure and saves a **screenshot**. The zoom belongs to that menu: dragging and
+apply to all open volumes. The same menu saves a **screenshot** and opens a **montage**
+for a report figure: pick the orientation, give start, step and stop in millimetres
+(`-40 10 60`, as in `cat_vol_slice_overlay`) and the number of columns and rows, or
+leave the layout on *auto*. The zoom belongs to that menu: dragging and
 scrolling do not change it, so the wheel steps through slices instead. Uncheck
 *Zoom → Lock zoom* (or start with `--free-zoom`) to zoom with the mouse.
 

@@ -28,6 +28,7 @@ Slices are shown in neurological orientation (left is left), with the
 anatomical direction of each pane edge marked (L/R/A/P/S/I).  The information
 panel lists file name, dimensions, voxel size, orientation code, data type and
 intensity range, plus voxel index, mm position and value under the cursor —
+all in real intensities, i.e. with ``scl_slope`` and ``scl_inter`` applied —
 and the region name when an atlas has been selected.  The status bar repeats
 the position in editable boxes, so a coordinate from a table can be typed in,
 next to buttons for the origin and the strongest voxel.
@@ -38,8 +39,10 @@ control panel.
 
 The right-click menu holds the display settings — zoom, atlas, overlay,
 contours, raw voxels, crosshair, direction letters, information panel — and
-they apply to every open volume.  It also opens a montage of slices for a
-report figure and saves a screenshot.  The keys are listed under
+they apply to every open volume.  It also saves a screenshot and opens a
+montage of slices for a report figure, whose slices are given as start, step
+and stop in millimetres with the number of columns and rows, as in
+``cat_vol_slice_overlay``.  The keys are listed under
 "Keyboard shortcuts"; dropping files on a window opens, overlays or outlines
 them.
 
@@ -137,7 +140,11 @@ import vtkmodules.vtkInteractionStyle  # noqa: F401
 import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleImage
 from vtkmodules.vtkFiltersSources import vtkLineSource
-from vtkmodules.vtkImagingCore import vtkImageMapToColors, vtkImageReslice
+from vtkmodules.vtkImagingCore import (
+    vtkImageMapToColors,
+    vtkImageReslice,
+    vtkImageShiftScale,
+)
 
 # Control panel and colormaps are shared with the surface viewer
 try:
@@ -247,6 +254,44 @@ def _voxel_to_world_matrix(reader, image) -> Tuple[List[List[float]], bool]:
         [D[2][0] * sx, D[2][1] * sy, D[2][2] * sz, oz],
         [0.0, 0.0, 0.0, 1.0],
     ], False)
+
+
+def _rescale_factors(reader) -> Tuple[float, float]:
+    """The ``scl_slope`` and ``scl_inter`` of a file, or (1, 0) without them."""
+    try:
+        slope = float(reader.GetRescaleSlope())
+        intercept = float(reader.GetRescaleIntercept())
+    except Exception:
+        return (1.0, 0.0)
+    # A MINC reader may have applied them already
+    if getattr(reader, "GetRescaleRealValues", None) and reader.GetRescaleRealValues():
+        return (1.0, 0.0)
+    if slope == 0.0:            # NIfTI: no scaling
+        return (1.0, 0.0)
+    return (slope, intercept)
+
+
+def _rescaled_image(reader, image) -> Tuple[object, Tuple[float, float]]:
+    """The image in real intensities, and the factors that were applied.
+
+    NIfTI stores intensities as ``value * scl_slope + scl_inter``, and VTK
+    hands out the numbers as they sit in the file, reporting the two factors
+    separately.  A scaled volume — int16 with a slope, which is how many
+    scanners and most statistical maps are written — would otherwise be
+    displayed, windowed and reported in storage units.
+    """
+    slope, intercept = _rescale_factors(reader)
+    if (slope, intercept) == (1.0, 0.0):
+        return image, (1.0, 0.0)
+    shift = vtkImageShiftScale()
+    shift.SetInputData(image)
+    # VTK computes (value + shift) * scale
+    shift.SetShift(intercept / slope)
+    shift.SetScale(slope)
+    shift.SetOutputScalarTypeToFloat()
+    shift.ClampOverflowOff()
+    shift.Update()
+    return shift.GetOutput(), (slope, intercept)
 
 
 def _write_png(render_window, path: str, scale: int = 1) -> str:
@@ -445,6 +490,9 @@ class CatImageViewer:
         else:
             self.mirror_surfaces = bool(mirror_surfaces)
         self._image = None
+        #: scl_slope and scl_inter of the file, applied to the values
+        self._rescale: Tuple[float, float] = (1.0, 0.0)
+        self._file_scalar_type: Optional[str] = None
         self._vox2world = None  # 4×4 matrix (list of lists): index -> world
         # Same transform in the form the image actors need (data coordinates,
         # i.e. index times spacing, to world)
@@ -1371,6 +1419,7 @@ class CatImageViewer:
                 if image is None or image.GetDimensions() == (0, 0, 0):
                     raise RuntimeError("image is empty or unreadable")
                 vox2world, _ = _voxel_to_world_matrix(reader, image)
+                image, _ = _rescaled_image(reader, image)   # real label numbers
                 world2vox = np.linalg.inv(np.array(vox2world, dtype=float))
                 stem = os.path.basename(atlas_path)
                 for suffix in ('.nii.gz', '.nii', '.mnc'):
@@ -1436,7 +1485,12 @@ class CatImageViewer:
         ]
         if self._orientation:
             lines.append(f"orientation {self._orientation}")
-        lines.append(f"data type   {self._image.GetScalarTypeAsString()}")
+        # The type the file uses, not the float the values were scaled into
+        lines.append(f"data type   {self._file_scalar_type or self._image.GetScalarTypeAsString()}")
+        slope, intercept = self._rescale
+        if (slope, intercept) != (1.0, 0.0):
+            sign = "+" if intercept >= 0 else "-"
+            lines.append(f"scaling     x {slope:g} {sign} {abs(intercept):g}")
         lines.append(f"intensity   {lo:g} .. {hi:g}")
         return lines
 
@@ -1550,6 +1604,8 @@ class CatImageViewer:
         if image is None or image.GetDimensions() == (0, 0, 0):
             raise ValueError(f"cannot read {os.path.basename(overlay_path)}")
         vox2world, from_header = _voxel_to_world_matrix(reader, image)
+        # Range, clip and the reported value are then in real intensities
+        image, _ = _rescaled_image(reader, image)
 
         # The image geometry lives in the transform, as for the displayed image
         image.SetOrigin(0.0, 0.0, 0.0)
@@ -1676,6 +1732,7 @@ class CatImageViewer:
         if image is None or image.GetDimensions() == (0, 0, 0):
             raise ValueError(f"cannot read {os.path.basename(path)}")
         vox2world, from_header = _voxel_to_world_matrix(reader, image)
+        image, _ = _rescaled_image(reader, image)   # levels in real values
         image.SetOrigin(0.0, 0.0, 0.0)
         try:
             ident = vtkMatrix3x3()
@@ -2074,6 +2131,12 @@ class CatImageViewer:
         self._image = reader.GetOutput()
         if self._image is None:
             raise RuntimeError(f"Failed to load image: {image_path}")
+        # What the file says the values are, before they become real ones
+        self._file_scalar_type = self._image.GetScalarTypeAsString()
+        self._image, self._rescale = _rescaled_image(reader, self._image)
+        if self.verbose and self._rescale != (1.0, 0.0):
+            print(f"[cat_vol_view] Applied scl_slope={self._rescale[0]:g}, "
+                  f"scl_inter={self._rescale[1]:g}")
         dims = self._image.GetDimensions()
         if self.verbose:
             print(f"[cat_vol_view] Image dimensions: {dims}")
@@ -2521,14 +2584,31 @@ class MontageWindow(QtWidgets.QMainWindow):
             ("Coronal", CatImageViewer.VIEW_CORONAL),
             ("Sagittal", CatImageViewer.VIEW_SAGITTAL))
 
+    #: Never build more tiles than this, whatever step is typed
+    MAX_SLICES = 100
+
     def __init__(self, viewer: CatImageViewer, title: str = "Montage",
-                 pane: int = CatImageViewer.VIEW_AXIAL, count: int = 12,
-                 parent=None):
+                 pane: int = CatImageViewer.VIEW_AXIAL,
+                 slices_mm: Optional[Tuple[float, float, float]] = None,
+                 columns: int = 0, rows: int = 0, parent=None):
+        """Open a montage.
+
+        Args:
+            slices_mm: ``(start, step, stop)`` in millimetres along the axis
+                being cut, as in ``cat_vol_slice_overlay``; derived from the
+                volume when omitted.
+            columns, rows: Layout of the sheet; 0 means "work it out", and
+                giving both fixes the sheet to that many tiles.
+        """
         super().__init__(parent)
         self.setWindowTitle(f"{title} — montage")
         self.source = viewer
         self.pane = int(pane)
-        self.count = int(count)
+        self.columns = int(columns)
+        self.rows = int(rows)
+        self.start_mm, self.step_mm, self.stop_mm = (
+            tuple(float(v) for v in slices_mm) if slices_mm
+            else self._default_range())
 
         central = QtWidgets.QWidget(self)
         box = QtWidgets.QVBoxLayout(central)
@@ -2545,52 +2625,159 @@ class MontageWindow(QtWidgets.QMainWindow):
         self.axis_combo.setCurrentIndex(
             [p for _, p in self.AXES].index(self.pane))
         self.axis_combo.currentIndexChanged.connect(self._axis_changed)
-        self.count_spin = QtWidgets.QSpinBox()
-        self.count_spin.setRange(1, 64)
-        self.count_spin.setValue(self.count)
-        self.count_spin.valueChanged.connect(self._count_changed)
-        bar.addWidget(QtWidgets.QLabel(" Slices through "))
+        bar.addWidget(QtWidgets.QLabel(" Slices "))
         bar.addWidget(self.axis_combo)
-        bar.addWidget(QtWidgets.QLabel("  Number "))
-        bar.addWidget(self.count_spin)
+
+        # start : step : stop in mm, as the slices are written down in
+        # cat_vol_slice_overlay
+        self.range_label = QtWidgets.QLabel("  mm (start step stop) ")
+        bar.addWidget(self.range_label)
+        self.range_spins: List[QtWidgets.QDoubleSpinBox] = []
+        for value, low in ((self.start_mm, -9999.0), (self.step_mm, 0.1),
+                           (self.stop_mm, -9999.0)):
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setRange(low, 9999.0)
+            spin.setDecimals(1)
+            spin.setValue(value)
+            spin.setKeyboardTracking(False)
+            spin.setFixedWidth(76)
+            spin.valueChanged.connect(self._range_changed)
+            self.range_spins.append(spin)
+            bar.addWidget(spin)
+        reset = bar.addAction("Fit")
+        reset.setToolTip("Start, step and stop across the whole volume")
+        reset.triggered.connect(self.fit_range)
+
+        bar.addSeparator()
+        bar.addWidget(QtWidgets.QLabel(" Columns "))
+        self.columns_spin = QtWidgets.QSpinBox()
+        self.columns_spin.setRange(0, 20)
+        self.columns_spin.setSpecialValueText("auto")
+        self.columns_spin.setValue(self.columns)
+        self.columns_spin.valueChanged.connect(self._layout_changed)
+        bar.addWidget(self.columns_spin)
+        bar.addWidget(QtWidgets.QLabel(" Rows "))
+        self.rows_spin = QtWidgets.QSpinBox()
+        self.rows_spin.setRange(0, 20)
+        self.rows_spin.setSpecialValueText("auto")
+        self.rows_spin.setValue(self.rows)
+        self.rows_spin.valueChanged.connect(self._layout_changed)
+        bar.addWidget(self.rows_spin)
+
         bar.addSeparator()
         save = bar.addAction("Save…")
         save.triggered.connect(self.save_screenshot_dialog)
 
         self._renderers: List[vtkRenderer] = []
         self._keep_alive: List = []
+        # Each renderer only clears its own viewport, so a sheet with fewer
+        # tiles than before would keep the old ones in the empty corner.  This
+        # one covers the whole window and is never removed.
+        self._background = vtkRenderer()
+        self._background.SetViewport(0.0, 0.0, 1.0, 1.0)
+        self._background.SetBackground(0, 0, 0)
+        self._background.SetInteractive(0)
+        self.render_window.AddRenderer(self._background)
         self.resize(900, 700)
         self._build()
         QtCore.QTimer.singleShot(0, self._post_show)
 
-    # -------- building --------
-    def _slice_indices(self) -> List[int]:
-        """Evenly spaced slices, leaving out the empty ends of the volume."""
+    # -------- where the slices are --------
+    def _world_axis(self) -> int:
+        """World axis the slices step along (x, y or z)."""
+        axis = self.source._pane_axis[self.pane]
+        direction = self.source._voxel_axis_directions()[axis]
+        return max(range(3), key=lambda a: abs(direction[a]))
+
+    def axis_letter(self) -> str:
+        """Name of that axis, for labels and for the toolbar."""
+        return "xyz"[self._world_axis()]
+
+    def _mm_for_index(self, index: int) -> float:
+        """Millimetre position of a slice, along the axis it cuts."""
+        axis = self.source._pane_axis[self.pane]
+        position = list(self.source._ijk or [0, 0, 0])
+        position[axis] = index
+        return self.source._world_from_index(tuple(position))[self._world_axis()]
+
+    def _index_for_mm(self, value: float) -> int:
+        """Slice that sits at *value* millimetres (rounded to the voxel grid)."""
+        axis = self.source._pane_axis[self.pane]
+        world = list(self.source.get_world_position() or (0.0, 0.0, 0.0))
+        world[self._world_axis()] = float(value)
+        return int(round(self.source._index_from_world(tuple(world))[axis]))
+
+    def _extent_mm(self) -> Tuple[float, float]:
+        """First and last millimetre position the volume covers on this axis."""
         axis = self.source._pane_axis[self.pane]
         extent = self.source._image.GetExtent()
-        low, high = extent[2 * axis], extent[2 * axis + 1]
-        margin = 0.12 * (high - low)
-        low, high = low + margin, high - margin
-        if self.count == 1:
-            return [int(round(0.5 * (low + high)))]
-        step = (high - low) / (self.count - 1)
-        return [int(round(low + i * step)) for i in range(self.count)]
+        ends = (self._mm_for_index(extent[2 * axis]),
+                self._mm_for_index(extent[2 * axis + 1]))
+        return (min(ends), max(ends))
 
-    def _grid(self) -> Tuple[int, int]:
-        """Columns and rows for the number of slices, kept roughly square."""
-        columns = max(1, int(math.ceil(math.sqrt(self.count))))
-        rows = int(math.ceil(self.count / columns))
-        return columns, rows
+    def _default_range(self) -> Tuple[float, float, float]:
+        """A dozen slices across the volume, in whole millimetres.
+
+        Only a starting point: start, step and stop are what the toolbar edits,
+        the way the ``slices`` vector is written in ``cat_vol_slice_overlay``.
+        """
+        low, high = self._extent_mm()
+        margin = 0.12 * (high - low)
+        start = round(low + margin)
+        stop = round(high - margin)
+        step = max(1.0, round((stop - start) / 11.0))
+        return (float(start), float(step), float(stop))
+
+    def slice_positions(self) -> List[float]:
+        """The millimetre positions to show: start, start+step, … up to stop."""
+        step = abs(self.step_mm)
+        if step <= 0:
+            return []
+        start, stop = self.start_mm, self.stop_mm
+        if stop < start:
+            start, stop = stop, start
+        low, high = self._extent_mm()
+        positions = []
+        # A hair over stop, so a stop that lands exactly on a step is included
+        while start <= stop + 1e-6 and len(positions) < self.MAX_SLICES:
+            if low - 1e-6 <= start <= high + 1e-6:
+                positions.append(round(start, 3))
+            start += step
+        return positions
+
+    # -------- building --------
+    def _slice_indices(self) -> List[int]:
+        """Voxel slices for the millimetre positions, in the volume."""
+        axis = self.source._pane_axis[self.pane]
+        extent = self.source._image.GetExtent()
+        indices = []
+        for position in self.slice_positions():
+            index = self._index_for_mm(position)
+            if extent[2 * axis] <= index <= extent[2 * axis + 1]:
+                indices.append(index)
+        return indices
+
+    def _grid(self, count: Optional[int] = None) -> Tuple[int, int]:
+        """Columns and rows of the sheet.
+
+        Fixed where the toolbar says so, worked out for the rest: with neither
+        given the sheet is kept roughly square, and one of the two determines
+        the other.
+        """
+        count = len(self._slice_indices()) if count is None else int(count)
+        count = max(1, count)
+        if self.columns > 0 and self.rows > 0:
+            return self.columns, self.rows
+        if self.columns > 0:
+            return self.columns, int(math.ceil(count / self.columns))
+        if self.rows > 0:
+            return int(math.ceil(count / self.rows)), self.rows
+        columns = max(1, int(math.ceil(math.sqrt(count))))
+        return columns, int(math.ceil(count / columns))
 
     def _slice_label(self, index: int) -> str:
         """Where the slice is, in millimetres along the axis it cuts."""
-        axis = self.source._pane_axis[self.pane]
-        centre = list(self.source._ijk or [0, 0, 0])
-        centre[axis] = index
-        world = self.source._world_from_index(tuple(centre))
-        direction = self.source._voxel_axis_directions()[axis]
-        dominant = max(range(3), key=lambda a: abs(direction[a]))
-        return f"{'xyz'[dominant]} = {world[dominant]:.0f}"
+        return f"{self.axis_letter()} = {self._mm_for_index(index):.0f}"
 
     def _build(self):
         """Lay the slices out, one renderer each."""
@@ -2600,8 +2787,14 @@ class MontageWindow(QtWidgets.QMainWindow):
         self._keep_alive = []
 
         source = self.source
-        columns, rows = self._grid()
         indices = self._slice_indices()
+        columns, rows = self._grid(len(indices))
+        dropped = max(0, len(indices) - columns * rows)
+        if dropped:
+            # Both columns and rows were given, and they do not hold every
+            # slice; showing the first ones beats silently changing the layout
+            indices = indices[:columns * rows]
+        self._report(len(indices), dropped)
         axis = source._pane_axis[self.pane]
         extent = list(source._image.GetExtent())
         template = source.renderers[self.pane].GetActiveCamera()
@@ -2651,6 +2844,20 @@ class MontageWindow(QtWidgets.QMainWindow):
                 renderer.GetActiveCamera().SetParallelScale(max(scales))
         self.render_window.Render()
 
+    def _report(self, shown: int, dropped: int = 0):
+        """Say what the sheet ended up showing, and why it is not more."""
+        if not shown:
+            message = ("No slice in that range — "
+                       f"the volume covers {self._extent_mm()[0]:.0f} … "
+                       f"{self._extent_mm()[1]:.0f} mm")
+        else:
+            message = f"{shown} slices, {self.step_mm:g} mm apart"
+            if dropped:
+                message += f" ({dropped} more do not fit the sheet)"
+            elif len(self.slice_positions()) >= self.MAX_SLICES:
+                message += f" (at most {self.MAX_SLICES})"
+        self.statusBar().showMessage(message)
+
     def _slice_actors(self, display_extent: Sequence[int]) -> List[vtkImageActor]:
         """Image (and overlay) actor for one slice of the montage."""
         source = self.source
@@ -2693,11 +2900,29 @@ class MontageWindow(QtWidgets.QMainWindow):
 
     # -------- interaction --------
     def _axis_changed(self, index: int):
+        """Another orientation: its millimetres are different ones."""
         self.pane = self.AXES[int(index)][1]
+        self.fit_range()
+
+    def _range_changed(self, _value=None):
+        self.start_mm, self.step_mm, self.stop_mm = (
+            spin.value() for spin in self.range_spins)
         self._build()
 
-    def _count_changed(self, count: int):
-        self.count = int(count)
+    def _layout_changed(self, _value=None):
+        self.columns = self.columns_spin.value()
+        self.rows = self.rows_spin.value()
+        self._build()
+
+    def fit_range(self):
+        """Put start, step and stop back across the whole volume."""
+        self.start_mm, self.step_mm, self.stop_mm = self._default_range()
+        for spin, value in zip(self.range_spins,
+                               (self.start_mm, self.step_mm, self.stop_mm)):
+            spin.blockSignals(True)
+            spin.setValue(value)
+            spin.blockSignals(False)
+        self.range_label.setText(f"  {self.axis_letter()} mm (start step stop) ")
         self._build()
 
     def _post_show(self):

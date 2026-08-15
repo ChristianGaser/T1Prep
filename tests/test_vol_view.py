@@ -1076,6 +1076,116 @@ class TestZoomStepping(unittest.TestCase):
             self.assertTrue(row[1])                  # every key says what it does
 
 
+class TestIntensityScaling(unittest.TestCase):
+    """NIfTI stores value * scl_slope + scl_inter, and VTK hands out the value.
+
+    Scanners and statistical maps are routinely written as integers with a
+    slope, so without applying it every number the viewer shows — cursor value,
+    intensity range, display window, overlay range, contour level — would be in
+    storage units.
+    """
+
+    SLOPE, INTER = 2.0, 10.0
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self.affine = np.array([[-1.0, 0, 0, 4.0],
+                                [0, 1.0, 0, -4.0],
+                                [0, 0, 1.0, -4.0],
+                                [0, 0, 0, 1.0]])
+        raw = (np.arange(8 * 8 * 8).reshape(8, 8, 8) % 100).astype(np.int16)
+        image = nib.Nifti1Image(raw, self.affine)
+        image.header.set_slope_inter(self.SLOPE, self.INTER)
+        nib.save(image, str(tmp / "scaled.nii.gz"))
+        self.path = str(tmp / "scaled.nii.gz")
+        self.truth = nib.load(self.path).get_fdata()
+        # The same data without scaling, to be sure nothing is touched then
+        nib.save(nib.Nifti1Image(raw, self.affine), str(tmp / "plain.nii.gz"))
+        self.plain = str(tmp / "plain.nii.gz")
+
+        self.viewer = self._viewer(self.path)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _viewer(self, path):
+        viewer = CatImageViewer(percentile_range=None)
+        viewer.load_image(path)
+        try:
+            viewer.setup(window_title="test")
+            viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+        return viewer
+
+    def _world_of(self, ijk):
+        return tuple((self.affine @ np.array([*ijk, 1.0]))[:3])
+
+    def test_the_value_is_what_nibabel_reads(self):
+        for ijk in ((0, 0, 0), (1, 2, 3), (4, 5, 6), (7, 7, 7)):
+            self.viewer.set_world_position(self._world_of(ijk))
+            self.assertAlmostEqual(self.viewer.get_value(),
+                                   float(self.truth[ijk]), places=5)
+
+    def test_the_reported_range_is_the_real_one(self):
+        self.assertEqual(tuple(self.viewer._image.GetScalarRange()),
+                         (float(self.truth.min()), float(self.truth.max())))
+
+    def test_the_panel_reports_the_file_type_and_the_scaling(self):
+        text = "\n".join(self.viewer._static_info_lines())
+        self.assertIn("data type   short", text)       # not the float it became
+        self.assertIn("scaling     x 2 + 10", text)
+        self.assertIn(f"intensity   {self.truth.min():g} .. {self.truth.max():g}", text)
+
+    def test_a_negative_offset_reads_well(self):
+        image = nib.load(self.path)
+        image.header.set_slope_inter(2.0, -10.0)
+        nib.save(image, self.path)
+        viewer = self._viewer(self.path)
+        self.assertIn("scaling     x 2 - 10", "\n".join(viewer._static_info_lines()))
+
+    def test_the_display_window_follows_the_real_values(self):
+        viewer = CatImageViewer(percentile_range=(3.0, 97.0))
+        viewer.load_image(self.path)
+        window, level = viewer.get_window_level()
+        low, high = level - 0.5 * window, level + 0.5 * window
+        self.assertGreaterEqual(low, self.truth.min() - 1e-6)
+        self.assertLessEqual(high, self.truth.max() + 1e-6)
+        # a window taken from the stored shorts would sit far below this
+        self.assertGreater(high, self.truth.max() / 2.0)
+
+    def test_the_overlay_is_scaled_too(self):
+        self.viewer.set_overlay(self.path)
+        self.assertEqual(self.viewer.overlay_range,
+                         [float(self.truth.min()), float(self.truth.max())])
+        self.viewer.set_world_position(self._world_of((1, 2, 3)))
+        self.assertAlmostEqual(self.viewer.get_overlay_value(),
+                               float(self.truth[1, 2, 3]), places=5)
+
+    def test_a_contour_level_is_in_real_values(self):
+        entry = self.viewer.add_contour(self.path)
+        self.assertAlmostEqual(entry['range'][0], float(self.truth.min()), places=5)
+        self.assertAlmostEqual(entry['level'],
+                               0.5 * (self.truth.min() + self.truth.max()), places=5)
+
+    def test_an_unscaled_file_is_left_alone(self):
+        """No slope means no float copy of the whole volume."""
+        viewer = self._viewer(self.plain)
+        self.assertEqual(viewer._rescale, (1.0, 0.0))
+        self.assertEqual(viewer._image.GetScalarTypeAsString(), "short")
+        self.assertNotIn("scaling", "\n".join(viewer._static_info_lines()))
+
+    def test_a_slope_of_zero_means_no_scaling(self):
+        """NIfTI spec: scl_slope = 0 switches the scaling off."""
+        image = nib.load(self.plain)
+        image.header['scl_slope'] = 0.0
+        image.header['scl_inter'] = 7.0
+        nib.save(image, str(Path(self._tmp.name) / "zero.nii.gz"))
+        viewer = self._viewer(str(Path(self._tmp.name) / "zero.nii.gz"))
+        self.assertEqual(viewer._rescale, (1.0, 0.0))
+
+
 class TestGoTo(unittest.TestCase):
     """Jumping to the origin and to the strongest voxel."""
 
@@ -1132,20 +1242,36 @@ class TestGoTo(unittest.TestCase):
 
 
 class TestMontageLayout(unittest.TestCase):
-    """The sheet of slices: how many, where, and what they are called."""
+    """The sheet of slices: which millimetres, in what grid, called what.
+
+    Slices are given as start, step and stop in millimetres, the way they are
+    written down in cat_vol_slice_overlay.
+    """
 
     class _Montage:
         """The geometry of MontageWindow without the Qt window around it."""
         AXES = MontageWindow.AXES
+        MAX_SLICES = MontageWindow.MAX_SLICES
+        _world_axis = MontageWindow._world_axis
+        axis_letter = MontageWindow.axis_letter
+        _mm_for_index = MontageWindow._mm_for_index
+        _index_for_mm = MontageWindow._index_for_mm
+        _extent_mm = MontageWindow._extent_mm
+        _default_range = MontageWindow._default_range
+        slice_positions = MontageWindow.slice_positions
         _grid = MontageWindow._grid
         _slice_indices = MontageWindow._slice_indices
         _slice_label = MontageWindow._slice_label
 
-        def __init__(self, source, pane, count):
-            self.source, self.pane, self.count = source, pane, count
+        def __init__(self, source, pane, slices_mm=None, columns=0, rows=0):
+            self.source, self.pane = source, pane
+            self.columns, self.rows = columns, rows
+            self.start_mm, self.step_mm, self.stop_mm = (
+                slices_mm if slices_mm else self._default_range())
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
+        # 20 x 24 x 28 voxels of 1 mm; z runs from -14 to 13 mm
         affine = np.array([[-1.0, 0, 0, 10.0],
                            [0, 1.0, 0, -12.0],
                            [0, 0, 1.0, -14.0],
@@ -1162,45 +1288,88 @@ class TestMontageLayout(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _montage(self, pane=CatImageViewer.VIEW_AXIAL, count=12):
-        return self._Montage(self.viewer, pane, count)
+    def _montage(self, pane=CatImageViewer.VIEW_AXIAL, **kwargs):
+        return self._Montage(self.viewer, pane, **kwargs)
 
-    def test_the_grid_stays_roughly_square(self):
+    # ---- millimetres ----
+    def test_the_axis_is_the_one_the_slices_step_along(self):
+        for pane, letter in ((CatImageViewer.VIEW_AXIAL, "z"),
+                             (CatImageViewer.VIEW_CORONAL, "y"),
+                             (CatImageViewer.VIEW_SAGITTAL, "x")):
+            self.assertEqual(self._montage(pane=pane).axis_letter(), letter)
+
+    def test_start_step_and_stop_are_taken_literally(self):
+        montage = self._montage(slices_mm=(-10.0, 5.0, 10.0))
+        self.assertEqual(montage.slice_positions(), [-10.0, -5.0, 0.0, 5.0, 10.0])
+        self.assertEqual([montage._slice_label(i) for i in montage._slice_indices()],
+                         ["z = -10", "z = -5", "z = 0", "z = 5", "z = 10"])
+
+    def test_a_stop_that_is_not_a_whole_number_of_steps(self):
+        montage = self._montage(slices_mm=(-10.0, 7.0, 6.0))
+        self.assertEqual(montage.slice_positions(), [-10.0, -3.0, 4.0])
+
+    def test_positions_outside_the_volume_are_left_out(self):
+        low, high = self._montage()._extent_mm()
+        montage = self._montage(slices_mm=(low - 100.0, 10.0, high + 100.0))
+        for position in montage.slice_positions():
+            self.assertGreaterEqual(position, low - 1e-6)
+            self.assertLessEqual(position, high + 1e-6)
+        self.assertTrue(montage.slice_positions())
+
+    def test_a_step_of_zero_shows_nothing_rather_than_hanging(self):
+        self.assertEqual(self._montage(slices_mm=(-10.0, 0.0, 10.0)).slice_positions(),
+                         [])
+
+    def test_a_reversed_range_still_runs_upwards(self):
+        montage = self._montage(slices_mm=(10.0, 5.0, -10.0))
+        self.assertEqual(montage.slice_positions(), [-10.0, -5.0, 0.0, 5.0, 10.0])
+
+    def test_a_tiny_step_is_capped(self):
+        montage = self._montage(slices_mm=(-14.0, 0.01, 13.0))
+        self.assertEqual(len(montage.slice_positions()), MontageWindow.MAX_SLICES)
+
+    def test_the_default_range_covers_the_volume(self):
+        montage = self._montage()
+        low, high = montage._extent_mm()
+        self.assertGreaterEqual(montage.start_mm, low)
+        self.assertLessEqual(montage.stop_mm, high)
+        self.assertGreater(montage.step_mm, 0)
+        self.assertGreaterEqual(len(montage._slice_indices()), 8)
+
+    def test_millimetres_and_slices_agree(self):
+        montage = self._montage()
+        for position in (-10.0, -3.0, 0.0, 7.0):
+            index = montage._index_for_mm(position)
+            self.assertAlmostEqual(montage._mm_for_index(index), position, places=6)
+
+    # ---- the grid ----
+    def test_the_grid_stays_roughly_square_when_not_told(self):
         for count, expected in ((1, (1, 1)), (4, (2, 2)), (9, (3, 3)),
                                 (12, (4, 3)), (16, (4, 4))):
-            self.assertEqual(self._montage(count=count)._grid(), expected)
+            self.assertEqual(self._montage()._grid(count), expected)
 
-    def test_every_slice_gets_a_tile(self):
-        for count in (1, 5, 12, 30):
-            montage = self._montage(count=count)
-            indices = montage._slice_indices()
-            self.assertEqual(len(indices), count)
-            columns, rows = montage._grid()
+    def test_columns_fix_the_width_and_rows_follow(self):
+        montage = self._montage(columns=5)
+        self.assertEqual(montage._grid(12), (5, 3))
+        self.assertEqual(montage._grid(5), (5, 1))
+
+    def test_rows_fix_the_height_and_columns_follow(self):
+        self.assertEqual(self._montage(rows=2)._grid(9), (5, 2))
+
+    def test_both_given_is_taken_as_given(self):
+        """Even when it cannot hold every slice — _build says so."""
+        montage = self._montage(columns=3, rows=2)
+        self.assertEqual(montage._grid(20), (3, 2))
+
+    def test_every_slice_gets_a_tile_when_the_grid_is_free(self):
+        for slices in ((-10.0, 1.0, 10.0), (-14.0, 3.0, 13.0), (0.0, 5.0, 0.0)):
+            montage = self._montage(slices_mm=slices)
+            count = len(montage._slice_indices())
+            columns, rows = montage._grid(count)
             self.assertGreaterEqual(columns * rows, count)
 
-    def test_the_slices_are_ordered_and_inside_the_volume(self):
-        montage = self._montage(count=10)
-        indices = montage._slice_indices()
-        axis = self.viewer._pane_axis[montage.pane]
-        extent = self.viewer._image.GetExtent()
-        self.assertEqual(indices, sorted(indices))
-        self.assertGreaterEqual(indices[0], extent[2 * axis])
-        self.assertLessEqual(indices[-1], extent[2 * axis + 1])
-        # the empty ends of the volume are left out
-        self.assertGreater(indices[0], extent[2 * axis])
-        self.assertLess(indices[-1], extent[2 * axis + 1])
-
-    def test_a_label_names_the_axis_and_the_millimetres(self):
-        montage = self._montage(pane=CatImageViewer.VIEW_AXIAL, count=3)
-        label = montage._slice_label(montage._slice_indices()[0])
-        self.assertTrue(label.startswith("z ="), label)
-        montage = self._montage(pane=CatImageViewer.VIEW_CORONAL, count=3)
-        self.assertTrue(montage._slice_label(10).startswith("y ="))
-        montage = self._montage(pane=CatImageViewer.VIEW_SAGITTAL, count=3)
-        self.assertTrue(montage._slice_label(10).startswith("x ="))
-
     def test_the_label_says_where_the_slice_really_is(self):
-        montage = self._montage(pane=CatImageViewer.VIEW_AXIAL, count=5)
+        montage = self._montage()
         index = montage._slice_indices()[2]
         axis = self.viewer._pane_axis[montage.pane]
         position = list(self.viewer.get_index())
@@ -1261,6 +1430,22 @@ class TestHistogram(unittest.TestCase):
         widget.set_values(values if values is not None
                           else rng.normal(50, 10, 5000))
         return widget
+
+    def test_it_asks_for_a_size(self):
+        """A form layout hands a field its size hint — a widget without one
+        ends up 0 px wide and never paints."""
+        widget = self._widget()
+        self.assertGreater(widget.sizeHint().width(), 0)
+        self.assertGreater(widget.sizeHint().height(), 0)
+        self.assertGreater(widget.minimumSizeHint().width(), 0)
+
+    def test_the_panel_shows_it_for_a_volume(self):
+        from t1prep.gui.controls import ControlPanel
+        panel = ControlPanel()
+        self.assertFalse(panel.histogram.isVisibleTo(panel))   # surfaces: off
+        panel.configure_for_volume()
+        self.assertTrue(panel.histogram.isVisibleTo(panel))
+        self.assertTrue(panel.histogram_label.isVisibleTo(panel))
 
     def test_the_data_becomes_bars(self):
         widget = self._widget()
