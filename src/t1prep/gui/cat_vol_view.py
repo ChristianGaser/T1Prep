@@ -31,8 +31,9 @@ Usage (CLI):
         --size 400 [--percentile 3 97]
 
     Up to six volumes may be given; each opens its own window (tiled three per
-    row) and their cursors are linked, so a click in one moves the others to
-    the same millimetre position.
+    row), titled with the directory the volume comes from.  The windows are
+    linked: a click in one moves the others to the same millimetre position,
+    and what the context menu changes applies to all of them.
 
     # source checkout
     python src/t1prep/gui/cat_vol_view.py <image> [surf1] [surf2] [surf3]
@@ -359,6 +360,7 @@ class CatImageViewer:
         show_info: bool = True,
         interpolate: bool = True,
         recenter: bool = True,
+        lock_zoom: bool = True,
     ):
         """Create the viewer.
 
@@ -369,6 +371,8 @@ class CatImageViewer:
             interpolate: Smooth the slices (linear); False draws the raw
                 voxels (nearest neighbour).
             recenter: Let a zoomed view follow the cursor.
+            lock_zoom: Ignore mouse and trackpad zooming, so the zoom only
+                changes through :meth:`set_field_of_view`.
             render_window: Render window to draw into.  Pass the one of a Qt
                 ``QVTKRenderWindowInteractor`` to embed the viewer in another
                 application (CAT_SurfView does this); a standalone window is
@@ -406,6 +410,8 @@ class CatImageViewer:
         self.recenter = bool(recenter)
         # Slices smoothed (linear) or as raw voxels (nearest neighbour)
         self.interpolate = bool(interpolate)
+        # Zooming by dragging or pinching is off; the menu sets the zoom
+        self.lock_zoom = bool(lock_zoom)
         # Information panel in the free quadrant
         self.show_info = bool(show_info)
         self._info_actor: Optional[vtkTextActor] = None
@@ -661,8 +667,38 @@ class CatImageViewer:
 
         self.interactor.AddObserver("LeftButtonPressEvent", _left_down_cb)
         self.interactor.AddObserver("LeftButtonReleaseEvent", _left_up_cb)
-        self.interactor.AddObserver("MouseWheelForwardEvent", _wheel_fwd_cb)
-        self.interactor.AddObserver("MouseWheelBackwardEvent", _wheel_back_cb)
+
+        # The wheel steps through slices.  It has to run before the interactor
+        # style, which would otherwise zoom on top of it (see _guard).
+        self._guard("MouseWheelForwardEvent", _wheel_fwd_cb)
+        self._guard("MouseWheelBackwardEvent", _wheel_back_cb)
+        # Right-drag is the style's zoom, and the context menu opens on the
+        # same button: when the menu takes the release, the style stays in its
+        # zoom state and every later mouse move keeps zooming
+        for event in ("RightButtonPressEvent", "RightButtonReleaseEvent",
+                      "StartPinchEvent", "PinchEvent"):
+            self._guard(event)
+
+    def _guard(self, event: str, handler=None):
+        """Take *event* away from the interactor style while zoom is locked.
+
+        Overriding the style's methods in Python is not enough: the interactor
+        dispatches to the C++ implementation, which never sees a Python
+        subclass.  An observer with a higher priority does get called, and
+        aborting there stops the event before the style handles it.
+        """
+        tag = None
+
+        def callback(obj, evt):
+            if handler is not None:
+                handler(obj, evt)
+            if self.lock_zoom and tag is not None:
+                command = obj.GetCommand(tag)
+                if command is not None:
+                    command.AbortFlagOn()
+
+        self._event_cbs.append(callback)
+        tag = self.interactor.AddObserver(event, callback, 1.0)
 
     # -------- Camera setup --------
     def _setup_cameras_spm12(self):
@@ -724,6 +760,22 @@ class CatImageViewer:
         """
         self._fov_mm = float(mm) if mm else None
         self._apply_field_of_view(recenter=True)
+        self.render_window.Render()
+
+    def set_lock_zoom(self, locked: bool):
+        """Whether the mouse or trackpad may change the zoom.
+
+        Switching the lock on also repairs the view: a zoom drag that lost its
+        button release leaves the style zooming on every mouse move, so the
+        state is ended and the zoom the menu asked for is restored.
+        """
+        self.lock_zoom = bool(locked)
+        if not self.lock_zoom:
+            return
+        style = self.interactor.GetInteractorStyle() if self.interactor else None
+        if style is not None:
+            style.EndDolly()      # a no-op unless a zoom drag is still running
+        self._apply_field_of_view(recenter=False)
         self.render_window.Render()
 
     def set_recenter(self, recenter: bool):
@@ -1894,42 +1946,21 @@ class CatImageViewer:
 # ------------------------------------------------------------------ #
 
 class _OrthoStyle(vtkInteractorStyleImage):
-    """Custom interactor style for the combined orthogonal viewer.
+    """Interactor style for the combined orthogonal viewer.
 
-    * Left-click: handled by explicit interactor observers in CatImageViewer.
-    * Mouse-wheel: handled by explicit interactor observers in CatImageViewer.
-    * Middle / right button: default pan / zoom from parent class.
+    Left-click and the mouse wheel are handled by explicit interactor
+    observers in :class:`CatImageViewer`; the middle button pans.
 
-    We intentionally do **not** call ``super().OnLeftButtonDown()`` because
-    the base ``vtkInteractorStyleImage`` would enter window/level adjust
-    mode and swallow all subsequent events.
+    Note that overriding the style's ``On...`` methods here would have no
+    effect: the interactor dispatches events to the C++ implementation, which
+    knows nothing about a Python subclass.  Anything that has to be taken away
+    from the style — the zoom, see :meth:`CatImageViewer._guard` — is stopped
+    by a higher-priority observer on the interactor instead.
     """
 
     def __init__(self, parent: CatImageViewer):
         super().__init__()
         self._parent = parent
-
-    # -- left button: no-op here; handled by observers --
-    def OnLeftButtonDown(self):
-        super().OnLeftButtonDown()
-
-    def OnLeftButtonUp(self):
-        super().OnLeftButtonUp()
-
-    # -- right button: the host shows a context menu when embedded, so the
-    #    inherited drag-to-zoom must not start underneath it --
-    def OnRightButtonDown(self):
-        if getattr(self._parent, 'embedded', False):
-            return
-        super().OnRightButtonDown()
-
-    def OnRightButtonUp(self):
-        if getattr(self._parent, 'embedded', False):
-            return
-        super().OnRightButtonUp()
-
-    def OnMouseMove(self):
-        super().OnMouseMove()
 
 
 # ------------------------------------------------------------------ #
@@ -1982,6 +2013,29 @@ def ask_for_files(app, caption: str, patterns: str) -> List[str]:
     chosen, _ = QtWidgets.QFileDialog.getOpenFileNames(
         None, caption, str(Path.home()), patterns)
     return list(chosen)
+
+
+def shorten_path(path: str, max_parts: int = 3, max_chars: int = 40) -> str:
+    """A directory for the title bar: its last components, "…" for the rest.
+
+    The end is what identifies a volume (``…/sub-01/mri``), so that is what is
+    kept.  It has to stay short as well: a title that does not fit the window
+    is shortened by macOS itself, and that drops the end.
+    """
+    text = str(path).rstrip(os.sep)
+    parts = [part for part in text.split(os.sep) if part]
+    if not parts:
+        return text
+    if len(parts) <= max_parts and len(text) <= max_chars:
+        return text
+    for count in range(min(max_parts, len(parts)), 1, -1):
+        candidate = f"…{os.sep}{os.sep.join(parts[-count:])}"
+        if len(candidate) <= max_chars:
+            return candidate
+    tail = parts[-1]
+    if len(tail) + 2 <= max_chars:
+        return f"…{os.sep}{tail}"
+    return "…" + tail[-(max_chars - 1):]   # one very long name: cut it as well
 
 
 def qt_application():
@@ -2046,8 +2100,12 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
                  **viewer_kwargs):
         super().__init__(parent)
         self.image_path = str(image_path)
-        self.setWindowTitle(f"Volume: {os.path.basename(self.image_path)}")
+        # The directory is what tells volumes apart when comparing subjects;
+        # the file name itself is in the information panel
+        self.setWindowTitle(shorten_path(os.path.dirname(os.path.abspath(self.image_path))))
         self.on_position_changed = on_position_changed
+        #: Windows the context menu settings are applied to; see link_windows
+        self.peers: List["VolumeViewerWindow"] = [self]
 
         central = QtWidgets.QWidget(self)
         box = QtWidgets.QVBoxLayout(central)
@@ -2287,6 +2345,11 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             action.setChecked(current == mm)
             action.triggered.connect(lambda _checked=False, v=mm: self.set_zoom(v))
         zoom_menu.addSeparator()
+        lock_action = zoom_menu.addAction("Lock zoom (mouse and touchpad)")
+        lock_action.setCheckable(True)
+        lock_action.setChecked(self.viewer.lock_zoom)
+        lock_action.triggered.connect(
+            lambda checked=False: self.set_lock_zoom(checked))
         follow_action = zoom_menu.addAction("Re-centre on cursor")
         follow_action.setCheckable(True)
         follow_action.setChecked(self.viewer.recenter)
@@ -2340,39 +2403,49 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         info_action.setCheckable(True)
         info_action.setChecked(self.viewer.show_info)
         info_action.triggered.connect(
-            lambda checked=False: self.viewer.set_info_visible(checked))
+            lambda checked=False: self.set_info_visible(checked))
         # Further sections (window/level, overlays, …) go here
 
         menu.exec(self.vtk_widget.mapToGlobal(pos))
 
+    def _for_each_window(self, action):
+        """Run *action* on every linked window, so they stay in step.
+
+        Everything the context menu offers is a display setting, and comparing
+        volumes only works when they are displayed the same way.
+        """
+        for window in self.peers:
+            try:
+                action(window)
+            except Exception:
+                continue
+
     def set_zoom(self, mm: Optional[float]):
         """Zoom the slices to an mm bounding box around the cursor."""
-        try:
-            self.viewer.set_field_of_view(mm)
-        except Exception:
-            pass
+        self._for_each_window(lambda w: w.viewer.set_field_of_view(mm))
+
+    def set_lock_zoom(self, locked: bool):
+        """Whether dragging or pinching may change the zoom."""
+        self._for_each_window(lambda w: w.viewer.set_lock_zoom(locked))
 
     def set_recenter(self, recenter: bool):
         """Whether a zoomed view follows the cursor."""
-        try:
-            self.viewer.set_recenter(recenter)
-        except Exception:
-            pass
+        self._for_each_window(lambda w: w.viewer.set_recenter(recenter))
 
     def set_interpolation(self, interpolate: bool):
         """Smooth the slices, or draw the raw voxels."""
-        try:
-            self.viewer.set_interpolation(interpolate)
-            self._update_label()   # the reported value follows the display
-        except Exception:
-            pass
+        def apply(window):
+            window.viewer.set_interpolation(interpolate)
+            window._update_label()   # the reported value follows the display
+        self._for_each_window(apply)
+
+    def set_info_visible(self, visible: bool):
+        """Show or hide the information panel."""
+        self._for_each_window(lambda w: w.viewer.set_info_visible(visible))
 
     def set_atlas(self, path: Optional[str]):
         """Use *path* to name the region under the cursor (None switches off)."""
-        try:
-            self.viewer.set_atlas(path)
-        except Exception:
-            pass
+        self._for_each_window(lambda w: w.viewer.set_atlas(path))
 
     def _choose_atlas(self):
         """Pick an atlas volume that is not one of the shipped ones."""
@@ -2468,6 +2541,11 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         help="Keep a zoomed view in place instead of following the cursor",
     )
     p.add_argument(
+        "--free-zoom", action="store_true",
+        help="Allow zooming by dragging or pinching (off by default, because "
+             "the mouse then keeps changing the zoom)",
+    )
+    p.add_argument(
         "--headless", action="store_true",
         help="Do not start interactor (no window)",
     )
@@ -2526,7 +2604,10 @@ def _split_inputs(inputs: Sequence[str]) -> Tuple[List[str], List[str]]:
 
 
 def link_windows(windows: Sequence["VolumeViewerWindow"]):
-    """Keep the cursor of several viewer windows on the same world position.
+    """Tie several viewer windows together.
+
+    Their cursors stay on the same world position, and what the context menu
+    changes — zoom, atlas, interpolation, … — applies to all of them.
 
     Each window reports where the user clicked or scrolled, and the others are
     moved to that millimetre position.  They are only told to move, never to
@@ -2541,6 +2622,7 @@ def link_windows(windows: Sequence["VolumeViewerWindow"]):
 
     for window in windows:
         window.on_position_changed = _follow
+        window.peers = windows          # display settings apply to the group
     return windows
 
 
@@ -2614,6 +2696,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         show_info=not args.no_info,
         interpolate=not args.nearest,
         recenter=not args.no_recenter,
+        lock_zoom=not args.free_zoom,
     )
     volumes, surfaces = _split_inputs(args.inputs)
     if not volumes:

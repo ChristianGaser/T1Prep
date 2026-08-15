@@ -120,6 +120,12 @@ t1prep-make-apps                   # macOS: build the viewer .app bundles
 CAT_VolView T1.nii.gz p1T1.nii.gz  # up to 6 volumes, one window each, linked
 ```
 
+In `CAT_VolView`, a right-click opens the display settings (zoom, atlas, overlay,
+raw voxels, image information); they apply to all open volumes. The zoom belongs
+to that menu — dragging and scrolling do not change it, so the wheel steps
+through slices instead. Uncheck *Zoom → Lock zoom* (or start with `--free-zoom`)
+to zoom with the mouse.
+
 On macOS, `t1prep-make-apps` wraps both viewers as `.app` bundles for the Dock and
 Finder (double-click to pick a file, or drop files onto the icon). The first interactive
 start of either viewer creates them in `~/Applications` by itself; set `T1PREP_NO_APPS=1`

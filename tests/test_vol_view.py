@@ -617,6 +617,104 @@ class TestNeurologicalOrientation(unittest.TestCase):
         self.assertEqual(tuple(cam.GetViewUp()), (0.0, 1.0, 0.0))
 
 
+class TestZoomLock(unittest.TestCase):
+    """The mouse must not change the zoom, which the menu owns.
+
+    The interactor style zooms on a right-drag and on the wheel.  A trackpad
+    makes both easy to trigger by accident, and worse: the context menu opens
+    on the same button, so it takes the release the style waits for and the
+    view keeps zooming on every later mouse move.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        affine = np.diag([1.0, 1.0, 1.0, 1.0])
+        self.path = _write_volume(Path(self._tmp.name) / "vol.nii.gz", affine)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _viewer(self, **kwargs):
+        viewer = CatImageViewer(percentile_range=None, **kwargs)
+        viewer.load_image(str(self.path))
+        try:
+            viewer.setup(window_title="test")
+            viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+        return viewer
+
+    @staticmethod
+    def _zoom(viewer):
+        return [r.GetActiveCamera().GetParallelScale() for r in viewer.renderers]
+
+    def test_locked_by_default(self):
+        self.assertTrue(self._viewer().lock_zoom)
+
+    def test_the_wheel_steps_slices_without_zooming(self):
+        viewer = self._viewer()
+        before = self._zoom(viewer)
+        viewer.interactor.SetEventPosition(200, 200)
+        viewer.interactor.MouseWheelForwardEvent()
+        first = viewer.get_index()
+        viewer.interactor.MouseWheelForwardEvent()
+        self.assertEqual(self._zoom(viewer), before)
+        self.assertNotEqual(viewer.get_index(), first)   # slices still step
+
+    def test_a_right_drag_does_not_zoom(self):
+        viewer = self._viewer()
+        before = self._zoom(viewer)
+        viewer.interactor.SetEventPosition(200, 200)
+        viewer.interactor.RightButtonPressEvent()
+        viewer.interactor.SetEventPosition(200, 300)
+        viewer.interactor.MouseMoveEvent()
+        self.assertEqual(self._zoom(viewer), before)
+
+    def test_a_swallowed_release_does_not_leave_the_view_zooming(self):
+        """The context menu keeps the release, so no drag may have started."""
+        viewer = self._viewer()
+        before = self._zoom(viewer)
+        viewer.interactor.SetEventPosition(200, 200)
+        viewer.interactor.RightButtonPressEvent()          # menu opens, no release
+        for y in (300, 320, 340):
+            viewer.interactor.SetEventPosition(220, y)
+            viewer.interactor.MouseMoveEvent()
+        self.assertEqual(self._zoom(viewer), before)
+
+    def test_the_menu_zoom_still_works(self):
+        viewer = self._viewer()
+        viewer.set_field_of_view(20.0)
+        self.assertEqual(self._zoom(viewer), [10.0, 10.0, 10.0])
+        viewer.set_field_of_view(None)
+        self.assertNotEqual(self._zoom(viewer), [10.0, 10.0, 10.0])
+
+    def test_unlocking_gives_the_mouse_its_zoom_back(self):
+        viewer = self._viewer(lock_zoom=False)
+        before = self._zoom(viewer)
+        viewer.interactor.SetEventPosition(200, 200)
+        viewer.interactor.RightButtonPressEvent()
+        viewer.interactor.SetEventPosition(200, 300)
+        viewer.interactor.MouseMoveEvent()
+        self.assertNotEqual(self._zoom(viewer), before)
+
+    def test_locking_again_repairs_a_messed_up_zoom(self):
+        viewer = self._viewer(lock_zoom=False)
+        viewer.set_field_of_view(20.0)
+        wanted = self._zoom(viewer)
+        viewer.interactor.SetEventPosition(200, 200)
+        viewer.interactor.RightButtonPressEvent()
+        viewer.interactor.SetEventPosition(200, 320)
+        viewer.interactor.MouseMoveEvent()
+        self.assertNotEqual(self._zoom(viewer), wanted)
+
+        viewer.set_lock_zoom(True)
+        self.assertEqual(self._zoom(viewer), wanted)
+        # ... and the interrupted drag is over, so moving on changes nothing
+        viewer.interactor.SetEventPosition(260, 360)
+        viewer.interactor.MouseMoveEvent()
+        self.assertEqual(self._zoom(viewer), wanted)
+
+
 class TestSeveralVolumes(unittest.TestCase):
     """Several volumes open one window each, with linked cursors."""
 
@@ -848,3 +946,105 @@ class TestInfoFontSize(unittest.TestCase):
         self.assertLess(small, large)
         self.assertGreaterEqual(small, 7)
         self.assertLessEqual(large, 16)
+
+
+class TestLinkedSettings(unittest.TestCase):
+    """What the context menu changes applies to every linked window."""
+
+    class _Viewer:
+        def __init__(self):
+            self.calls = []
+
+        def __getattr__(self, name):
+            def record(*args):
+                self.calls.append((name, args))
+            return record
+
+    class _Window:
+        # the real broadcast, on stand-in windows
+        _for_each_window = VolumeViewerWindow._for_each_window
+
+        def __init__(self):
+            self.viewer = TestLinkedSettings._Viewer()
+            self.peers = [self]
+            self.labels = 0
+
+        def _update_label(self):
+            self.labels += 1
+
+    def _group(self, count=3):
+        windows = [self._Window() for _ in range(count)]
+        for window in windows:
+            window.peers = windows
+        return windows
+
+    def test_zoom_reaches_every_window(self):
+        windows = self._group()
+        VolumeViewerWindow.set_zoom(windows[0], 40.0)
+        for window in windows:
+            self.assertEqual(window.viewer.calls, [("set_field_of_view", (40.0,))])
+
+    def test_atlas_and_interpolation_too(self):
+        windows = self._group()
+        VolumeViewerWindow.set_atlas(windows[1], "/data/atlas.nii.gz")
+        VolumeViewerWindow.set_interpolation(windows[1], False)
+        for window in windows:
+            names = [name for name, _ in window.viewer.calls]
+            self.assertEqual(names, ["set_atlas", "set_interpolation"])
+            self.assertEqual(window.labels, 1)   # the reported value follows
+
+    def test_a_lone_window_still_works(self):
+        window = self._Window()
+        VolumeViewerWindow.set_recenter(window, False)
+        self.assertEqual(window.viewer.calls, [("set_recenter", (False,))])
+
+    def test_the_zoom_lock_reaches_every_window(self):
+        windows = self._group()
+        VolumeViewerWindow.set_lock_zoom(windows[2], False)
+        for window in windows:
+            self.assertEqual(window.viewer.calls, [("set_lock_zoom", (False,))])
+
+    def test_a_broken_window_does_not_stop_the_others(self):
+        windows = self._group()
+
+        class _Broken:
+            peers = windows
+            _for_each_window = VolumeViewerWindow._for_each_window
+
+            @property
+            def viewer(self):
+                raise RuntimeError("closed")
+
+        windows.insert(1, _Broken())
+        VolumeViewerWindow.set_zoom(windows[0], 20.0)
+        self.assertEqual(windows[-1].viewer.calls, [("set_field_of_view", (20.0,))])
+
+
+class TestTitlePath(unittest.TestCase):
+    """The title bar names the directory, since file names repeat."""
+
+    def test_short_paths_are_kept(self):
+        from t1prep.gui.cat_vol_view import shorten_path
+        self.assertEqual(shorten_path("/data/sub-01/mri"), "/data/sub-01/mri")
+        self.assertEqual(shorten_path("relative/sub-02/mri"), "relative/sub-02/mri")
+
+    def test_long_paths_keep_their_end(self):
+        """The end identifies the volume, and macOS would cut it off itself."""
+        from t1prep.gui.cat_vol_view import shorten_path
+        short = shorten_path("/var/folders/4x/40sqmh7x5gn1vspcrntxy9dh0000gn/T/"
+                             "tmpu6fawg0h/sub-01/mri")
+        self.assertEqual(short, "…/tmpu6fawg0h/sub-01/mri")
+
+    def test_stays_short_enough_for_a_title_bar(self):
+        """Whatever is shown is the end of the real path, and it fits."""
+        from t1prep.gui.cat_vol_view import shorten_path
+        for path in ("/very/deep/study/derivatives/T1Prep/sub-01/anat/extra",
+                     "/" + "a" * 80 + "/" + "b" * 80 + "/cc",
+                     "/data/" + "x" * 200):
+            short = shorten_path(path)
+            self.assertLessEqual(len(short), 40, path)
+            self.assertTrue(path.endswith(short.lstrip("…")), path)
+
+    def test_a_single_component_is_left_alone(self):
+        from t1prep.gui.cat_vol_view import shorten_path
+        self.assertEqual(shorten_path("/data"), "/data")

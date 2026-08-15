@@ -312,7 +312,10 @@ orientation (left is left) in the millimetre space of the NIfTI sform/qform, and
 `--screenshot` writes a PNG without opening a window.
 
 Up to six volumes can be given at once: each opens its own window, the windows are tiled
-three per row (four to six fill a second row below), and their cursors are linked — clicking in one moves the others to the same
+three per row (four to six fill a second row below), their title bars name the *directory*
+of the volume (file names repeat across subjects, directories do not), and everything the
+right-click menu changes — zoom, atlas, raw voxels, re-centring, the information panel —
+applies to all of them at once. Their cursors are linked — clicking in one moves the others to the same
 millimetre position, so the same anatomical point is shown even when the volumes differ in
 grid, voxel size or orientation.
 
