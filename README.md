@@ -120,11 +120,33 @@ t1prep-make-apps                   # macOS: build the viewer .app bundles
 CAT_VolView T1.nii.gz p1T1.nii.gz  # up to 6 volumes, one window each, linked
 ```
 
-In `CAT_VolView`, a right-click opens the display settings (zoom, atlas, overlay,
-raw voxels, image information); they apply to all open volumes. The zoom belongs
-to that menu — dragging and scrolling do not change it, so the wheel steps
-through slices instead. Uncheck *Zoom → Lock zoom* (or start with `--free-zoom`)
-to zoom with the mouse.
+In `CAT_VolView`, a right-click opens the display settings — zoom, atlas, overlay,
+contours, raw voxels, crosshair, orientation letters, image information — and they
+apply to all open volumes. The same menu opens a **montage** of slices for a report
+figure and saves a **screenshot**. The zoom belongs to that menu: dragging and
+scrolling do not change it, so the wheel steps through slices instead. Uncheck
+*Zoom → Lock zoom* (or start with `--free-zoom`) to zoom with the mouse.
+
+```bash
+CAT_VolView T1.nii.gz --overlay spmT_0001.nii.gz   # overlay, resampled if needed
+CAT_VolView T1.nii.gz --contour p1T1.nii.gz        # segmentation outlined on the T1
+```
+
+An **overlay** or a **contour** only has to be registered to the image — a different
+voxel grid is resampled through the millimetre space of the two headers, so an atlas,
+a template or a statistical map can be shown on a native-space T1.
+
+Slices are labelled with the anatomical direction of each edge (L/R/A/P/S/I). The
+status bar shows the cursor position in editable mm and voxel boxes — type a peak
+coordinate from a table to jump there — with buttons for the origin and the strongest
+voxel. The display range can be dragged over the intensity histogram in the control
+panel. Dropping a file on a window opens it in a linked window, **shift** makes it the
+overlay, **alt** outlines it.
+
+Keys: arrows and PgUp/PgDown step through slices, `+`/`-`/`0` zoom, `o` and `m` go to
+the origin and to the strongest voxel, `c`/`a`/`i`/`n`/`p` toggle crosshair, letters,
+information, raw voxels and the control panel, `s` saves a screenshot and `h` lists
+them all.
 
 On macOS, `t1prep-make-apps` wraps both viewers as `.app` bundles for the Dock and
 Finder (double-click to pick a file, or drop files onto the icon). The first interactive

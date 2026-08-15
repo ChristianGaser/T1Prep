@@ -18,6 +18,7 @@ try:
     import nibabel as nib
     from t1prep.gui.cat_vol_view import (
         CatImageViewer,
+        MontageWindow,
         VolumeViewerWindow,
         _split_inputs,
         link_windows,
@@ -666,6 +667,95 @@ class TestOverlayResampling(unittest.TestCase):
         self.assertIn("sform", message)
 
 
+class TestContours(unittest.TestCase):
+    """Outlines of other volumes drawn over the slices (CheckReg style)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        affine = np.array([[-1.0, 0, 0, 32.0],
+                           [0, 1.0, 0, -32.0],
+                           [0, 0, 1.0, -32.0],
+                           [0, 0, 0, 1.0]])
+        i, j, k = np.mgrid[0:64, 0:64, 0:64]
+        radius = np.sqrt((i - 32) ** 2 + (j - 32) ** 2 + (k - 32) ** 2)
+        nib.save(nib.Nifti1Image(np.clip(120 - 2 * radius, 0, None).astype(np.float32),
+                                 affine), str(tmp / "image.nii.gz"))
+        # A mask of radius 20 mm around the origin, on a 2 mm grid of its own
+        i, j, k = np.mgrid[0:32, 0:32, 0:32]
+        radius = np.sqrt((i - 16) ** 2 + (j - 16) ** 2 + (k - 16) ** 2)
+        nib.save(nib.Nifti1Image((radius < 10).astype(np.float32),
+                                 affine @ np.diag([2, 2, 2, 1])),
+                 str(tmp / "mask.nii.gz"))
+        self.mask = str(tmp / "mask.nii.gz")
+
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(tmp / "image.nii.gz"))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_an_outline_is_drawn_in_every_pane(self):
+        entry = self.viewer.add_contour(self.mask)
+        self.assertEqual(len(self.viewer.contours), 1)
+        for pane in range(3):
+            self.assertIsNotNone(entry['actors'][pane])
+            entry['filters'][pane].Update()
+            self.assertGreater(entry['filters'][pane].GetOutput().GetNumberOfLines(), 0)
+
+    def test_it_lands_where_the_mask_is(self):
+        """A 20 mm mask around the origin must be outlined there, not elsewhere."""
+        entry = self.viewer.add_contour(self.mask)
+        bounds = [0.0] * 6
+        entry['actors'][CatImageViewer.VIEW_AXIAL].GetBounds(bounds)
+        for low, high in ((bounds[0], bounds[1]), (bounds[2], bounds[3])):
+            self.assertAlmostEqual(low, -19.0, delta=2.0)
+            self.assertAlmostEqual(high, 19.0, delta=2.0)
+
+    def test_the_level_defaults_to_the_middle_of_the_range(self):
+        entry = self.viewer.add_contour(self.mask)
+        self.assertAlmostEqual(entry['level'], 0.5)      # a 0..1 mask
+        self.viewer.set_contour_level(self.mask, 0.9)
+        self.assertAlmostEqual(self.viewer.contours[0]['level'], 0.9)
+        for squares in self.viewer.contours[0]['filters']:
+            self.assertAlmostEqual(squares.GetValue(0), 0.9)
+
+    def test_the_outline_follows_the_displayed_slice(self):
+        entry = self.viewer.add_contour(self.mask)
+        pane = CatImageViewer.VIEW_AXIAL
+        axis = self.viewer._pane_axis[pane]
+        before = entry['filters'][pane].GetImageRange()
+        self.viewer.step_slice(5, pane)
+        after = entry['filters'][pane].GetImageRange()
+        self.assertNotEqual(before, after)
+        self.assertEqual(after[2 * axis], self.viewer.get_index()[axis])
+
+    def test_colours_are_handed_out_in_turn(self):
+        first = self.viewer.add_contour(self.mask)
+        second = self.viewer.add_contour(self.mask)
+        self.assertEqual(first['color'], CatImageViewer.CONTOUR_COLORS[0])
+        self.assertEqual(second['color'], CatImageViewer.CONTOUR_COLORS[1])
+
+    def test_they_can_be_removed(self):
+        self.viewer.add_contour(self.mask)
+        self.viewer.add_contour(self.mask, level=0.2)
+        self.viewer.remove_contour(self.mask)
+        self.assertEqual(self.viewer.contours, [])
+        self.viewer.add_contour(self.mask)
+        self.viewer.clear_contours()
+        self.assertEqual(self.viewer.contours, [])
+        for renderer in self.viewer.renderers:
+            actors = renderer.GetActors()
+            actors.InitTraversal()
+            # only the crosshair lines are left behind
+            self.assertLessEqual(actors.GetNumberOfItems(), 2)
+
+
 class TestNeurologicalOrientation(unittest.TestCase):
     """Slices are shown "left is left" (neurological), not mirrored."""
 
@@ -984,6 +1074,233 @@ class TestZoomStepping(unittest.TestCase):
         for row in VolumeViewerWindow.SHORTCUTS:
             self.assertEqual(len(row), 3)
             self.assertTrue(row[1])                  # every key says what it does
+
+
+class TestGoTo(unittest.TestCase):
+    """Jumping to the origin and to the strongest voxel."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self.affine = np.array([[-1.0, 0, 0, 10.0],
+                                [0, 1.0, 0, -12.0],
+                                [0, 0, 1.0, -14.0],
+                                [0, 0, 0, 1.0]])
+        data = np.zeros((20, 24, 28), dtype=np.float32)
+        data[3, 4, 5] = 99.0                      # the one peak
+        nib.save(nib.Nifti1Image(data, self.affine), str(tmp / "image.nii.gz"))
+        self.peak_voxel = (3, 4, 5)
+        overlay = np.zeros((20, 24, 28), dtype=np.float32)
+        overlay[11, 12, 13] = 5.0                 # a different peak
+        nib.save(nib.Nifti1Image(overlay, self.affine), str(tmp / "overlay.nii.gz"))
+        self.overlay = str(tmp / "overlay.nii.gz")
+
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(tmp / "image.nii.gz"))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_the_origin_is_the_origin_of_the_millimetre_space(self):
+        self.viewer.set_index(1, 2, 3)
+        self.viewer.go_to_origin()
+        for value in self.viewer.get_world_position():
+            self.assertAlmostEqual(value, 0.0, places=6)
+
+    def test_the_maximum_is_found(self):
+        index = self.viewer.go_to_maximum()
+        self.assertEqual(self.viewer.get_value_at_index(index), 99.0)
+        self.assertEqual(self.viewer.get_index(), index)
+
+    def test_with_an_overlay_its_maximum_wins(self):
+        """A statistical map is what you want the peak of, not the anatomy."""
+        self.viewer.set_overlay(self.overlay)
+        self.viewer.go_to_maximum()
+        self.assertEqual(self.viewer.get_overlay_value(), 5.0)
+
+    def test_linked_windows_are_told(self):
+        seen = []
+        self.viewer.on_position_changed = seen.append
+        self.viewer.go_to_maximum()
+        self.viewer.go_to_origin()
+        self.assertEqual(len(seen), 2)
+
+
+class TestMontageLayout(unittest.TestCase):
+    """The sheet of slices: how many, where, and what they are called."""
+
+    class _Montage:
+        """The geometry of MontageWindow without the Qt window around it."""
+        AXES = MontageWindow.AXES
+        _grid = MontageWindow._grid
+        _slice_indices = MontageWindow._slice_indices
+        _slice_label = MontageWindow._slice_label
+
+        def __init__(self, source, pane, count):
+            self.source, self.pane, self.count = source, pane, count
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        affine = np.array([[-1.0, 0, 0, 10.0],
+                           [0, 1.0, 0, -12.0],
+                           [0, 0, 1.0, -14.0],
+                           [0, 0, 0, 1.0]])
+        path = _write_volume(Path(self._tmp.name) / "vol.nii.gz", affine)
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(path))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _montage(self, pane=CatImageViewer.VIEW_AXIAL, count=12):
+        return self._Montage(self.viewer, pane, count)
+
+    def test_the_grid_stays_roughly_square(self):
+        for count, expected in ((1, (1, 1)), (4, (2, 2)), (9, (3, 3)),
+                                (12, (4, 3)), (16, (4, 4))):
+            self.assertEqual(self._montage(count=count)._grid(), expected)
+
+    def test_every_slice_gets_a_tile(self):
+        for count in (1, 5, 12, 30):
+            montage = self._montage(count=count)
+            indices = montage._slice_indices()
+            self.assertEqual(len(indices), count)
+            columns, rows = montage._grid()
+            self.assertGreaterEqual(columns * rows, count)
+
+    def test_the_slices_are_ordered_and_inside_the_volume(self):
+        montage = self._montage(count=10)
+        indices = montage._slice_indices()
+        axis = self.viewer._pane_axis[montage.pane]
+        extent = self.viewer._image.GetExtent()
+        self.assertEqual(indices, sorted(indices))
+        self.assertGreaterEqual(indices[0], extent[2 * axis])
+        self.assertLessEqual(indices[-1], extent[2 * axis + 1])
+        # the empty ends of the volume are left out
+        self.assertGreater(indices[0], extent[2 * axis])
+        self.assertLess(indices[-1], extent[2 * axis + 1])
+
+    def test_a_label_names_the_axis_and_the_millimetres(self):
+        montage = self._montage(pane=CatImageViewer.VIEW_AXIAL, count=3)
+        label = montage._slice_label(montage._slice_indices()[0])
+        self.assertTrue(label.startswith("z ="), label)
+        montage = self._montage(pane=CatImageViewer.VIEW_CORONAL, count=3)
+        self.assertTrue(montage._slice_label(10).startswith("y ="))
+        montage = self._montage(pane=CatImageViewer.VIEW_SAGITTAL, count=3)
+        self.assertTrue(montage._slice_label(10).startswith("x ="))
+
+    def test_the_label_says_where_the_slice_really_is(self):
+        montage = self._montage(pane=CatImageViewer.VIEW_AXIAL, count=5)
+        index = montage._slice_indices()[2]
+        axis = self.viewer._pane_axis[montage.pane]
+        position = list(self.viewer.get_index())
+        position[axis] = index
+        expected = self.viewer._world_from_index(tuple(position))[2]
+        self.assertEqual(montage._slice_label(index), f"z = {expected:.0f}")
+
+
+class TestDropTargets(unittest.TestCase):
+    """Which dropped files the window takes, and what it does with them."""
+
+    def test_volumes_and_surfaces_are_accepted(self):
+        from PySide6 import QtCore
+        for name in ("T1.nii.gz", "T1.nii", "brain.mnc", "lh.central.gii",
+                     "mesh.vtk"):
+            url = QtCore.QUrl.fromLocalFile(f"/data/{name}")
+            self.assertTrue(VolumeViewerWindow._droppable(url), name)
+
+    def test_anything_else_is_ignored(self):
+        from PySide6 import QtCore
+        for name in ("notes.txt", "report.pdf", "table.csv"):
+            url = QtCore.QUrl.fromLocalFile(f"/data/{name}")
+            self.assertFalse(VolumeViewerWindow._droppable(url), name)
+        self.assertFalse(VolumeViewerWindow._droppable(
+            QtCore.QUrl("https://example.org/T1.nii.gz")))
+
+    def test_a_new_window_inherits_the_display_settings(self):
+        class _Viewer:
+            show_info = False
+            interpolate = False
+            recenter = False
+            lock_zoom = True
+            show_orientation = False
+
+        class _Window:
+            _viewer_options = VolumeViewerWindow._viewer_options
+            viewer = _Viewer()
+
+        options = _Window()._viewer_options()
+        self.assertEqual(options, {'show_info': False, 'interpolate': False,
+                                   'recenter': False, 'lock_zoom': True,
+                                   'show_orientation': False})
+
+
+class TestHistogram(unittest.TestCase):
+    """The histogram sets the display range by dragging its two handles."""
+
+    @classmethod
+    def setUpClass(cls):
+        from PySide6 import QtWidgets
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def _widget(self, values=None):
+        from t1prep.gui.controls import HistogramWidget
+        widget = HistogramWidget()
+        widget.resize(200, 80)
+        rng = np.random.default_rng(0)
+        widget.set_values(values if values is not None
+                          else rng.normal(50, 10, 5000))
+        return widget
+
+    def test_the_data_becomes_bars(self):
+        widget = self._widget()
+        self.assertEqual(len(widget._counts), 128)
+        self.assertGreater(max(widget._counts), 0)
+
+    def test_empty_data_is_survived(self):
+        widget = self._widget(values=np.array([]))
+        self.assertEqual(widget._counts, [])
+
+    def test_infinities_are_left_out(self):
+        values = np.array([0.0, 1.0, np.nan, np.inf, 2.0])
+        widget = self._widget(values=values)
+        self.assertEqual((widget._low, widget._high), (0.0, 2.0))
+
+    def test_dragging_a_handle_reports_the_new_window(self):
+        widget = self._widget()
+        seen = []
+        widget.windowChanged.connect(lambda lo, hi: seen.append((lo, hi)))
+        widget.set_window(widget._low, widget._high)
+        widget._dragging = 'low'
+        widget._drag_to(widget.width() / 2.0)
+        self.assertEqual(len(seen), 1)
+        low, high = seen[-1]
+        self.assertAlmostEqual(low, widget._to_value(widget.width() / 2.0), places=6)
+        self.assertAlmostEqual(high, widget._high, places=6)
+
+    def test_the_handles_cannot_cross(self):
+        widget = self._widget()
+        widget.set_window(widget._low, widget._high)
+        widget._dragging = 'low'
+        widget._drag_to(10 * widget.width())     # far past the other handle
+        low, high = widget.window()
+        self.assertLessEqual(low, high)
+
+    def test_a_double_click_goes_back_to_the_full_range(self):
+        widget = self._widget()
+        widget.set_window(10.0, 20.0)
+        widget.mouseDoubleClickEvent(None)
+        self.assertEqual(widget.window(), (widget._low, widget._high))
 
 
 class TestSeveralVolumes(unittest.TestCase):

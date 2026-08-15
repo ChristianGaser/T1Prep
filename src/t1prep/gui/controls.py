@@ -10,8 +10,8 @@ from __future__ import annotations
 import math
 from typing import Tuple
 
-from PySide6 import QtWidgets
-from PySide6.QtCore import Qt
+from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtCore import Qt, Signal
 
 ORIENT_H = Qt.Orientation.Horizontal
 
@@ -30,6 +30,135 @@ LOGP_THRESHOLDS = (
     ('p<0.01', -math.log10(0.01)),
     ('p<0.001', -math.log10(0.001)),
 )
+
+
+class HistogramWidget(QtWidgets.QWidget):
+    """Intensity histogram with the displayed window drawn over it.
+
+    Setting a display range by typing numbers means guessing where the tissue
+    classes are; over a histogram the same range is one drag, and the two
+    handles are the ends of the window.  Emits ``windowChanged(low, high)``
+    while a handle is dragged.
+    """
+
+    windowChanged = Signal(float, float)
+
+    #: How close to a handle a click has to be, in pixels
+    GRAB = 6
+
+    def __init__(self, parent=None, bins: int = 128):
+        super().__init__(parent)
+        self.setMinimumHeight(70)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.SizeHorCursor)
+        self._bins = int(bins)
+        self._counts: list = []
+        self._low = 0.0
+        self._high = 1.0
+        self._window = (0.0, 1.0)
+        self._dragging = None       # 'low', 'high' or None
+
+    # ---- data ----
+    def set_values(self, values, low: float = None, high: float = None):
+        """Take the intensities to show (any sequence of numbers)."""
+        try:
+            import numpy as np
+        except ImportError:       # pragma: no cover - numpy is a dependency
+            return
+        data = np.asarray(values, dtype=float).ravel()
+        data = data[np.isfinite(data)]
+        if data.size == 0:
+            self._counts = []
+            self.update()
+            return
+        if data.size > 200000:    # a histogram does not need every voxel
+            data = data[:: max(1, data.size // 200000)]
+        self._low = float(low if low is not None else data.min())
+        self._high = float(high if high is not None else data.max())
+        if self._high <= self._low:
+            self._high = self._low + 1.0
+        counts, _ = np.histogram(data, bins=self._bins,
+                                 range=(self._low, self._high))
+        # The background peak of an MRI dwarfs everything else, so the bars are
+        # drawn on a log scale — otherwise only the air is visible
+        self._counts = np.log1p(counts).tolist()
+        self.update()
+
+    def set_window(self, low: float, high: float):
+        """Show *low*..*high* as the selected window."""
+        self._window = (float(low), float(high))
+        self.update()
+
+    def window(self) -> Tuple[float, float]:
+        return self._window
+
+    # ---- geometry ----
+    def _to_x(self, value: float) -> float:
+        span = self._high - self._low or 1.0
+        return (value - self._low) / span * max(1, self.width() - 1)
+
+    def _to_value(self, x: float) -> float:
+        span = self._high - self._low or 1.0
+        return self._low + x / max(1, self.width() - 1) * span
+
+    # ---- painting ----
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.fillRect(self.rect(), QtGui.QColor(30, 30, 30))
+        width, height = self.width(), self.height()
+        if self._counts:
+            peak = max(self._counts) or 1.0
+            step = width / len(self._counts)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QtGui.QColor(150, 150, 150))
+            for i, count in enumerate(self._counts):
+                bar = (count / peak) * (height - 4)
+                painter.drawRect(QtCore.QRectF(i * step, height - bar, step, bar))
+        # the window as a bright band, its ends as handles
+        low_x, high_x = self._to_x(self._window[0]), self._to_x(self._window[1])
+        painter.setBrush(QtGui.QColor(80, 140, 220, 60))
+        painter.drawRect(QtCore.QRectF(low_x, 0, max(1.0, high_x - low_x), height))
+        pen = QtGui.QPen(QtGui.QColor(120, 190, 255))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        for x in (low_x, high_x):
+            painter.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, height))
+
+    # ---- dragging ----
+    def mousePressEvent(self, event):
+        x = event.position().x()
+        distances = {'low': abs(x - self._to_x(self._window[0])),
+                     'high': abs(x - self._to_x(self._window[1]))}
+        nearest = min(distances, key=distances.get)
+        # Clicking well away from both handles moves the nearer one there, so
+        # the window can be set without hitting a two-pixel line
+        self._dragging = nearest
+        self._drag_to(x)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self._drag_to(event.position().x())
+
+    def mouseReleaseEvent(self, event):
+        self._dragging = None
+
+    def mouseDoubleClickEvent(self, event):
+        """Back to the full range."""
+        self._window = (self._low, self._high)
+        self.update()
+        self.windowChanged.emit(*self._window)
+
+    def _drag_to(self, x: float):
+        value = self._to_value(max(0.0, min(float(self.width()), x)))
+        low, high = self._window
+        if self._dragging == 'low':
+            low = min(value, high - 1e-9)
+        else:
+            high = max(value, low + 1e-9)
+        self._window = (low, high)
+        self.update()
+        self.windowChanged.emit(low, high)
 
 
 class ControlPanel(QtWidgets.QWidget):
@@ -101,6 +230,11 @@ class ControlPanel(QtWidgets.QWidget):
         bkg_box = QtWidgets.QHBoxLayout(); bkg_box.addWidget(self.bkg_min); bkg_box.addWidget(self.bkg_slider_min); bkg_box.addWidget(self.bkg_slider_max); bkg_box.addWidget(self.bkg_max)
         self._bkg_row = self._wrap(bkg_box)
         form.addRow("Range (bkg)", self._bkg_row)
+        # Histogram of the image, with the same range as draggable handles
+        self.histogram = HistogramWidget()
+        self.histogram_label = QtWidgets.QLabel("Histogram")
+        form.addRow(self.histogram_label, self.histogram)
+        self.set_histogram_visible(False)
         # Opacity
         self.opacity = QtWidgets.QSlider(ORIENT_H); self.opacity.setRange(0,100); self.opacity.setValue(80)
         form.addRow("Opacity", self.opacity)
@@ -168,10 +302,16 @@ class ControlPanel(QtWidgets.QWidget):
                        self.cb_fix_scaling, self.cb_histogram):
             widget.setVisible(False)
         self.form.labelForField(self._bkg_row).setText("Range (image)")
+        self.set_histogram_visible(True)
 
     def set_labels_for_volume(self):
         """Wording that fits volumes rather than surfaces."""
         self.form.labelForField(self._overlay_row).setText("Overlay volume")
+
+    def set_histogram_visible(self, visible: bool):
+        """Show the intensity histogram (the volume viewer fills it)."""
+        for widget in (self.histogram_label, self.histogram):
+            widget.setVisible(bool(visible))
 
     def set_threshold_visible(self, visible: bool):
         """Show the p-value threshold row (only useful for -log10(p) overlays)."""

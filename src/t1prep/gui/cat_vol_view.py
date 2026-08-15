@@ -21,12 +21,27 @@ overlay's.  It only has to be registered to the image: a different voxel grid
 is resampled (nearest neighbour) through the millimetre space of the two
 headers.
 
-Slices are shown in neurological orientation (left is left).  The information
+Other volumes can be outlined on the slices (``--contour``), which is how a
+registration or a segmentation is judged; they are resampled the same way.
+
+Slices are shown in neurological orientation (left is left), with the
+anatomical direction of each pane edge marked (L/R/A/P/S/I).  The information
 panel lists file name, dimensions, voxel size, orientation code, data type and
 intensity range, plus voxel index, mm position and value under the cursor —
-and the region name when an atlas has been selected.
+and the region name when an atlas has been selected.  The status bar repeats
+the position in editable boxes, so a coordinate from a table can be typed in,
+next to buttons for the origin and the strongest voxel.
 
-Display intensities are scaled to the 3rd--97th percentile range by default.
+Display intensities are scaled to the 3rd--97th percentile range by default and
+can be set by dragging the two handles over the intensity histogram in the
+control panel.
+
+The right-click menu holds the display settings — zoom, atlas, overlay,
+contours, raw voxels, crosshair, direction letters, information panel — and
+they apply to every open volume.  It also opens a montage of slices for a
+report figure and saves a screenshot.  The keys are listed under
+"Keyboard shortcuts"; dropping files on a window opens, overlays or outlines
+them.
 
 Usage (CLI):
     CAT_VolView <image> [more images…] [surf1] [surf2] [surf3] \
@@ -70,7 +85,7 @@ from vtkmodules.vtkCommonCore import VTK_FLOAT, vtkPoints
 from vtkmodules.vtkCommonMath import vtkMatrix3x3, vtkMatrix4x4
 from vtkmodules.vtkCommonTransforms import vtkTransform
 from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
-from vtkmodules.vtkFiltersCore import vtkCutter
+from vtkmodules.vtkFiltersCore import vtkCutter, vtkMarchingSquares
 from vtkmodules.vtkIOImage import (
     vtkNIFTIImageReader,
     vtkImageReader2Factory,
@@ -232,6 +247,30 @@ def _voxel_to_world_matrix(reader, image) -> Tuple[List[List[float]], bool]:
         [D[2][0] * sx, D[2][1] * sy, D[2][2] * sz, oz],
         [0.0, 0.0, 0.0, 1.0],
     ], False)
+
+
+def _write_png(render_window, path: str, scale: int = 1) -> str:
+    """Save what *render_window* shows as a PNG and return the file name."""
+    if not path.lower().endswith(".png"):
+        path += ".png"
+    render_window.Render()
+    w2i = vtkWindowToImageFilter()
+    w2i.SetInput(render_window)
+    try:
+        w2i.SetScale(max(1, int(scale)))
+    except Exception:
+        pass
+    try:
+        w2i.ReadFrontBufferOff()
+        w2i.SetInputBufferTypeToRGB()
+    except Exception:
+        pass
+    w2i.Update()
+    writer = vtkPNGWriter()
+    writer.SetFileName(path)
+    writer.SetInputConnection(w2i.GetOutputPort())
+    writer.Write()
+    return path
 
 
 def _format_value(value: Optional[float]) -> str:
@@ -444,6 +483,8 @@ class CatImageViewer:
         self._overlay_image = None
         #: True when the overlay had to be put on the grid of the image
         self.overlay_resampled = False
+        #: Outlines of other volumes drawn over the slices; see add_contour
+        self.contours: List[dict] = []
         self._overlay_actors: List[Optional[vtkImageActor]] = [None, None, None]
         self._overlay_colors: List = [None, None, None]
         self.overlay_range: List[float] = [0.0, 0.0]
@@ -997,25 +1038,7 @@ class CatImageViewer:
             scale: Magnification of the saved image; 2 gives a figure that
                 still looks sharp in a report.
         """
-        if not path.lower().endswith(".png"):
-            path += ".png"
-        self.render_window.Render()
-        w2i = vtkWindowToImageFilter()
-        w2i.SetInput(self.render_window)
-        try:
-            w2i.SetScale(max(1, int(scale)))
-        except Exception:
-            pass
-        try:
-            w2i.ReadFrontBufferOff()
-            w2i.SetInputBufferTypeToRGB()
-        except Exception:
-            pass
-        w2i.Update()
-        writer = vtkPNGWriter()
-        writer.SetFileName(path)
-        writer.SetInputConnection(w2i.GetOutputPort())
-        writer.Write()
+        path = _write_png(self.render_window, path, scale)
         if self.verbose:
             print(f"[cat_vol_view] Wrote screenshot: {path}")
         return path
@@ -1221,6 +1244,8 @@ class CatImageViewer:
             self._image_actors[pane].SetDisplayExtent(*display)
             if self._overlay_actors[pane] is not None:
                 self._overlay_actors[pane].SetDisplayExtent(*display)
+
+        self._update_contour_slices()
 
         # A zoomed view stays centred on the cursor
         if self._fov_mm:
@@ -1564,14 +1589,17 @@ class CatImageViewer:
                    for r in range(3) for c in range(4))
 
     def _resample_to_image(self, image, vox2world: Sequence[Sequence[float]],
-                           from_header: bool, name: str):
+                           from_header: bool, name: str,
+                           interpolate: bool = False,
+                           background: float = float("nan")):
         """Put *image* on the voxel grid of the displayed image.
 
         Both transforms map voxels to anatomical millimetres, so going through
         that space lines the two up wherever they overlap.  Sampling is nearest
-        neighbour — an overlay is usually a label map or a thresholded
-        statistic, and interpolating those invents values.  Voxels outside the
-        overlay become NaN, which the colour table leaves transparent.
+        neighbour by default — an overlay is usually a label map or a
+        thresholded statistic, and interpolating those invents values — and
+        voxels outside the volume become NaN, which the colour table leaves
+        transparent.
         """
         if np is None:
             raise ValueError("resampling needs numpy, which is not installed")
@@ -1602,11 +1630,14 @@ class CatImageViewer:
         reslice.SetOutputExtent(*self._image.GetExtent())
         reslice.SetOutputSpacing(*own_spacing)
         reslice.SetOutputOrigin(*self._image.GetOrigin())
-        reslice.SetInterpolationModeToNearestNeighbor()
+        if interpolate:
+            reslice.SetInterpolationModeToLinear()
+        else:
+            reslice.SetInterpolationModeToNearestNeighbor()
         # Float output, so untouched voxels can be NaN rather than a value the
         # overlay would be coloured for
         reslice.SetOutputScalarType(VTK_FLOAT)
-        reslice.SetBackgroundLevel(float("nan"))
+        reslice.SetBackgroundLevel(float(background))
         reslice.Update()
         resampled = reslice.GetOutput()
         if resampled is None or resampled.GetDimensions() == (0, 0, 0):
@@ -1982,6 +2013,46 @@ class CatImageViewer:
     def set_index(self, i: float, j: float, k: float, notify: bool = False):
         """Move the cursor to a voxel index, clamped to the image extent."""
         self._set_cursor((i, j, k), notify=notify)
+
+    def go_to_origin(self, notify: bool = True):
+        """Put the cursor on the origin of the millimetre space (0, 0, 0).
+
+        In a registered image that is the anterior commissure, which is where
+        a coordinate is reported from.
+        """
+        self.set_world_position((0.0, 0.0, 0.0), notify=notify)
+
+    def go_to_maximum(self, notify: bool = True) -> Optional[Tuple[int, int, int]]:
+        """Jump to the strongest voxel — of the overlay when there is one.
+
+        The first thing to look at in a statistical map is its peak, and
+        finding it by scrolling is hopeless.
+
+        Returns:
+            The voxel jumped to, or None when there is nothing to search.
+        """
+        image = self._overlay_image if self._overlay_image is not None else self._image
+        if image is None or np is None or vtk_to_numpy is None:
+            return None
+        scalars = image.GetPointData().GetScalars()
+        if scalars is None:
+            return None
+        try:
+            values = vtk_to_numpy(scalars)
+            if values.ndim > 1:                 # colour or vector data
+                values = values[:, 0]
+            # A resampled overlay is NaN outside itself
+            flat = int(np.nanargmax(values))
+        except (ValueError, TypeError):
+            return None
+        extent = image.GetExtent()
+        width = extent[1] - extent[0] + 1
+        height = extent[3] - extent[2] + 1
+        k, rest = divmod(flat, width * height)
+        j, i = divmod(rest, width)
+        index = (i + extent[0], j + extent[2], k + extent[4])
+        self.set_index(*index, notify=notify)
+        return index
 
     def set_world_position(self, world: Tuple[float, float, float],
                            notify: bool = False):
@@ -2435,6 +2506,216 @@ def install_qt_message_filter():
 
     QtCore.qInstallMessageHandler(_filter)
 
+class MontageWindow(QtWidgets.QMainWindow):
+    """A row-and-column sheet of slices through the volume.
+
+    One slice at a time answers a question about a place; a montage answers
+    one about the whole volume — which is what goes into a QC report, and what
+    ``cat_vol_slice_overlay`` produces in CAT12.  The image is taken from a
+    :class:`CatImageViewer` with its display range, overlay and colours, so the
+    sheet looks like the slices it was opened from.
+    """
+
+    #: Slice orientations offered, as (label, pane of the ortho viewer)
+    AXES = (("Axial", CatImageViewer.VIEW_AXIAL),
+            ("Coronal", CatImageViewer.VIEW_CORONAL),
+            ("Sagittal", CatImageViewer.VIEW_SAGITTAL))
+
+    def __init__(self, viewer: CatImageViewer, title: str = "Montage",
+                 pane: int = CatImageViewer.VIEW_AXIAL, count: int = 12,
+                 parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{title} — montage")
+        self.source = viewer
+        self.pane = int(pane)
+        self.count = int(count)
+
+        central = QtWidgets.QWidget(self)
+        box = QtWidgets.QVBoxLayout(central)
+        box.setContentsMargins(0, 0, 0, 0)
+        self.setCentralWidget(central)
+        self.vtk_widget = QVTKRenderWindowInteractor(central)
+        box.addWidget(self.vtk_widget, 1)
+        self.render_window = self.vtk_widget.GetRenderWindow()
+
+        bar = self.addToolBar("Montage")
+        bar.setMovable(False)
+        self.axis_combo = QtWidgets.QComboBox()
+        self.axis_combo.addItems([label for label, _ in self.AXES])
+        self.axis_combo.setCurrentIndex(
+            [p for _, p in self.AXES].index(self.pane))
+        self.axis_combo.currentIndexChanged.connect(self._axis_changed)
+        self.count_spin = QtWidgets.QSpinBox()
+        self.count_spin.setRange(1, 64)
+        self.count_spin.setValue(self.count)
+        self.count_spin.valueChanged.connect(self._count_changed)
+        bar.addWidget(QtWidgets.QLabel(" Slices through "))
+        bar.addWidget(self.axis_combo)
+        bar.addWidget(QtWidgets.QLabel("  Number "))
+        bar.addWidget(self.count_spin)
+        bar.addSeparator()
+        save = bar.addAction("Save…")
+        save.triggered.connect(self.save_screenshot_dialog)
+
+        self._renderers: List[vtkRenderer] = []
+        self._keep_alive: List = []
+        self.resize(900, 700)
+        self._build()
+        QtCore.QTimer.singleShot(0, self._post_show)
+
+    # -------- building --------
+    def _slice_indices(self) -> List[int]:
+        """Evenly spaced slices, leaving out the empty ends of the volume."""
+        axis = self.source._pane_axis[self.pane]
+        extent = self.source._image.GetExtent()
+        low, high = extent[2 * axis], extent[2 * axis + 1]
+        margin = 0.12 * (high - low)
+        low, high = low + margin, high - margin
+        if self.count == 1:
+            return [int(round(0.5 * (low + high)))]
+        step = (high - low) / (self.count - 1)
+        return [int(round(low + i * step)) for i in range(self.count)]
+
+    def _grid(self) -> Tuple[int, int]:
+        """Columns and rows for the number of slices, kept roughly square."""
+        columns = max(1, int(math.ceil(math.sqrt(self.count))))
+        rows = int(math.ceil(self.count / columns))
+        return columns, rows
+
+    def _slice_label(self, index: int) -> str:
+        """Where the slice is, in millimetres along the axis it cuts."""
+        axis = self.source._pane_axis[self.pane]
+        centre = list(self.source._ijk or [0, 0, 0])
+        centre[axis] = index
+        world = self.source._world_from_index(tuple(centre))
+        direction = self.source._voxel_axis_directions()[axis]
+        dominant = max(range(3), key=lambda a: abs(direction[a]))
+        return f"{'xyz'[dominant]} = {world[dominant]:.0f}"
+
+    def _build(self):
+        """Lay the slices out, one renderer each."""
+        for renderer in self._renderers:
+            self.render_window.RemoveRenderer(renderer)
+        self._renderers = []
+        self._keep_alive = []
+
+        source = self.source
+        columns, rows = self._grid()
+        indices = self._slice_indices()
+        axis = source._pane_axis[self.pane]
+        extent = list(source._image.GetExtent())
+        template = source.renderers[self.pane].GetActiveCamera()
+
+        for position, index in enumerate(indices):
+            renderer = vtkRenderer()
+            renderer.SetBackground(0, 0, 0)
+            column = position % columns
+            row = position // columns
+            renderer.SetViewport(column / columns, 1.0 - (row + 1) / rows,
+                                 (column + 1) / columns, 1.0 - row / rows)
+
+            display = list(extent)
+            display[2 * axis] = display[2 * axis + 1] = index
+            for actor in self._slice_actors(display):
+                renderer.AddActor(actor)
+                self._keep_alive.append(actor)
+
+            label = vtkTextActor()
+            label.SetInput(self._slice_label(index))
+            prop = label.GetTextProperty()
+            prop.SetFontFamilyToArial()
+            prop.SetFontSize(12)
+            prop.SetColor(0.9, 0.9, 0.6)
+            coordinate = label.GetPositionCoordinate()
+            coordinate.SetCoordinateSystemToNormalizedViewport()
+            coordinate.SetValue(0.04, 0.04)
+            renderer.AddViewProp(label)
+            self._keep_alive.append(label)
+
+            camera = renderer.GetActiveCamera()
+            camera.SetParallelProjection(1)
+            # Same view direction as the pane this montage cuts along
+            focal = template.GetFocalPoint()
+            position_3d = template.GetPosition()
+            camera.SetFocalPoint(*focal)
+            camera.SetPosition(*position_3d)
+            camera.SetViewUp(*template.GetViewUp())
+            renderer.ResetCamera()
+            self.render_window.AddRenderer(renderer)
+            self._renderers.append(renderer)
+
+        # Every tile at the same scale, so the slices are comparable
+        scales = [r.GetActiveCamera().GetParallelScale() for r in self._renderers]
+        if scales:
+            for renderer in self._renderers:
+                renderer.GetActiveCamera().SetParallelScale(max(scales))
+        self.render_window.Render()
+
+    def _slice_actors(self, display_extent: Sequence[int]) -> List[vtkImageActor]:
+        """Image (and overlay) actor for one slice of the montage."""
+        source = self.source
+        actors = []
+        window, level = source.get_window_level()
+
+        colours = vtkImageMapToWindowLevelColors()
+        colours.SetInputData(source._image)
+        colours.SetWindow(window)
+        colours.SetLevel(level)
+        image_actor = vtkImageActor()
+        image_actor.GetMapper().SetInputConnection(colours.GetOutputPort())
+        image_actor.SetInterpolate(1 if source.interpolate else 0)
+        self._keep_alive.append(colours)
+        actors.append(image_actor)
+
+        if source._overlay_image is not None:
+            overlay_colours = vtkImageMapToColors()
+            overlay_colours.SetInputData(source._overlay_image)
+            overlay_colours.SetLookupTable(source._overlay_lut())
+            overlay_colours.SetOutputFormatToRGBA()
+            overlay_actor = vtkImageActor()
+            overlay_actor.GetMapper().SetInputConnection(
+                overlay_colours.GetOutputPort())
+            overlay_actor.SetInterpolate(0)
+            self._keep_alive.append(overlay_colours)
+            actors.append(overlay_actor)
+
+        for offset, actor in enumerate(actors):
+            actor.SetDisplayExtent(*display_extent)
+            if source._world_from_header:
+                matrix = source._world_matrix()
+                if offset:      # lift the overlay off the image plane
+                    shift = source._camera_offset(self.pane, 0.25)
+                    for row in range(3):
+                        matrix.SetElement(row, 3,
+                                          matrix.GetElement(row, 3) + shift[row])
+                actor.SetUserMatrix(matrix)
+        return actors
+
+    # -------- interaction --------
+    def _axis_changed(self, index: int):
+        self.pane = self.AXES[int(index)][1]
+        self._build()
+
+    def _count_changed(self, count: int):
+        self.count = int(count)
+        self._build()
+
+    def _post_show(self):
+        try:
+            self.vtk_widget.Initialize()
+            self.render_window.Render()
+        except Exception:
+            pass
+
+    def save_screenshot_dialog(self):
+        """Ask where to write the sheet and save it."""
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save montage", "montage.png", "PNG image (*.png)")
+        if path:
+            _write_png(self.render_window, path, scale=2)
+            self.statusBar().showMessage(f"Saved {os.path.basename(path)}", 4000)
+
+
 class VolumeViewerWindow(QtWidgets.QMainWindow):
     """Window around :class:`CatImageViewer`.
 
@@ -2508,8 +2789,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         self.viewer.setup(window_title=os.path.basename(self.image_path))
         self.viewer.on_position_changed = self._position_changed
 
-        self._label = QtWidgets.QLabel("")
-        self.statusBar().addWidget(self._label)
+        self._build_coordinate_bar()
         self._update_label()
 
         self._build_control_panel()
@@ -2526,6 +2806,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         self.vtk_widget.setContextMenuPolicy(policy)
         self.vtk_widget.customContextMenuRequested.connect(self._show_context_menu)
         self._install_shortcuts()
+        self.setAcceptDrops(True)
 
         # The interactor may only be initialised once the widget has a window
         QtCore.QTimer.singleShot(0, self._post_show)
@@ -2539,6 +2820,8 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         ("PgUp, PgDown", "ten slices at a time", None),
         ("+, -", "zoom in, zoom out", None),
         ("0", "show the whole volume", None),
+        ("o", "go to the origin (0, 0, 0)", "go_to_origin"),
+        ("m", "go to the strongest voxel", "go_to_maximum"),
         ("c", "crosshair on/off", "_key_crosshair"),
         ("a", "orientation letters on/off", "_key_orientation"),
         ("i", "image information on/off", "_key_info"),
@@ -2571,6 +2854,8 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             bind(sequence, lambda: self._step_zoom(1))
         bind("-", lambda: self._step_zoom(-1))
         bind("0", lambda: self.set_zoom(None))
+        bind("o", self.go_to_origin)
+        bind("m", self.go_to_maximum)
         bind("c", self._key_crosshair)
         bind("a", self._key_orientation)
         bind("i", self._key_info)
@@ -2639,7 +2924,96 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             "<p>Slice steps and zoom apply to the pane under the mouse.</p>"
             f"<table>{rows}</table>"
             "<p>The mouse wheel steps through slices as well; "
-            "right-click opens the display settings.</p>")
+            "right-click opens the display settings.</p>"
+            "<p>Dropping a volume on the window opens it in a linked window, "
+            "<b>shift</b> makes it the overlay and <b>alt</b> outlines it; "
+            "a surface is outlined too.</p>")
+
+    # -------- drag and drop --------
+    def dragEnterEvent(self, event):
+        """Take a drag that carries files this viewer can show."""
+        if any(self._droppable(url) for url in event.mimeData().urls()):
+            event.acceptProposedAction()
+
+    dragMoveEvent = dragEnterEvent
+
+    @staticmethod
+    def _droppable(url) -> bool:
+        return bool(url.isLocalFile()
+                    and str(url.toLocalFile()).lower().endswith(
+                        SURFACE_SUFFIXES + VOLUME_SUFFIXES))
+
+    def dropEvent(self, event):
+        """Open, overlay or outline the dropped files.
+
+        Which of the three is decided by the modifier held while dropping, the
+        way file managers pick between copy and link.
+        """
+        paths = [url.toLocalFile() for url in event.mimeData().urls()
+                 if self._droppable(url)]
+        if not paths:
+            return
+        event.acceptProposedAction()
+        modifiers = event.modifiers()
+        volumes, surfaces = _split_inputs(paths)
+        for surface in surfaces:
+            self.add_surface(surface)
+        if not volumes:
+            return
+        if modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier:
+            self.set_overlay(volumes[0])
+        elif modifiers & QtCore.Qt.KeyboardModifier.AltModifier:
+            for volume in volumes:
+                self.add_contour(volume)
+        else:
+            for volume in volumes:
+                self.open_volume(volume)
+
+    def add_surface(self, path: str):
+        """Draw a surface as an outline on the slices."""
+        try:
+            self.viewer.add_surface(path, self.SURFACE_COLORS[
+                len(self.viewer.surfaces) % len(self.SURFACE_COLORS)])
+            self.viewer._build_surface_contours()
+            self.viewer._set_slices_from_index()
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self, "Surface", f"Cannot show {os.path.basename(path)}:\n{exc}")
+
+    def open_volume(self, path: str) -> Optional["VolumeViewerWindow"]:
+        """Open *path* in a window of its own, linked to this one."""
+        if len(self.peers) >= MAX_VOLUMES:
+            self.statusBar().showMessage(
+                f"Already showing {MAX_VOLUMES} volumes", 4000)
+            return None
+        window = VolumeViewerWindow(path, **self._viewer_options())
+        windows = list(self.peers) + [window]
+        link_windows(windows)
+        window.show()
+        _place_windows(windows)
+        return window
+
+    def _viewer_options(self) -> dict:
+        """The display settings a newly opened window should start with."""
+        viewer = self.viewer
+        return {
+            'show_info': viewer.show_info,
+            'interpolate': viewer.interpolate,
+            'recenter': viewer.recenter,
+            'lock_zoom': viewer.lock_zoom,
+            'show_orientation': viewer.show_orientation,
+        }
+
+    # -------- montage --------
+    def open_montage(self) -> "MontageWindow":
+        """Open a sheet of slices through this volume, for a report figure."""
+        montage = MontageWindow(self.viewer, os.path.basename(self.image_path),
+                                parent=self)
+        montage.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        montage.setWindowFlag(QtCore.Qt.WindowType.Window, True)
+        montage.show()
+        self._montage = montage      # keep it alive
+        return montage
 
     # -------- screenshot --------
     def save_screenshot_dialog(self):
@@ -2659,6 +3033,88 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
                                           f"Could not save the image:\n{exc}")
             return
         self.statusBar().showMessage(f"Saved {os.path.basename(written)}", 4000)
+
+    # -------- coordinate bar --------
+    def _build_coordinate_bar(self):
+        """Millimetres and voxel index of the cursor, editable, in the status bar.
+
+        Reading a coordinate off the panel is only half of it — a peak from a
+        table has to be typed back in, which is what the boxes in SPM's Display
+        are for.
+        """
+        bar = QtWidgets.QWidget(self)
+        row = QtWidgets.QHBoxLayout(bar)
+        row.setContentsMargins(4, 0, 4, 0)
+        row.setSpacing(4)
+
+        self.mm_boxes: List[QtWidgets.QDoubleSpinBox] = []
+        self.voxel_boxes: List[QtWidgets.QSpinBox] = []
+        extent = self.viewer._image.GetExtent()
+
+        row.addWidget(QtWidgets.QLabel("mm"))
+        for _ in range(3):
+            box = QtWidgets.QDoubleSpinBox()
+            box.setDecimals(1)
+            box.setRange(-9999.0, 9999.0)
+            box.setSingleStep(1.0)
+            box.setKeyboardTracking(False)
+            box.setFixedWidth(72)
+            box.editingFinished.connect(self._mm_entered)
+            box.valueChanged.connect(lambda _value: self._mm_entered())
+            self.mm_boxes.append(box)
+            row.addWidget(box)
+
+        row.addSpacing(8)
+        row.addWidget(QtWidgets.QLabel("voxel"))
+        for axis in range(3):
+            box = QtWidgets.QSpinBox()
+            box.setRange(extent[2 * axis], extent[2 * axis + 1])
+            box.setKeyboardTracking(False)
+            box.setFixedWidth(64)
+            box.editingFinished.connect(self._voxel_entered)
+            box.valueChanged.connect(lambda _value: self._voxel_entered())
+            self.voxel_boxes.append(box)
+            row.addWidget(box)
+
+        for text, tip, slot in (
+                ("Origin", "Go to 0, 0, 0 (o)", self.go_to_origin),
+                ("Max", "Go to the strongest voxel (m)", self.go_to_maximum)):
+            button = QtWidgets.QToolButton()
+            button.setText(text)
+            button.setToolTip(tip)
+            button.clicked.connect(slot)
+            row.addWidget(button)
+
+        self._label = QtWidgets.QLabel("")
+        row.addSpacing(8)
+        row.addWidget(self._label, 1)
+        self.statusBar().addWidget(bar, 1)
+        #: Guards the boxes against reacting to their own update
+        self._filling_boxes = False
+
+    def _mm_entered(self):
+        if getattr(self, '_filling_boxes', False):
+            return
+        self.viewer.set_world_position(
+            tuple(box.value() for box in self.mm_boxes), notify=True)
+        self._update_label()
+
+    def _voxel_entered(self):
+        if getattr(self, '_filling_boxes', False):
+            return
+        self.viewer.set_index(*[box.value() for box in self.voxel_boxes], notify=True)
+        self._update_label()
+
+    def go_to_origin(self):
+        """Move every linked window to the origin of the millimetre space."""
+        self.viewer.go_to_origin()
+        self._update_label()
+
+    def go_to_maximum(self):
+        """Move to the strongest voxel of this window (the others follow)."""
+        if self.viewer.go_to_maximum() is None:
+            self.statusBar().showMessage("No maximum to go to", 3000)
+        self._update_label()
 
     # -------- control panel --------
     def _build_control_panel(self):
@@ -2704,6 +3160,18 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             lo = float(self.ctrl.bkg_min.value()); hi = float(self.ctrl.bkg_max.value())
             if hi > lo:
                 viewer.set_window_level(hi - lo, 0.5 * (hi + lo))
+                self.ctrl.histogram.set_window(lo, hi)
+
+        def _histogram_dragged(lo: float, hi: float):
+            """A handle was moved: the boxes and the slices follow."""
+            for spin, value in ((self.ctrl.bkg_min, lo), (self.ctrl.bkg_max, hi)):
+                spin.blockSignals(True)
+                spin.setValue(value)
+                spin.blockSignals(False)
+            if hi > lo:
+                viewer.set_window_level(hi - lo, 0.5 * (hi + lo))
+        self.ctrl.histogram.windowChanged.connect(_histogram_dragged)
+        self._fill_histogram()
 
         for widget, slot in ((self.ctrl.range_min, _range_changed),
                              (self.ctrl.range_max, _range_changed),
@@ -2754,6 +3222,22 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
 
         self._sync_control_panel()
 
+    def _fill_histogram(self):
+        """Show the intensities of the displayed image in the histogram."""
+        if vtk_to_numpy is None:
+            self.ctrl.set_histogram_visible(False)
+            return
+        scalars = self.viewer._image.GetPointData().GetScalars()
+        if scalars is None:
+            return
+        try:
+            self.ctrl.histogram.set_values(vtk_to_numpy(scalars))
+        except Exception:
+            self.ctrl.set_histogram_visible(False)
+            return
+        window, level = self.viewer.get_window_level()
+        self.ctrl.histogram.set_window(level - 0.5 * window, level + 0.5 * window)
+
     def _sync_control_panel(self):
         """Show the current overlay settings in the panel."""
         viewer = self.viewer
@@ -2774,6 +3258,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         window, level = viewer.get_window_level()
         self.ctrl.bkg_min.setValue(level - 0.5 * window)
         self.ctrl.bkg_max.setValue(level + 0.5 * window)
+        self.ctrl.histogram.set_window(level - 0.5 * window, level + 0.5 * window)
         self.ctrl.colormap.setCurrentIndex(
             COLORMAP_ORDER.index(viewer.overlay_colormap)
             if viewer.overlay_colormap in COLORMAP_ORDER else 0)
@@ -2893,6 +3378,25 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         overlay_menu.addSeparator()
         overlay_menu.addAction("Open…").triggered.connect(self._choose_overlay)
 
+        # Outlines of other volumes — the quickest check of a registration or a
+        # segmentation, as in CheckReg
+        contour_menu = menu.addMenu("Contours")
+        contour_menu.addAction("Add…").triggered.connect(self._choose_contour)
+        if self.viewer.contours:
+            contour_menu.addSeparator()
+            for entry in self.viewer.contours:
+                submenu = contour_menu.addMenu(entry['name'])
+                colour = QtGui.QColor.fromRgbF(*entry['color'])
+                pixmap = QtGui.QPixmap(12, 12)
+                pixmap.fill(colour)
+                submenu.setIcon(QtGui.QIcon(pixmap))
+                submenu.addAction(f"Level: {entry['level']:g}…").triggered.connect(
+                    lambda _checked=False, e=entry: self._ask_contour_level(e))
+                submenu.addAction("Remove").triggered.connect(
+                    lambda _checked=False, p=entry['path']: self.remove_contour(p))
+            contour_menu.addSeparator()
+            contour_menu.addAction("Remove all").triggered.connect(self.clear_contours)
+
         panel_action = menu.addAction("Controls")
         panel_action.setCheckable(True)
         panel_action.setChecked(self.dock_controls.isVisible())
@@ -2919,6 +3423,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             lambda checked=False: self.set_orientation_labels(checked))
 
         menu.addSeparator()
+        menu.addAction("Montage…").triggered.connect(self.open_montage)
         menu.addAction("Save screenshot…").triggered.connect(
             self.save_screenshot_dialog)
         menu.addAction("Keyboard shortcuts…").triggered.connect(
@@ -2965,6 +3470,54 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         """Show or hide the crosshair."""
         self._for_each_window(lambda w: w.viewer.set_crosshair_visible(visible))
 
+    # -------- contours --------
+    def add_contour(self, path: str, level: Optional[float] = None):
+        """Outline *path* on every linked window.
+
+        Comparing subjects means outlining the same volume in all of them, so
+        this follows the other display settings and is broadcast.
+        """
+        failed = []
+
+        def apply(window):
+            try:
+                window.viewer.add_contour(path, level)
+            except Exception as exc:
+                failed.append(str(exc))
+
+        self._for_each_window(apply)
+        if failed:
+            QtWidgets.QMessageBox.warning(
+                self, "Contour",
+                f"Cannot outline {os.path.basename(path)}:\n{failed[0]}")
+
+    def remove_contour(self, path: str):
+        """Remove the outline of *path* everywhere."""
+        self._for_each_window(lambda w: w.viewer.remove_contour(path))
+
+    def clear_contours(self):
+        """Remove every outline everywhere."""
+        self._for_each_window(lambda w: w.viewer.clear_contours())
+
+    def set_contour_level(self, path: str, level: float):
+        """Change the level of an outline everywhere."""
+        self._for_each_window(lambda w: w.viewer.set_contour_level(path, level))
+
+    def _choose_contour(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Outline which volume?", os.path.dirname(self.image_path),
+            "NIfTI (*.nii *.nii.gz);;All files (*)")
+        if path:
+            self.add_contour(path)
+
+    def _ask_contour_level(self, entry: dict):
+        low, high = entry['range']
+        level, accepted = QtWidgets.QInputDialog.getDouble(
+            self, "Contour level", f"Intensity to follow ({low:g} … {high:g}):",
+            float(entry['level']), -1e9, 1e9, 4)
+        if accepted:
+            self.set_contour_level(entry['path'], level)
+
     def set_orientation_labels(self, visible: bool):
         """Show or hide the anatomical direction letters."""
         self._for_each_window(lambda w: w.viewer.set_orientation_labels(visible))
@@ -2988,11 +3541,19 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         if ijk is None or world is None:
             self._label.setText("")
             return
+        self._filling_boxes = True
+        try:
+            for box, value in zip(self.mm_boxes, world):
+                box.setValue(round(float(value), 1))
+            for box, value in zip(self.voxel_boxes, ijk):
+                box.setValue(int(value))
+        finally:
+            self._filling_boxes = False
         value = self.viewer.get_value()
-        text = (f"voxel [{ijk[0]}, {ijk[1]}, {ijk[2]}]    "
-                f"mm ({world[0]:.1f}, {world[1]:.1f}, {world[2]:.1f})")
-        if value is not None:
-            text += f"    value {value:g}"
+        text = f"value {_format_value(value)}"
+        if self.viewer.overlay_path:
+            text = (f"overlay {_format_value(value)}    "
+                    f"image {_format_value(self.viewer.get_background_value())}")
         self._label.setText(text)
 
     def _position_changed(self, world_xyz: Tuple[float, float, float]):
@@ -3047,6 +3608,12 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         "--overlay", type=str, default=None,
         help=("Volume drawn in colour on top of the image; one on a different "
               "grid is resampled through the millimetre space of the headers"),
+    )
+    p.add_argument(
+        "--contour", type=str, action="append", default=None,
+        metavar="VOLUME",
+        help=("Volume outlined on the slices (repeatable); the fastest check "
+              "of a registration or a segmentation"),
     )
     p.add_argument(
         "--atlas", type=str, default=None,
@@ -3109,6 +3676,10 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
 
 #: Files that hold a surface rather than a volume
 SURFACE_SUFFIXES = ('.gii', '.vtk', '.vtp', '.obj', '.stl', '.ply')
+
+#: Volume files, for deciding whether a dropped file can be shown at all
+VOLUME_SUFFIXES = ('.nii', '.nii.gz', '.mnc', '.mha', '.mhd', '.nrrd', '.nhdr',
+                   '.img', '.hdr')
 
 #: Volumes opened at once, one window each
 MAX_VOLUMES = 6
@@ -3251,6 +3822,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 viewer.set_overlay(args.overlay)
             if args.atlas:
                 viewer.set_atlas(args.atlas)
+            for contour in (args.contour or ()):
+                viewer.add_contour(contour)
             screenshot = args.screenshot
             if screenshot and len(volumes) > 1:
                 stem, ext = os.path.splitext(screenshot)
@@ -3271,6 +3844,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             window.set_atlas(args.atlas)
         windows.append(window)
     link_windows(windows)
+    for contour in (args.contour or ()):
+        # After linking, so one call outlines it in every window
+        windows[0].add_contour(contour)
     for window in windows:
         window.show()
     _place_windows(windows)
