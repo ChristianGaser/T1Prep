@@ -14,10 +14,12 @@ Layout (SPM12-like)::
     |  (bot-L) | info     |
     +----------+----------+
 
-A second volume on the same voxel grid can be drawn in colour on top
-(``--overlay``), with range, clip, colormap, opacity, inversion and the
-p-value thresholds set from the control panel the surface viewer uses; the
-reported intensity is then the overlay's.
+A second volume can be drawn in colour on top (``--overlay``), with range,
+clip, colormap, opacity, inversion and the p-value thresholds set from the
+control panel the surface viewer uses; the reported intensity is then the
+overlay's.  It only has to be registered to the image: a different voxel grid
+is resampled (nearest neighbour) through the millimetre space of the two
+headers.
 
 Slices are shown in neurological orientation (left is left).  The information
 panel lists file name, dimensions, voxel size, orientation code, data type and
@@ -64,7 +66,7 @@ from typing import List, Optional, Sequence, Tuple
 
 # Import minimal VTK modules explicitly (avoids large monolithic import)
 from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray, vtkPlane
-from vtkmodules.vtkCommonCore import vtkPoints
+from vtkmodules.vtkCommonCore import VTK_FLOAT, vtkPoints
 from vtkmodules.vtkCommonMath import vtkMatrix3x3, vtkMatrix4x4
 from vtkmodules.vtkCommonTransforms import vtkTransform
 from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
@@ -120,7 +122,7 @@ import vtkmodules.vtkInteractionStyle  # noqa: F401
 import vtkmodules.vtkRenderingOpenGL2  # noqa: F401
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleImage
 from vtkmodules.vtkFiltersSources import vtkLineSource
-from vtkmodules.vtkImagingCore import vtkImageMapToColors
+from vtkmodules.vtkImagingCore import vtkImageMapToColors, vtkImageReslice
 
 # Control panel and colormaps are shared with the surface viewer
 try:
@@ -145,7 +147,7 @@ except ImportError:  # direct invocation as a script
 
 # Qt window + interactor.  QVTKRWIBase has to be chosen before the widget is
 # imported; CAT_SurfView imports this module and relies on the same setting.
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 import vtkmodules.qt as _vtk_qt
 _vtk_qt.QVTKRWIBase = "QOpenGLWidget"
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
@@ -230,6 +232,13 @@ def _voxel_to_world_matrix(reader, image) -> Tuple[List[List[float]], bool]:
         [D[2][0] * sx, D[2][1] * sy, D[2][2] * sz, oz],
         [0.0, 0.0, 0.0, 1.0],
     ], False)
+
+
+def _format_value(value: Optional[float]) -> str:
+    """An intensity for the panel; NaN and None are shown as nothing."""
+    if value is None or value != value:
+        return "-"
+    return f"{value:g}"
 
 
 def _load_surface(surface_path: str) -> vtkPolyData:
@@ -361,6 +370,7 @@ class CatImageViewer:
         interpolate: bool = True,
         recenter: bool = True,
         lock_zoom: bool = True,
+        show_orientation: bool = True,
     ):
         """Create the viewer.
 
@@ -373,6 +383,8 @@ class CatImageViewer:
             recenter: Let a zoomed view follow the cursor.
             lock_zoom: Ignore mouse and trackpad zooming, so the zoom only
                 changes through :meth:`set_field_of_view`.
+            show_orientation: Mark the edges of the panes with the anatomical
+                direction they point at (L/R/A/P/S/I).
             render_window: Render window to draw into.  Pass the one of a Qt
                 ``QVTKRenderWindowInteractor`` to embed the viewer in another
                 application (CAT_SurfView does this); a standalone window is
@@ -415,6 +427,12 @@ class CatImageViewer:
         # Information panel in the free quadrant
         self.show_info = bool(show_info)
         self._info_actor: Optional[vtkTextActor] = None
+        # Anatomical direction letters along the pane edges
+        self.show_orientation = bool(show_orientation)
+        self._orientation_actors: List[List[vtkTextActor]] = [[], [], []]
+        # Crosshair, and the pane the keyboard acts on when the mouse is away
+        self.show_crosshair = True
+        self.last_pane = self.VIEW_AXIAL
         self._image_name = ""
         self._orientation: Optional[str] = None
         # Atlas selected for naming the region under the cursor
@@ -424,6 +442,8 @@ class CatImageViewer:
         self.overlay_path: Optional[str] = None
         self.overlay_name = ""
         self._overlay_image = None
+        #: True when the overlay had to be put on the grid of the image
+        self.overlay_resampled = False
         self._overlay_actors: List[Optional[vtkImageActor]] = [None, None, None]
         self._overlay_colors: List = [None, None, None]
         self.overlay_range: List[float] = [0.0, 0.0]
@@ -614,6 +634,7 @@ class CatImageViewer:
         index = self.get_index_exact()
         if index is None or not (0 <= view_idx < 3):
             return
+        self.last_pane = view_idx
         axis = self._pane_axis[view_idx]
         # Step whole slices, keeping the position within the plane
         index = list(index)
@@ -865,6 +886,140 @@ class CatImageViewer:
                           0.5 * (extent[2] + extent[3]),
                           0.5 * (extent[4] + extent[5])])
 
+    def set_crosshair_visible(self, visible: bool):
+        """Show or hide the crosshair (a clean view for a screenshot)."""
+        self.show_crosshair = bool(visible)
+        for pane in getattr(self, '_line_act', []):
+            for actor in pane:
+                actor.SetVisibility(1 if self.show_crosshair else 0)
+        self.render_window.Render()
+
+    # -------- Orientation labels --------
+    #: Which anatomical direction the world axes point at.  The world of the
+    #: viewer is the millimetre space of the NIfTI sform, i.e. RAS.
+    _AXIS_LETTERS = (("L", "R"), ("P", "A"), ("I", "S"))
+
+    @classmethod
+    def _direction_letter(cls, vector: Sequence[float]) -> str:
+        """Anatomical letter for a world direction, e.g. (0,-1,0) -> 'P'."""
+        axis = max(range(3), key=lambda a: abs(vector[a]))
+        if abs(vector[axis]) < 1e-6:
+            return ""
+        return cls._AXIS_LETTERS[axis][1 if vector[axis] > 0 else 0]
+
+    def _init_orientation_labels(self):
+        """Put a direction letter on each edge of every pane.
+
+        Which way round a slice is shown is the kind of mistake that is easy to
+        make and hard to notice, and it survives into every screenshot — so the
+        letters are derived from the cameras rather than written down.
+        """
+        # (x, y, horizontal justification, vertical justification)
+        places = ((0.02, 0.5, "Left", "Centered"),
+                  (0.98, 0.5, "Right", "Centered"),
+                  (0.5, 0.98, "Centered", "Top"),
+                  (0.5, 0.02, "Centered", "Bottom"))
+        for pane in range(3):
+            actors = []
+            for x, y, horizontal, vertical in places:
+                actor = vtkTextActor()
+                prop = actor.GetTextProperty()
+                prop.SetFontFamilyToArial()
+                prop.SetBold(True)
+                prop.SetColor(0.95, 0.95, 0.55)
+                getattr(prop, f"SetJustificationTo{horizontal}")()
+                getattr(prop, f"SetVerticalJustificationTo{vertical}")()
+                coord = actor.GetPositionCoordinate()
+                coord.SetCoordinateSystemToNormalizedViewport()
+                coord.SetValue(x, y)
+                self.renderers[pane].AddViewProp(actor)
+                actors.append(actor)
+            self._orientation_actors[pane] = actors
+        self._update_orientation_labels()
+
+    def _update_orientation_labels(self):
+        """Re-read the letters from the cameras and size them to the panes."""
+        if not any(self._orientation_actors):
+            return
+        # Without a header transform the world is not anatomical, so there is
+        # nothing truthful to write
+        visible = self.show_orientation and self._world_from_header
+        height = self.render_window.GetSize()[1] or 2 * self.window_size
+        for pane, actors in enumerate(self._orientation_actors):
+            if not actors:
+                continue
+            camera = self.renderers[pane].GetActiveCamera()
+            position = camera.GetPosition()
+            focal = camera.GetFocalPoint()
+            up = camera.GetViewUp()
+            view = [focal[a] - position[a] for a in range(3)]
+            # right on screen = view direction x up
+            right = [view[1] * up[2] - view[2] * up[1],
+                     view[2] * up[0] - view[0] * up[2],
+                     view[0] * up[1] - view[1] * up[0]]
+            flip = [-v for v in right]
+            letters = (self._direction_letter(flip),
+                       self._direction_letter(right),
+                       self._direction_letter(up),
+                       self._direction_letter([-v for v in up]))
+            viewport = self._viewports[pane]
+            size = int(max(9, min(20, height * (viewport[3] - viewport[1]) / 22)))
+            for actor, letter in zip(actors, letters):
+                actor.SetInput(letter)
+                actor.GetTextProperty().SetFontSize(size)
+                actor.SetVisibility(1 if visible and letter else 0)
+
+    def set_orientation_labels(self, visible: bool):
+        """Show or hide the L/R/A/P/S/I letters."""
+        self.show_orientation = bool(visible)
+        self._update_orientation_labels()
+        self.render_window.Render()
+
+    # -------- Keyboard-driven navigation --------
+    def pane_at(self, x: int, y: int) -> int:
+        """Pane at a window pixel position, or -1 outside the three panes."""
+        pane = self._get_view_from_renderer(self.interactor.FindPokedRenderer(x, y))
+        return pane if pane >= 0 else self._get_active_view(x, y)
+
+    def step_slice(self, delta: int, pane: Optional[int] = None):
+        """Move the cursor *delta* slices along the axis *pane* slices through.
+
+        Without a pane the last one the user worked in is used, so the arrow
+        keys carry on where the mouse left off.
+        """
+        self._on_scroll(self.last_pane if pane is None else pane, int(delta))
+
+    # -------- Screenshot --------
+    def save_screenshot(self, path: str, scale: int = 1) -> str:
+        """Write what the window shows to a PNG file and return its path.
+
+        Args:
+            scale: Magnification of the saved image; 2 gives a figure that
+                still looks sharp in a report.
+        """
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        self.render_window.Render()
+        w2i = vtkWindowToImageFilter()
+        w2i.SetInput(self.render_window)
+        try:
+            w2i.SetScale(max(1, int(scale)))
+        except Exception:
+            pass
+        try:
+            w2i.ReadFrontBufferOff()
+            w2i.SetInputBufferTypeToRGB()
+        except Exception:
+            pass
+        w2i.Update()
+        writer = vtkPNGWriter()
+        writer.SetFileName(path)
+        writer.SetInputConnection(w2i.GetOutputPort())
+        writer.Write()
+        if self.verbose:
+            print(f"[cat_vol_view] Wrote screenshot: {path}")
+        return path
+
     def _world_from_index(self, ijk: Tuple[int, int, int]):
         i, j, k = ijk
         # Prefer full 4x4 voxel-to-world
@@ -1084,6 +1239,7 @@ class CatImageViewer:
         """Handle a click/drag at window pixel *(x, y)* in *view_idx*."""
         if self._ijk is None:
             return
+        self.last_pane = view_idx
         ren = self.renderers[view_idx]
 
         # --- Build a world-space ray from the click position ----------
@@ -1270,14 +1426,15 @@ class CatImageViewer:
             "",
             f"voxel       [{ijk[0]}, {ijk[1]}, {ijk[2]}]",
             f"mm          ({world[0]:.1f}, {world[1]:.1f}, {world[2]:.1f})",
-            f"value       {value:g}" if value is not None else "value       -",
+            f"value       {_format_value(value)}",
         ]
         if self._overlay_image is not None:
             # 'value' is the overlay above; keep the image underneath visible
-            background = self.get_background_value()
-            lines.append(f"background  {background:g}" if background is not None
-                         else "background  -")
-            lines.insert(1, f"overlay     {self.overlay_name}")
+            lines.append(f"background  {_format_value(self.get_background_value())}")
+            name = self.overlay_name
+            if self.overlay_resampled:
+                name += " (resampled)"
+            lines.insert(1, f"overlay     {name}")
         if self._atlas:
             region = self._atlas_region()
             lines.append(f"atlas       {self._atlas['name']}")
@@ -1305,6 +1462,7 @@ class CatImageViewer:
 
     def _update_info_text(self):
         """Redraw the information panel in the free quadrant."""
+        self._update_orientation_labels()
         if self._info_actor is None or self._image is None:
             return
         if not self.show_info:
@@ -1340,17 +1498,22 @@ class CatImageViewer:
     def set_overlay(self, overlay_path: Optional[str]):
         """Colour a second volume on top of the displayed one.
 
-        The overlay has to sit on the same voxel grid as the image (same
-        dimensions and voxel size); anything else would need resampling, which
-        this viewer deliberately does not do.  Pass None to remove it.
+        An overlay on the same voxel grid is used as it is.  Anything else is
+        resampled into the grid of the displayed image through the millimetre
+        space of the two headers, so a map that is merely *registered* to the
+        image — an atlas, a template, a statistical map — can be overlaid as
+        well.  Pass None to remove it.
 
         Raises:
-            ValueError: when the file cannot be read or the grids differ.
+            ValueError: when the file cannot be read, or when the grids differ
+                and at least one of the two has no anatomical transform to
+                resample through.
         """
         self._remove_overlay_actors()
         self.overlay_path = None
         self.overlay_name = ""
         self._overlay_image = None
+        self.overlay_resampled = False
         if not overlay_path:
             self._update_info_text()
             self.render_window.Render()
@@ -1361,16 +1524,9 @@ class CatImageViewer:
         image = reader.GetOutput()
         if image is None or image.GetDimensions() == (0, 0, 0):
             raise ValueError(f"cannot read {os.path.basename(overlay_path)}")
-        dims, own = image.GetDimensions(), self._image.GetDimensions()
-        if dims != own:
-            raise ValueError(f"dimensions {dims} differ from {own}")
-        spacing, own_spacing = image.GetSpacing(), self._image.GetSpacing()
-        if any(abs(a - b) > 1e-4 for a, b in zip(spacing, own_spacing)):
-            raise ValueError(
-                f"voxel size {tuple(round(v, 3) for v in spacing)} differs from "
-                f"{tuple(round(v, 3) for v in own_spacing)}")
+        vox2world, from_header = _voxel_to_world_matrix(reader, image)
 
-        # Same grid, so the geometry of the displayed image applies to both
+        # The image geometry lives in the transform, as for the displayed image
         image.SetOrigin(0.0, 0.0, 0.0)
         try:
             ident = vtkMatrix3x3()
@@ -1378,14 +1534,219 @@ class CatImageViewer:
             image.SetDirectionMatrix(ident)
         except Exception:
             pass
+
+        # Value range from the file, before any NaN padding is added
+        lo, hi = image.GetScalarRange()
+
+        if not self._same_grid(image, vox2world):
+            image = self._resample_to_image(image, vox2world, from_header,
+                                            os.path.basename(overlay_path))
+            self.overlay_resampled = True
+
         self._overlay_image = image
         self.overlay_path = overlay_path
         self.overlay_name = os.path.basename(overlay_path)
-        lo, hi = image.GetScalarRange()
         self.overlay_range = [float(lo), float(hi)]
         self._build_overlay_actors()
         self._update_info_text()
         self.render_window.Render()
+
+    def _same_grid(self, image, vox2world: Sequence[Sequence[float]]) -> bool:
+        """True when *image* has the voxels of the displayed image, mm for mm."""
+        if image.GetDimensions() != self._image.GetDimensions():
+            return False
+        if any(abs(a - b) > 1e-4
+               for a, b in zip(image.GetSpacing(), self._image.GetSpacing())):
+            return False
+        # Same voxel count and size is not the same grid: the two may still sit
+        # in different places, which only the transform tells
+        return all(abs(vox2world[r][c] - self._vox2world[r][c]) <= 1e-3
+                   for r in range(3) for c in range(4))
+
+    def _resample_to_image(self, image, vox2world: Sequence[Sequence[float]],
+                           from_header: bool, name: str):
+        """Put *image* on the voxel grid of the displayed image.
+
+        Both transforms map voxels to anatomical millimetres, so going through
+        that space lines the two up wherever they overlap.  Sampling is nearest
+        neighbour — an overlay is usually a label map or a thresholded
+        statistic, and interpolating those invents values.  Voxels outside the
+        overlay become NaN, which the colour table leaves transparent.
+        """
+        if np is None:
+            raise ValueError("resampling needs numpy, which is not installed")
+        if not (from_header and self._world_from_header):
+            which = "the overlay" if not from_header else "the image"
+            raise ValueError(
+                f"{name} is on a different voxel grid, and {which} has no "
+                "sform/qform to resample through")
+
+        own_spacing = self._image.GetSpacing()
+        spacing = image.GetSpacing()
+        scale_out = np.diag([*own_spacing, 1.0])          # data coords -> index
+        scale_in = np.diag([*spacing, 1.0])
+        # output data coords -> index -> mm -> overlay index -> overlay data
+        transform = (scale_in
+                     @ np.linalg.inv(np.array(vox2world, dtype=float))
+                     @ np.array(self._vox2world, dtype=float)
+                     @ np.linalg.inv(scale_out))
+
+        axes = vtkMatrix4x4()
+        for row in range(4):
+            for col in range(4):
+                axes.SetElement(row, col, float(transform[row, col]))
+
+        reslice = vtkImageReslice()
+        reslice.SetInputData(image)
+        reslice.SetResliceAxes(axes)
+        reslice.SetOutputExtent(*self._image.GetExtent())
+        reslice.SetOutputSpacing(*own_spacing)
+        reslice.SetOutputOrigin(*self._image.GetOrigin())
+        reslice.SetInterpolationModeToNearestNeighbor()
+        # Float output, so untouched voxels can be NaN rather than a value the
+        # overlay would be coloured for
+        reslice.SetOutputScalarType(VTK_FLOAT)
+        reslice.SetBackgroundLevel(float("nan"))
+        reslice.Update()
+        resampled = reslice.GetOutput()
+        if resampled is None or resampled.GetDimensions() == (0, 0, 0):
+            raise ValueError(f"could not resample {name} onto the image")
+        if self.verbose:
+            print(f"[cat_vol_view] Resampled {name} onto the image grid")
+        return resampled
+
+    # ---------- Contours of other volumes ----------
+    #: Colours handed out to contours, in this order
+    CONTOUR_COLORS = ((1.0, 1.0, 0.25), (0.35, 1.0, 0.45),
+                      (0.4, 0.75, 1.0), (1.0, 0.45, 0.8))
+
+    def add_contour(self, path: str, level: Optional[float] = None,
+                    color: Optional[Tuple[float, float, float]] = None) -> dict:
+        """Draw the outline of another volume on the slices.
+
+        This is how a registration or a segmentation is judged: the boundary of
+        one volume over the grey values of another, as ``CheckReg`` does it.
+        The volume is resampled onto the displayed grid when it has one of its
+        own, so anything registered to the image can be outlined.
+
+        Args:
+            path: Volume to outline.
+            level: Intensity the outline follows; halfway through the value
+                range by default, which is the tissue boundary of a
+                probability map.
+            color: Line colour; taken from :attr:`CONTOUR_COLORS` otherwise.
+
+        Returns:
+            The contour, as it appears in :attr:`contours`.
+        """
+        reader = _guess_image_reader(path)
+        reader.Update()
+        image = reader.GetOutput()
+        if image is None or image.GetDimensions() == (0, 0, 0):
+            raise ValueError(f"cannot read {os.path.basename(path)}")
+        vox2world, from_header = _voxel_to_world_matrix(reader, image)
+        image.SetOrigin(0.0, 0.0, 0.0)
+        try:
+            ident = vtkMatrix3x3()
+            ident.Identity()
+            image.SetDirectionMatrix(ident)
+        except Exception:
+            pass
+        lo, hi = image.GetScalarRange()
+        if not self._same_grid(image, vox2world):
+            # Smoothly, unlike the overlay: an outline traced through blocky
+            # nearest-neighbour values would look like a staircase.  Outside
+            # the volume the value is its minimum, so no outline is drawn
+            # around the edge of the data.
+            image = self._resample_to_image(
+                image, vox2world, from_header, os.path.basename(path),
+                interpolate=True, background=float(lo))
+        entry = {
+            'path': str(path),
+            'name': os.path.basename(path),
+            'image': image,
+            'range': (float(lo), float(hi)),
+            'level': float(level) if level is not None else 0.5 * (lo + hi),
+            'color': tuple(color) if color else
+                     self.CONTOUR_COLORS[len(self.contours) % len(self.CONTOUR_COLORS)],
+            'actors': [None, None, None],
+            'filters': [None, None, None],
+        }
+        self.contours.append(entry)
+        self._build_contour_actors(entry)
+        self._set_slices_from_index()
+        self.render_window.Render()
+        return entry
+
+    def _build_contour_actors(self, entry: dict):
+        """One outline actor per pane for *entry*."""
+        for pane in range(3):
+            squares = vtkMarchingSquares()
+            squares.SetInputData(entry['image'])
+            squares.SetValue(0, entry['level'])
+            mapper = vtkPolyDataMapper()
+            mapper.SetInputConnection(squares.GetOutputPort())
+            mapper.ScalarVisibilityOff()
+            actor = vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(*entry['color'])
+            actor.GetProperty().SetLineWidth(1.5)
+            # In front of the image, like the overlay and the crosshair
+            offset = self._camera_offset(pane, 0.35)
+            if self._world_from_header:
+                matrix = self._world_matrix()
+                for row in range(3):
+                    matrix.SetElement(row, 3, matrix.GetElement(row, 3) + offset[row])
+                actor.SetUserMatrix(matrix)
+            else:
+                actor.SetPosition(*offset)
+            self.renderers[pane].AddActor(actor)
+            entry['filters'][pane] = squares
+            entry['actors'][pane] = actor
+
+    def _update_contour_slices(self):
+        """Point every outline at the slice its pane shows."""
+        if not self.contours or self._ijk is None:
+            return
+        extent = list(self._image.GetExtent())
+        for entry in self.contours:
+            for pane in range(3):
+                squares = entry['filters'][pane]
+                if squares is None:
+                    continue
+                axis = self._pane_axis[pane]
+                slice_extent = list(extent)
+                slice_extent[2 * axis] = slice_extent[2 * axis + 1] = self._ijk[axis]
+                squares.SetImageRange(*slice_extent)
+                squares.Modified()
+
+    def set_contour_level(self, path: str, level: float):
+        """Change the intensity the outline of *path* follows."""
+        for entry in self.contours:
+            if entry['path'] == path:
+                entry['level'] = float(level)
+                for squares in entry['filters']:
+                    if squares is not None:
+                        squares.SetValue(0, entry['level'])
+                        squares.Modified()
+        self.render_window.Render()
+
+    def remove_contour(self, path: str):
+        """Remove the outline of *path*."""
+        for entry in [e for e in self.contours if e['path'] == path]:
+            for pane, actor in enumerate(entry['actors']):
+                if actor is not None:
+                    try:
+                        self.renderers[pane].RemoveActor(actor)
+                    except Exception:
+                        pass
+            self.contours.remove(entry)
+        self.render_window.Render()
+
+    def clear_contours(self):
+        """Remove every outline."""
+        for entry in list(self.contours):
+            self.remove_contour(entry['path'])
 
     def _remove_overlay_actors(self):
         for pane, actor in enumerate(self._overlay_actors):
@@ -1537,18 +1898,20 @@ class CatImageViewer:
         except Exception:
             return None
 
-    def _sample(self, image):
+    def _sample(self, image, nearest: bool = False):
         """Intensity of *image* at the cursor, sampled the way it is drawn.
 
         With smoothing on this is the trilinear value at the exact cursor
         position, so the number matches what is displayed; with raw voxels
-        selected it is the untouched value of the voxel the cursor is in.
+        selected — or with *nearest*, which the overlay uses because it is
+        drawn that way — it is the untouched value of the voxel the cursor is
+        in.
         """
         index = self.get_index_exact()
         if image is None or index is None:
             return None
         ext = image.GetExtent()
-        if not self.interpolate:
+        if nearest or not self.interpolate:
             ijk = [max(ext[2 * a], min(ext[2 * a + 1], int(round(index[a]))))
                    for a in range(3)]
             try:
@@ -1581,7 +1944,7 @@ class CatImageViewer:
     def get_value(self):
         """Intensity at the cursor: the overlay's when one is loaded."""
         if self._overlay_image is not None:
-            return self._sample(self._overlay_image)
+            return self.get_overlay_value()
         return self._sample(self._image)
 
     def get_background_value(self):
@@ -1589,8 +1952,13 @@ class CatImageViewer:
         return self._sample(self._image)
 
     def get_overlay_value(self):
-        """Overlay intensity at the cursor, or None without an overlay."""
-        return self._sample(self._overlay_image)
+        """Overlay intensity at the cursor, or None without an overlay.
+
+        Always nearest neighbour, since that is how the overlay is drawn — and
+        a resampled overlay carries NaN outside itself, which no interpolation
+        should smear into the values next to it.
+        """
+        return self._sample(self._overlay_image, nearest=True)
 
     def _set_cursor(self, index: Sequence[float], notify: bool = False):
         """Place the cursor at a (fractional) voxel index, clamped to the image.
@@ -1881,8 +2249,9 @@ class CatImageViewer:
 
         self._apply_interpolation()
 
-        # Crosshair overlays & surface contours
+        # Crosshair overlays, direction letters & surface contours
         self._init_crosshair()
+        self._init_orientation_labels()
         if self.surfaces:
             self._build_surface_contours()
         self._set_slices_from_index()
@@ -2156,9 +2525,140 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             policy = QtCore.Qt.CustomContextMenu
         self.vtk_widget.setContextMenuPolicy(policy)
         self.vtk_widget.customContextMenuRequested.connect(self._show_context_menu)
+        self._install_shortcuts()
 
         # The interactor may only be initialised once the widget has a window
         QtCore.QTimer.singleShot(0, self._post_show)
+
+    # -------- keyboard --------
+    #: Keys, what they do and how they are described in the help.  Slice steps
+    #: and zoom follow the pane under the mouse, everything else the window.
+    SHORTCUTS = (
+        ("Up, Right", "next slice", "_key_next_slice"),
+        ("Down, Left", "previous slice", "_key_previous_slice"),
+        ("PgUp, PgDown", "ten slices at a time", None),
+        ("+, -", "zoom in, zoom out", None),
+        ("0", "show the whole volume", None),
+        ("c", "crosshair on/off", "_key_crosshair"),
+        ("a", "orientation letters on/off", "_key_orientation"),
+        ("i", "image information on/off", "_key_info"),
+        ("n", "raw voxels (nearest neighbour) on/off", "_key_nearest"),
+        ("p", "control panel on/off", "_key_panel"),
+        ("s", "save a screenshot", "save_screenshot_dialog"),
+        ("h, ?", "this list", "show_shortcut_help"),
+    )
+
+    def _install_shortcuts(self):
+        """Bind the keys of :attr:`SHORTCUTS` to the window.
+
+        They are window shortcuts, not interactor bindings: the VTK widget has
+        the focus and would otherwise swallow the keys.
+        """
+        def bind(sequence: str, slot):
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(sequence), self)
+            shortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(slot)
+            self._shortcuts.append(shortcut)
+
+        self._shortcuts: List[QtGui.QShortcut] = []
+        for sequence in ("Up", "Right"):
+            bind(sequence, self._key_next_slice)
+        for sequence in ("Down", "Left"):
+            bind(sequence, self._key_previous_slice)
+        bind("PgUp", lambda: self._step_slice(10))
+        bind("PgDown", lambda: self._step_slice(-10))
+        for sequence in ("+", "="):        # '=' is the unshifted '+' key
+            bind(sequence, lambda: self._step_zoom(1))
+        bind("-", lambda: self._step_zoom(-1))
+        bind("0", lambda: self.set_zoom(None))
+        bind("c", self._key_crosshair)
+        bind("a", self._key_orientation)
+        bind("i", self._key_info)
+        bind("n", self._key_nearest)
+        bind("p", self._key_panel)
+        bind("s", self.save_screenshot_dialog)
+        for sequence in ("h", "?", "F1"):
+            bind(sequence, self.show_shortcut_help)
+
+    def _pane_under_mouse(self) -> Optional[int]:
+        """Pane the mouse is over, or None when it is somewhere else."""
+        position = self.vtk_widget.mapFromGlobal(QtGui.QCursor.pos())
+        if not self.vtk_widget.rect().contains(position):
+            return None
+        try:
+            ratio = self.vtk_widget.devicePixelRatioF()
+        except Exception:
+            ratio = 1.0
+        # VTK counts pixels from the bottom left
+        x = int(position.x() * ratio)
+        y = int((self.vtk_widget.height() - position.y()) * ratio)
+        pane = self.viewer.pane_at(x, y)
+        return pane if pane >= 0 else None
+
+    def _step_slice(self, delta: int):
+        self.viewer.step_slice(delta, self._pane_under_mouse())
+        self._update_label()
+
+    def _key_next_slice(self):
+        self._step_slice(1)
+
+    def _key_previous_slice(self):
+        self._step_slice(-1)
+
+    def _step_zoom(self, direction: int):
+        """Move one step through :attr:`ZOOM_LEVELS` (+1 zooms in)."""
+        levels = [mm for _, mm in self.ZOOM_LEVELS]
+        try:
+            current = levels.index(self.viewer.get_field_of_view())
+        except ValueError:
+            current = 0
+        self.set_zoom(levels[max(0, min(len(levels) - 1, current + direction))])
+
+    def _key_crosshair(self):
+        self.set_crosshair(not self.viewer.show_crosshair)
+
+    def _key_orientation(self):
+        self.set_orientation_labels(not self.viewer.show_orientation)
+
+    def _key_info(self):
+        self.set_info_visible(not self.viewer.show_info)
+
+    def _key_nearest(self):
+        self.set_interpolation(not self.viewer.interpolate)
+
+    def _key_panel(self):
+        self.dock_controls.setVisible(not self.dock_controls.isVisible())
+
+    def show_shortcut_help(self):
+        """List the keys, since a viewer without a menu bar hides them."""
+        rows = "".join(
+            f"<tr><td><b>{keys}</b>&nbsp;&nbsp;</td><td>{what}</td></tr>"
+            for keys, what, _ in self.SHORTCUTS)
+        QtWidgets.QMessageBox.information(
+            self, "Keyboard shortcuts",
+            "<p>Slice steps and zoom apply to the pane under the mouse.</p>"
+            f"<table>{rows}</table>"
+            "<p>The mouse wheel steps through slices as well; "
+            "right-click opens the display settings.</p>")
+
+    # -------- screenshot --------
+    def save_screenshot_dialog(self):
+        """Ask where to write a PNG of this window and save it."""
+        default = os.path.join(
+            os.path.dirname(os.path.abspath(self.image_path)),
+            os.path.splitext(os.path.basename(self.image_path))[0].replace('.nii', '')
+            + ".png")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save screenshot", default, "PNG image (*.png)")
+        if not path:
+            return
+        try:
+            written = self.viewer.save_screenshot(path, scale=2)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Screenshot",
+                                          f"Could not save the image:\n{exc}")
+            return
+        self.statusBar().showMessage(f"Saved {os.path.basename(written)}", 4000)
 
     # -------- control panel --------
     def _build_control_panel(self):
@@ -2404,7 +2904,25 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         info_action.setChecked(self.viewer.show_info)
         info_action.triggered.connect(
             lambda checked=False: self.set_info_visible(checked))
-        # Further sections (window/level, overlays, …) go here
+
+        cross_action = menu.addAction("Crosshair")
+        cross_action.setCheckable(True)
+        cross_action.setChecked(self.viewer.show_crosshair)
+        cross_action.triggered.connect(
+            lambda checked=False: self.set_crosshair(checked))
+
+        letters_action = menu.addAction("Orientation letters")
+        letters_action.setCheckable(True)
+        letters_action.setChecked(self.viewer.show_orientation)
+        letters_action.setEnabled(self.viewer._world_from_header)
+        letters_action.triggered.connect(
+            lambda checked=False: self.set_orientation_labels(checked))
+
+        menu.addSeparator()
+        menu.addAction("Save screenshot…").triggered.connect(
+            self.save_screenshot_dialog)
+        menu.addAction("Keyboard shortcuts…").triggered.connect(
+            self.show_shortcut_help)
 
         menu.exec(self.vtk_widget.mapToGlobal(pos))
 
@@ -2442,6 +2960,14 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
     def set_info_visible(self, visible: bool):
         """Show or hide the information panel."""
         self._for_each_window(lambda w: w.viewer.set_info_visible(visible))
+
+    def set_crosshair(self, visible: bool):
+        """Show or hide the crosshair."""
+        self._for_each_window(lambda w: w.viewer.set_crosshair_visible(visible))
+
+    def set_orientation_labels(self, visible: bool):
+        """Show or hide the anatomical direction letters."""
+        self._for_each_window(lambda w: w.viewer.set_orientation_labels(visible))
 
     def set_atlas(self, path: Optional[str]):
         """Use *path* to name the region under the cursor (None switches off)."""
@@ -2503,8 +3029,7 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         "inputs", nargs="+",
         help=("Volumes (.nii(.gz), .mnc, .mha/.mhd, .nrrd, …) and up to three "
               "surfaces (.gii, .vtk, .vtp, .obj, .stl) drawn as outlines. "
-              "Several volumes are stepped through with the ←/→ keys, "
-              "keeping the cursor position."),
+              "Every volume opens its own linked window."),
     )
     p.add_argument(
         "--size", type=int, default=400,
@@ -2520,8 +3045,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     )
     p.add_argument(
         "--overlay", type=str, default=None,
-        help=("Volume drawn in colour on top of the image; it must be on the "
-              "same voxel grid (same dimensions and voxel size)"),
+        help=("Volume drawn in colour on top of the image; one on a different "
+              "grid is resampled through the millimetre space of the headers"),
     )
     p.add_argument(
         "--atlas", type=str, default=None,
@@ -2539,6 +3064,10 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     p.add_argument(
         "--no-recenter", action="store_true",
         help="Keep a zoomed view in place instead of following the cursor",
+    )
+    p.add_argument(
+        "--no-orientation", action="store_true",
+        help="Leave out the L/R/A/P/S/I letters along the pane edges",
     )
     p.add_argument(
         "--free-zoom", action="store_true",
@@ -2697,6 +3226,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         interpolate=not args.nearest,
         recenter=not args.no_recenter,
         lock_zoom=not args.free_zoom,
+        show_orientation=not args.no_orientation,
     )
     volumes, surfaces = _split_inputs(args.inputs)
     if not volumes:

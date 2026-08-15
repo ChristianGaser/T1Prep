@@ -521,15 +521,17 @@ class TestOverlayVolume(unittest.TestCase):
         self.assertIsNone(self.viewer.overlay_path)
         self.assertAlmostEqual(self.viewer.get_value(), background, places=3)
 
-    def test_grid_must_match(self):
-        """Resampling is out of scope, so a different grid is refused."""
-        with self.assertRaises(ValueError) as caught:
-            self.viewer.set_overlay(self.coarse)
-        self.assertIn("dimensions", str(caught.exception))
-        with self.assertRaises(ValueError) as caught:
-            self.viewer.set_overlay(self.stretched)
-        self.assertIn("voxel size", str(caught.exception))
-        self.assertIsNone(self.viewer.overlay_path)
+    def test_the_same_grid_is_used_untouched(self):
+        self.viewer.set_overlay(self.overlay)
+        self.assertFalse(self.viewer.overlay_resampled)
+
+    def test_another_grid_is_resampled_instead_of_refused(self):
+        for path in (self.coarse, self.stretched):
+            self.viewer.set_overlay(path)
+            self.assertEqual(self.viewer.overlay_path, path)
+            self.assertTrue(self.viewer.overlay_resampled)
+            self.assertEqual(self.viewer._overlay_image.GetDimensions(),
+                             self.viewer._image.GetDimensions())
 
     def test_actors_follow_the_slices(self):
         self.viewer.set_overlay(self.overlay)
@@ -570,6 +572,98 @@ class TestOverlayVolume(unittest.TestCase):
                 self.assertFalse(actor.GetInterpolate())
             for actor in self.viewer._image_actors:
                 self.assertEqual(bool(actor.GetInterpolate()), interpolate)
+
+
+class TestOverlayResampling(unittest.TestCase):
+    """An overlay only has to be registered, not stored on the same grid.
+
+    Atlases, templates and statistical maps rarely share the voxel grid of the
+    image they belong to, so the two are lined up through the millimetre space
+    of their headers.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self.image_affine = np.array([[-2.0, 0, 0, 40.0],
+                                      [0, 2.0, 0, -50.0],
+                                      [0, 0, 2.0, -30.0],
+                                      [0, 0, 0, 1.0]])
+        nib.save(nib.Nifti1Image(np.zeros((40, 40, 40), np.float32), self.image_affine),
+                 str(tmp / "image.nii.gz"))
+        # 1 mm, half the size, and its voxel axes in a different order
+        self.overlay_affine = np.array([[0, 0, 1.0, -20.0],
+                                        [1.0, 0, 0, -25.0],
+                                        [0, 1.0, 0, -15.0],
+                                        [0, 0, 0, 1.0]])
+        rng = np.random.default_rng(0)
+        self.data = rng.integers(0, 9, size=(40, 40, 40)).astype(np.float32)
+        nib.save(nib.Nifti1Image(self.data, self.overlay_affine),
+                 str(tmp / "overlay.nii.gz"))
+        self.overlay = str(tmp / "overlay.nii.gz")
+
+        # No sform/qform at all, so there is no space to resample through
+        headerless = nib.Nifti1Image(np.zeros((7, 8, 9), np.float32), np.eye(4))
+        headerless.set_sform(None, code=0)
+        headerless.set_qform(None, code=0)
+        nib.save(headerless, str(tmp / "headerless.nii.gz"))
+        self.headerless = str(tmp / "headerless.nii.gz")
+
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(tmp / "image.nii.gz"))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+        self.viewer.set_overlay(self.overlay)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _expected(self):
+        """Overlay value at the cursor, straight from the file's affine."""
+        centre = np.array(self.viewer._world_from_index(self.viewer.get_index()))
+        index = np.round(np.linalg.inv(self.overlay_affine)
+                         @ np.array([*centre, 1.0]))[:3].astype(int)
+        if np.any(index < 0) or np.any(index >= np.array(self.data.shape)):
+            return None
+        return float(self.data[tuple(index)])
+
+    def test_values_land_where_the_header_says(self):
+        rng = np.random.default_rng(1)
+        checked = 0
+        for _ in range(60):
+            world = (rng.uniform(-30, 30), rng.uniform(-40, 20), rng.uniform(-20, 40))
+            self.viewer.set_world_position(world)
+            expected = self._expected()
+            if expected is None:
+                continue
+            checked += 1
+            self.assertAlmostEqual(self.viewer.get_overlay_value(), expected, places=5)
+        self.assertGreater(checked, 10)   # the positions did cover the overlay
+
+    def test_outside_the_overlay_there_is_no_value(self):
+        self.viewer.set_world_position((300.0, 300.0, 300.0))
+        value = self.viewer.get_overlay_value()
+        self.assertTrue(value != value)   # NaN, so the colour table skips it
+        # and the panel does not print "nan"
+        self.assertIn("value       -", "\n".join(self.viewer._cursor_info_lines()))
+
+    def test_the_range_comes_from_the_file_not_from_the_padding(self):
+        self.assertEqual(self.viewer.overlay_range,
+                         [float(self.data.min()), float(self.data.max())])
+
+    def test_the_panel_says_that_it_was_resampled(self):
+        text = "\n".join(self.viewer._cursor_info_lines())
+        self.assertIn("(resampled)", text)
+
+    def test_without_a_header_it_is_refused_with_a_reason(self):
+        with self.assertRaises(ValueError) as caught:
+            self.viewer.set_overlay(self.headerless)
+        message = str(caught.exception)
+        self.assertIn("different voxel grid", message)
+        self.assertIn("sform", message)
 
 
 class TestNeurologicalOrientation(unittest.TestCase):
@@ -713,6 +807,183 @@ class TestZoomLock(unittest.TestCase):
         viewer.interactor.SetEventPosition(260, 360)
         viewer.interactor.MouseMoveEvent()
         self.assertEqual(self._zoom(viewer), wanted)
+
+
+class TestOrientationLetters(unittest.TestCase):
+    """Each pane says which way it is turned, read off its camera."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        # LAS on disk, as most NIfTI files are
+        affine = np.array([[-1.0, 0, 0, 80.0],
+                           [0, 1.0, 0, -116.0],
+                           [0, 0, 1.0, -72.0],
+                           [0, 0, 0, 1.0]])
+        self.path = _write_volume(Path(self._tmp.name) / "vol.nii.gz", affine)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _viewer(self, **kwargs):
+        viewer = CatImageViewer(percentile_range=None, **kwargs)
+        viewer.load_image(str(self.path))
+        try:
+            viewer.setup(window_title="test")
+            viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+        return viewer
+
+    @staticmethod
+    def _letters(viewer, pane):
+        """left, right, top, bottom letter of a pane."""
+        return tuple(a.GetInput() for a in viewer._orientation_actors[pane])
+
+    def test_the_letters_match_the_neurological_layout(self):
+        viewer = self._viewer()
+        self.assertEqual(self._letters(viewer, CatImageViewer.VIEW_AXIAL),
+                         ("L", "R", "A", "P"))
+        self.assertEqual(self._letters(viewer, CatImageViewer.VIEW_CORONAL),
+                         ("L", "R", "S", "I"))
+        self.assertEqual(self._letters(viewer, CatImageViewer.VIEW_SAGITTAL),
+                         ("A", "P", "S", "I"))
+
+    def test_a_direction_becomes_the_letter_it_points_at(self):
+        letter = CatImageViewer._direction_letter
+        self.assertEqual(letter((1.0, 0.0, 0.0)), "R")
+        self.assertEqual(letter((-1.0, 0.0, 0.0)), "L")
+        self.assertEqual(letter((0.0, 0.9, -0.2)), "A")
+        self.assertEqual(letter((0.0, -0.9, 0.2)), "P")
+        self.assertEqual(letter((0.0, 0.0, 1.0)), "S")
+        self.assertEqual(letter((0.0, 0.0, -1.0)), "I")
+        self.assertEqual(letter((0.0, 0.0, 0.0)), "")
+
+    def test_they_can_be_switched_off(self):
+        viewer = self._viewer()
+        viewer.set_orientation_labels(False)
+        for pane in range(3):
+            for actor in viewer._orientation_actors[pane]:
+                self.assertFalse(actor.GetVisibility())
+        viewer.set_orientation_labels(True)
+        self.assertTrue(viewer._orientation_actors[0][0].GetVisibility())
+
+    def test_nothing_is_claimed_without_an_anatomical_space(self):
+        """No sform means the world is not RAS, so no letter is truthful."""
+        viewer = self._viewer()
+        viewer._world_from_header = False
+        viewer._update_orientation_labels()
+        for actor in viewer._orientation_actors[0]:
+            self.assertFalse(actor.GetVisibility())
+
+
+class TestKeyboardAndScreenshot(unittest.TestCase):
+    """Slice stepping, zoom stepping and saving a PNG."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = _write_volume(Path(self._tmp.name) / "vol.nii.gz",
+                                  np.diag([1.0, 1.0, 1.0, 1.0]))
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(str(self.path))
+        try:
+            self.viewer.setup(window_title="test")
+            self.viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_stepping_moves_along_the_axis_of_the_named_pane(self):
+        for pane in range(3):
+            axis = self.viewer._pane_axis[pane]
+            before = list(self.viewer.get_index())
+            self.viewer.step_slice(1, pane)
+            after = list(self.viewer.get_index())
+            self.assertEqual(after[axis], before[axis] + 1)
+            after[axis] = before[axis]
+            self.assertEqual(after, before)      # the other two do not move
+
+    def test_without_a_pane_the_last_one_used_is_stepped(self):
+        self.viewer.step_slice(1, CatImageViewer.VIEW_SAGITTAL)
+        self.assertEqual(self.viewer.last_pane, CatImageViewer.VIEW_SAGITTAL)
+        axis = self.viewer._pane_axis[CatImageViewer.VIEW_SAGITTAL]
+        before = self.viewer.get_index()[axis]
+        self.viewer.step_slice(3)
+        self.assertEqual(self.viewer.get_index()[axis], before + 3)
+
+    def test_stepping_stops_at_the_edge(self):
+        self.viewer.step_slice(10 ** 6, CatImageViewer.VIEW_AXIAL)
+        axis = self.viewer._pane_axis[CatImageViewer.VIEW_AXIAL]
+        extent = self.viewer._image.GetExtent()
+        self.assertEqual(self.viewer.get_index()[axis], extent[2 * axis + 1])
+
+    def test_the_crosshair_can_be_hidden(self):
+        self.viewer.set_crosshair_visible(False)
+        self.assertFalse(self.viewer.show_crosshair)
+        for pane in self.viewer._line_act:
+            for actor in pane:
+                self.assertFalse(actor.GetVisibility())
+        self.viewer.set_crosshair_visible(True)
+        self.assertTrue(self.viewer._line_act[0][0].GetVisibility())
+
+    def test_a_screenshot_is_written(self):
+        target = Path(self._tmp.name) / "shot"
+        written = self.viewer.save_screenshot(str(target), scale=1)
+        self.assertTrue(written.endswith(".png"))   # the suffix is added
+        self.assertGreater(os.path.getsize(written), 0)
+        with open(written, "rb") as fh:
+            self.assertEqual(fh.read(4), b"\x89PNG")
+
+
+class TestZoomStepping(unittest.TestCase):
+    """The +/- keys walk through the zoom levels of the menu."""
+
+    class _Window:
+        ZOOM_LEVELS = VolumeViewerWindow.ZOOM_LEVELS
+        _step_zoom = VolumeViewerWindow._step_zoom
+
+        def __init__(self, current=None):
+            self.current = current
+            self.viewer = self
+            self.asked = []
+
+        def get_field_of_view(self):
+            return self.current
+
+        def set_zoom(self, mm):
+            self.asked.append(mm)
+            self.current = mm
+
+    def test_zooming_in_and_out(self):
+        window = self._Window()          # starts at "Full volume"
+        window._step_zoom(1)
+        self.assertEqual(window.current, 160.0)
+        window._step_zoom(1)
+        self.assertEqual(window.current, 80.0)
+        window._step_zoom(-1)
+        self.assertEqual(window.current, 160.0)
+
+    def test_it_stops_at_both_ends(self):
+        window = self._Window()
+        window._step_zoom(-1)
+        self.assertIsNone(window.current)
+        for _ in range(len(VolumeViewerWindow.ZOOM_LEVELS) + 3):
+            window._step_zoom(1)
+        self.assertEqual(window.current, VolumeViewerWindow.ZOOM_LEVELS[-1][1])
+
+    def test_a_zoom_that_is_not_a_level_starts_over(self):
+        window = self._Window(current=33.0)
+        window._step_zoom(1)
+        self.assertEqual(window.current, 160.0)
+
+    def test_every_shortcut_is_documented(self):
+        keys = [row[0] for row in VolumeViewerWindow.SHORTCUTS]
+        self.assertIn("s", keys)                     # screenshot
+        self.assertIn("Up, Right", keys)             # slices
+        for row in VolumeViewerWindow.SHORTCUTS:
+            self.assertEqual(len(row), 3)
+            self.assertTrue(row[1])                  # every key says what it does
 
 
 class TestSeveralVolumes(unittest.TestCase):
