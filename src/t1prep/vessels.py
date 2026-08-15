@@ -99,7 +99,11 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
-from ._segment_utils import _resolve_template_file, get_regions_mask
+from ._segment_utils import (
+    _resample_to,
+    _resolve_template_file,
+    get_regions_mask,
+)
 
 __all__ = [
     "protected_regions",
@@ -426,71 +430,6 @@ def _csf_context(yp0, vx, radius_mm=2.5):
 # ---------------------------------------------------------------------------
 # 2) spatial prior
 # ---------------------------------------------------------------------------
-
-
-def _resample_to(img, target_affine, target_shape, device="cpu", channel=None,
-                 nearest=False):
-    """Trilinear resample *img* onto the grid given by affine and shape.
-
-    ``get_atlas`` resizes the template array onto the target dimensions and so
-    silently assumes both cover the same field of view.  That holds for the
-    label atlases it is used with, but ``cat_bloodvessels.nii.gz`` lives on the
-    SPM TPM grid (origin -90/-126/-72) while T1Prep works on the shooting
-    template grid (origin -84/-120/-72).  A plain resize would misplace the
-    prior by several millimetres, which matters most exactly where it is used
-    -- around the insula.  So the real affines are honoured here.
-
-    The sampling grid is built at roughly the template resolution and only
-    then resized to the target shape, so the explicit coordinate array stays
-    small even when the target is a 0.5 mm volume.
-
-    Set ``nearest`` for label atlases.  Interpolating label *ids* linearly
-    invents labels that lie between two unrelated regions, which silently
-    turns a protection mask into nonsense.
-    """
-    img = nib.as_closest_canonical(img)
-    data = np.asanyarray(img.dataobj, dtype=np.float32)
-    if channel is not None:
-        data = data[..., channel]
-
-    target_affine = np.asarray(target_affine, dtype=float)
-    target_shape = np.asarray(target_shape, dtype=int)[:3]
-    tgt_zoom = np.sqrt((target_affine[:3, :3] ** 2).sum(axis=0))
-    src_zoom = np.asarray(img.header.get_zooms()[:3], dtype=float)
-
-    # Intermediate grid: same field of view, roughly the template resolution.
-    n_int = np.maximum(2, np.round(target_shape * tgt_zoom / src_zoom)).astype(int)
-    inter = target_affine.copy()
-    inter[:3, :3] = target_affine[:3, :3] * (target_shape / n_int)
-    # Keep the outer field of view identical by shifting the first voxel centre.
-    inter[:3, 3] = target_affine[:3, 3] + 0.5 * (
-        inter[:3, :3] - target_affine[:3, :3]
-    ) @ np.ones(3)
-
-    # Intermediate voxel -> source voxel.
-    to_src = np.linalg.inv(img.affine) @ inter
-    grids = np.meshgrid(*[np.arange(n, dtype=np.float32) for n in n_int], indexing="ij")
-    coords = (
-        to_src[:3, :3].astype(np.float32) @ np.stack([g.ravel() for g in grids])
-        + to_src[:3, 3, None].astype(np.float32)
-    )
-
-    # grid_sample expects normalised coordinates in reversed axis order.
-    shape_src = np.asarray(data.shape[:3], dtype=np.float32)
-    norm = 2.0 * coords / np.maximum(shape_src - 1.0, 1.0)[:, None] - 1.0
-    grid = torch.as_tensor(
-        norm[::-1].T.reshape(*n_int, 3).copy(), device=device
-    )[None]
-
-    out = F.grid_sample(
-        _as_tensor(data, device),
-        grid,
-        mode="nearest" if nearest else "bilinear",
-        align_corners=True,
-        padding_mode="border",
-    )
-    out = _resize(out, target_shape, mode="nearest" if nearest else "trilinear")
-    return out[0, 0].cpu().numpy()
 
 
 def blood_vessel_prior(target_affine, target_shape, device="cpu"):

@@ -959,6 +959,78 @@ def handle_lesions(
     return p1_large, p2_large, p3_large, p0_large_diff, wmh_value, ind_wmh
 
 
+def _resample_to(img, target_affine, target_shape, device="cpu", channel=None,
+                 nearest=False):
+    """Trilinear resample *img* onto the grid given by affine and shape.
+
+    ``get_atlas`` resizes the template array onto the target dimensions and so
+    silently assumes both cover the same field of view.  That holds for the
+    label atlases it is used with, but ``cat_bloodvessels.nii.gz`` lives on the
+    SPM TPM grid (origin -90/-126/-72) while T1Prep works on the shooting
+    template grid (origin -84/-120/-72).  A plain resize would misplace the
+    prior by several millimetres, which matters most exactly where it is used
+    -- around the insula.  So the real affines are honoured here.
+
+    The sampling grid is built at roughly the template resolution and only
+    then resized to the target shape, so the explicit coordinate array stays
+    small even when the target is a 0.5 mm volume.
+
+    Set ``nearest`` for label atlases.  Interpolating label *ids* linearly
+    invents labels that lie between two unrelated regions, which silently
+    turns a protection mask into nonsense.
+    """
+    img = nib.as_closest_canonical(img)
+    data = np.asanyarray(img.dataobj, dtype=np.float32)
+    if channel is not None:
+        data = data[..., channel]
+
+    target_affine = np.asarray(target_affine, dtype=float)
+    target_shape = np.asarray(target_shape, dtype=int)[:3]
+    tgt_zoom = np.sqrt((target_affine[:3, :3] ** 2).sum(axis=0))
+    src_zoom = np.asarray(img.header.get_zooms()[:3], dtype=float)
+
+    # Intermediate grid: same field of view, roughly the template resolution.
+    n_int = np.maximum(2, np.round(target_shape * tgt_zoom / src_zoom)).astype(int)
+    inter = target_affine.copy()
+    inter[:3, :3] = target_affine[:3, :3] * (target_shape / n_int)
+    # Keep the outer field of view identical by shifting the first voxel centre.
+    inter[:3, 3] = target_affine[:3, 3] + 0.5 * (
+        inter[:3, :3] - target_affine[:3, :3]
+    ) @ np.ones(3)
+
+    # Intermediate voxel -> source voxel.
+    to_src = np.linalg.inv(img.affine) @ inter
+    grids = np.meshgrid(*[np.arange(n, dtype=np.float32) for n in n_int], indexing="ij")
+    coords = (
+        to_src[:3, :3].astype(np.float32) @ np.stack([g.ravel() for g in grids])
+        + to_src[:3, 3, None].astype(np.float32)
+    )
+
+    # grid_sample expects normalised coordinates in reversed axis order.
+    shape_src = np.asarray(data.shape[:3], dtype=np.float32)
+    norm = 2.0 * coords / np.maximum(shape_src - 1.0, 1.0)[:, None] - 1.0
+    grid = torch.as_tensor(
+        norm[::-1].T.reshape(*n_int, 3).copy(), device=device
+    )[None]
+
+    src = torch.as_tensor(
+        np.ascontiguousarray(data, dtype=np.float32), device=device
+    )[None, None]
+    out = F.grid_sample(
+        src,
+        grid,
+        mode="nearest" if nearest else "bilinear",
+        align_corners=True,
+        padding_mode="border",
+    )
+    mode = "nearest" if nearest else "trilinear"
+    kwargs = {} if nearest else {"align_corners": False}
+    out = F.interpolate(
+        out, size=tuple(int(v) for v in target_shape), mode=mode, **kwargs
+    )
+    return out[0, 0].cpu().numpy()
+
+
 def get_atlas(
     t1,
     affine,
@@ -1033,22 +1105,47 @@ def get_atlas(
             affine, warps[shape].to(atlas_register.device), atlas, t1.shape
         )
 
-    atlas_tensor = nifti_to_tensor(atlas)[None, None].to(device)
+    # Resizing onto the target dimensions silently assumes both grids cover
+    # the same field of view.  That holds after the warp above -- deepmriprep
+    # returns the atlas on WARP_TEMPLATE, which shares the working field of
+    # view -- and for templates already on the working grid such as cat_wmh.
+    # It does not hold for the 1 mm atlases (IBSR, Neuromorphometrics), whose
+    # field of view is 161x197x161 mm against the working 169.5x205.5x169.5:
+    # a plain resize stretches them by 5% and displaces structures by up to
+    # 4.2 mm at the edges.  So the affines decide, and the fast path is taken
+    # only when they genuinely agree.
+    src_fov = np.asarray(atlas.shape[:3]) * np.sqrt(
+        (np.asarray(atlas.affine)[:3, :3] ** 2).sum(axis=0)
+    )
+    tgt_affine = np.asarray(transform, dtype=float)
+    tgt_fov = np.asarray(dim) * np.sqrt((tgt_affine[:3, :3] ** 2).sum(axis=0))
+    src_origin = np.asarray(atlas.affine)[:3, 3]
+    aligned = np.allclose(src_fov, tgt_fov, atol=1e-3) and np.allclose(
+        src_origin, tgt_affine[:3, 3], atol=1e-3
+    )
 
-    # Choose interpolation mode and output dtype depending on whether
-    # the atlas contains discrete labels or continuous values.
+    if aligned:
+        atlas_tensor = nifti_to_tensor(atlas)[None, None].to(device)
+        if is_label_atlas:
+            atlas_np = F.interpolate(atlas_tensor, dim, mode="nearest")[0, 0]
+        else:
+            atlas_np = F.interpolate(
+                atlas_tensor, dim, mode="trilinear", align_corners=False
+            )[0, 0]
+        atlas_np = atlas_np.cpu().numpy()
+    else:
+        atlas_np = _resample_to(
+            atlas, tgt_affine, dim, device=device, nearest=is_label_atlas
+        )
+
     if is_label_atlas:
-        atlas_tensor = F.interpolate(atlas_tensor, dim, mode="nearest")[0, 0]
-        atlas_tensor = atlas_tensor.type(
-            torch.uint8 if atlas_tensor.max() < 256 else torch.int16
+        atlas_np = np.round(atlas_np)
+        atlas_np = atlas_np.astype(
+            np.uint8 if atlas_np.max() < 256 else np.int16
         )
     else:
-        atlas_tensor = F.interpolate(
-            atlas_tensor, dim, mode="trilinear", align_corners=False
-        )[0, 0]
-        atlas_tensor = atlas_tensor.to(torch.float32)
+        atlas_np = atlas_np.astype(np.float32)
 
-    atlas_np = atlas_tensor.cpu().numpy()
     return nib.Nifti1Image(atlas_np, transform, header)
 
 
