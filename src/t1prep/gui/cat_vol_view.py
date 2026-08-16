@@ -40,15 +40,22 @@ control panel.
 The right-click menu holds the display settings — zoom, atlas, overlay,
 contours, raw voxels, crosshair, direction letters, information panel — and
 they apply to every open volume.  It also saves a screenshot and opens a
-montage of slices for a report figure, whose slices are given as start, step
-and stop in millimetres with the number of columns and rows, as in
-``cat_vol_slice_overlay``.  The keys are listed under
+montage of slices for a report figure, whose slices are given either as a list
+of millimetre positions or as start, step and stop, with the number of columns
+and rows, as in ``cat_vol_slice_overlay``.  The keys are listed under
 "Keyboard shortcuts"; dropping files on a window opens, overlays or outlines
 them.
 
 Usage (CLI):
     CAT_VolView <image> [more images…] [surf1] [surf2] [surf3] \
         --size 400 [--percentile 3 97]
+
+    A montage can also be produced without opening a window, which is what
+    makes it scriptable::
+
+        CAT_VolView T1.nii.gz --montage --slices "25 30 40 80" \
+            --overlay spmT_logP.nii.gz --threshold 0.05 --colormap FIRE \
+            --colorbar --columns 4 --screenshot figure.png
 
     Up to six volumes may be given; each opens its own window (tiled three per
     row), titled with the directory the volume comes from.  The windows are
@@ -77,6 +84,7 @@ from __future__ import annotations
 import itertools
 import math
 import os
+import re
 import sys
 import argparse
 from pathlib import Path
@@ -84,7 +92,12 @@ from typing import List, Optional, Sequence, Tuple
 
 # Import minimal VTK modules explicitly (avoids large monolithic import)
 from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray, vtkPlane
-from vtkmodules.vtkCommonCore import VTK_FLOAT, vtkPoints
+from vtkmodules.vtkCommonCore import (
+    VTK_FLOAT,
+    vtkLookupTable,
+    vtkPoints,
+    vtkVariant,
+)
 from vtkmodules.vtkCommonMath import vtkMatrix3x3, vtkMatrix4x4
 from vtkmodules.vtkCommonTransforms import vtkTransform
 from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
@@ -116,6 +129,7 @@ try:
 except Exception:  # pragma: no cover - optional
     vtk_to_numpy = None  # type: ignore
 
+from vtkmodules.vtkRenderingAnnotation import vtkScalarBarActor
 from vtkmodules.vtkRenderingCore import (
     VTK_CURSOR_CROSSHAIR,
     vtkActor,
@@ -161,10 +175,12 @@ except ImportError:  # direct invocation as a script
 try:
     from .colormaps import (
         JET, COLORMAP_NAMES, COLORMAP_ORDER, build_overlay_lut,
+        format_p_value_label, logp_colorbar_ticks,
     )
 except ImportError:  # direct invocation as a script
     from colormaps import (
         JET, COLORMAP_NAMES, COLORMAP_ORDER, build_overlay_lut,
+        format_p_value_label, logp_colorbar_ticks,
     )
 
 # Qt window + interactor.  QVTKRWIBase has to be chosen before the widget is
@@ -2569,14 +2585,18 @@ def install_qt_message_filter():
 
     QtCore.qInstallMessageHandler(_filter)
 
-class MontageWindow(QtWidgets.QMainWindow):
+class Montage:
     """A row-and-column sheet of slices through the volume.
 
-    One slice at a time answers a question about a place; a montage answers
-    one about the whole volume — which is what goes into a QC report, and what
+    One slice at a time answers a question about a place; a montage answers one
+    about the whole volume — which is what goes into a QC report, and what
     ``cat_vol_slice_overlay`` produces in CAT12.  The image is taken from a
     :class:`CatImageViewer` with its display range, overlay and colours, so the
-    sheet looks like the slices it was opened from.
+    sheet looks like the slices it was made from.
+
+    The class draws into a render window and knows nothing about Qt, so the
+    same code serves :class:`MontageWindow` and the batch call that writes a
+    PNG without opening a window (``--montage --screenshot``).
     """
 
     #: Slice orientations offered, as (label, pane of the ortho viewer)
@@ -2584,92 +2604,51 @@ class MontageWindow(QtWidgets.QMainWindow):
             ("Coronal", CatImageViewer.VIEW_CORONAL),
             ("Sagittal", CatImageViewer.VIEW_SAGITTAL))
 
-    #: Never build more tiles than this, whatever step is typed
+    #: Never build more tiles than this, whatever step is asked for
     MAX_SLICES = 100
 
-    def __init__(self, viewer: CatImageViewer, title: str = "Montage",
+    #: Height of the colorbar strip, as a fraction of the window
+    COLORBAR_HEIGHT = 0.13
+
+    def __init__(self, viewer: CatImageViewer, render_window: vtkRenderWindow,
                  pane: int = CatImageViewer.VIEW_AXIAL,
                  slices_mm: Optional[Tuple[float, float, float]] = None,
-                 columns: int = 0, rows: int = 0, parent=None):
-        """Open a montage.
+                 slices: Optional[Sequence[float]] = None,
+                 columns: int = 0, rows: int = 0, labels: bool = True,
+                 colorbar: bool = False, on_message=None):
+        """Prepare a montage; :meth:`build` draws it.
 
         Args:
             slices_mm: ``(start, step, stop)`` in millimetres along the axis
                 being cut, as in ``cat_vol_slice_overlay``; derived from the
                 volume when omitted.
+            slices: Explicit millimetre positions, which take precedence over
+                *slices_mm* — the slices of a figure are usually a hand-picked
+                list rather than a regular series.
             columns, rows: Layout of the sheet; 0 means "work it out", and
                 giving both fixes the sheet to that many tiles.
+            labels: Write the position of each slice into its tile.
+            colorbar: Add a colour bar for the overlay (or for the image when
+                there is none), labelled with p-values for -log10(p) maps.
+            on_message: Called with a line about what the sheet shows.
         """
-        super().__init__(parent)
-        self.setWindowTitle(f"{title} — montage")
         self.source = viewer
+        self.render_window = render_window
         self.pane = int(pane)
         self.columns = int(columns)
         self.rows = int(rows)
+        self.labels = bool(labels)
+        self.colorbar = bool(colorbar)
+        self.on_message = on_message
+        self.slices = [float(v) for v in slices] if slices else None
         self.start_mm, self.step_mm, self.stop_mm = (
             tuple(float(v) for v in slices_mm) if slices_mm
             else self._default_range())
 
-        central = QtWidgets.QWidget(self)
-        box = QtWidgets.QVBoxLayout(central)
-        box.setContentsMargins(0, 0, 0, 0)
-        self.setCentralWidget(central)
-        self.vtk_widget = QVTKRenderWindowInteractor(central)
-        box.addWidget(self.vtk_widget, 1)
-        self.render_window = self.vtk_widget.GetRenderWindow()
-
-        bar = self.addToolBar("Montage")
-        bar.setMovable(False)
-        self.axis_combo = QtWidgets.QComboBox()
-        self.axis_combo.addItems([label for label, _ in self.AXES])
-        self.axis_combo.setCurrentIndex(
-            [p for _, p in self.AXES].index(self.pane))
-        self.axis_combo.currentIndexChanged.connect(self._axis_changed)
-        bar.addWidget(QtWidgets.QLabel(" Slices "))
-        bar.addWidget(self.axis_combo)
-
-        # start : step : stop in mm, as the slices are written down in
-        # cat_vol_slice_overlay
-        self.range_label = QtWidgets.QLabel("  mm (start step stop) ")
-        bar.addWidget(self.range_label)
-        self.range_spins: List[QtWidgets.QDoubleSpinBox] = []
-        for value, low in ((self.start_mm, -9999.0), (self.step_mm, 0.1),
-                           (self.stop_mm, -9999.0)):
-            spin = QtWidgets.QDoubleSpinBox()
-            spin.setRange(low, 9999.0)
-            spin.setDecimals(1)
-            spin.setValue(value)
-            spin.setKeyboardTracking(False)
-            spin.setFixedWidth(76)
-            spin.valueChanged.connect(self._range_changed)
-            self.range_spins.append(spin)
-            bar.addWidget(spin)
-        reset = bar.addAction("Fit")
-        reset.setToolTip("Start, step and stop across the whole volume")
-        reset.triggered.connect(self.fit_range)
-
-        bar.addSeparator()
-        bar.addWidget(QtWidgets.QLabel(" Columns "))
-        self.columns_spin = QtWidgets.QSpinBox()
-        self.columns_spin.setRange(0, 20)
-        self.columns_spin.setSpecialValueText("auto")
-        self.columns_spin.setValue(self.columns)
-        self.columns_spin.valueChanged.connect(self._layout_changed)
-        bar.addWidget(self.columns_spin)
-        bar.addWidget(QtWidgets.QLabel(" Rows "))
-        self.rows_spin = QtWidgets.QSpinBox()
-        self.rows_spin.setRange(0, 20)
-        self.rows_spin.setSpecialValueText("auto")
-        self.rows_spin.setValue(self.rows)
-        self.rows_spin.valueChanged.connect(self._layout_changed)
-        bar.addWidget(self.rows_spin)
-
-        bar.addSeparator()
-        save = bar.addAction("Save…")
-        save.triggered.connect(self.save_screenshot_dialog)
-
         self._renderers: List[vtkRenderer] = []
         self._keep_alive: List = []
+        self._colorbar_renderer: Optional[vtkRenderer] = None
+        self.colorbar_actor: Optional[vtkScalarBarActor] = None
         # Each renderer only clears its own viewport, so a sheet with fewer
         # tiles than before would keep the old ones in the empty corner.  This
         # one covers the whole window and is never removed.
@@ -2678,9 +2657,6 @@ class MontageWindow(QtWidgets.QMainWindow):
         self._background.SetBackground(0, 0, 0)
         self._background.SetInteractive(0)
         self.render_window.AddRenderer(self._background)
-        self.resize(900, 700)
-        self._build()
-        QtCore.QTimer.singleShot(0, self._post_show)
 
     # -------- where the slices are --------
     def _world_axis(self) -> int:
@@ -2728,24 +2704,39 @@ class MontageWindow(QtWidgets.QMainWindow):
         step = max(1.0, round((stop - start) / 11.0))
         return (float(start), float(step), float(stop))
 
+    def set_slices(self, slices: Optional[Sequence[float]]):
+        """Use an explicit list of millimetre positions (None: back to the series)."""
+        self.slices = [float(v) for v in slices] if slices else None
+
     def slice_positions(self) -> List[float]:
-        """The millimetre positions to show: start, start+step, … up to stop."""
+        """The millimetre positions to show.
+
+        An explicit list is taken as it is; otherwise the series start,
+        start+step, … up to stop.  Positions outside the volume are dropped
+        either way — clamping them would repeat the end slice.
+        """
+        low, high = self._extent_mm()
+
+        def inside(value: float) -> bool:
+            return low - 1e-6 <= value <= high + 1e-6
+
+        if self.slices is not None:
+            return [round(v, 3) for v in self.slices if inside(v)][:self.MAX_SLICES]
+
         step = abs(self.step_mm)
         if step <= 0:
             return []
         start, stop = self.start_mm, self.stop_mm
         if stop < start:
             start, stop = stop, start
-        low, high = self._extent_mm()
         positions = []
         # A hair over stop, so a stop that lands exactly on a step is included
         while start <= stop + 1e-6 and len(positions) < self.MAX_SLICES:
-            if low - 1e-6 <= start <= high + 1e-6:
+            if inside(start):
                 positions.append(round(start, 3))
             start += step
         return positions
 
-    # -------- building --------
     def _slice_indices(self) -> List[int]:
         """Voxel slices for the millimetre positions, in the volume."""
         axis = self.source._pane_axis[self.pane]
@@ -2760,9 +2751,8 @@ class MontageWindow(QtWidgets.QMainWindow):
     def _grid(self, count: Optional[int] = None) -> Tuple[int, int]:
         """Columns and rows of the sheet.
 
-        Fixed where the toolbar says so, worked out for the rest: with neither
-        given the sheet is kept roughly square, and one of the two determines
-        the other.
+        Fixed where asked for, worked out for the rest: with neither given the
+        sheet is kept roughly square, and one of the two determines the other.
         """
         count = len(self._slice_indices()) if count is None else int(count)
         count = max(1, count)
@@ -2779,12 +2769,17 @@ class MontageWindow(QtWidgets.QMainWindow):
         """Where the slice is, in millimetres along the axis it cuts."""
         return f"{self.axis_letter()} = {self._mm_for_index(index):.0f}"
 
-    def _build(self):
+    # -------- building --------
+    def build(self):
         """Lay the slices out, one renderer each."""
         for renderer in self._renderers:
             self.render_window.RemoveRenderer(renderer)
         self._renderers = []
         self._keep_alive = []
+        if self._colorbar_renderer is not None:
+            self.render_window.RemoveRenderer(self._colorbar_renderer)
+            self._colorbar_renderer = None
+            self.colorbar_actor = None
 
         source = self.source
         indices = self._slice_indices()
@@ -2798,14 +2793,16 @@ class MontageWindow(QtWidgets.QMainWindow):
         axis = source._pane_axis[self.pane]
         extent = list(source._image.GetExtent())
         template = source.renderers[self.pane].GetActiveCamera()
+        floor = self.COLORBAR_HEIGHT if self.colorbar else 0.0
 
         for position, index in enumerate(indices):
             renderer = vtkRenderer()
             renderer.SetBackground(0, 0, 0)
             column = position % columns
             row = position // columns
-            renderer.SetViewport(column / columns, 1.0 - (row + 1) / rows,
-                                 (column + 1) / columns, 1.0 - row / rows)
+            height = (1.0 - floor) / rows
+            renderer.SetViewport(column / columns, 1.0 - (row + 1) * height,
+                                 (column + 1) / columns, 1.0 - row * height)
 
             display = list(extent)
             display[2 * axis] = display[2 * axis + 1] = index
@@ -2813,17 +2810,18 @@ class MontageWindow(QtWidgets.QMainWindow):
                 renderer.AddActor(actor)
                 self._keep_alive.append(actor)
 
-            label = vtkTextActor()
-            label.SetInput(self._slice_label(index))
-            prop = label.GetTextProperty()
-            prop.SetFontFamilyToArial()
-            prop.SetFontSize(12)
-            prop.SetColor(0.9, 0.9, 0.6)
-            coordinate = label.GetPositionCoordinate()
-            coordinate.SetCoordinateSystemToNormalizedViewport()
-            coordinate.SetValue(0.04, 0.04)
-            renderer.AddViewProp(label)
-            self._keep_alive.append(label)
+            if self.labels:
+                label = vtkTextActor()
+                label.SetInput(self._slice_label(index))
+                prop = label.GetTextProperty()
+                prop.SetFontFamilyToArial()
+                prop.SetFontSize(12)
+                prop.SetColor(0.9, 0.9, 0.6)
+                coordinate = label.GetPositionCoordinate()
+                coordinate.SetCoordinateSystemToNormalizedViewport()
+                coordinate.SetValue(0.04, 0.04)
+                renderer.AddViewProp(label)
+                self._keep_alive.append(label)
 
             camera = renderer.GetActiveCamera()
             camera.SetParallelProjection(1)
@@ -2842,21 +2840,98 @@ class MontageWindow(QtWidgets.QMainWindow):
         if scales:
             for renderer in self._renderers:
                 renderer.GetActiveCamera().SetParallelScale(max(scales))
+        if self.colorbar:
+            self._build_colorbar()
         self.render_window.Render()
 
     def _report(self, shown: int, dropped: int = 0):
         """Say what the sheet ended up showing, and why it is not more."""
         if not shown:
-            message = ("No slice in that range — "
-                       f"the volume covers {self._extent_mm()[0]:.0f} … "
-                       f"{self._extent_mm()[1]:.0f} mm")
+            low, high = self._extent_mm()
+            message = (f"No slice in that range — the volume covers "
+                       f"{low:.0f} … {high:.0f} mm")
+        elif self.slices is not None:
+            message = f"{shown} slices"
+            if len(self.slices) > shown:
+                message += f" ({len(self.slices) - shown} outside the volume)"
         else:
             message = f"{shown} slices, {self.step_mm:g} mm apart"
             if dropped:
                 message += f" ({dropped} more do not fit the sheet)"
             elif len(self.slice_positions()) >= self.MAX_SLICES:
                 message += f" (at most {self.MAX_SLICES})"
-        self.statusBar().showMessage(message)
+        if self.on_message is not None:
+            self.on_message(message)
+        return message
+
+    def _colorbar_lut(self):
+        """Lookup table and value range the bar should show."""
+        source = self.source
+        if source._overlay_image is not None:
+            return source._overlay_lut(), tuple(source.overlay_range)
+        window, level = source.get_window_level()
+        lut = vtkLookupTable()
+        lut.SetNumberOfTableValues(256)
+        lut.SetTableRange(level - 0.5 * window, level + 0.5 * window)
+        for i in range(256):
+            grey = i / 255.0
+            lut.SetTableValue(i, grey, grey, grey, 1.0)
+        lut.Build()
+        return lut, (level - 0.5 * window, level + 0.5 * window)
+
+    def _build_colorbar(self):
+        """A colour bar under the sheet, in p-values for a -log10(p) overlay."""
+        lut, value_range = self._colorbar_lut()
+        bar = vtkScalarBarActor()
+        bar.SetLookupTable(lut)
+        bar.SetOrientationToHorizontal()
+        bar.SetPosition(0.3, 0.25)
+        bar.SetWidth(0.4)
+        bar.SetHeight(0.55)
+        bar.SetTitle(" ")
+        try:
+            bar.SetAnnotationTextScaling(False)
+            bar.UnconstrainedFontSizeOn()
+        except Exception:
+            pass
+        for prop in (bar.GetLabelTextProperty(), bar.GetAnnotationTextProperty()):
+            prop.SetFontFamilyToArial()
+            prop.SetFontSize(14)
+            prop.SetColor(0.92, 0.92, 0.92)
+            prop.SetItalic(False)
+            prop.SetBold(False)
+
+        # A statistic map is read as p-values, exactly as in the surface viewer
+        ticks = []
+        if is_logp_name(self.source.overlay_path):
+            ticks = logp_colorbar_ticks(value_range[0], value_range[1],
+                                        self.source.overlay_clip)
+        if ticks:
+            compact = len(ticks) > 5
+            lut.ResetAnnotations()
+            for value in ticks:
+                lut.SetAnnotation(vtkVariant(float(value)),
+                                  format_p_value_label(value, compact))
+            bar.SetDrawAnnotations(True)
+            bar.SetDrawTickLabels(False)
+            bar.SetFixedAnnotationLeaderLineColor(True)
+        else:
+            bar.SetDrawAnnotations(False)
+            bar.SetDrawTickLabels(True)
+            bar.SetNumberOfLabels(5)
+            # VTK's default format prints '170.' for 170
+            bar.SetLabelFormat("%.4g")
+
+        renderer = vtkRenderer()
+        renderer.SetViewport(0.0, 0.0, 1.0, self.COLORBAR_HEIGHT)
+        renderer.SetBackground(0, 0, 0)
+        renderer.SetInteractive(0)
+        renderer.AddViewProp(bar)
+        self.render_window.AddRenderer(renderer)
+        self._colorbar_renderer = renderer
+        #: The bar itself, so its labelling can be inspected
+        self.colorbar_actor = bar
+        self._keep_alive.append(bar)
 
     def _slice_actors(self, display_extent: Sequence[int]) -> List[vtkImageActor]:
         """Image (and overlay) actor for one slice of the montage."""
@@ -2898,32 +2973,150 @@ class MontageWindow(QtWidgets.QMainWindow):
                 actor.SetUserMatrix(matrix)
         return actors
 
+
+def render_montage(viewer: CatImageViewer, path: str,
+                   size: Tuple[int, int] = (1200, 900), scale: int = 1,
+                   **montage_kwargs) -> str:
+    """Write a montage of *viewer* to a PNG without opening a window."""
+    window = vtkRenderWindow()
+    try:
+        window.SetOffScreenRendering(1)
+        window.SetMultiSamples(0)
+    except Exception:
+        pass
+    window.SetSize(int(size[0]), int(size[1]))
+    montage = Montage(viewer, window, **montage_kwargs)
+    montage.build()
+    return _write_png(window, path, scale=scale)
+
+
+class MontageWindow(QtWidgets.QMainWindow):
+    """Window around :class:`Montage`, with the sheet settings in a toolbar."""
+
+    AXES = Montage.AXES
+    MAX_SLICES = Montage.MAX_SLICES
+
+    def __init__(self, viewer: CatImageViewer, title: str = "Montage",
+                 pane: int = CatImageViewer.VIEW_AXIAL,
+                 slices_mm: Optional[Tuple[float, float, float]] = None,
+                 slices: Optional[Sequence[float]] = None,
+                 columns: int = 0, rows: int = 0, labels: bool = True,
+                 colorbar: bool = False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{title} — montage")
+
+        central = QtWidgets.QWidget(self)
+        box = QtWidgets.QVBoxLayout(central)
+        box.setContentsMargins(0, 0, 0, 0)
+        self.setCentralWidget(central)
+        self.vtk_widget = QVTKRenderWindowInteractor(central)
+        box.addWidget(self.vtk_widget, 1)
+        self.render_window = self.vtk_widget.GetRenderWindow()
+
+        self.montage = Montage(
+            viewer, self.render_window, pane=pane, slices_mm=slices_mm,
+            slices=slices, columns=columns, rows=rows, labels=labels,
+            colorbar=colorbar,
+            on_message=lambda text: self.statusBar().showMessage(text))
+
+        bar = self.addToolBar("Montage")
+        bar.setMovable(False)
+        self.axis_combo = QtWidgets.QComboBox()
+        self.axis_combo.addItems([label for label, _ in Montage.AXES])
+        self.axis_combo.setCurrentIndex(
+            [p for _, p in Montage.AXES].index(self.montage.pane))
+        self.axis_combo.currentIndexChanged.connect(self._axis_changed)
+        bar.addWidget(QtWidgets.QLabel(" Slices "))
+        bar.addWidget(self.axis_combo)
+
+        # start : step : stop in mm, as the slices are written down in
+        # cat_vol_slice_overlay
+        self.range_label = QtWidgets.QLabel(
+            f"  {self.montage.axis_letter()} mm (start step stop) ")
+        bar.addWidget(self.range_label)
+        self.range_spins: List[QtWidgets.QDoubleSpinBox] = []
+        for value, low in ((self.montage.start_mm, -9999.0),
+                           (self.montage.step_mm, 0.1),
+                           (self.montage.stop_mm, -9999.0)):
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setRange(low, 9999.0)
+            spin.setDecimals(1)
+            spin.setValue(value)
+            spin.setKeyboardTracking(False)
+            spin.setFixedWidth(76)
+            spin.valueChanged.connect(self._range_changed)
+            self.range_spins.append(spin)
+            bar.addWidget(spin)
+        reset = bar.addAction("Fit")
+        reset.setToolTip("Start, step and stop across the whole volume")
+        reset.triggered.connect(self.fit_range)
+
+        bar.addSeparator()
+        bar.addWidget(QtWidgets.QLabel(" Columns "))
+        self.columns_spin = QtWidgets.QSpinBox()
+        self.columns_spin.setRange(0, 20)
+        self.columns_spin.setSpecialValueText("auto")
+        self.columns_spin.setValue(self.montage.columns)
+        self.columns_spin.valueChanged.connect(self._layout_changed)
+        bar.addWidget(self.columns_spin)
+        bar.addWidget(QtWidgets.QLabel(" Rows "))
+        self.rows_spin = QtWidgets.QSpinBox()
+        self.rows_spin.setRange(0, 20)
+        self.rows_spin.setSpecialValueText("auto")
+        self.rows_spin.setValue(self.montage.rows)
+        self.rows_spin.valueChanged.connect(self._layout_changed)
+        bar.addWidget(self.rows_spin)
+
+        self.colorbar_box = QtWidgets.QCheckBox("Colorbar")
+        self.colorbar_box.setChecked(self.montage.colorbar)
+        self.colorbar_box.toggled.connect(self._colorbar_changed)
+        bar.addSeparator()
+        bar.addWidget(self.colorbar_box)
+
+        bar.addSeparator()
+        save = bar.addAction("Save…")
+        save.triggered.connect(self.save_screenshot_dialog)
+
+        self.resize(900, 700)
+        self.montage.build()
+        QtCore.QTimer.singleShot(0, self._post_show)
+
     # -------- interaction --------
     def _axis_changed(self, index: int):
         """Another orientation: its millimetres are different ones."""
-        self.pane = self.AXES[int(index)][1]
+        self.montage.pane = Montage.AXES[int(index)][1]
         self.fit_range()
 
     def _range_changed(self, _value=None):
-        self.start_mm, self.step_mm, self.stop_mm = (
-            spin.value() for spin in self.range_spins)
-        self._build()
+        # Typing a series replaces a list that was passed in
+        self.montage.set_slices(None)
+        (self.montage.start_mm, self.montage.step_mm,
+         self.montage.stop_mm) = (spin.value() for spin in self.range_spins)
+        self.montage.build()
 
     def _layout_changed(self, _value=None):
-        self.columns = self.columns_spin.value()
-        self.rows = self.rows_spin.value()
-        self._build()
+        self.montage.columns = self.columns_spin.value()
+        self.montage.rows = self.rows_spin.value()
+        self.montage.build()
+
+    def _colorbar_changed(self, checked: bool):
+        self.montage.colorbar = bool(checked)
+        self.montage.build()
 
     def fit_range(self):
         """Put start, step and stop back across the whole volume."""
-        self.start_mm, self.step_mm, self.stop_mm = self._default_range()
+        self.montage.set_slices(None)
+        (self.montage.start_mm, self.montage.step_mm,
+         self.montage.stop_mm) = self.montage._default_range()
         for spin, value in zip(self.range_spins,
-                               (self.start_mm, self.step_mm, self.stop_mm)):
+                               (self.montage.start_mm, self.montage.step_mm,
+                                self.montage.stop_mm)):
             spin.blockSignals(True)
             spin.setValue(value)
             spin.blockSignals(False)
-        self.range_label.setText(f"  {self.axis_letter()} mm (start step stop) ")
-        self._build()
+        self.range_label.setText(
+            f"  {self.montage.axis_letter()} mm (start step stop) ")
+        self.montage.build()
 
     def _post_show(self):
         try:
@@ -3230,10 +3423,10 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         }
 
     # -------- montage --------
-    def open_montage(self) -> "MontageWindow":
+    def open_montage(self, **montage_kwargs) -> "MontageWindow":
         """Open a sheet of slices through this volume, for a report figure."""
         montage = MontageWindow(self.viewer, os.path.basename(self.image_path),
-                                parent=self)
+                                parent=self, **montage_kwargs)
         montage.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, False)
         montage.setWindowFlag(QtCore.Qt.WindowType.Window, True)
         montage.show()
@@ -3803,6 +3996,32 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
 #  CLI                                                                #
 # ------------------------------------------------------------------ #
 
+#: Options whose value may start with a minus, which argparse would otherwise
+#: read as another option.  Slice positions are negative half the time.
+_MINUS_VALUE_OPTIONS = ("--slices",)
+
+
+def _attach_minus_values(argv: Sequence[str]) -> List[str]:
+    """Join ``--slices -30:10:30`` into ``--slices=-30:10:30``.
+
+    argparse only lets a value start with '-' when it looks like a plain
+    number, so '-30:10:30' and '-30 -15 0' would be taken for options.  The
+    attached form is unambiguous, and writing it is not the user's job.
+    """
+    out: List[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if (token in _MINUS_VALUE_OPTIONS and index + 1 < len(argv)
+                and str(argv[index + 1]).startswith("-")):
+            out.append(f"{token}={argv[index + 1]}")
+            index += 2
+            continue
+        out.append(token)
+        index += 1
+    return out
+
+
 def _parse_args(argv: Optional[Sequence[str]] = None):
     p = argparse.ArgumentParser(
         description=(
@@ -3845,6 +4064,85 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         help=("Atlas volume naming the region under the cursor; also "
               "selectable from the right-click menu"),
     )
+    montage = p.add_argument_group(
+        "montage",
+        "A sheet of slices instead of the three orthogonal views.  With "
+        "--screenshot it is written without opening a window, which is what "
+        "makes it usable in a script.")
+    montage.add_argument(
+        "--montage", action="store_true",
+        help="Show (or write) a montage of slices",
+    )
+    montage.add_argument(
+        "--slices", type=str, default=None, metavar="SPEC",
+        help=("Slices in mm, either a list ('25 30 40 80') or a range "
+              "('-40:10:60' = start:step:stop); across the volume by default"),
+    )
+    montage.add_argument(
+        "--orientation", choices=["axial", "coronal", "sagittal"],
+        default="axial",
+        help="Plane the montage cuts",
+    )
+    montage.add_argument(
+        "--columns", type=int, default=0,
+        help="Columns of the sheet (0 works it out)",
+    )
+    montage.add_argument(
+        "--rows", type=int, default=0,
+        help="Rows of the sheet (0 works it out)",
+    )
+    montage.add_argument(
+        "--colorbar", action="store_true",
+        help=("Draw a colour bar; a -log10(p) overlay ('log' in its name) is "
+              "labelled with p-values"),
+    )
+    montage.add_argument(
+        "--no-labels", action="store_true",
+        help="Leave out the position label in each tile",
+    )
+    montage.add_argument(
+        "--montage-size", nargs=2, type=int, default=[1200, 900],
+        metavar=("WIDTH", "HEIGHT"),
+        help="Pixel size of the written montage",
+    )
+
+    colours = p.add_argument_group(
+        "overlay colours", "How the overlay is coloured, as in the control panel")
+    colours.add_argument(
+        "--range", nargs=2, type=float, default=None, metavar=("LOW", "HIGH"),
+        help="Value range the colormap covers (the overlay's own by default)",
+    )
+    colours.add_argument(
+        "--clip", nargs=2, type=float, default=None, metavar=("LOW", "HIGH"),
+        help="Hide values in between, so the image shows through",
+    )
+    colours.add_argument(
+        "--threshold", type=float, default=None, metavar="P",
+        help=("Threshold a -log10(p) overlay at this p-value, i.e. clip to "
+              "+/- -log10(P); 0.05, 0.01 and 0.001 are the usual ones"),
+    )
+    colours.add_argument(
+        "--colormap", type=str, default=None, choices=list(COLORMAP_NAMES),
+        help="Colormap of the overlay",
+    )
+    colours.add_argument(
+        "--opacity", type=float, default=None, metavar="0..1",
+        help="Opacity of the overlay",
+    )
+    colours.add_argument(
+        "--inverse", action="store_true",
+        help="Flip the sign of the overlay",
+    )
+    colours.add_argument(
+        "--discrete", type=int, default=None, metavar="N",
+        help="Draw the colormap in N steps instead of continuously",
+    )
+    colours.add_argument(
+        "--range-bkg", nargs=2, type=float, default=None,
+        metavar=("LOW", "HIGH"),
+        help="Display range of the image underneath (percentiles by default)",
+    )
+
     p.add_argument(
         "--no-info", action="store_true",
         help="Leave the information panel out of the free quadrant",
@@ -3896,7 +4194,18 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         "--no-percentile", action="store_true",
         help="Use the full intensity range instead of percentile scaling",
     )
-    return p.parse_args(argv)
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    # Unknown arguments are looked at first: a list of slices has to be one
+    # argument, and unquoted its numbers end up here rather than in --slices
+    args, extra = p.parse_known_args(_attach_minus_values(argv))
+    numbers = [item for item in list(args.inputs) + list(extra)
+               if re.fullmatch(r"[-+]?[0-9]*\.?[0-9]+", str(item))]
+    if numbers:
+        p.error(f"{' '.join(numbers)}: slice positions have to be quoted, "
+                f'e.g. --slices "25 30 40 80"')
+    if extra:
+        p.error(f"unrecognized arguments: {' '.join(extra)}")
+    return args
 
 
 #: Files that hold a surface rather than a volume
@@ -3911,6 +4220,44 @@ MAX_VOLUMES = 6
 
 #: Windows per row when they are tiled; the rest go into further rows
 WINDOWS_PER_ROW = 3
+
+
+def parse_slices(text: str) -> Tuple[Optional[List[float]], Optional[Tuple[float, float, float]]]:
+    """Read a slice specification into either a list or a start/step/stop series.
+
+    Two forms, both in millimetres, as they are written in
+    ``cat_vol_slice_overlay``::
+
+        "25 30 40 80"      an explicit list (commas work as well)
+        "-40:10:60"        start:step:stop, or start:stop for 1 mm steps
+
+    Returns:
+        ``(list, None)`` or ``(None, (start, step, stop))``.
+
+    Raises:
+        ValueError: when the text is neither.
+    """
+    text = str(text).strip()
+    if not text:
+        raise ValueError("no slices given")
+    if ":" in text:
+        parts = [p for p in text.split(":") if p.strip()]
+        try:
+            values = [float(p) for p in parts]
+        except ValueError:
+            raise ValueError(f"cannot read the slice range {text!r}")
+        if len(values) == 2:
+            return None, (values[0], 1.0, values[1])
+        if len(values) == 3:
+            return None, (values[0], values[1], values[2])
+        raise ValueError("a slice range is start:step:stop or start:stop")
+    try:
+        values = [float(p) for p in text.replace(",", " ").split()]
+    except ValueError:
+        raise ValueError(f"cannot read the slice list {text!r}")
+    if not values:
+        raise ValueError("no slices given")
+    return values, None
 
 
 def is_logp_name(filename: Optional[str]) -> bool:
@@ -3994,6 +4341,61 @@ def _place_windows(windows: Sequence["VolumeViewerWindow"]):
         window.move(left + column * (width + gap), top + row * (height + gap))
 
 
+def _montage_options(args) -> dict:
+    """Montage settings from the command line, ready for :class:`Montage`.
+
+    Raises:
+        ValueError: when the slice specification cannot be read.
+    """
+    panes = {"axial": CatImageViewer.VIEW_AXIAL,
+             "coronal": CatImageViewer.VIEW_CORONAL,
+             "sagittal": CatImageViewer.VIEW_SAGITTAL}
+    slices = slices_mm = None
+    if args.slices:
+        slices, slices_mm = parse_slices(args.slices)
+    return {
+        'pane': panes[args.orientation],
+        'slices': slices,
+        'slices_mm': slices_mm,
+        'columns': args.columns,
+        'rows': args.rows,
+        'labels': not args.no_labels,
+        'colorbar': args.colorbar,
+    }
+
+
+def _apply_overlay_options(viewer: CatImageViewer, args):
+    """Colour the overlay the way the command line asks for.
+
+    Called after the overlay is loaded, since its own value range is the
+    default for everything here.
+    """
+    if args.range_bkg:
+        low, high = sorted(float(v) for v in args.range_bkg)
+        if high > low:
+            viewer.set_window_level(high - low, 0.5 * (high + low))
+    if viewer.overlay_path is None and not args.overlay:
+        return
+    if args.range:
+        viewer.overlay_range = [float(args.range[0]), float(args.range[1])]
+    if args.clip:
+        viewer.overlay_clip = (float(args.clip[0]), float(args.clip[1]))
+    if args.threshold:
+        # A p-value is thresholded on the -log10(p) scale the map is stored in
+        edge = -math.log10(float(args.threshold))
+        viewer.overlay_clip = (-edge, edge)
+    if args.colormap:
+        viewer.overlay_colormap = COLORMAP_ORDER[
+            list(COLORMAP_NAMES).index(args.colormap)]
+    if args.opacity is not None:
+        viewer.overlay_opacity = max(0.0, min(1.0, float(args.opacity)))
+    if args.inverse:
+        viewer.overlay_inverse = True
+    if args.discrete is not None:
+        viewer.overlay_discrete = max(0, int(args.discrete))
+    viewer.refresh_overlay()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI entry-point."""
     if argv is None and running_as_app() and len(sys.argv) < 2:
@@ -4035,6 +4437,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         volumes = volumes[:MAX_VOLUMES]
     surfaces = surfaces[:3]
 
+    try:
+        montage_options = _montage_options(args)
+    except ValueError as exc:
+        print(f"[cat_vol_view] {exc}", file=sys.stderr)
+        return 2
+
     if args.screenshot or args.headless:
         # Batch mode renders without a window, so no Qt application is needed
         for i, volume in enumerate(volumes):
@@ -4045,6 +4453,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             viewer.setup(window_title=os.path.basename(volume))
             if args.overlay:
                 viewer.set_overlay(args.overlay)
+            _apply_overlay_options(viewer, args)
             if args.atlas:
                 viewer.set_atlas(args.atlas)
             for contour in (args.contour or ()):
@@ -4053,7 +4462,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if screenshot and len(volumes) > 1:
                 stem, ext = os.path.splitext(screenshot)
                 screenshot = f"{stem}_{i + 1}{ext or '.png'}"
-            viewer.render(screenshot=screenshot, headless=True)
+            if args.montage:
+                viewer.render(headless=True)     # the cameras the sheet copies
+                if not screenshot:
+                    print("[cat_vol_view] --montage --headless writes nothing "
+                          "without --screenshot", file=sys.stderr)
+                    return 2
+                written = render_montage(
+                    viewer, screenshot, size=tuple(args.montage_size),
+                    on_message=lambda text: print(f"[cat_vol_view] {text}"),
+                    **montage_options)
+                if args.verbose:
+                    print(f"[cat_vol_view] Wrote montage: {written}")
+            else:
+                viewer.render(screenshot=screenshot, headless=True)
         return 0
 
     # Interactive start only: a batch render should have no side effects
@@ -4063,8 +4485,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # One window per volume, with their cursors linked
     windows = []
     for volume in volumes:
-        window = VolumeViewerWindow(volume, surfaces=surfaces,
-                                    overlay=args.overlay, **options)
+        window = VolumeViewerWindow(volume, surfaces=surfaces, **options)
+        _apply_overlay_options(window.viewer, args)
+        if args.overlay:
+            window.set_overlay(args.overlay)     # the panel follows the file
+            _apply_overlay_options(window.viewer, args)
+            window._sync_control_panel()
         if args.atlas:
             window.set_atlas(args.atlas)
         windows.append(window)
@@ -4075,6 +4501,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for window in windows:
         window.show()
     _place_windows(windows)
+    if args.montage:
+        for window in windows:
+            window.open_montage(**montage_options)
     return int(app.exec())
 
 

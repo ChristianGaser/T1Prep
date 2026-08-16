@@ -157,15 +157,17 @@ try:
     from .colormaps import (
         C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY,
         COLORMAP_NAMES, COLORMAP_ORDER,
-        LookupTableWithEnabling, apply_discrete, build_overlay_lut,
-        clipped_lut_indices, get_lookup_table, invert_lut,
+        LOG10_P005, LookupTableWithEnabling, apply_discrete, build_overlay_lut,
+        clipped_lut_indices, format_p_value_label, get_lookup_table, invert_lut,
+        logp_colorbar_ticks,
     )
 except ImportError:  # direct invocation as a script
     from colormaps import (
         C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY,
         COLORMAP_NAMES, COLORMAP_ORDER,
-        LookupTableWithEnabling, apply_discrete, build_overlay_lut,
-        clipped_lut_indices, get_lookup_table, invert_lut,
+        LOG10_P005, LookupTableWithEnabling, apply_discrete, build_overlay_lut,
+        clipped_lut_indices, format_p_value_label, get_lookup_table, invert_lut,
+        logp_colorbar_ticks,
     )
 
 # ---- Naming helpers ----
@@ -392,9 +394,6 @@ def detect_overlay_kind(filename: str) -> Optional[str]:
     return None
 
 
-# -log10(0.05) = 1.30103, the usual p<0.05 threshold of CAT12 statistic results
-LOG10_P005 = -math.log10(0.05)
-
 def is_logp_overlay(filename: Optional[str]) -> bool:
     """Return True when the overlay holds -log10(p) values.
 
@@ -404,75 +403,6 @@ def is_logp_overlay(filename: Optional[str]) -> bool:
     if not filename:
         return False
     return 'log' in Path(filename).name.lower()
-
-
-def format_p_value_label(value: float, compact: bool = False) -> str:
-    """Convert a -log10(p) tick to the p-value it stands for.
-
-    Mirrors the tick labels of ``cat_surf_results``: 1.3 -> ``0.05``,
-    2 -> ``0.01``, 3 -> ``0.001``; beyond 1e-7 the exponential notation is
-    used, and negative values (the other tail of a two-sided contrast) keep a
-    leading minus sign.
-
-    Args:
-        value: Tick position in -log10(p) units.
-        compact: Switch to the exponential form from 1e-4 on.  Needed when
-            many ticks share the bar, where '0.0000001' would overlap its
-            neighbour.
-    """
-    mag = abs(float(value))
-    if mag == 0.0:
-        return ''
-    p = 10.0 ** (-mag)
-    if mag > (3 if compact else 7):
-        exp = round(mag)
-        label = f'1e-{exp:02d}' if abs(mag - exp) < 1e-6 else f'{p:.0e}'
-    else:
-        # Trailing zeros of the fixed-point form are dropped, so -log10(0.05)
-        # prints as '0.05' rather than '0.0500000'.
-        label = f'{p:.7f}'.rstrip('0')
-    return f'-{label}' if value < 0 else label
-
-
-def logp_colorbar_ticks(
-    vmin: float, vmax: float, clip: Optional[Tuple[float, float]] = None, max_ticks: int = 8
-) -> List[float]:
-    """Tick positions (in -log10(p) units) for a log-p colorbar.
-
-    Follows ``cat_surf_results``: integer steps over the displayed range, but
-    when the overlay is thresholded at p<0.05 the first tick above (and below)
-    zero is moved to exactly ±log10(0.05) so it is labelled '0.05'.
-    """
-    if not (vmax > vmin):
-        return []
-    c0 = c1 = None
-    if clip is not None and clip[1] > clip[0]:
-        c0, c1 = float(clip[0]), float(clip[1])
-    step = max(1, int(math.ceil((vmax - vmin) / max(1, max_ticks))))
-    lo, hi = int(round(vmin)), int(round(vmax))
-
-    if c1 is not None and 1.3 <= abs(c1) <= 1.4:
-        if c0 is not None and -1.4 <= c0 <= -1.3 and vmin < 0:
-            ticks = [float(v) for v in range(lo, hi + 1, step)]
-            if 0.0 in ticks:
-                mid = ticks.index(0.0)
-                if 0 < mid < len(ticks) - 1:
-                    ticks[mid - 1] = -LOG10_P005
-                    ticks[mid + 1] = LOG10_P005
-            else:
-                ticks = [
-                    -LOG10_P005 if v == -1.0 else (LOG10_P005 if v == 1.0 else v)
-                    for v in ticks
-                ]
-        else:
-            ticks = [float(v) for v in range(0, hi + 1, step)]
-            if len(ticks) > 1:
-                ticks[1] = LOG10_P005
-    else:
-        ticks = [float(v) for v in range(math.floor(vmin), math.ceil(vmax) + 1, step)]
-
-    # Zero has no p-value; keep only ticks that fall inside the shown range
-    return [v for v in ticks if v != 0.0 and vmin <= v <= vmax]
 
 
 def _is_gifti_mesh_by_name(filename: str) -> bool:

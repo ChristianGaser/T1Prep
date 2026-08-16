@@ -124,8 +124,26 @@ In `CAT_VolView`, a right-click opens the display settings — zoom, atlas, over
 contours, raw voxels, crosshair, orientation letters, image information — and they
 apply to all open volumes. The same menu saves a **screenshot** and opens a **montage**
 for a report figure: pick the orientation, give start, step and stop in millimetres
-(`-40 10 60`, as in `cat_vol_slice_overlay`) and the number of columns and rows, or
-leave the layout on *auto*. The zoom belongs to that menu: dragging and
+(as in `cat_vol_slice_overlay`) and the number of columns and rows, or leave the layout
+on *auto*.
+
+The montage is also scriptable — with `--screenshot` it is written without opening a
+window, so the same figure can be produced for a whole study:
+
+```bash
+CAT_VolView T1.nii.gz --montage --slices "25 30 40 80" --columns 4 \
+    --overlay spmT_logP.nii.gz --threshold 0.05 --colormap FIRE --colorbar \
+    --screenshot figure.png
+```
+
+`--slices` takes either a list of millimetre positions (`"25 30 40 80"`) or a range
+(`"-40:10:60"` = start:step:stop); leave it out to cover the volume. `--orientation`
+picks the plane, `--columns`/`--rows` the layout, `--no-labels` drops the position
+labels and `--montage-size W H` sets the pixel size. The overlay is coloured with
+`--range`, `--clip`, `--threshold P` (clips a −log10(p) map at that p-value),
+`--colormap`, `--opacity`, `--inverse` and `--discrete N`, the image underneath with
+`--range-bkg`; `--colorbar` labels a −log10(p) overlay with p-values, exactly as
+`cat_surf_results` does. The zoom belongs to that menu: dragging and
 scrolling do not change it, so the wheel steps through slices instead. Uncheck
 *Zoom → Lock zoom* (or start with `--free-zoom`) to zoom with the mouse.
 

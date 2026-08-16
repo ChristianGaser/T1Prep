@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 import tempfile
@@ -16,10 +17,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     import nibabel as nib
+    from vtkmodules.vtkRenderingCore import vtkRenderWindow
     from t1prep.gui.cat_vol_view import (
         CatImageViewer,
+        Montage,
         MontageWindow,
         VolumeViewerWindow,
+        parse_slices,
+        render_montage,
         _split_inputs,
         link_windows,
         MAX_VOLUMES,
@@ -1248,27 +1253,6 @@ class TestMontageLayout(unittest.TestCase):
     written down in cat_vol_slice_overlay.
     """
 
-    class _Montage:
-        """The geometry of MontageWindow without the Qt window around it."""
-        AXES = MontageWindow.AXES
-        MAX_SLICES = MontageWindow.MAX_SLICES
-        _world_axis = MontageWindow._world_axis
-        axis_letter = MontageWindow.axis_letter
-        _mm_for_index = MontageWindow._mm_for_index
-        _index_for_mm = MontageWindow._index_for_mm
-        _extent_mm = MontageWindow._extent_mm
-        _default_range = MontageWindow._default_range
-        slice_positions = MontageWindow.slice_positions
-        _grid = MontageWindow._grid
-        _slice_indices = MontageWindow._slice_indices
-        _slice_label = MontageWindow._slice_label
-
-        def __init__(self, source, pane, slices_mm=None, columns=0, rows=0):
-            self.source, self.pane = source, pane
-            self.columns, self.rows = columns, rows
-            self.start_mm, self.step_mm, self.stop_mm = (
-                slices_mm if slices_mm else self._default_range())
-
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         # 20 x 24 x 28 voxels of 1 mm; z runs from -14 to 13 mm
@@ -1289,7 +1273,8 @@ class TestMontageLayout(unittest.TestCase):
         self._tmp.cleanup()
 
     def _montage(self, pane=CatImageViewer.VIEW_AXIAL, **kwargs):
-        return self._Montage(self.viewer, pane, **kwargs)
+        """A montage on its own render window — no Qt window involved."""
+        return Montage(self.viewer, vtkRenderWindow(), pane=pane, **kwargs)
 
     # ---- millimetres ----
     def test_the_axis_is_the_one_the_slices_step_along(self):
@@ -1343,6 +1328,25 @@ class TestMontageLayout(unittest.TestCase):
             self.assertAlmostEqual(montage._mm_for_index(index), position, places=6)
 
     # ---- the grid ----
+    def test_an_explicit_list_is_used_as_it_is(self):
+        """The slices of a figure are usually hand-picked, not a series."""
+        montage = self._montage(slices=[-10.0, 0.0, 4.0, 11.0])
+        self.assertEqual(montage.slice_positions(), [-10.0, 0.0, 4.0, 11.0])
+        self.assertEqual([montage._slice_label(i)
+                          for i in montage._slice_indices()],
+                         ["z = -10", "z = 0", "z = 4", "z = 11"])
+
+    def test_a_list_beats_a_range(self):
+        montage = self._montage(slices=[0.0, 5.0], slices_mm=(-10.0, 1.0, 10.0))
+        self.assertEqual(montage.slice_positions(), [0.0, 5.0])
+        montage.set_slices(None)          # and going back works
+        self.assertEqual(len(montage.slice_positions()), 21)
+
+    def test_a_list_is_filtered_by_the_volume_too(self):
+        low, high = self._montage()._extent_mm()
+        montage = self._montage(slices=[low - 50.0, 0.0, high + 50.0])
+        self.assertEqual(montage.slice_positions(), [0.0])
+
     def test_the_grid_stays_roughly_square_when_not_told(self):
         for count, expected in ((1, (1, 1)), (4, (2, 2)), (9, (3, 3)),
                                 (12, (4, 3)), (16, (4, 4))):
@@ -1376,6 +1380,239 @@ class TestMontageLayout(unittest.TestCase):
         position[axis] = index
         expected = self.viewer._world_from_index(tuple(position))[2]
         self.assertEqual(montage._slice_label(index), f"z = {expected:.0f}")
+
+
+class TestSliceSpecification(unittest.TestCase):
+    """--slices takes a list or a start:step:stop range, both in mm."""
+
+    def test_a_list(self):
+        for text in ("25 30 40 80", "25,30,40,80", " 25, 30 40,80 "):
+            self.assertEqual(parse_slices(text), ([25.0, 30.0, 40.0, 80.0], None))
+
+    def test_negative_and_fractional_positions(self):
+        self.assertEqual(parse_slices("-30 -7.5 0")[0], [-30.0, -7.5, 0.0])
+
+    def test_a_range(self):
+        self.assertEqual(parse_slices("-40:10:60"), (None, (-40.0, 10.0, 60.0)))
+
+    def test_a_range_without_a_step_goes_in_millimetre_steps(self):
+        self.assertEqual(parse_slices("-4:4"), (None, (-4.0, 1.0, 4.0)))
+
+    def test_a_single_slice(self):
+        self.assertEqual(parse_slices("12"), ([12.0], None))
+
+    def test_nonsense_is_refused_with_a_reason(self):
+        for text in ("", "   ", "abc", "1:2:3:4", "10:x:20"):
+            with self.assertRaises(ValueError):
+                parse_slices(text)
+
+
+class TestMontageCommandLine(unittest.TestCase):
+    """What the montage options add up to before anything is drawn."""
+
+    def _args(self, *argv):
+        from t1prep.gui.cat_vol_view import _parse_args
+        return _parse_args(["image.nii.gz", *argv])
+
+    def test_slice_values_may_start_with_a_minus(self):
+        """mm coordinates are negative half the time; argparse hates that."""
+        from t1prep.gui.cat_vol_view import _attach_minus_values
+        self.assertEqual(_attach_minus_values(["--slices", "-30:10:30"]),
+                         ["--slices=-30:10:30"])
+        self.assertEqual(_attach_minus_values(["--slices", "-30 -15 0"]),
+                         ["--slices=-30 -15 0"])
+        # anything else is passed through untouched
+        self.assertEqual(_attach_minus_values(["--slices", "10 20", "--colorbar"]),
+                         ["--slices", "10 20", "--colorbar"])
+        self.assertEqual(self._args("--slices", "-30:10:30").slices, "-30:10:30")
+        self.assertEqual(self._args("--slices", "-30 -15 0").slices, "-30 -15 0")
+
+    def test_an_unquoted_list_is_explained(self):
+        with self.assertRaises(SystemExit):
+            self._args("--slices", "25", "30", "40")
+
+    def test_the_options_reach_the_montage(self):
+        from t1prep.gui.cat_vol_view import _montage_options
+        options = _montage_options(self._args(
+            "--montage", "--slices", "25 30 40 80", "--orientation", "coronal",
+            "--columns", "2", "--rows", "3", "--colorbar", "--no-labels"))
+        self.assertEqual(options['slices'], [25.0, 30.0, 40.0, 80.0])
+        self.assertIsNone(options['slices_mm'])
+        self.assertEqual(options['pane'], CatImageViewer.VIEW_CORONAL)
+        self.assertEqual((options['columns'], options['rows']), (2, 3))
+        self.assertTrue(options['colorbar'])
+        self.assertFalse(options['labels'])
+
+    def test_a_range_becomes_start_step_stop(self):
+        from t1prep.gui.cat_vol_view import _montage_options
+        options = _montage_options(self._args("--slices", "-40:10:60"))
+        self.assertEqual(options['slices_mm'], (-40.0, 10.0, 60.0))
+        self.assertIsNone(options['slices'])
+
+    def test_defaults_leave_the_slices_to_the_volume(self):
+        from t1prep.gui.cat_vol_view import _montage_options
+        options = _montage_options(self._args("--montage"))
+        self.assertIsNone(options['slices'])
+        self.assertIsNone(options['slices_mm'])
+        self.assertEqual(options['pane'], CatImageViewer.VIEW_AXIAL)
+        self.assertTrue(options['labels'])
+
+    def test_a_bad_specification_is_refused(self):
+        from t1prep.gui.cat_vol_view import _montage_options
+        with self.assertRaises(ValueError):
+            _montage_options(self._args("--slices", "1:2:3:4"))
+
+
+class TestOverlayCommandLine(unittest.TestCase):
+    """--range, --clip, --threshold and friends, applied to a viewer."""
+
+    class _Viewer:
+        overlay_path = "spmT_logP.nii.gz"
+        overlay_range = [0.0, 5.0]
+        overlay_clip = (0.0, 0.0)
+        overlay_colormap = None
+        overlay_opacity = 0.8
+        overlay_inverse = False
+        overlay_discrete = 0
+
+        def __init__(self):
+            self.window_level = None
+            self.refreshed = 0
+
+        def set_window_level(self, window, level):
+            self.window_level = (window, level)
+
+        def refresh_overlay(self):
+            self.refreshed += 1
+
+    def _apply(self, *argv):
+        from t1prep.gui.cat_vol_view import _apply_overlay_options, _parse_args
+        viewer = self._Viewer()
+        _apply_overlay_options(viewer, _parse_args(["image.nii.gz", *argv]))
+        return viewer
+
+    def test_range_and_clip(self):
+        viewer = self._apply("--range", "0", "8", "--clip", "-2", "2")
+        self.assertEqual(viewer.overlay_range, [0.0, 8.0])
+        self.assertEqual(viewer.overlay_clip, (-2.0, 2.0))
+        self.assertEqual(viewer.refreshed, 1)
+
+    def test_a_p_value_threshold_becomes_a_clip_window(self):
+        viewer = self._apply("--threshold", "0.05")
+        edge = -math.log10(0.05)
+        self.assertAlmostEqual(viewer.overlay_clip[0], -edge)
+        self.assertAlmostEqual(viewer.overlay_clip[1], edge)
+        self.assertAlmostEqual(self._apply("--threshold", "0.001").overlay_clip[1],
+                               3.0)
+
+    def test_colours(self):
+        from t1prep.gui.colormaps import FIRE
+        viewer = self._apply("--colormap", "FIRE", "--opacity", "0.5",
+                             "--inverse", "--discrete", "8")
+        self.assertEqual(viewer.overlay_colormap, FIRE)
+        self.assertEqual(viewer.overlay_opacity, 0.5)
+        self.assertTrue(viewer.overlay_inverse)
+        self.assertEqual(viewer.overlay_discrete, 8)
+
+    def test_the_image_range_is_a_window_and_a_level(self):
+        viewer = self._apply("--range-bkg", "20", "120")
+        self.assertEqual(viewer.window_level, (100.0, 70.0))
+
+    def test_nothing_given_changes_nothing(self):
+        viewer = self._apply()
+        self.assertEqual(viewer.overlay_range, [0.0, 5.0])
+        self.assertEqual(viewer.overlay_clip, (0.0, 0.0))
+        self.assertIsNone(viewer.window_level)
+
+
+class TestBatchMontage(unittest.TestCase):
+    """The montage as a script: no window, a PNG on disk."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        affine = np.array([[-1.0, 0, 0, 16.0],
+                           [0, 1.0, 0, -16.0],
+                           [0, 0, 1.0, -16.0],
+                           [0, 0, 0, 1.0]])
+        i, j, k = np.mgrid[0:32, 0:32, 0:32]
+        radius = np.sqrt((i - 16) ** 2 + (j - 16) ** 2 + (k - 16) ** 2)
+        nib.save(nib.Nifti1Image(np.clip(100 - 3 * radius, 0, None).astype(np.float32),
+                                 affine), str(tmp / "image.nii.gz"))
+        self.image = str(tmp / "image.nii.gz")
+        # 'log' in the name marks a -log10(p) map, as in CAT12
+        nib.save(nib.Nifti1Image((6.0 * np.exp(-radius / 4.0)).astype(np.float32),
+                                 affine), str(tmp / "spm_logP.nii.gz"))
+        self.overlay = str(tmp / "spm_logP.nii.gz")
+        self.out = tmp / "montage.png"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _viewer(self, overlay=None):
+        viewer = CatImageViewer(percentile_range=None)
+        viewer.load_image(self.image)
+        try:
+            viewer.setup(window_title="test")
+            viewer.render(headless=True)
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+        if overlay:
+            viewer.set_overlay(overlay)
+        return viewer
+
+    def test_a_png_is_written_without_a_window(self):
+        written = render_montage(self._viewer(), str(self.out),
+                                 size=(400, 300), slices=[-10.0, 0.0, 10.0])
+        self.assertTrue(os.path.exists(written))
+        with open(written, "rb") as fh:
+            self.assertEqual(fh.read(4), b"\x89PNG")
+
+    def test_the_size_is_the_one_asked_for(self):
+        render_montage(self._viewer(), str(self.out), size=(640, 480),
+                       slices=[0.0])
+        from PySide6 import QtGui
+        image = QtGui.QImage(str(self.out))
+        self.assertEqual((image.width(), image.height()), (640, 480))
+
+    def test_a_colorbar_adds_a_renderer_of_its_own(self):
+        viewer = self._viewer(self.overlay)
+        window = vtkRenderWindow()
+        montage = Montage(viewer, window, slices=[0.0], colorbar=True)
+        montage.build()
+        self.assertIsNotNone(montage._colorbar_renderer)
+        # and the tiles make room for it
+        self.assertGreater(montage._renderers[0].GetViewport()[1], 0.0)
+
+    def test_a_logp_overlay_gets_p_value_ticks(self):
+        viewer = self._viewer(self.overlay)
+        viewer.overlay_clip = (-1.3, 1.3)
+        montage = Montage(viewer, vtkRenderWindow(), slices=[0.0], colorbar=True)
+        montage.build()
+        lut = montage.colorbar_actor.GetLookupTable()
+        labels = [lut.GetAnnotation(i) for i in range(lut.GetNumberOfAnnotatedValues())]
+        self.assertIn("0.05", labels)     # as in cat_surf_results
+        self.assertIn("0.01", labels)
+
+    def test_labels_can_be_left_out(self):
+        for labels, expected in ((True, 2), (False, 1)):
+            montage = Montage(self._viewer(), vtkRenderWindow(), slices=[0.0],
+                              labels=labels)
+            montage.build()
+            props = montage._renderers[0].GetViewProps()
+            self.assertEqual(props.GetNumberOfItems(), expected)
+
+    def test_the_message_says_what_was_drawn(self):
+        seen = []
+        render_montage(self._viewer(), str(self.out), size=(300, 200),
+                       slices=[-10.0, 0.0, 10.0], on_message=seen.append)
+        self.assertEqual(seen, ["3 slices"])
+
+    def test_slices_outside_the_volume_are_reported(self):
+        seen = []
+        render_montage(self._viewer(), str(self.out), size=(300, 200),
+                       slices=[0.0, 500.0], on_message=seen.append)
+        self.assertIn("outside the volume", seen[0])
 
 
 class TestDropTargets(unittest.TestCase):
