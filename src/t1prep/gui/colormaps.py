@@ -120,6 +120,12 @@ def _fill_from_ctf(lut: LookupTableWithEnabling, points, alpha: float):
         lut.SetTableValue(i, r, g, b, alpha)
 
 def get_lookup_table(colormap: int, alpha: float) -> LookupTableWithEnabling:
+    """The lookup table for a colormap id, at *alpha* opacity.
+
+    Args:
+        colormap: One of the module constants (JET, HOT, FIRE, …).
+        alpha: Opacity given to every entry.
+    """
     lut = LookupTableWithEnabling()
     if colormap == C1:
         pts = [

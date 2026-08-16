@@ -2140,6 +2140,15 @@ class CatImageViewer:
 
     # ---------- Public API ----------
     def load_image(self, image_path: str):
+        """Read a volume and work out the millimetre space it lives in.
+
+        The sform/qform of the header is what puts slices, crosshair, surfaces
+        and any linked window into the same space, and ``scl_slope``/
+        ``scl_inter`` are applied so the values are the real intensities.
+
+        Raises:
+            RuntimeError: when the file cannot be read or is empty.
+        """
         if self.verbose:
             print(f"[cat_vol_view] Loading image: {image_path}")
         reader = _guess_image_reader(image_path)
@@ -2224,6 +2233,12 @@ class CatImageViewer:
         return self
 
     def add_surface(self, surface: "str | vtkPolyData", color: Tuple[float, float, float]):
+        """Draw a surface as an outline on the slices, in *color*.
+
+        The surface has to be in the millimetre space of the image; only when
+        the image carries no transform of its own is a surface far from it
+        nudged onto the image centre.
+        """
         if isinstance(surface, vtkPolyData):
             poly = surface
         else:

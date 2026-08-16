@@ -19,6 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     from t1prep.gui.cat_surf_view import (
         UNDERLAY_GREYS,
+        UNDERLAY_PLAIN_GREY,
         VIEWER_KEYS,
         default_overlay_range,
         ClusterTableDialog,
@@ -1149,3 +1150,19 @@ class TestAtlasHemisphereOrder(unittest.TestCase):
         expected, _names = read_annotation(str(self.left))
         for chosen in (self.left, self.right):
             np.testing.assert_array_equal(self._labels(chosen)[0], expected)
+
+
+class TestPlainUnderlay(unittest.TestCase):
+    """With no shading the surface is an even grey, not almost white."""
+
+    def test_it_is_a_mid_grey(self):
+        for channel in UNDERLAY_PLAIN_GREY:
+            self.assertGreater(channel, 0.2)
+            self.assertLess(channel, 0.45)     # 0.5 comes out nearly white
+
+    def test_it_is_neutral(self):
+        self.assertEqual(len(set(UNDERLAY_PLAIN_GREY)), 1)
+
+    def test_it_is_darker_than_the_shading_band(self):
+        """Otherwise 'nothing' would look brighter than the shaded surfaces."""
+        self.assertLess(UNDERLAY_PLAIN_GREY[0], UNDERLAY_GREYS[1])

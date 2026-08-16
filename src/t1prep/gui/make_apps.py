@@ -333,7 +333,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               file=sys.stderr)
         return 1
     try:
-        apps = build_apps(out_dir=args.out_dir, bin_dir=args.bin_dir)
+        build_apps(out_dir=args.out_dir, bin_dir=args.bin_dir)
     except FileNotFoundError as exc:
         print(f"❌ {exc}", file=sys.stderr)
         return 1

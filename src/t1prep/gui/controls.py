@@ -173,6 +173,14 @@ class HistogramWidget(QtWidgets.QWidget):
 
 
 class ControlPanel(QtWidgets.QWidget):
+    """The docked panel both viewers use to control an overlay.
+
+    Overlay picker, value range, clip window, p-value thresholds, background
+    range with its histogram, opacity, colormap, discrete levels and
+    inversion.  The rows that only make sense for a surface are hidden by
+    :meth:`configure_for_volume`.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(320)
@@ -504,6 +512,7 @@ class ControlPanel(QtWidgets.QWidget):
 
     # Public: set slider bounds (min,max) and align slider positions to current spin values
     def set_overlay_bounds(self, vmin: float, vmax: float):
+        """Set what the overlay range sliders span (the spin boxes keep their value)."""
         self._overlay_bounds = (float(vmin), float(vmax))
         self._spin_to_slider('overlay', 'min', float(self.range_min.value()))
         self._spin_to_slider('overlay', 'max', float(self.range_max.value()))

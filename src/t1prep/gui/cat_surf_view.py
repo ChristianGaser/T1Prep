@@ -55,13 +55,13 @@ Requires: vtk (>=9), PySide6; nibabel (for GIFTI fallback + FreeSurfer textures 
 
 Usage
 -----
-Preferred (uses the repo's venv wrapper):
+Installed entry point (a pip install puts it in the environment's bin/):
 
-    scripts/CAT_SurfView <mesh_or_overlay> [more_overlays...] [options]
+    CAT_SurfView <mesh_or_overlay> [more_overlays...] [options]
 
-Direct invocation:
+From a source checkout:
 
-    python src/t1prep/gui/cat_surf_view.py <mesh_or_overlay> [more_overlays...] [options]
+    scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py <mesh_or_overlay> [options]
 """
 from __future__ import annotations
 import argparse
@@ -71,7 +71,7 @@ import sys
 import re
 import numpy as np
 from scipy import sparse
-from scipy.sparse import csgraph  # noqa: F401  (sparse.csgraph)
+from scipy.sparse import csgraph  # noqa: F401  (needed for sparse.csgraph)
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -188,18 +188,14 @@ DEFAULT_WINDOW_SIZE = (1800, 800)
 try:
     from .colormaps import (
         C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY,
-        COLORMAP_NAMES, COLORMAP_ORDER,
-        LOG10_P005, LookupTableWithEnabling, apply_discrete, build_overlay_lut,
-        clipped_lut_indices, format_p_value_label, get_lookup_table, invert_lut,
-        logp_colorbar_ticks,
+        LOG10_P005, apply_discrete, build_overlay_lut, clipped_lut_indices,
+        format_p_value_label, get_lookup_table, invert_lut, logp_colorbar_ticks,
     )
 except ImportError:  # direct invocation as a script
     from colormaps import (
         C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY,
-        COLORMAP_NAMES, COLORMAP_ORDER,
-        LOG10_P005, LookupTableWithEnabling, apply_discrete, build_overlay_lut,
-        clipped_lut_indices, format_p_value_label, get_lookup_table, invert_lut,
-        logp_colorbar_ticks,
+        LOG10_P005, apply_discrete, build_overlay_lut, clipped_lut_indices,
+        format_p_value_label, get_lookup_table, invert_lut, logp_colorbar_ticks,
     )
 
 # ---- Naming helpers ----
@@ -1013,8 +1009,6 @@ def split_combined_mesh(
     Returns:
         (poly_l, poly_r): Separate vtkPolyData objects.
     """
-    from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy as _v2n
-
     pts_all = poly.GetPoints()
     n_total = pts_all.GetNumberOfPoints()
     n_right = n_total - n_left
@@ -1191,6 +1185,14 @@ def _nib_load_gifti(filename: str):
 
 
 def read_gifti_mesh(filename: str) -> vtkPolyData:
+    """Read a surface mesh from a GIFTI file.
+
+    Uses VTK's reader when the build has one and falls back to nibabel, which
+    also covers the files VTK refuses (SPM's external-binary GIFTI).
+
+    Raises:
+        RuntimeError: when the file holds no POINTSET/TRIANGLE arrays.
+    """
     if HAVE_VTK_GIFTI:
         r = vtkGIFTIReader(); r.SetFileName(filename); r.Update()
         out = r.GetOutput()
@@ -1341,6 +1343,12 @@ def _is_freesurfer_morph(filename: str) -> bool:
 
 
 def read_scalars(filename: str) -> vtkDoubleArray:
+    """Read one value per vertex from an overlay file.
+
+    Handles GIFTI (including SPM's ``.gii`` + ``.dat`` pair), FreeSurfer morph
+    data such as thickness or curv, FreeSurfer annotations and plain text with
+    one value per line.
+    """
     ext = Path(filename).suffix.lower()
 
     # --- SPM surface analysis overlays (.gii with .dat companion) ---
@@ -1436,6 +1444,7 @@ def _title_from_path(path: str, max_chars: int = 80) -> str:
 
 
 # ---- Stats ----
+# Overlay statistics for the colorbar title; NaN vertices are left out
 def get_mean(arr: vtkDoubleArray) -> float: return float(np.nanmean(vtk_to_numpy(arr)))
 def get_median(arr: vtkDoubleArray) -> float: return float(np.nanmedian(vtk_to_numpy(arr)))
 def get_std(arr: vtkDoubleArray) -> float: return float(np.nanstd(vtk_to_numpy(arr)))
@@ -1460,19 +1469,6 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
     higher priority and aborts the ones it handles (see VIEWER_KEYS).
     """
 
-    def __init__(self):
-        super().__init__()
-        self._renderer = None
-        self._viewer = None
-
-    def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
-    def SetViewer(self, viewer): self._viewer = viewer
-
-    def _volume_open(self) -> bool:
-        try:
-            return bool(self._viewer and getattr(self._viewer, '_volume_windows', None))
-        except Exception:
-            return False
 
 
 # ---- Options & CLI ----
@@ -1496,6 +1492,12 @@ _COLORMAP_FLAGS = ('fire', 'bipolar', 'c1', 'c2', 'c3')
 
 @dataclass
 class Options:
+    """Everything the command line can ask for, in one object.
+
+    Built by :func:`parse_args` and kept on the viewer as ``self.opts``, so a
+    control-panel change and a command-line flag end up in the same place.
+    """
+
     mesh_left: Optional[str]
     meshes: List[str] = None  # Multiple mesh files (for navigation when no overlay)
     overlay: Optional[str] = None
@@ -1519,11 +1521,16 @@ class Options:
     white: bool = False
     panel: bool = False  # start with control dock hidden by default
     colormap: int = JET
-    debug: bool = False
     fix_scaling: bool = False  # Fix scaling across overlays
     free_zoom: bool = False    # Let the mouse change the zoom
 
 def parse_args(argv: List[str]) -> Options:
+    """Turn command-line arguments into :class:`Options`.
+
+    Positional arguments may be meshes or overlays in any order — what a file
+    holds is decided by its name and, where that is not enough, its contents.
+    A defaults file and ``-preset`` fill in what was not given explicitly.
+    """
     p = argparse.ArgumentParser(
         prog='CAT_SurfView',
         description='Render LH/RH cortical surfaces with optional overlays (CAT_SurfView).',
@@ -1620,7 +1627,6 @@ def parse_args(argv: List[str]) -> Options:
                         'because a right-click then keeps the view zooming)')
     p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true',
                    help='Keep the range of the first overlay for all following ones')
-    p.add_argument('-debug', action='store_true', help=argparse.SUPPRESS)  # accepted, not implemented
     # External defaults file for viewer settings (key=value lines)
     p.add_argument('-defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
     # Called without any argument: show the help instead of opening an empty window
@@ -1691,7 +1697,6 @@ def parse_args(argv: List[str]) -> Options:
         if 'fix_scaling' in cfg: _apply_if_default('fix_scaling', _parse_bool)
         if 'white' in cfg: _apply_if_default('white', _parse_bool)
         if 'log' in cfg: _apply_if_default('log', _parse_bool)
-        if 'debug' in cfg: _apply_if_default('debug', _parse_bool)
         # Enums / tuples
         if 'title_mode' in cfg: _apply_if_default('title_mode', str)
         if 'range' in cfg: _apply_if_default('range', lambda s: tuple(_parse_floats_csv(s, 2)))
@@ -1859,7 +1864,6 @@ def parse_args(argv: List[str]) -> Options:
         white=bool(a.white),
         panel=bool(a.panel),
         colormap=cm,
-        debug=bool(a.debug),
         fix_scaling=bool(a.fix_scaling),
         free_zoom=bool(getattr(a, 'free_zoom', False)),
     )
@@ -1867,6 +1871,15 @@ def parse_args(argv: List[str]) -> Options:
 # ---- Control Panel ----
 # ---- Viewer ----
 class Viewer(QtWidgets.QMainWindow):
+    """The CAT_SurfView window.
+
+    Shows both hemispheres as a six-view montage (or a pair of flat maps),
+    with an overlay on top of a shaded surface, a colorbar, a docked control
+    panel and an optional volume window whose slices are linked to the picked
+    vertex.  What is displayed comes from :class:`Options`; the right-click
+    menu and the control panel change the same fields afterwards.
+    """
+
     def __init__(self, opts: Options):
         super().__init__()
         self.opts = opts
@@ -1923,7 +1936,8 @@ class Viewer(QtWidgets.QMainWindow):
 
         # interactor style
         self.iren: vtkRenderWindowInteractor = self.rw.GetInteractor()
-        style = CustomInteractorStyle(); style.SetRenderer(self.ren); style.SetViewer(self); self.iren.SetInteractorStyle(style)
+        style = CustomInteractorStyle()
+        self.iren.SetInteractorStyle(style)
         # The viewer handles its own keys here.  Overriding the style's
         # OnKeyPress would not do: the interactor dispatches to the C++
         # implementation, which knows nothing about a Python subclass — so the
@@ -3401,31 +3415,6 @@ class Viewer(QtWidgets.QMainWindow):
         # of spanning black to white
         low, high = UNDERLAY_GREYS
         return low + shaded * (high - low)
-
-    def _underlay_range(self) -> Optional[List[float]]:
-        """A shading window that fits the data now under the surface.
-
-        Curvature from a file and curvature computed from the mesh are the
-        same quantity on different scales, and sulcal depth on yet another —
-        so the window follows the data instead of a fixed pair of numbers.
-        The outer percentiles are left out, or a few extreme vertices would
-        flatten everything else into one grey.
-        """
-        if self.curv_l_out is None or vtk_to_numpy is None:
-            return None
-        values = []
-        for output in (self.curv_l_out, self.curv_r_out):
-            if output is None:
-                continue
-            scalars = output.GetPointData().GetScalars()
-            if scalars is not None:
-                values.append(np.abs(vtk_to_numpy(scalars).astype(float)))
-        if not values:
-            return None
-        edge = float(np.percentile(np.concatenate(values), 98))
-        if not np.isfinite(edge) or edge <= 0:
-            return None
-        return [-edge, edge]
 
     def _folded_curvature(self) -> List[Optional["np.ndarray"]]:
         """Mean curvature of the folded surface, whatever surface is shown.
