@@ -272,130 +272,15 @@ after moving or reinstalling that environment.
 ### `CAT_SurfView` / `CAT_VolView`
 
 The two viewers (PySide6/VTK) are installed as console scripts, not as wrappers in this
-folder: `CAT_SurfView` shows cortical meshes and overlays in a six-view montage,
-`CAT_VolView` shows a volume as three orthogonal slices. Run either without arguments (or
-with `-h`) for the full help. From a source checkout without installing, use
-`./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py …`.
+folder. From a source checkout they run through the environment wrapper:
 
 ```bash
-# View a surface mesh
-CAT_SurfView /path/to/lh.central.gii
-
-# View a surface overlay (e.g., thickness) – the mesh is found automatically
-CAT_SurfView /path/to/lh.thickness
-
-# Several overlays, stepped through with the ←/→ keys
-CAT_SurfView sub-*/lh.thickness.*
-
-# CAT12/SPM statistic results with a fixed range and everything up to 6 hidden
-CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii
-
-# Predefined settings (-preset 1: C3 colormap with 16 discrete levels)
-CAT_SurfView -preset 1 -colorbar lh.thickness.subj
-
-# Volume with surface outlines drawn onto the slices
-CAT_VolView T1.nii.gz lh.central.gii rh.central.gii
-
-# Up to six volumes: one window each, tiled, cursors linked
-CAT_VolView T1.nii.gz p1T1.nii.gz p2T1.nii.gz
-
-# Statistic map in colour on top of a T1 (same voxel grid)
-CAT_VolView T1.nii.gz --overlay TFCE_log_pFWE.nii.gz
+scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py lh.central.gii
+scripts/run_with_env.sh src/t1prep/gui/cat_vol_view.py T1.nii.gz
 ```
 
-**Linked volume view.** `-volume <image>` (or the *Open NIfTI…* button) opens the three
-orthogonal slices of a volume next to the surface, sharing one millimetre space: clicking
-the surface moves the slices, and clicking or scrolling a slice marks the closest surface
-point in every montage view. It is the same window `CAT_VolView` opens on its own, so both
-offer the identical slices and right-click menu. Slices are shown in neurological
-orientation (left is left) in the millimetre space of the NIfTI sform/qform, and
-`--screenshot` writes a PNG without opening a window.
-
-Up to six volumes can be given at once: each opens its own window, the windows are tiled
-three per row (four to six fill a second row below), their title bars name the *directory*
-of the volume (file names repeat across subjects, directories do not), and everything the
-right-click menu changes — zoom, atlas, raw voxels, re-centring, the information panel —
-applies to all of them at once. Their cursors are linked — clicking in one moves the others to the same
-millimetre position, so the same anatomical point is shown even when the volumes differ in
-grid, voxel size or orientation.
-
-The free quadrant carries an information panel: file name, dimensions, voxel size,
-orientation code, data type and intensity range, plus the voxel index, mm coordinates and
-value under the cursor. The right-click menu holds:
-
-- **Zoom** — full volume or a 160/80/40/20/10 mm bounding box, as in the SPM ortho viewer;
-  a zoomed view follows the cursor, keeping the picked point in the middle of the pane.
-  *Re-centre on cursor* in the same submenu turns that off (`--no-recenter`), so the view
-  stays where it is and only picking a zoom level moves it. The cursor itself is not
-  rounded to the voxel grid, so it sits exactly where it was placed — only the displayed
-  slices and the intensity readout are voxel-wise.
-- **Atlas** — name the region under the cursor from any atlas shipped with T1Prep (or one
-  of your own via *Other…*, or `--atlas` on the command line). The atlas is sampled at the
-  mm position of the cursor, so pick one only when the displayed image is registered to its
-  space; *None* switches the lookup off.
-- **Raw voxels (nearest neighbour)** — draw the slices unsmoothed to see the data as
-  stored, useful for segmentation edges and resampling artefacts (`--nearest`). The
-  reported intensity follows: trilinear at the exact cursor position while smoothing
-  is on, the untouched voxel value with raw voxels selected.
-- **Overlay** — draw a second volume in colour on top (`--overlay`, or *Open…*). It has to
-  be on the same voxel grid (same dimensions and voxel size); anything else is refused
-  rather than silently resampled. The reported intensity is then the overlay's, with the
-  image value kept on a `background` line. The overlay is always drawn with nearest
-  neighbour, so a thresholded map keeps its edges; clipped values and voxels the map has
-  no value for (NaN outside a statistic mask) are left unpainted, so the image shows
-  through them.
-- **Controls** — the control panel of `CAT_SurfView`, wired to the overlay: value range,
-  clip window, p-value thresholds for `log`-named overlays, image intensity range,
-  opacity, colormap, discrete levels and inversion.
-- **Image information** — hide or show the panel (`--no-info` starts without it).
-
-**Presets.** `-preset N` applies a predefined set of options — currently `1` for the C3
-colormap with 16 discrete levels. Anything given explicitly on the command line takes
-precedence, so `-preset 1 -fire` keeps the fire colormap and the 16 levels. Further presets
-are added in the `PRESETS` table of `src/t1prep/gui/cat_surf_view.py`.
-
-**Statistic results.** When the overlay name contains `log` (CAT12/SPM `logP_*` files), the
-colorbar is labelled with p-values instead of the raw -log10(p) values, as in
-`cat_surf_results`: `1.3` → `0.05`, `2` → `0.01`, `3` → `0.001`, and `1e-08` beyond `p<1e-7`.
-Thresholded maps (`-clip -1.3 1.3`) get their first tick at exactly ±log10(0.05). Use `-log`
-to force the p-value labels for files that do not follow the naming convention.
-
-For such overlays the control panel also shows a **Threshold** entry with the three common
-levels — `p<0.05`, `p<0.01`, `p<0.001` (and `none`) — which set the clip window to
-±log10(p), hiding everything below it and greying that band on the colorbar, exactly like
-the threshold menu of `cat_surf_results`. It stays in sync with the clip spin boxes, so
-`-clip -2 2` on the command line starts on `p<0.01`.
-
-**How the surface is found.** An overlay file does not reference the surface it belongs to,
-so it is resolved in this order:
-
-1. geometry stored inside the overlay file itself (CAT12 `mesh.*` files and statistic
-   results usually carry it),
-2. the mesh matching the overlay name (`lh.thickness.subj` → `lh.central.subj.gii`) or a
-   `central`/`midthickness` surface in the same folder,
-3. the number of values, matched against the shipped 4k/32k/164k templates.
-
-Step 3 is what makes free-form names work — most notably CAT12/SPM statistic results
-(`logP_age_(...)_pFWE0.1_k0.gii`, `TFCE_log_pFWE_0001.gii`). Any `.gii` that holds values but
-no surface is treated as an overlay, so such results also load when they were copied away
-from their `SPM.mat`. Because the lookup runs for every overlay, files from different
-folders, subjects and mesh resolutions can be mixed in a single call. The other hemisphere
-is added when its file sits next to the selected one — `lh.`/`rh.`, `left`/`right` or
-`_hemi-L_`/`_hemi-R_`, in either direction, so picking the right hemisphere finds the left
-one just as well — or when a mesh (`mesh.central.*`) or overlay holds both hemispheres back
-to back, which are split so all six views are shown.
-
-**Batch use.** `-output` renders the view, writes the PNG and exits, so the viewer can be
-called from a loop without any interaction:
-
-```bash
-for f in sub-*/lh.thickness.*; do
-  CAT_SurfView -range 1 5 -colorbar -output "$(dirname "$f")/thickness.png" "$f"
-done
-```
-
-**Keys.** `←/→` previous/next overlay (or mesh), `u/d/l/r` rotate, `o` reset view,
-`b` flip dorsal views, `w/s` wireframe/shaded, `g` screenshot, `h` key help, `q` quit.
+What they can do — overlays, atlases, cluster tables, montages, batch figures — is
+documented in **[docs/viewers.md](../docs/viewers.md)**.
 
 ### `CAT_SurfParameters_ui`
 

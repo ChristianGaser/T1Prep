@@ -61,7 +61,12 @@ T1Prep/
 ├── requirements.txt                # pip dependencies
 ├── pyproject.toml                  # Package metadata and dependencies
 ├── setup.py                        # Legacy setup script
-├── README.md                       # User documentation
+├── README.md                       # Landing page: what it is, install, links
+├── docs/
+│   ├── installation.md             # pip, source checkout, WSL, manual, Docker
+│   ├── usage.md                    # Running the pipeline: options, outputs, examples
+│   ├── viewers.md                  # CAT_SurfView and CAT_VolView
+│   └── tools.md                    # Web UI and the surface post-processing GUIs
 ├── Dockerfile                      # Container build
 ├── T1Prep_defaults.txt             # Default CLI options
 └── Agents.md                       # This file
@@ -75,18 +80,18 @@ T1Prep/
 |--------------------|----------------|
 | `requirements.txt` | `pyproject.toml` -> `[project.dependencies]` section |
 | `pyproject.toml` dependencies | `requirements.txt` (keep versions aligned) |
-| CLI options in `scripts/T1Prep` | `README.md` -> Options section |
+| CLI options in `scripts/T1Prep` | `docs/usage.md` -> Options section |
 | CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py` -> `run_t1prep()` parameters |
 | CLI options in `scripts/T1Prep` | `src/t1prep/webui/app.py` -> form handling and defaults |
-| `[project.scripts]` / `script-files` in `pyproject.toml` | `README.md`, `README_pypi.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
-| `src/t1prep/t1prep.py` API | `README.md` -> Python API section |
+| `[project.scripts]` / `script-files` in `pyproject.toml` | `README.md`, `README_pypi.md`, `docs/installation.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
+| `src/t1prep/t1prep.py` API | `docs/usage.md` -> Python API section |
 | Default values | `T1Prep_defaults.txt` |
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` -> Project Structure, `CLAUDE.md` |
 | Atlas files in `src/t1prep/data/` | Add corresponding `.txt` description file |
-| Installation process | `README.md` -> Installation section |
+| Installation process | `docs/installation.md` (README keeps the one-line quick start) |
 | Installation process (bash bootstrapper) | `scripts/install.sh` |
 | Installation process (PyPI distribution) | `pyproject.toml`, `README_pypi.md` |
-| Docker configuration | `README.md` -> Docker section |
+| Docker configuration | `docs/installation.md` -> Docker section |
 | Docker configuration | `Dockerfile` |
 | Version number | `src/t1prep/__init__.py` (canonical — pyproject.toml derives via setuptools attr, scripts/T1Prep_utils.sh reads it via awk); `Makefile` PREV_VERSION/VERSION drive `make release`; release tags + README badges |
 
@@ -144,9 +149,20 @@ These helpers ensure the correct interpreter and dependencies are used across CL
 - Run Web UI: `cd webui && python app.py`
  - Run Web UI (recommended): `./scripts/T1Prep_ui --port 5000`
 
-## When to Update README.md
+## When to Update the Documentation
 
-**Always update README.md when:**
+The README is a landing page: overview, requirements, a one-line install and
+links.  Everything else lives in `docs/`, so a change usually belongs there.
+
+| Change | Document |
+|--------|----------|
+| CLI options, output structure, naming, examples | `docs/usage.md` |
+| Installation, dependencies, Docker | `docs/installation.md` |
+| Viewer features or options | `docs/viewers.md` |
+| Web UI, surface post-processing GUIs | `docs/tools.md` |
+| A new entry point, or what T1Prep *is* | `README.md` as well |
+
+**Always update the documentation when:**
 1. Adding/removing/changing CLI options in `scripts/T1Prep`
 2. Changing the Python API signature in `src/t1prep/t1prep.py`
 3. Adding new features or capabilities
@@ -156,13 +172,13 @@ These helpers ensure the correct interpreter and dependencies are used across CL
 7. Changing Docker build or run instructions
 8. Fixing important bugs that affect user workflow
 
-**README.md sections to check:**
-- **Options**: Must match `scripts/T1Prep --help` output
-- **Python API**: Must match `run_t1prep()` function signature
-- **Installation**: PyPI path (`pip install T1Prep`) is primary; bash
-  bootstrapper (`scripts/install.sh`) is the secondary path for users
-  who want the full source tree.  Keep both in sync.
-- **Requirements**: Must match `requirements.txt` / `pyproject.toml`
+**Sections to check:**
+- **Options** (`docs/usage.md`): Must match `scripts/T1Prep --help` output
+- **Python API** (`docs/usage.md`): Must match `run_t1prep()` signature
+- **Installation** (`docs/installation.md`): PyPI path (`pip install T1Prep`)
+  is primary; the bash bootstrapper (`scripts/install.sh`) is the secondary
+  path for users who want the full source tree.  Keep both in sync.
+- **Requirements** (`README.md`): Must match `requirements.txt` / `pyproject.toml`
 
 ## Adding New CLI Options
 
@@ -173,7 +189,7 @@ When adding a new CLI option, update these files in order:
 3. `webui/app.py` - Add form field handling if applicable
 4. `webui/templates/index.html` - Add UI element if applicable
 5. `T1Prep_defaults.txt` - Add default value if applicable
-6. `README.md` - Document the new option
+6. `docs/usage.md` - Document the new option
 
 ## Adding New Atlases
 

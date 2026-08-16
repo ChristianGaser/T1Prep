@@ -78,12 +78,14 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 |------------------|--------------|
 | `requirements.txt` | `pyproject.toml` → `[project.dependencies]` |
 | `pyproject.toml` dependencies | `requirements.txt` |
-| CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py`, `src/t1prep/webui/app.py`, `src/t1prep/webui/templates/index.html`, `T1Prep_defaults.txt`, `README.md` |
-| `[project.scripts]` / `script-files` entry points in `pyproject.toml` | `README.md`, `README_pypi.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
-| `src/t1prep/t1prep.py` API | `README.md` → Python API section |
+| CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py`, `src/t1prep/webui/app.py`, `src/t1prep/webui/templates/index.html`, `T1Prep_defaults.txt`, `docs/usage.md` |
+| `[project.scripts]` / `script-files` entry points in `pyproject.toml` | `README.md`, `README_pypi.md`, `docs/installation.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
+| `src/t1prep/t1prep.py` API | `docs/usage.md` → Python API section |
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` → Project Structure, `CLAUDE.md` |
-| Installation process | `README.md`, `README_pypi.md`, `scripts/install.sh` (bash bootstrapper is secondary to `pip install T1Prep`) |
-| Docker configuration | `README.md`, `Dockerfile` |
+| Viewer features or options | `docs/viewers.md` |
+| The other GUI tools | `docs/tools.md` |
+| Installation process | `docs/installation.md`, `README.md`, `README_pypi.md`, `scripts/install.sh` (bash bootstrapper is secondary to `pip install T1Prep`) |
+| Docker configuration | `docs/installation.md`, `Dockerfile` |
 | Version number | `src/t1prep/__init__.py` is the single source of truth — `pyproject.toml` derives via `setuptools.dynamic`, `scripts/T1Prep_utils.sh` awks it, `Makefile` bumps it via `make release`. Also update README badges + git tag. |
 
 ## Adding New CLI Options (order matters)
@@ -93,7 +95,7 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 3. `src/t1prep/webui/app.py`
 4. `src/t1prep/webui/templates/index.html`
 5. `T1Prep_defaults.txt`
-6. `README.md`
+6. `docs/usage.md`
 
 ## Adding New Atlases
 
@@ -123,7 +125,7 @@ Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`
 - [ ] `shellcheck scripts/*.sh` passes (shell changes)
 - [ ] `flake8 src` / `ruff check src` passes
 - [ ] `requirements.txt` ↔ `pyproject.toml` in sync
-- [ ] `README.md` updated for user-facing changes
+- [ ] Documentation updated for user-facing changes (`docs/usage.md`, `docs/viewers.md`, `docs/tools.md`)
 - [ ] Docstrings added for new public functions
 
 ## Ignore Rules

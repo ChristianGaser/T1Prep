@@ -10,32 +10,21 @@
 <img src="T1Prep_logo.svg" alt="T1Prep logo" width="340"> 
 
 # T1Prep: T1 PREProcessing Pipeline (aka PyCAT) 
-
 ## Table of Contents
 
+- [What T1Prep does](#what-t1prep-does)
 - [Requirements](#requirements)
 - [Main Differences to CAT12](#main-differences-to-cat12)
 - [Installation](#installation)
-- [pip / PyPI (Recommended for Python users)](#pip--pypi-recommended-for-python-users)
-- [Bash bootstrapper (full source tree)](#bash-bootstrapper-full-source-tree)
-- [Windows Installation via WSL](#windows-installation-via-wsl-recommended)
-- [Manual Installation](#manual-installation)
-- [Web UI (Flask)](#web-ui-flask)
-- [Docker](#docker)
-- [Output Folder Structure and Naming Conventions](#output-folder-structure-and-naming-conventions)
-- [Usage](#usage)
-- [Helper Scripts](#helper-scripts)
-- [Python API](#python-api)
-- [Options](#options)
-- [Output folders structure](#output-folders-structure)
-- [Naming behaviour](#naming-behaviour)
-- [Examples](#examples)
-- [Longitudinal realignment (experimental)](#longitudinal-realignment-experimental)
-- [Input](#input)
+- [Running T1Prep](#running-t1prep)
+- [Tools](#tools)
+- [Documentation](#documentation)
 - [Support](#support)
 - [License](#license)
 
 ---
+
+## What T1Prep does
 
 T1Prep is a pipeline that preprocesses T1-weighted MRI data and supports segmentation and cortical surface reconstruction. It provides a complete set of tools for efficiently processing structural MRI scans.
 
@@ -64,619 +53,73 @@ CAT12 folder structures and the BIDS derivatives standard.
 
 ## Installation
 
-T1Prep is distributed as a pure-Python package on PyPI and can also be
-installed via a bash bootstrapper that lays down the full source tree.
-Pick whichever workflow suits you.
-
-### pip / PyPI (Recommended for Python users)
-
-If you have Python 3.9–3.12 available (3.10+ recommended), install directly from PyPI:
+T1Prep is on PyPI and needs nothing but Python:
 
 ```bash
-# Latest release
 python3 -m pip install T1Prep
-
-# Pin a specific version (any PEP 440 spec)
-python3 -m pip install "T1Prep==0.4.4"
-
-# Optional: pipx keeps T1Prep isolated in its own venv
-pipx install T1Prep
 ```
 
-> **Multiple Python versions?** Install with the *exact* interpreter you intend
-> to run T1Prep with, e.g. `python3.12 -m pip install T1Prep` (T1Prep requires
-> Python 3.9–3.12; a `pip` bound to a Python older than 3.9 will refuse to
-> install). On macOS, prefer 3.10+ — a 3.9 install is pinned to PyTorch 2.8 and
-> runs slower (see [Requirements](#requirements)).
-> T1Prep first tries the interpreter it was installed into and the newest
-> Python 3.9–3.12 on your `PATH`. If auto-detection picks the wrong one, point
-> it explicitly — either per invocation (`T1Prep --python /path/to/python …`) or
-> for the whole session (`export T1PREP_PYTHON=/path/to/python`). Using `pipx`
-> or a dedicated venv sidesteps the ambiguity entirely.
-
-Model weights are not bundled with the wheel; they are fetched lazily on
-the first run into your user cache (or downloaded ahead of time with
+That places every command — `T1Prep`, `t1prep-ui`, `t1prep-run`, `CAT_SurfView`,
+`CAT_VolView` and the helpers — into the active environment's `bin/`. Model
+weights are fetched on the first run (or ahead of time with
 `t1prep-download-models`).
 
-Use it from Python:
+A source checkout, Windows via WSL, a manual install and the Docker image are
+described in **[docs/installation.md](docs/installation.md)**.
+
+## Running T1Prep
+
+```bash
+T1Prep file.nii.gz                              # segmentation + surfaces
+T1Prep --out-dir out/ --multi 4 sub-*/anat/*.nii.gz   # a batch, in parallel
+t1prep-run --input file.nii.gz --out-dir out/   # the single-subject Python entry
+```
 
 ```python
 from t1prep import run_t1prep
 run_t1prep("/path/to/sub-01_T1w.nii.gz")
 ```
 
-…or from the command line. A `pip install` places every entry point into the
-active environment's `bin/` directory, so once that directory is on your `PATH`
-the following commands are available:
+The options, the output folder structure, the naming conventions, worked
+examples and the experimental longitudinal pipeline are in
+**[docs/usage.md](docs/usage.md)**.
+
+> `T1Prep` is the bash orchestrator (full features including `--multi` batch
+> parallelism); `t1prep-run` is the equivalent single-subject Python entry. Add
+> the environment's `bin/` to `PATH` and you never need to call anything from
+> the source `scripts/` folder.
+
+## Tools
+
+Installed alongside the pipeline, and usable on their own:
+
+| Command | What it is |
+|---------|------------|
+| `CAT_SurfView` | Surface viewer: overlays, atlases, cluster tables, figures |
+| `CAT_VolView` | Volume viewer: three orthogonal slices, overlays, montages |
+| `t1prep-ui` | Web UI for the pipeline |
+| `CAT_SurfResampleMulti_ui`, `CAT_SurfParameters_ui`, `CAT_Surf2ROIMulti_ui` | Surface post-processing GUIs |
 
 ```bash
-T1Prep file.nii.gz                 # main CLI (batch + parallel, --multi)
-t1prep-ui                          # web UI
-t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
-CAT_SurfView lh.central.gii        # surface viewer (no arguments prints the help)
-CAT_SurfView -output view.png lh.thickness.sub-01   # batch: render a PNG and exit
-CAT_VolView T1.nii.gz              # volume viewer (3 orthogonal slices)
-t1prep-make-apps                   # macOS: build the viewer .app bundles
-CAT_VolView T1.nii.gz p1T1.nii.gz  # up to 6 volumes, one window each, linked
+CAT_SurfView lh.thickness.sub-01     # surface with an overlay
+CAT_VolView T1.nii.gz p1T1.nii.gz    # two linked volume windows
 ```
 
-In `CAT_SurfView`, clicking a vertex reports it in the status bar — hemisphere, vertex
-number, mm position, the overlay value and, for a −log10(p) map, the p-value it stands
-for. A right-click selects one of the shipped surface atlases (the region name is then
-part of that readout, and their borders can be drawn on the surface), switches between the surfaces of the same subject (central,
-inflated, patch) and, separately, what they are shaded with (mean curvature, sulcal
-depth or nothing), saves a screenshot, and opens the **cluster table**: every
-suprathreshold region with its peak, p-value, coordinate, size in mm² and atlas region,
-with an adjustable threshold, rows that mark the peak on the surface, and CSV export for
-the paper. `m` jumps to the strongest vertex, `+`/`-` zoom (the mouse does not — a right-click
-would otherwise leave the view zooming; `-free-zoom` restores it), `h` lists the keys,
-and dropping a surface, overlay or `.annot` file on the window opens it.
-
-In `CAT_VolView`, a right-click opens the display settings — zoom, atlas, overlay,
-contours, raw voxels, crosshair, orientation letters, image information — and they
-apply to all open volumes. The same menu saves a **screenshot** and opens a **montage**
-for a report figure: pick the orientation, give start, step and stop in millimetres
-(as in `cat_vol_slice_overlay`) and the number of columns and rows, or leave the layout
-on *auto*.
-
-The montage is also scriptable — with `--screenshot` it is written without opening a
-window, so the same figure can be produced for a whole study:
-
-```bash
-CAT_VolView T1.nii.gz --montage --slices "25 30 40 80" --columns 4 \
-    --overlay spmT_logP.nii.gz --threshold 0.05 --colormap FIRE --colorbar \
-    --screenshot figure.png
-```
-
-`--slices` takes either a list of millimetre positions (`"25 30 40 80"`) or a range
-(`"-40:10:60"` = start:step:stop); leave it out to cover the volume. `--orientation`
-picks the plane, `--columns`/`--rows` the layout, `--no-labels` drops the position
-labels and `--montage-size W H` sets the pixel size. The overlay is coloured with
-`--range`, `--clip`, `--threshold P` (clips a −log10(p) map at that p-value),
-`--colormap`, `--opacity`, `--inverse` and `--discrete N`, the image underneath with
-`--range-bkg`; `--colorbar` labels a −log10(p) overlay with p-values, exactly as
-`cat_surf_results` does. The zoom belongs to that menu: dragging and
-scrolling do not change it, so the wheel steps through slices instead. Uncheck
-*Zoom → Lock zoom* (or start with `--free-zoom`) to zoom with the mouse.
-
-```bash
-CAT_VolView T1.nii.gz --overlay spmT_0001.nii.gz   # overlay, resampled if needed
-CAT_VolView T1.nii.gz --contour p1T1.nii.gz        # segmentation outlined on the T1
-```
-
-An **overlay** or a **contour** only has to be registered to the image — a different
-voxel grid is resampled through the millimetre space of the two headers, so an atlas,
-a template or a statistical map can be shown on a native-space T1.
-
-Slices are labelled with the anatomical direction of each edge (L/R/A/P/S/I). The
-status bar shows the cursor position in editable mm and voxel boxes — type a peak
-coordinate from a table to jump there — with buttons for the origin and the strongest
-voxel. The display range can be dragged over the intensity histogram in the control
-panel. Dropping a file on a window opens it in a linked window, **shift** makes it the
-overlay, **alt** outlines it.
-
-Keys: arrows and PgUp/PgDown step through slices, `+`/`-`/`0` zoom, `o` and `m` go to
-the origin and to the strongest voxel, `c`/`a`/`i`/`n`/`p` toggle crosshair, letters,
-information, raw voxels and the control panel, `s` saves a screenshot and `h` lists
-them all.
-
-On macOS, `t1prep-make-apps` wraps both viewers as `.app` bundles for the Dock and
-Finder (double-click to pick a file, or drop files onto the icon). The first interactive
-start of either viewer creates them in `~/Applications` by itself; set `T1PREP_NO_APPS=1`
-to prevent that.
-
-```bash
-```
-
-> The `T1Prep` command is the bash orchestrator (full features incl. `--multi`
-> batch parallelism); `t1prep-run` is the equivalent single-subject Python
-> entry. Add the environment's `bin/` to `PATH` and you never need to call
-> anything from the source `scripts/` folder.
-
-### Bash bootstrapper (full source tree)
-
-To install everything (the package, all dependencies, and every entry point)
-into a self-contained environment, use the bundled bootstrapper:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
-```
-
-It creates a virtualenv, installs T1Prep into it, and prints the `export PATH`
-line to add its `bin/` directory to your shell. After that, run `T1Prep`,
-`t1prep-ui`, etc. directly.
-
-The installer will interactively prompt you to:
-1. **Select a version**: Latest release, development (main branch), or choose from available releases
-2. **Choose installation directory**: Current folder, temporary folder, or custom path
-3. **Select a Python interpreter**: if several supported Pythons (3.9–3.12) are
-   found, pick which one to install into (the newest is offered as the default).
-   If only one is found it is used automatically.
-
-#### Non-Interactive Installation
-Use environment variables to skip the interactive prompts:
-```bash
-# Install latest release to current directory
-T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" \
-  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
-
-# Install specific version to custom directory
-T1PREP_VERSION=v1.0.0 T1PREP_INSTALL_DIR=/opt/T1Prep \
-  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
-
-# Pin the Python interpreter to install into (skips the Python prompt)
-T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" T1PREP_PYTHON=python3.12 \
-  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
-```
-
-| Environment Variable | Description |
-|---------------------|-------------|
-| `T1PREP_VERSION` | Release tag (e.g., `v1.0.0`) or `latest` |
-| `T1PREP_INSTALL_DIR` | Absolute path for installation |
-| `T1PREP_PYTHON` | Python interpreter to install into (e.g., `python3.12` or an absolute path); must be Python 3.9–3.12 |
-
-### Windows Installation via WSL (Recommended)
-
-T1Prep requires a Linux environment to run. On Windows, we recommend using **Windows Subsystem for Linux (WSL)**, which provides a complete Linux environment with full compatibility.
-
-#### WSL Requirements
-
-| Windows Version | WSL Support |
-|-----------------|-------------|
-| Windows 11 (all versions) | WSL 2 ✓ |
-| Windows 10 version 2004+ (Build 19041+) | WSL 2 ✓ |
-| Windows 10 version 1903-1909 | WSL 2 (with manual kernel update) |
-| Windows 10 version 1607-1903 | WSL 1 only |
-| Windows Server 2019+ | WSL ✓ |
-
-#### Installing WSL and T1Prep
-
-1. **Install WSL** (run PowerShell as Administrator):
-   ```powershell
-   wsl --install
-   ```
-   This installs WSL 2 with Ubuntu by default. Restart your computer when prompted.
-
-2. **Open Ubuntu** from the Start menu and complete the initial setup (create username/password).
-
-3. **Install T1Prep** inside WSL (Ubuntu terminal):
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/scripts/install.sh | bash
-   ```
-
-4. **Access Windows files** from WSL at `/mnt/c/` (C: drive), `/mnt/d/` (D: drive), etc.:
-   ```bash
-   # Process a file from your Windows Documents folder
-   T1Prep --out-dir /mnt/c/Users/YourName/T1Prep_output /mnt/c/Users/YourName/Documents/scan.nii.gz
-   ```
-
-#### Alternative: Docker on Windows
-
-If you prefer not to install WSL directly, you can use Docker Desktop for Windows (which uses WSL 2 internally):
-
-```powershell
-docker run --rm -it -v C:\path\to\data:/data t1prep:latest --out-dir /data/out /data/file.nii.gz
-```
-
-See the [Docker](#docker) section for build instructions.
-
-### Manual Installation
-
-If you do not want pip to manage the environment for you (e.g. for an
-offline or air-gapped setup), you can install the dependencies yourself.
-
-**From PyPI into your own virtualenv:**
-```bash
-python3.12 -m venv env
-source env/bin/activate         # or add env/bin to PATH
-pip install T1Prep
-```
-
-**From a source checkout (developers):**
-```bash
-git clone https://github.com/ChristianGaser/T1Prep.git
-cd T1Prep
-python3.12 -m venv env
-source env/bin/activate
-pip install -e .                    # editable; tracks local edits
-# – or –
-pip install -r requirements.txt     # dependencies only (no T1Prep itself)
-```
-
-Either way the entry points (`T1Prep`, `t1prep-ui`, `t1prep-run`,
-`CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`) are
-placed in `env/bin`. Activating
-the venv — or adding `env/bin` to your `PATH` — is all that is needed; the
-source `scripts/` folder is only a dev fallback and should not be put on `PATH`.
-
-**Source ZIP plus bash bootstrapper** (kept for parity with older docs):
-```bash
-unzip T1Prep_$version.zip -d your_installation_folder
-./scripts/T1Prep --python python3.12 --install   # creates env/ and installs into it
-export PATH="$PWD/env/bin:$PATH"                  # then use T1Prep, t1prep-ui, …
-```
-
-## Web UI (Flask)
-
-A minimal browser-based UI is available for local use. It uploads selected NIfTI
-files, lets you configure General and Save options, and can schedule jobs to
-start at a specific time.
-
-```bash
-t1prep-ui
-```
-
-By default the Web UI runs on port 5050. To use a different port:
-
-```bash
-t1prep-ui 5500
-```
-
-When started, the UI will try to open an app-style window (Chrome if available,
-otherwise your default browser). You can also open the URL manually in any
-browser.
-
-Then open http://127.0.0.1:5050 (or the port you selected) in your browser.
-
-To prevent auto-opening a browser window:
-
-```bash
-t1prep-ui --no-browser
-```
-
-Uploaded files are stored under `webui_uploads/` (in the current working
-directory) and per-job logs under `webui_jobs/`.
-
-## Docker
-
-A Dockerfile is provided that installs T1Prep from PyPI on top of a slim
-Python 3.12 base image. No source checkout is needed — the image is a
-pure-Python distribution with model weights fetched lazily on first run.
-
-### Build
-
-**Latest release from PyPI:**
-```bash
-docker build -t t1prep:latest .
-```
-
-**Pinned release:**
-
-```bash
-docker build \
-  --build-arg T1PREP_VERSION=0.4.4 \
-  -t t1prep:0.4.4 .
-```
-
-The `T1PREP_VERSION` build-arg accepts any PEP 440 version string (no
-leading `v`) and is forwarded to `pip install "T1Prep==..."`. Leave it
-unset to track the latest release on PyPI.
-
-### Run
-
-Mount your data directory into the container (replace /path/to/data with your folder):
-
-```bash
-docker run --rm -it \
-  -v /path/to/data:/data \
-  t1prep:latest \
-  --out-dir /data/out /data/file.nii.gz
-```
-Append `--gpus all` to `docker run` to enable GPU acceleration when available.
-
-### Memory & performance
-
-Make sure that the container has at least 10-16 GB of RAM available. If you are using Docker Desktop/WSL2, increase the VM memory in the settings if needed. If you receive an error message stating that there is no space left on the device: /tmp/, you can try the following:
-If you obtain an error that no space is left on device: /tmp/ you can try that:
-```bash
-docker run --rm -it \
-  --tmpfs /tmp:rw,exec,nosuid,nodev,size=16g \
-  -v /path/to/data:/data \
-  t1prep:latest \
-  --out-dir /data/out /data/file.nii.gz
-```
-
-## Output Folder Structure and Naming Conventions
-
-T1Prep automatically determines output locations based on the input data structure:
-
-1. **BIDS datasets**  
-   If the input NIfTI is located in an `anat` folder:
-
-`<dataset-root>/derivatives/T1Prep-v<version>/<sub-XXX>/<ses-YYY>/anat/`
-   
-- Subject (`sub-XXX`) and session (`ses-YYY`) are extracted from the path.
-- If `--out-dir <DIR>` is specified, the BIDS substructure will still be created inside `<DIR>`.
-
-2. **Non-BIDS datasets**  
-Results are written to **CAT12-style subfolders** (`mri/`, `surf/`, etc.) in:
-   
-`<input-folder>/<subfolder>/`
-
-or in `<DIR>` if `--out-dir <DIR>` is specified.
-
-3. **Naming Conventions**  
-- **Default (CAT12)**: Uses classic names like `mri/brainmask.nii` and `surf/lh.thickness`.
-- **With `--bids`**: Uses BIDS derivatives naming, e.g.:
-  ```
-  sub-01_ses-1_space-T1w_desc-brain_mask.nii.gz
-  sub-01_ses-1_hemi-L_thickness.shape.gii
-  ```
-- All filename mappings for both modes are defined in `Names.tsv` and can be customized.   
-   
-## Usage
-```bash
-T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
-```
-
-(`T1Prep` resolves from the environment's `bin/` once it is on your `PATH`; from
-a source checkout without an install you can still run `./scripts/T1Prep`.)
-
-## Helper Scripts
-
-In addition to `T1Prep`, the following commands — all installed into the
-environment's `bin/` — provide convenient entry points for the Web UI and
-CAT-Surface post-processing.
-
-### `t1prep-ui`
-
-Launches the Flask Web UI (same tool described in the [Web UI (Flask)](#web-ui-flask) section).
-
-```bash
-t1prep-ui
-t1prep-ui 5500
-t1prep-ui --no-browser
-```
-
-- Default port: `5050`
-- Optional positional port argument (e.g., `5500`)
-- `--no-browser` disables auto-launching a browser/app window
-
-### `CAT_SurfResampleMulti_ui`
-
-Resamples LH/RH surface values to target spheres and writes a combined output
-per LH input using `CAT_SurfResampleMulti`.
-
-```bash
-CAT_SurfResampleMulti_ui [options] lh.thickness.subject.gii
-```
-
-Common options:
-- `--out <DIR>` output directory
-- `--res <STR>` output surface resolution (`32k` or `4k`)
-- `--fwhm <FLOAT>` smoothing FWHM
-- `--trg-sphere <FILE>` target LH sphere
-- `--mask <FILE>` target LH mask
-- `--jobs <N>` parallel worker count
-
-Input expectations:
-- Supports `lh.*` naming and auto-derives RH counterparts
-- BIDS-style `*_left*` naming is currently not implemented
-
-### `CAT_SurfParameters_ui`
-
-Computes surface parameters from mesh files using CAT-Surface binaries
-(`CAT_SurfCurvature`, `CAT_SurfFractalDimension`, `CAT_SurfArea`,
-`CAT_SurfRatio`, `CAT_SurfSulcusDepth`) bundled in `src/t1prep/bin/`.
-
-```bash
-CAT_SurfParameters_ui [options] lh.central.gii
-```
-
-Common options:
-- `-gy`, `-mc`, `-gc`, `-cv`, `-si`, `-sh`, `-fi`, `-area`, `-fd`, `-sr`, `-sra`
-- `-depth`, `-sqrt-depth`, `-min-curv`, `-max-curv`, `-dp`
-- `-gifti` write GIfTI output
-- `-noclobber` do not overwrite existing files
-- `--jobs <N>` / `--no-parallel` parallel control
-
-Input expectations:
-- Accepts `.obj` and `.gii`
-- For `lh.*` files, matching `rh.*` is processed automatically when available
-
-### `CAT_Surf2ROIMulti_ui`
-
-Extracts ROI-wise values from surface value files using `CAT_Surf2ROIMulti`.
-For each LH input, RH files are derived automatically.
-
-```bash
-CAT_Surf2ROIMulti_ui [options] lh.thickness.subject.gii
-```
-
-Common options:
-- `--out <DIR>` output directory
-- `--res <STR>` surface/atlas resolution (default `32k`)
-- `--trg-sphere <FILE>` target LH sphere
-- `--annot <NAMES>` one or multiple atlas names
-- `--jobs <N>` / `--no-parallel` parallel control
-
-Atlas names for `--annot` are resolved as:
-- `src/t1prep/data/atlases_surfaces_<res>/lh.<name>.annot`
-- `src/t1prep/data/atlases_surfaces_<res>/rh.<name>.annot`
-
-Multi-atlas examples:
-
-```bash
-CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'" lh.thickness.subject.gii
-CAT_Surf2ROIMulti_ui --annot "aparc_DK40.freesurfer,aparc_a2009s.freesurfer" lh.thickness.subject.gii
-```
-
-## Python API
-You can also call the full pipeline from Python without shelling out manually:
-
-```python
-from t1prep import run_t1prep
-
-# Single file, BIDS naming
-run_t1prep("/data/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz", bids=True)
-
-# Multiple files with options and logging
-run_t1prep([
-  "/data/T1/sub-01.nii.gz",
-  "/data/T1/sub-02.nii.gz",
-], out_dir="/results", atlas=["neuromorphometrics", "suit"], multi=-1,
-   wp=True, p=True, csf=True, lesions=True, gz=True, stream_output=True,
-   log_file="/results/T1Prep_run.log")
-```
-
-## Options
-Simply call T1Prep to see available options
-```bash
-T1Prep
-```
-
-Skull-stripping modes:
-- `--skullstrip-only`: run skull-stripping only and exit after writing a skull-stripped image and brain mask.
-- `--no-skullstrip` / `--skip-skullstrip`: skip skull-stripping (assumes input is already skull-stripped).
-
-Longitudinal / advanced flags:
-- `--initial-surf <FILE>`: use an initial surface estimate for longitudinal processing.
-- `--long-data <PATH>`: process the volume at `<PATH>` while keeping output naming/folders based on the provided input file.
-- `--no-atlas`: disable atlas labeling (overrides any defaults file atlas selection).
-
-Robustness:
-- `--retry`: retry a failed processing step once. By default, if segmentation or surface
-  estimation fails for a subject it is reported as an error straight away.
-
-## Output folders structure
-Output folder structure depends on the input dataset type:
-* BIDS datasets (if the upper-level folder of the input files is 'anat'):
-    Results are placed in a BIDS-compatible derivatives folder:
-    inside &lt;DIR&gt;
-    Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
-* Non-BIDS datasets:
-    Results are placed in subfolders similar to CAT12 output
-    (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
-    output directory.
-
-If '--bids' is set, the BIDS derivatives substructure will always be used
-inside &lt;DIR&gt;.
-
-## Naming behaviour
-* CAT12 style (default): Uses legacy folder and file names
-  (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
-* BIDS style: Uses standardized derivatives names, including 
-  subject/session identifiers, modality, and processing steps.
-
-The complete mapping between internal outputs and both naming conventions
-is stored in 'Names.tsv' and can be customized.
-
-Examples:
-Input: /data/study/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz
-Default output (no --out-dir):
-    /data/study/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
-With --out-dir /results:
-    /results/derivatives/T1Prep-v${version}/sub-01/ses-1/anat/
-
-Input: /data/T1_images/subject01.nii.gz
-Default output (no --out-dir):
-    /data/T1_images/mri/
-With --out-dir /results:
-    /results/mri/
-
-## Examples
-```bash
-  T1Prep --out-dir test_folder sTRIO*.nii
-```
-Process all files matching the pattern 'sTRIO*.nii'. Generate segmentation 
-and surface maps, saving the results in the 'test_folder' directory.
-
-```bash
-  T1Prep --no-surf sTRIO*.nii
-```
-Process all files matching the pattern 'sTRIO*.nii', but skip surface 
-creation. Only segmentation maps are generated and saved in the same 
-directory as the input files.
-
-```bash
-  T1Prep --python python3.11 --no-overwrite "surf/lh.thickness." sTRIO*.nii
-```
-Process all files matching the pattern `'sTRIO*.nii'` and use python3.11. 
-Skip processing for files where 'surf/lh.thickness.*' already exists, and 
-save new results in the same directory as the input files.
-
-```bash
-  T1Prep --lesion --no-sphere sTRIO*.nii
-```
-Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of 
-spherical registration, but additionally save lesion map (named p7sTRIO*.nii) 
-in native space.
-
-```bash
-  T1Prep --amap sTRIO*.nii
-```
-Process all files matching the pattern `'sTRIO*.nii'` and enable AMAP segmentation.
-  
-```bash
-  T1Prep --multi 8 --p --csf sTRIO*.nii
-```
-
-```bash
-  T1Prep --skullstrip-only --out-dir test_folder sTRIO*.nii
-```
-Only run skull-stripping and write the skull-stripped image and brain mask.
-
-```bash
-  T1Prep --skip-skullstrip --out-dir test_folder sTRIO*_brain.nii
-```
-Skip skull-stripping for already skull-stripped inputs.
-Process all files matching the pattern 'sTRIO*.nii'. Additionally save 
-segmentations in native space, including CSF segmentation. The processing 
-pipeline involves two stages of parallelization:
-
-1. Segmentation (Python-based): Runs best with about 10-16 GB of memory per 
-   process. The number of processes is automatically estimated based on 
-   available memory to optimize resource usage.
-
-2. Surface Extraction: This stage does not require significant memory and is
-   fully distributed across all available processorsor limited to the 
-   defined number of processes using the "--multi" flag.
-
-If "--multi" is set to a specific number (e.g., 8), the system still 
-estimates memory-based constraints for segmentation parallelization. However,
-the specified number of processes (e.g., 8) will be used for surface 
-extraction, ensuring efficient parallelization across the two stages. The 
-default setting is -1, which automatically estimates the number of
-available processors.
-
-## Longitudinal realignment (experimental)
-
-For rigid realignment of a series of NIfTI volumes, use the realignment helper:
-
-```bash
-./scripts/realign_longitudinal.sh --help
-```
-
-New tuning flags in the Python realigner:
-- `--max-fwhm-mm <FLOAT>`: maximum smoothing (FWHM, mm) for coarse alignment.
-- `--no-intensity-scale`: disable SPM-like global intensity scaling.
-- `--overlap-penalty-weight <FLOAT>`: penalize samples that fall outside the moving FOV.
-- `--sample-strategy {grid,gradient}`: choose deterministic grid or edge-biased gradient sampling.
-- `--grad-quantile <FLOAT>`: threshold for selecting high-gradient samples.
-
-
-## Input
-T1-weighted MRI images in NIfTI format (extension nii/nii.gz).
+Both viewers also render figures without opening a window, so they can be used
+from a script. See **[docs/viewers.md](docs/viewers.md)** for them and
+**[docs/tools.md](docs/tools.md)** for the rest.
+
+## Documentation
+
+| Document | Covers |
+|----------|--------|
+| [docs/installation.md](docs/installation.md) | pip, source checkout, WSL, manual install, Docker |
+| [docs/usage.md](docs/usage.md) | Running the pipeline: options, outputs, naming, examples |
+| [docs/viewers.md](docs/viewers.md) | `CAT_SurfView` and `CAT_VolView`, interactive and batch |
+| [docs/tools.md](docs/tools.md) | Web UI and the surface post-processing GUIs |
+| [scripts/README.md](scripts/README.md) | The scripts in a source checkout |
+| [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) | The bundled virtual environment |
+| [Agents.md](Agents.md) | Contributing: layout, style, tests |
 
 ## Support
 For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
@@ -684,4 +127,3 @@ For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
 ## License
 T1Prep is distributed under the terms of the [Apache License](https://www.apache.org/licenses/LICENSE-2.0) 
 as published by the Apache Software Foundation.
-

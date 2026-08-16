@@ -136,6 +136,17 @@ with CAT12-compatible filenames (e.g., `mwp1sub-01.nii`, `lh.thickness.sub-01`).
 
 ---
 
+## Documentation
+
+| Document | Covers |
+|----------|--------|
+| [Installation](https://github.com/ChristianGaser/T1Prep/blob/main/docs/installation.md) | pip, source checkout, WSL, manual install, Docker |
+| [Usage](https://github.com/ChristianGaser/T1Prep/blob/main/docs/usage.md) | Options, output structure, naming, examples |
+| [Viewers](https://github.com/ChristianGaser/T1Prep/blob/main/docs/viewers.md) | `CAT_SurfView` and `CAT_VolView`, interactive and batch |
+| [Tools](https://github.com/ChristianGaser/T1Prep/blob/main/docs/tools.md) | Web UI and the surface post-processing GUIs |
+
+---
+
 ## License
 
 Distributed under the [Apache License 2.0](https://github.com/ChristianGaser/T1Prep/blob/main/LICENSE).
