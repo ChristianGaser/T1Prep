@@ -153,11 +153,19 @@ from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
 # The volume window is shared with the standalone CAT_VolView tool.  It also
 # selects the QVTKRWIBase used below, so it is imported before the widget.
 try:
+    from .viewer_common import (
+        ZOOM_EVENTS, ask_and_save_png, claim_event, dropped_files,
+        droppable_url, note, show_shortcuts,
+    )
     from .cat_vol_view import (
         VolumeViewerWindow, ask_for_files, install_qt_message_filter,
         qt_application, running_as_app,
     )
 except ImportError:  # direct invocation as a script (no package context)
+    from viewer_common import (
+        ZOOM_EVENTS, ask_and_save_png, claim_event, dropped_files,
+        droppable_url, note, show_shortcuts,
+    )
     from cat_vol_view import (
         VolumeViewerWindow, ask_for_files, install_qt_message_filter,
         qt_application, running_as_app,
@@ -1402,8 +1410,9 @@ def read_scalars(filename: str) -> vtkDoubleArray:
             out = vtkDoubleArray(); out.SetNumberOfTuples(len(fs))
             for i, v in enumerate(fs): out.SetValue(i, float(v))
             return out
-        except Exception:
-            pass
+        except Exception as exc:
+            note(f"{Path(filename).name} does not read as FreeSurfer morph "
+                 f"data ({exc}); trying the remaining formats")
 
     # --- Case 3: Plain text file (one value per line) ---
     data: List[float] = []
@@ -1524,12 +1533,86 @@ class Options:
     fix_scaling: bool = False  # Fix scaling across overlays
     free_zoom: bool = False    # Let the mouse change the zoom
 
-def parse_args(argv: List[str]) -> Options:
-    """Turn command-line arguments into :class:`Options`.
 
-    Positional arguments may be meshes or overlays in any order — what a file
-    holds is decided by its name and, where that is not enough, its contents.
-    A defaults file and ``-preset`` fill in what was not given explicitly.
+# ---- reading a defaults file ----
+
+def _parse_bool(s: str) -> bool:
+    return str(s).strip().lower() in ('1','true','yes','on')
+
+def _parse_floats_csv(s: str, n_expected: int = None) -> Tuple[float, ...]:
+    parts = [p for p in re.split(r'[;,\s]+', str(s).strip()) if p]
+    vals = tuple(float(p) for p in parts)
+    if n_expected and len(vals) != n_expected:
+        raise ValueError(f'Expected {n_expected} numbers, got {len(vals)}')
+    return vals
+
+def _cm_from_name(name: str) -> int:
+    name_u = str(name).strip().upper()
+    mapping = {
+        'JET': JET, 'HOT': HOT, 'FIRE': FIRE, 'BIPOLAR': BIPOLAR, 'GRAY': GRAY,
+        'C1': C1, 'C2': C2, 'C3': C3
+    }
+    if name_u in mapping:
+        return mapping[name_u]
+    # allow numeric index
+    try:
+        v = int(name_u)
+        return v if v in mapping.values() else JET
+    except Exception:
+        return JET
+
+def _load_defaults_file(path: str) -> dict:
+    cfg = {}
+    try:
+        with open(path, 'r') as f:
+            for line in f:
+                s = line.strip()
+                if not s or s.startswith('#'):
+                    continue
+                if '=' not in s:
+                    continue
+                key, val = s.split('=', 1)
+                cfg[key.strip()] = val.strip().strip('"\'')
+    except Exception:
+        return {}
+    return cfg
+
+def _apply_defaults_cfg(cfg: dict, ns: argparse.Namespace, defaults_ns: argparse.Namespace):
+    if not cfg:
+        return
+    def _apply_if_default(attr: str, parser: callable):
+        if hasattr(ns, attr):
+            if getattr(ns, attr) == getattr(defaults_ns, attr):
+                try:
+                    setattr(ns, attr, parser(cfg[attr]))
+                except Exception:
+                    pass
+    # Scalars / toggles
+    if 'opacity' in cfg: _apply_if_default('opacity', float)
+    if 'discrete' in cfg: _apply_if_default('discrete', int)
+    if 'inverse' in cfg: _apply_if_default('inverse', _parse_bool)
+    if 'colorbar' in cfg: _apply_if_default('colorbar', _parse_bool)
+    if 'fontsize' in cfg: _apply_if_default('fontsize', int)
+    if 'panel' in cfg: _apply_if_default('panel', _parse_bool)
+    if 'fix_scaling' in cfg: _apply_if_default('fix_scaling', _parse_bool)
+    if 'white' in cfg: _apply_if_default('white', _parse_bool)
+    if 'log' in cfg: _apply_if_default('log', _parse_bool)
+    # Enums / tuples
+    if 'title_mode' in cfg: _apply_if_default('title_mode', str)
+    if 'range' in cfg: _apply_if_default('range', lambda s: tuple(_parse_floats_csv(s, 2)))
+    if 'range_bkg' in cfg: _apply_if_default('range_bkg', lambda s: tuple(_parse_floats_csv(s, 2)))
+    if 'clip' in cfg: _apply_if_default('clip', lambda s: tuple(_parse_floats_csv(s, 2)))
+    if 'size' in cfg: _apply_if_default('size', lambda s: tuple(int(x) for x in _parse_floats_csv(s, 2)))
+    if 'colormap' in cfg: _apply_if_default('colormap', _cm_from_name)
+
+# Build a defaults namespace to detect which args were explicitly set by user
+
+def _build_parser() -> argparse.ArgumentParser:
+    """The command-line interface of CAT_SurfView.
+
+    Kept apart from :func:`parse_args`, which is about what the arguments
+    then mean — the defaults file, the presets and which positional is a
+    mesh and which an overlay.
     """
     p = argparse.ArgumentParser(
         prog='CAT_SurfView',
@@ -1630,90 +1713,29 @@ def parse_args(argv: List[str]) -> Options:
     # External defaults file for viewer settings (key=value lines)
     p.add_argument('-defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
     # Called without any argument: show the help instead of opening an empty window
+    return p
+
+
+def parse_args(argv: List[str]) -> Options:
+    """Turn command-line arguments into :class:`Options`.
+
+    Positional arguments may be meshes or overlays in any order — what a file
+    holds is decided by its name and, where that is not enough, its contents.
+    A defaults file and ``-preset`` fill in what was not given explicitly.
+    """
+    p = _build_parser()
     if not argv:
         p.print_help()
         sys.exit(0)
     a = p.parse_args(argv)
 
     # Optionally load external defaults and apply only for values not explicitly provided on CLI
-    def _parse_bool(s: str) -> bool:
-        return str(s).strip().lower() in ('1','true','yes','on')
-
-    def _parse_floats_csv(s: str, n_expected: int = None) -> Tuple[float, ...]:
-        parts = [p for p in re.split(r'[;,\s]+', str(s).strip()) if p]
-        vals = tuple(float(p) for p in parts)
-        if n_expected and len(vals) != n_expected:
-            raise ValueError(f'Expected {n_expected} numbers, got {len(vals)}')
-        return vals
-
-    def _cm_from_name(name: str) -> int:
-        name_u = str(name).strip().upper()
-        mapping = {
-            'JET': JET, 'HOT': HOT, 'FIRE': FIRE, 'BIPOLAR': BIPOLAR, 'GRAY': GRAY,
-            'C1': C1, 'C2': C2, 'C3': C3
-        }
-        if name_u in mapping:
-            return mapping[name_u]
-        # allow numeric index
-        try:
-            v = int(name_u)
-            return v if v in mapping.values() else JET
-        except Exception:
-            return JET
-
-    def _load_defaults_file(path: str) -> dict:
-        cfg = {}
-        try:
-            with open(path, 'r') as f:
-                for line in f:
-                    s = line.strip()
-                    if not s or s.startswith('#'):
-                        continue
-                    if '=' not in s:
-                        continue
-                    key, val = s.split('=', 1)
-                    cfg[key.strip()] = val.strip().strip('"\'')
-        except Exception:
-            return {}
-        return cfg
-
-    def _apply_defaults_cfg(cfg: dict, ns: argparse.Namespace, defaults_ns: argparse.Namespace):
-        if not cfg:
-            return
-        def _apply_if_default(attr: str, parser: callable):
-            if hasattr(ns, attr):
-                if getattr(ns, attr) == getattr(defaults_ns, attr):
-                    try:
-                        setattr(ns, attr, parser(cfg[attr]))
-                    except Exception:
-                        pass
-        # Scalars / toggles
-        if 'opacity' in cfg: _apply_if_default('opacity', float)
-        if 'discrete' in cfg: _apply_if_default('discrete', int)
-        if 'inverse' in cfg: _apply_if_default('inverse', _parse_bool)
-        if 'colorbar' in cfg: _apply_if_default('colorbar', _parse_bool)
-        if 'fontsize' in cfg: _apply_if_default('fontsize', int)
-        if 'panel' in cfg: _apply_if_default('panel', _parse_bool)
-        if 'fix_scaling' in cfg: _apply_if_default('fix_scaling', _parse_bool)
-        if 'white' in cfg: _apply_if_default('white', _parse_bool)
-        if 'log' in cfg: _apply_if_default('log', _parse_bool)
-        # Enums / tuples
-        if 'title_mode' in cfg: _apply_if_default('title_mode', str)
-        if 'range' in cfg: _apply_if_default('range', lambda s: tuple(_parse_floats_csv(s, 2)))
-        if 'range_bkg' in cfg: _apply_if_default('range_bkg', lambda s: tuple(_parse_floats_csv(s, 2)))
-        if 'clip' in cfg: _apply_if_default('clip', lambda s: tuple(_parse_floats_csv(s, 2)))
-        if 'size' in cfg: _apply_if_default('size', lambda s: tuple(int(x) for x in _parse_floats_csv(s, 2)))
-        if 'colormap' in cfg: _apply_if_default('colormap', _cm_from_name)
-
-    # Build a defaults namespace to detect which args were explicitly set by user
     defaults_ns = p.parse_args([])
     if getattr(a, 'defaults', None):
-        import re  # lazy import for simple parsing
         cfg = _load_defaults_file(a.defaults)
         _apply_defaults_cfg(cfg, a, defaults_ns)
     else:
         # If no explicit defaults file given, try to load project default
-        import re  # for parsing floats
         script_dir = Path(__file__).resolve().parent
         candidates = [
             script_dir.parent / 'data' / 'cat_surf_view_defaults.txt',
@@ -1881,8 +1903,23 @@ class Viewer(QtWidgets.QMainWindow):
     """
 
     def __init__(self, opts: Options):
+        """Build the viewer for *opts*, in the order the parts depend on.
+
+        Window and renderers first, then the interaction that needs the
+        interactor, then the data, the colours derived from it, the scene
+        built from both, and finally the panel that shows all of it.
+        """
         super().__init__()
         self.opts = opts
+        self._build_window()
+        self._build_interaction()
+        self._load_surfaces()
+        self._prepare_colours()
+        self._build_scene()
+        self._finish_setup()
+
+    def _build_window(self):
+        """The window, its central widget and the two renderers."""
         # Cache of overlay path -> resolved mesh path.
         # Prevents ambiguous directory-based mesh resolution from "sticking" to the
         # most recently used mesh when toggling between multiple overlays.
@@ -1895,7 +1932,7 @@ class Viewer(QtWidgets.QMainWindow):
         self.current_mesh_index: int = 0
         # Use the original input file for the window title
         self.setWindowTitle(self.opts.title or _title_from_path(self.opts.mesh_left))
-        self.resize(*opts.size)
+        self.resize(*self.opts.size)
 
         # central widget with VTK view
         self.frame = QtWidgets.QFrame(); self.vl = QtWidgets.QVBoxLayout(); self.vl.setContentsMargins(0,0,0,0)
@@ -1915,7 +1952,7 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             self.vtk_widget.setFocusPolicy(Qt.StrongFocus)
 
-        self.ren = vtkRenderer(); self.ren.SetBackground(1,1,1) if opts.white else self.ren.SetBackground(0,0,0)
+        self.ren = vtkRenderer(); self.ren.SetBackground(1,1,1) if self.opts.white else self.ren.SetBackground(0,0,0)
         self.rw: vtkRenderWindow = self.vtk_widget.GetRenderWindow();
         try:
             self.rw.SetMultiSamples(0)
@@ -1935,6 +1972,9 @@ class Viewer(QtWidgets.QMainWindow):
         self.rw.AddRenderer(self.ren_ui)
 
         # interactor style
+
+    def _build_interaction(self):
+        """Interactor, the keys and zoom the viewer claims, picking."""
         self.iren: vtkRenderWindowInteractor = self.rw.GetInteractor()
         style = CustomInteractorStyle()
         self.iren.SetInteractorStyle(style)
@@ -1944,41 +1984,24 @@ class Viewer(QtWidgets.QMainWindow):
         # event has to be taken away from the style by aborting it, otherwise
         # VTK acts on it as well (its 'r' resets the camera, which used to
         # throw away the rotation the viewer had just applied).
-        def _claim(event: str, handler=None):
-            """Handle *event* before the style, and keep our keys from it."""
-            tag = [None]
-
-            def callback(obj, _event):
-                try:
-                    sym = self.iren.GetKeySym()
-                except Exception:
-                    sym = None
-                if handler is not None:
-                    handler(sym)
-                if sym in VIEWER_KEYS and tag[0] is not None:
-                    command = obj.GetCommand(tag[0])
-                    if command is not None:
-                        command.AbortFlagOn()
-
-            self._key_callbacks.append(callback)
-            tag[0] = self.iren.AddObserver(event, callback, 1.0)
-
+        # The viewer's own keys are taken away from the style, or VTK acts on
+        # them as well — its 'r' resets the camera, undoing the rotation the
+        # viewer just applied.  Most of those act on OnChar, not on the press.
         self._key_callbacks: List = []
-        _claim("KeyPressEvent", self._handle_key)
-        # VTK acts on most keys in OnChar, not on the key press: 'r' resets the
-        # camera there, which used to undo the rotation of the viewer's own 'r'
-        _claim("CharEvent")
+        ours = lambda: self._pressed_key() in VIEWER_KEYS
+        claim_event(self.iren, "KeyPressEvent", self._key_callbacks, ours,
+                    lambda _obj: self._handle_key(self._pressed_key()))
+        claim_event(self.iren, "CharEvent", self._key_callbacks, ours)
 
         # The mouse must not change the zoom.  Right-drag is the style's zoom
         # and the context menu opens on the same button, so the menu takes the
         # release the style waits for and every later mouse move keeps
         # zooming — which makes clicking a vertex impossible.
-        self.lock_zoom = not bool(getattr(opts, 'free_zoom', False))
+        self.lock_zoom = not bool(getattr(self.opts, 'free_zoom', False))
         self._zoom_callbacks: List = []
-        for event in ("RightButtonPressEvent", "RightButtonReleaseEvent",
-                      "MouseWheelForwardEvent", "MouseWheelBackwardEvent",
-                      "StartPinchEvent", "PinchEvent"):
-            self._guard_zoom(event)
+        for event in ZOOM_EVENTS:
+            claim_event(self.iren, event, self._zoom_callbacks,
+                        lambda: self.lock_zoom)
 
         # Clicking on the surface marks the spot and moves any open slice viewer
         self._cursor_actors: List[vtkActor] = []
@@ -2004,6 +2027,9 @@ class Viewer(QtWidgets.QMainWindow):
                 self._broadcast_world_pick(mm)
         self.iren.AddObserver("LeftButtonPressEvent", _on_left_click)
 
+
+    def _load_surfaces(self):
+        """The meshes, their curvature and any background scalars."""
         # Load surfaces (LH + optional RH) if provided; otherwise start empty
         self.poly_l = None
         self.poly_r = None
@@ -2046,7 +2072,7 @@ class Viewer(QtWidgets.QMainWindow):
                     raise FileNotFoundError(f"Corresponding mesh file not found: {mesh_path}")
                 left_mesh_path = mesh_path_obj
                 # Set the overlay to the original input file
-                opts.overlay = str(input_path)
+                self.opts.overlay = str(input_path)
             else:
                 # Input is a mesh file
                 left_mesh_path = input_path
@@ -2076,12 +2102,12 @@ class Viewer(QtWidgets.QMainWindow):
 
         # Optional background scalars
         self.bkg_scalar_l = None; self.bkg_scalar_r = None
-        if opts.overlay_bkg:
-            self.bkg_scalar_l = read_scalars(opts.overlay_bkg)
-            other_bkg = _hemi_counterpart(Path(opts.overlay_bkg))
+        if self.opts.overlay_bkg:
+            self.bkg_scalar_l = read_scalars(self.opts.overlay_bkg)
+            other_bkg = _hemi_counterpart(Path(self.opts.overlay_bkg))
             if other_bkg is not None and other_bkg.exists() and self.poly_r is not None:
                 self.bkg_scalar_l, self.bkg_scalar_r = order_by_hemisphere(
-                    opts.overlay_bkg, self.bkg_scalar_l, read_scalars(str(other_bkg)))
+                    self.opts.overlay_bkg, self.bkg_scalar_l, read_scalars(str(other_bkg)))
             elif self.poly_r is not None and self.bkg_scalar_l is not None and self.bkg_scalar_l.GetNumberOfTuples() == (self.poly_l.GetNumberOfPoints()+self.poly_r.GetNumberOfPoints()):
                 self.bkg_scalar_l, self.bkg_scalar_r = _split_scalars(
                     self.bkg_scalar_l,
@@ -2097,17 +2123,20 @@ class Viewer(QtWidgets.QMainWindow):
             if self.bkg_scalar_r is not None: self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
 
         # Overlay range (must be known before any LUT/clip computation)
-        self.overlay_range = list(opts.range)
+
+    def _prepare_colours(self):
+        """Value ranges and the lookup tables built from them."""
+        self.overlay_range = list(self.opts.range)
         # Track which display ranges the user explicitly provided via CLI so that
         # per-overlay presets (e.g. thickness) never silently override them.
-        self._user_set_range = (opts.range[1] > opts.range[0])
-        self._user_set_clip = (opts.clip[1] > opts.clip[0])
-        self._user_set_range_bkg = (opts.range_bkg[1] > opts.range_bkg[0])
+        self._user_set_range = (self.opts.range[1] > self.opts.range[0])
+        self._user_set_clip = (self.opts.clip[1] > self.opts.clip[0])
+        self._user_set_range_bkg = (self.opts.range_bkg[1] > self.opts.range_bkg[0])
 
         # Actors and LUTs
         self._actors: List[vtkActor] = []
-        self.lut_overlay_l = get_lookup_table(opts.colormap, opts.opacity)
-        self.lut_overlay_r = get_lookup_table(opts.colormap, opts.opacity)
+        self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
+        self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
         # If inverse is requested, flip the LUTs (do not modify data/ranges)
         if self.opts.inverse:
             self._invert_lut(self.lut_overlay_l)
@@ -2124,7 +2153,7 @@ class Viewer(QtWidgets.QMainWindow):
         self.lut_bkg.SetValueRange(0, 1); self.lut_bkg.Build()
 
         # Background scalar range
-        self.range_bkg = list(opts.range_bkg)
+        self.range_bkg = list(self.opts.range_bkg)
         if not (self.range_bkg[1] > self.range_bkg[0]):
             r = [0.0,0.0]; self.curv_l_out.GetScalarRange(r); self.range_bkg = r
         if self.range_bkg[0] < 0 < self.range_bkg[1]:
@@ -2136,15 +2165,18 @@ class Viewer(QtWidgets.QMainWindow):
         self.actor_bkg_r = None; self.actor_ov_r = None
 
         # Overlay management
+
+    def _build_scene(self):
+        """Overlays, hemisphere actors, the montage and the colorbar."""
         self.overlay_list = []
         self.current_overlay_index = 0
         self.fixed_overlay_range = None  # Store fixed range when fix_scaling is enabled
         
         # Initialize overlay list
-        if opts.overlays:
-            self.overlay_list = opts.overlays
-        elif opts.overlay:
-            self.overlay_list = [opts.overlay]
+        if self.opts.overlays:
+            self.overlay_list = self.opts.overlays
+        elif self.opts.overlay:
+            self.overlay_list = [self.opts.overlay]
         # Enforce initial fix scaling policy based on overlay count
         self._enforce_fix_scaling_policy()
         
@@ -2185,6 +2217,9 @@ class Viewer(QtWidgets.QMainWindow):
         self._base_cam_state = None
 
         # Right-side control panel (dock)
+
+    def _finish_setup(self):
+        """The panel, the context menu and the first render."""
         self._build_control_panel()
 
         # Start interactor after the window is shown (avoid blocking render)
@@ -2517,10 +2552,7 @@ class Viewer(QtWidgets.QMainWindow):
     def _save_screenshot_dialog(self):
         """Ask where to write a PNG of the montage and save it."""
         start = str(Path(self.opts.mesh_left or '.').with_suffix('.png'))
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save screenshot", start, "PNG image (*.png)")
-        if path:
-            self.save_png(path)
+        ask_and_save_png(self, start, self.save_png)
 
     #: Keys, and what they do, for the help dialog
     SHORTCUTS = (
@@ -2538,11 +2570,8 @@ class Viewer(QtWidgets.QMainWindow):
 
     def show_shortcut_help(self):
         """List the keys in a dialog — printing them helps nobody in an app."""
-        rows = "".join(f"<tr><td><b>{keys}</b>&nbsp;&nbsp;</td><td>{what}</td></tr>"
-                       for keys, what in self.SHORTCUTS)
-        QtWidgets.QMessageBox.information(
-            self, "Keyboard shortcuts",
-            f"<table>{rows}</table>"
+        show_shortcuts(
+            self, self.SHORTCUTS,
             "<p>Click the surface to mark a vertex; right-click for the "
             "display settings. Dropping a surface or an overlay on the window "
             "opens it.</p>")
@@ -2554,16 +2583,16 @@ class Viewer(QtWidgets.QMainWindow):
 
     dragMoveEvent = dragEnterEvent
 
+    #: What this window can open when it is dropped on
+    DROP_SUFFIXES = ('.gii', '.annot', '.txt', '.vtk', '.vtp')
+
     @staticmethod
     def _droppable(url) -> bool:
-        return bool(url.isLocalFile()
-                    and str(url.toLocalFile()).lower().endswith(
-                        ('.gii', '.annot', '.txt', '.vtk', '.vtp')))
+        return droppable_url(url, Viewer.DROP_SUFFIXES)
 
     def dropEvent(self, event):
         """A dropped mesh replaces the surface, anything else becomes overlay."""
-        paths = [url.toLocalFile() for url in event.mimeData().urls()
-                 if self._droppable(url)]
+        paths = dropped_files(event, self.DROP_SUFFIXES)
         if not paths:
             return
         event.acceptProposedAction()
@@ -2666,6 +2695,20 @@ class Viewer(QtWidgets.QMainWindow):
 
     # -- Control panel integration --
     def _build_control_panel(self):
+        """Create the control panel, fill it, wire it and show the window.
+
+        Four steps, each in its own method: the dock and its toggle, the
+        current settings written into the widgets, the signal wiring, and
+        the state the viewer starts in (panel visibility, shading, menus).
+        """
+        self._build_controls_dock()
+        self._fill_control_panel()
+        self._wire_control_panel()
+        self._apply_startup_state()
+        self._build_menus()
+
+    def _build_controls_dock(self):
+        """The docked panel itself, floating beside the window."""
         self.ctrl = ControlPanel(self)
         dock = QtWidgets.QDockWidget("Controls", self)
         dock.setObjectName("ControlsDock")
@@ -2736,6 +2779,11 @@ class Viewer(QtWidgets.QMainWindow):
         # ----------------------------------------------
     
         # Seed values
+        # kept for the start-state block, which shows the dock
+        self._position_dock = position_dock
+
+    def _fill_control_panel(self):
+        """Show the settings the viewer started with in the widgets."""
         if self.overlay_range[1] > self.overlay_range[0]:
             self.ctrl.range_min.setValue(float(self.overlay_range[0]))
             self.ctrl.range_max.setValue(float(self.overlay_range[1]))
@@ -2774,13 +2822,13 @@ class Viewer(QtWidgets.QMainWindow):
             self.ctrl.cb_histogram.setChecked(False)
         except Exception:
             pass
-        # Initialize colormap selector based on opts.colormap
+        # Initialize colormap selector based on self.opts.colormap
         cm_index_map = {JET: 0, HOT: 1, FIRE: 2, BIPOLAR: 3, GRAY: 4, C1: 5, C2: 6, C3: 7}
         try:
             self.ctrl.colormap.setCurrentIndex(cm_index_map.get(self.opts.colormap, 0))
         except Exception:
             pass
-        # Initialize discrete checkbox from opts (consider non-zero as on)
+        # Initialize discrete checkbox from self.opts (consider non-zero as on)
         if hasattr(self.ctrl, 'cb_discrete'):
             disc = int(getattr(self.opts, 'discrete', 0) or 0)
             self.ctrl.cb_discrete.setChecked(disc > 0)
@@ -2792,6 +2840,16 @@ class Viewer(QtWidgets.QMainWindow):
         self._enforce_fix_scaling_policy()
         # Signals
         # Removed reset button; reset available via keyboard 'o' or menu if needed
+
+    def _wire_control_panel(self):
+        """Connect every widget to what it changes, group by group."""
+        self._wire_overlay_picker()
+        self._wire_appearance()
+        self._wire_ranges()
+        self._wire_clip_and_threshold()
+
+    def _wire_overlay_picker(self):
+        """The overlay combo and the button beside it."""
         self.ctrl.overlay_btn.clicked.connect(self._pick_overlay)
         # Open NIfTI volume in orthogonal view window
         try:
@@ -2809,6 +2867,9 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             pass
         # Colormap selection handler
+
+    def _wire_appearance(self):
+        """Colormap, discrete levels, opacity, colorbar, inversion, histogram."""
         def _on_colormap_changed(idx: int):
             # Map UI index back to enum
             idx_to_cm = {0: JET, 1: HOT, 2: FIRE, 3: BIPOLAR, 4: GRAY, 5: C1, 6: C2, 7: C3}
@@ -2858,6 +2919,9 @@ class Viewer(QtWidgets.QMainWindow):
             self.ctrl.cb_discrete.toggled.connect(_on_discrete_toggled)
 
         # Live: overlay range (spin + slider)
+
+    def _wire_ranges(self):
+        """The overlay range and the range of the surface underneath."""
         def _on_overlay_range_changed():
             r0 = float(self.ctrl.range_min.value()); r1 = float(self.ctrl.range_max.value())
             if r1 > r0:
@@ -2977,6 +3041,9 @@ class Viewer(QtWidgets.QMainWindow):
         self.ctrl.cb_histogram.toggled.connect(_on_histogram_toggled)
 
         # Live-ish: clip window — apply on slider release or editing finished
+
+    def _wire_clip_and_threshold(self):
+        """The clip window and the p-value thresholds that set it."""
         def _apply_clip_live():
             c0 = float(self.ctrl.clip_min.value()); c1 = float(self.ctrl.clip_max.value())
             # Treat (0,0) as disabled, same convention as _apply_controls
@@ -3024,13 +3091,16 @@ class Viewer(QtWidgets.QMainWindow):
             _apply_clip_live()
         self.ctrl.threshold.currentIndexChanged.connect(_on_threshold_changed)
     
+
+    def _apply_startup_state(self):
+        """Panel visibility, the readout, drops and the initial shading."""
         # Start state based on CLI flag --panel (default hidden)
         if self.opts.panel:
-            dock.setFloating(True)
-            dock.show()
-            position_dock()
+            self.dock_controls.setFloating(True)
+            self.dock_controls.show()
+            self._position_dock()
         else:
-            dock.hide()
+            self.dock_controls.hide()
         # Initial status hint, next to the readout for the marked vertex
         self._build_pick_label()
         self.setAcceptDrops(True)      # a dropped surface or overlay opens
@@ -3045,6 +3115,9 @@ class Viewer(QtWidgets.QMainWindow):
         # Initialize slider bounds from current data
         self._update_slider_bounds()
     
+
+    def _build_menus(self):
+        """Menu bar, the Ctrl/Cmd+D shortcut and a volume given on the CLI."""
         # View menu + keyboard shortcut
         menubar = self.menuBar()
         menu = menubar.addMenu("View")
@@ -3541,25 +3614,6 @@ class Viewer(QtWidgets.QMainWindow):
         self.rw.Render()
 
     # ---------- zoom ----------
-    def _guard_zoom(self, event: str):
-        """Take *event* away from the interactor style while zoom is locked.
-
-        Overriding the style in Python would not help: the interactor
-        dispatches to the C++ implementation.  An observer with a higher
-        priority does get called, and aborting there stops the event before
-        the style sees it.
-        """
-        tag = [None]
-
-        def callback(obj, _event):
-            if self.lock_zoom and tag[0] is not None:
-                command = obj.GetCommand(tag[0])
-                if command is not None:
-                    command.AbortFlagOn()
-
-        self._zoom_callbacks.append(callback)
-        tag[0] = self.iren.AddObserver(event, callback, 1.0)
-
     def set_lock_zoom(self, locked: bool):
         """Whether the mouse or trackpad may change the zoom.
 
@@ -3699,6 +3753,13 @@ class Viewer(QtWidgets.QMainWindow):
             sb.showMessage(f"Controls hidden — press {shortcut_hint} to show")
         # Single application-wide shortcut should suffice
 
+    def _pressed_key(self) -> Optional[str]:
+        """The key the interactor is reporting, or None."""
+        try:
+            return self.iren.GetKeySym()
+        except Exception:
+            return None
+
     def _handle_key(self, sym: Optional[str]):
         if not sym:
             return
@@ -3806,7 +3867,11 @@ class Viewer(QtWidgets.QMainWindow):
         for i in range(n):
             x, y, z = pts.GetPoint(i)
             pts.SetPoint(i, x, y + y_shift, z)
-        poly.SetPoints(pts)
+        # The points were moved in place, so VTK has to be told: bounds are
+        # cached, and everything framed from them — the cameras, the placement
+        # of the flat maps — would otherwise use the position before the shift
+        pts.Modified()
+        poly.Modified()
         return float(y_shift)
 
     # --- LUT helpers ---

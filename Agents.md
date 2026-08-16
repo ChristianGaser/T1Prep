@@ -24,8 +24,11 @@ T1Prep/
 │       ├── gui/                    # PySide6/VTK visualization tools
 │       │   ├── cat_surf_view.py    # Surface viewer (CAT_SurfView)
 │       │   ├── make_apps.py        # macOS .app bundles (t1prep-make-apps)
-│       │   └── cat_vol_view.py     # Orthogonal volume viewer (CAT_VolView),
-│       │                           # also embedded in CAT_SurfView's -volume window
+│       │   ├── cat_vol_view.py     # Orthogonal volume viewer (CAT_VolView),
+│       │   │                       # also embedded in CAT_SurfView's -volume window
+│       │   ├── controls.py         # Overlay control panel shared by both viewers
+│       │   ├── colormaps.py        # Colormaps and p-value colorbar labels
+│       │   └── viewer_common.py    # Event claiming, drop targets, help, screenshots
 │       └── webui/                  # Flask web UI (t1prep-ui)
 │           ├── app.py              # Flask application (main())
 │           ├── templates/index.html

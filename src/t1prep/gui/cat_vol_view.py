@@ -168,8 +168,18 @@ except ImportError:  # direct invocation as a script
 
 try:
     from .controls import ControlPanel, LOGP_THRESHOLDS
+    from .viewer_common import (
+        VOLUME_SUFFIXES, ZOOM_EVENTS, ask_and_save_png, claim_event,
+        dropped_files, droppable_url, note, set_verbose, shorten_path,
+        show_shortcuts,
+    )
 except ImportError:  # direct invocation as a script
     from controls import ControlPanel, LOGP_THRESHOLDS
+    from viewer_common import (
+        VOLUME_SUFFIXES, ZOOM_EVENTS, ask_and_save_png, claim_event,
+        dropped_files, droppable_url, note, set_verbose, shorten_path,
+        show_shortcuts,
+    )
 
 # Colormaps are shared with the surface viewer
 try:
@@ -189,6 +199,10 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import vtkmodules.qt as _vtk_qt
 _vtk_qt.QVTKRWIBase = "QOpenGLWidget"
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+
+
+#: Files that hold a surface rather than a volume
+SURFACE_SUFFIXES = ('.gii', '.vtk', '.vtp', '.obj', '.stl', '.ply')
 
 
 def _guess_image_reader(image_path: str):
@@ -355,8 +369,9 @@ def _load_surface(surface_path: str) -> vtkPolyData:
                 out = r.GetOutput()
                 if out is not None:
                     return out
-            except Exception:
-                pass
+            except Exception as exc:
+                note(f"VTK could not read {os.path.basename(surface_path)} "
+                     f"({exc}); trying nibabel")
         # Fallback: use nibabel to parse GIFTI and convert to vtkPolyData
         if nib is None or np is None:
             raise RuntimeError(
@@ -794,37 +809,18 @@ class CatImageViewer:
         self.interactor.AddObserver("LeftButtonPressEvent", _left_down_cb)
         self.interactor.AddObserver("LeftButtonReleaseEvent", _left_up_cb)
 
-        # The wheel steps through slices.  It has to run before the interactor
-        # style, which would otherwise zoom on top of it (see _guard).
-        self._guard("MouseWheelForwardEvent", _wheel_fwd_cb)
-        self._guard("MouseWheelBackwardEvent", _wheel_back_cb)
-        # Right-drag is the style's zoom, and the context menu opens on the
+        # The wheel steps through slices; the style would otherwise zoom on top
+        # of that.  Right-drag is its zoom, and the context menu opens on the
         # same button: when the menu takes the release, the style stays in its
-        # zoom state and every later mouse move keeps zooming
-        for event in ("RightButtonPressEvent", "RightButtonReleaseEvent",
-                      "StartPinchEvent", "PinchEvent"):
-            self._guard(event)
-
-    def _guard(self, event: str, handler=None):
-        """Take *event* away from the interactor style while zoom is locked.
-
-        Overriding the style's methods in Python is not enough: the interactor
-        dispatches to the C++ implementation, which never sees a Python
-        subclass.  An observer with a higher priority does get called, and
-        aborting there stops the event before the style handles it.
-        """
-        tag = None
-
-        def callback(obj, evt):
-            if handler is not None:
-                handler(obj, evt)
-            if self.lock_zoom and tag is not None:
-                command = obj.GetCommand(tag)
-                if command is not None:
-                    command.AbortFlagOn()
-
-        self._event_cbs.append(callback)
-        tag = self.interactor.AddObserver(event, callback, 1.0)
+        # zoom state and every later mouse move keeps zooming.
+        locked = lambda: self.lock_zoom
+        claim_event(self.interactor, "MouseWheelForwardEvent", self._event_cbs,
+                    locked, lambda obj: _wheel_fwd_cb(obj, None))
+        claim_event(self.interactor, "MouseWheelBackwardEvent", self._event_cbs,
+                    locked, lambda obj: _wheel_back_cb(obj, None))
+        for event in ZOOM_EVENTS:
+            if not event.startswith("MouseWheel"):
+                claim_event(self.interactor, event, self._event_cbs, locked)
 
     # -------- Camera setup --------
     def _setup_cameras_spm12(self):
@@ -1412,7 +1408,8 @@ class CatImageViewer:
                         continue
                     if name_col < len(parts):
                         names[roi_id] = parts[name_col]
-        except Exception:
+        except OSError as exc:
+            note(f"no region names for the atlas: {exc}")
             return {}
         return names
 
@@ -2284,8 +2281,8 @@ class CatImageViewer:
                     poly = f.GetOutput()
                     if self.verbose:
                         print(f"[cat_vol_view] Recentered surface by translation (dx,dy,dz)=({dx:.3f},{dy:.3f},{dz:.3f})")
-        except Exception:
-            pass
+        except Exception as exc:
+            note(f"could not check whether the surface needs recentring: {exc}")
         self.surfaces.append((poly, color))
         return self
 
@@ -2547,29 +2544,6 @@ def ask_for_files(app, caption: str, patterns: str) -> List[str]:
     chosen, _ = QtWidgets.QFileDialog.getOpenFileNames(
         None, caption, str(Path.home()), patterns)
     return list(chosen)
-
-
-def shorten_path(path: str, max_parts: int = 3, max_chars: int = 40) -> str:
-    """A directory for the title bar: its last components, "…" for the rest.
-
-    The end is what identifies a volume (``…/sub-01/mri``), so that is what is
-    kept.  It has to stay short as well: a title that does not fit the window
-    is shortened by macOS itself, and that drops the end.
-    """
-    text = str(path).rstrip(os.sep)
-    parts = [part for part in text.split(os.sep) if part]
-    if not parts:
-        return text
-    if len(parts) <= max_parts and len(text) <= max_chars:
-        return text
-    for count in range(min(max_parts, len(parts)), 1, -1):
-        candidate = f"…{os.sep}{os.sep.join(parts[-count:])}"
-        if len(candidate) <= max_chars:
-            return candidate
-    tail = parts[-1]
-    if len(tail) + 2 <= max_chars:
-        return f"…{os.sep}{tail}"
-    return "…" + tail[-(max_chars - 1):]   # one very long name: cut it as well
 
 
 def qt_application():
@@ -3349,15 +3323,11 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
 
     def show_shortcut_help(self):
         """List the keys, since a viewer without a menu bar hides them."""
-        rows = "".join(
-            f"<tr><td><b>{keys}</b>&nbsp;&nbsp;</td><td>{what}</td></tr>"
-            for keys, what, _ in self.SHORTCUTS)
-        QtWidgets.QMessageBox.information(
-            self, "Keyboard shortcuts",
-            "<p>Slice steps and zoom apply to the pane under the mouse.</p>"
-            f"<table>{rows}</table>"
-            "<p>The mouse wheel steps through slices as well; "
-            "right-click opens the display settings.</p>"
+        show_shortcuts(
+            self, self.SHORTCUTS,
+            "<p>Slice steps and zoom apply to the pane under the mouse; the "
+            "mouse wheel steps through slices as well, and right-click opens "
+            "the display settings.</p>"
             "<p>Dropping a volume on the window opens it in a linked window, "
             "<b>shift</b> makes it the overlay and <b>alt</b> outlines it; "
             "a surface is outlined too.</p>")
@@ -3370,11 +3340,12 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
 
     dragMoveEvent = dragEnterEvent
 
+    #: What this window can open when it is dropped on
+    DROP_SUFFIXES = SURFACE_SUFFIXES + VOLUME_SUFFIXES
+
     @staticmethod
     def _droppable(url) -> bool:
-        return bool(url.isLocalFile()
-                    and str(url.toLocalFile()).lower().endswith(
-                        SURFACE_SUFFIXES + VOLUME_SUFFIXES))
+        return droppable_url(url, VolumeViewerWindow.DROP_SUFFIXES)
 
     def dropEvent(self, event):
         """Open, overlay or outline the dropped files.
@@ -3382,8 +3353,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         Which of the three is decided by the modifier held while dropping, the
         way file managers pick between copy and link.
         """
-        paths = [url.toLocalFile() for url in event.mimeData().urls()
-                 if self._droppable(url)]
+        paths = dropped_files(event, self.DROP_SUFFIXES)
         if not paths:
             return
         event.acceptProposedAction()
@@ -3455,17 +3425,10 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             os.path.dirname(os.path.abspath(self.image_path)),
             os.path.splitext(os.path.basename(self.image_path))[0].replace('.nii', '')
             + ".png")
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save screenshot", default, "PNG image (*.png)")
-        if not path:
-            return
-        try:
-            written = self.viewer.save_screenshot(path, scale=2)
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Screenshot",
-                                          f"Could not save the image:\n{exc}")
-            return
-        self.statusBar().showMessage(f"Saved {os.path.basename(written)}", 4000)
+        written = ask_and_save_png(
+            self, default, lambda path: self.viewer.save_screenshot(path, scale=2))
+        if written:
+            self.statusBar().showMessage(f"Saved {os.path.basename(written)}", 4000)
 
     # -------- coordinate bar --------
     def _build_coordinate_bar(self):
@@ -3752,9 +3715,22 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
 
     # -------- context menu --------
     def _show_context_menu(self, pos):
-        """Right-click menu of the slice views."""
+        """Right-click menu of the slice views, section by section."""
         menu = QtWidgets.QMenu(self)
+        self._add_zoom_menu(menu)
+        self._add_atlas_menu(menu)
+        self._add_overlay_menu(menu)
+        self._add_view_menu(menu)
+        menu.addSeparator()
+        menu.addAction("Montage…").triggered.connect(self.open_montage)
+        menu.addAction("Save screenshot…").triggered.connect(
+            self.save_screenshot_dialog)
+        menu.addAction("Keyboard shortcuts…").triggered.connect(
+            self.show_shortcut_help)
+        menu.exec(self.vtk_widget.mapToGlobal(pos))
 
+    def _add_zoom_menu(self, menu):
+        """Zoom levels, the lock and the re-centring toggle."""
         zoom_menu = menu.addMenu("Zoom")
         current = self.viewer.get_field_of_view()
         for label, mm in self.ZOOM_LEVELS:
@@ -3774,6 +3750,9 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         follow_action.triggered.connect(
             lambda checked=False: self.set_recenter(checked))
 
+
+    def _add_atlas_menu(self, menu):
+        """The atlas that names the region under the cursor."""
         # Naming the region under the cursor only makes sense when the image is
         # registered to the atlas, so the atlas is picked by hand
         atlas_menu = menu.addMenu("Atlas")
@@ -3791,6 +3770,9 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         atlas_menu.addSeparator()
         atlas_menu.addAction("Other…").triggered.connect(self._choose_atlas)
 
+
+    def _add_overlay_menu(self, menu):
+        """Raw voxels, the overlay volume and the contours."""
         menu.addSeparator()
         raw_action = menu.addAction("Raw voxels (nearest neighbour)")
         raw_action.setCheckable(True)
@@ -3830,6 +3812,9 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             contour_menu.addSeparator()
             contour_menu.addAction("Remove all").triggered.connect(self.clear_contours)
 
+
+    def _add_view_menu(self, menu):
+        """Controls, information panel, crosshair and letters."""
         panel_action = menu.addAction("Controls")
         panel_action.setCheckable(True)
         panel_action.setChecked(self.dock_controls.isVisible())
@@ -3854,15 +3839,6 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         letters_action.setEnabled(self.viewer._world_from_header)
         letters_action.triggered.connect(
             lambda checked=False: self.set_orientation_labels(checked))
-
-        menu.addSeparator()
-        menu.addAction("Montage…").triggered.connect(self.open_montage)
-        menu.addAction("Save screenshot…").triggered.connect(
-            self.save_screenshot_dialog)
-        menu.addAction("Keyboard shortcuts…").triggered.connect(
-            self.show_shortcut_help)
-
-        menu.exec(self.vtk_widget.mapToGlobal(pos))
 
     def _for_each_window(self, action):
         """Run *action* on every linked window, so they stay in step.
@@ -4223,12 +4199,6 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     return args
 
 
-#: Files that hold a surface rather than a volume
-SURFACE_SUFFIXES = ('.gii', '.vtk', '.vtp', '.obj', '.stl', '.ply')
-
-#: Volume files, for deciding whether a dropped file can be shown at all
-VOLUME_SUFFIXES = ('.nii', '.nii.gz', '.mnc', '.mha', '.mhd', '.nrrd', '.nhdr',
-                   '.img', '.hdr')
 
 #: Volumes opened at once, one window each
 MAX_VOLUMES = 6
@@ -4427,6 +4397,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
 
     pct = None if args.no_percentile else tuple(args.percentile)
+    set_verbose(args.verbose)
     options = dict(
         window_size=args.size,
         # Surfaces and image share the millimetre space of the NIfTI header,
@@ -4459,45 +4430,56 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     if args.screenshot or args.headless:
-        # Batch mode renders without a window, so no Qt application is needed
-        for i, volume in enumerate(volumes):
-            viewer = CatImageViewer(**options)
-            viewer.load_image(volume)
-            for s, surf in enumerate(surfaces):
-                viewer.add_surface(surf, VolumeViewerWindow.SURFACE_COLORS[s])
-            viewer.setup(window_title=os.path.basename(volume))
-            if args.overlay:
-                viewer.set_overlay(args.overlay)
-            _apply_overlay_options(viewer, args)
-            if args.atlas:
-                viewer.set_atlas(args.atlas)
-            for contour in (args.contour or ()):
-                viewer.add_contour(contour)
-            screenshot = args.screenshot
-            if screenshot and len(volumes) > 1:
-                stem, ext = os.path.splitext(screenshot)
-                screenshot = f"{stem}_{i + 1}{ext or '.png'}"
-            if args.montage:
-                viewer.render(headless=True)     # the cameras the sheet copies
-                if not screenshot:
-                    print("[cat_vol_view] --montage --headless writes nothing "
-                          "without --screenshot", file=sys.stderr)
-                    return 2
-                written = render_montage(
-                    viewer, screenshot, size=tuple(args.montage_size),
-                    on_message=lambda text: print(f"[cat_vol_view] {text}"),
-                    **montage_options)
-                if args.verbose:
-                    print(f"[cat_vol_view] Wrote montage: {written}")
-            else:
-                viewer.render(screenshot=screenshot, headless=True)
-        return 0
+        return _render_without_a_window(args, options, volumes, surfaces,
+                                        montage_options)
+    return _open_windows(args, options, volumes, surfaces, montage_options)
 
+
+def _render_without_a_window(args, options: dict, volumes: Sequence[str],
+                             surfaces: Sequence[str], montage_options: dict) -> int:
+    """Write the screenshots a batch call asks for, without opening a window."""
+    # Batch mode renders without a window, so no Qt application is needed
+    for i, volume in enumerate(volumes):
+        viewer = CatImageViewer(**options)
+        viewer.load_image(volume)
+        for s, surf in enumerate(surfaces):
+            viewer.add_surface(surf, VolumeViewerWindow.SURFACE_COLORS[s])
+        viewer.setup(window_title=os.path.basename(volume))
+        if args.overlay:
+            viewer.set_overlay(args.overlay)
+        _apply_overlay_options(viewer, args)
+        if args.atlas:
+            viewer.set_atlas(args.atlas)
+        for contour in (args.contour or ()):
+            viewer.add_contour(contour)
+        screenshot = args.screenshot
+        if screenshot and len(volumes) > 1:
+            stem, ext = os.path.splitext(screenshot)
+            screenshot = f"{stem}_{i + 1}{ext or '.png'}"
+        if args.montage:
+            viewer.render(headless=True)     # the cameras the sheet copies
+            if not screenshot:
+                print("[cat_vol_view] --montage --headless writes nothing "
+                      "without --screenshot", file=sys.stderr)
+                return 2
+            written = render_montage(
+                viewer, screenshot, size=tuple(args.montage_size),
+                on_message=lambda text: print(f"[cat_vol_view] {text}"),
+                **montage_options)
+            if args.verbose:
+                print(f"[cat_vol_view] Wrote montage: {written}")
+        else:
+            viewer.render(screenshot=screenshot, headless=True)
+    return 0
+
+
+def _open_windows(args, options: dict, volumes: Sequence[str],
+                  surfaces: Sequence[str], montage_options: dict) -> int:
+    """Show one window per volume, link them, and run the application."""
     # Interactive start only: a batch render should have no side effects
     install_qt_message_filter()
     ensure_apps_exist()      # macOS: leaves the app bundles behind, once
     app = qt_application()
-    # One window per volume, with their cursors linked
     windows = []
     for volume in volumes:
         window = VolumeViewerWindow(volume, surfaces=surfaces, **options)

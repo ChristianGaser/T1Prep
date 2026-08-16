@@ -2058,3 +2058,50 @@ class TestTitlePath(unittest.TestCase):
     def test_a_single_component_is_left_alone(self):
         from t1prep.gui.cat_vol_view import shorten_path
         self.assertEqual(shorten_path("/data"), "/data")
+
+
+class TestSharedViewerHelpers(unittest.TestCase):
+    """The pieces both viewers use, in one place (viewer_common)."""
+
+    def test_drop_targets_are_decided_by_suffix(self):
+        from PySide6 import QtCore
+        from t1prep.gui.viewer_common import (VOLUME_SUFFIXES, SURFACE_SUFFIXES,
+                                              droppable_url)
+        for name in ("T1.nii.gz", "brain.mnc", "lh.central.gii", "lh.aparc.annot"):
+            url = QtCore.QUrl.fromLocalFile(f"/data/{name}")
+            self.assertTrue(droppable_url(url, VOLUME_SUFFIXES + SURFACE_SUFFIXES))
+        self.assertFalse(droppable_url(QtCore.QUrl.fromLocalFile("/data/notes.txt"),
+                                       VOLUME_SUFFIXES))
+        self.assertFalse(droppable_url(QtCore.QUrl("https://example.org/T1.nii.gz"),
+                                       VOLUME_SUFFIXES))
+
+    def test_both_viewers_claim_the_same_zoom_events(self):
+        from t1prep.gui.viewer_common import ZOOM_EVENTS
+        for event in ("RightButtonPressEvent", "MouseWheelForwardEvent",
+                      "PinchEvent"):
+            self.assertIn(event, ZOOM_EVENTS)
+
+    def test_notes_are_quiet_unless_asked_for(self):
+        import io
+        from contextlib import redirect_stderr
+        from t1prep.gui import viewer_common
+        was = viewer_common._verbose
+        try:
+            viewer_common.set_verbose(False)
+            quiet = io.StringIO()
+            with redirect_stderr(quiet):
+                viewer_common.note("a fallback happened")
+            self.assertEqual(quiet.getvalue(), "")
+
+            viewer_common.set_verbose(True)
+            loud = io.StringIO()
+            with redirect_stderr(loud):
+                viewer_common.note("a fallback happened")
+            self.assertIn("a fallback happened", loud.getvalue())
+        finally:
+            viewer_common.set_verbose(was)
+
+    def test_the_title_shortener_lives_in_the_shared_module(self):
+        from t1prep.gui.viewer_common import shorten_path
+        from t1prep.gui.cat_vol_view import shorten_path as imported
+        self.assertIs(imported, shorten_path)
