@@ -47,8 +47,7 @@ CAT12 folder structures and the BIDS derivatives standard.
 - Implemented entirely in Python, eliminating the need for a Matlab license or platform-specific compiled binaries.
 - Newly developed pipeline to estimate cortical surface and thickness.
 - Skull-stripping, segmentation and non-linear spatial registration uses DeepMriPrep
-- Does not yet support longitudinal pipelines.
-- No quality assessment implemented yet.
+- Does not yet fully support longitudinal pipelines.
 - Only T1 MRI data supported.
 
 ## Installation
