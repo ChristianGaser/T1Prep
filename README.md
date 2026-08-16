@@ -120,6 +120,18 @@ t1prep-make-apps                   # macOS: build the viewer .app bundles
 CAT_VolView T1.nii.gz p1T1.nii.gz  # up to 6 volumes, one window each, linked
 ```
 
+In `CAT_SurfView`, clicking a vertex reports it in the status bar — hemisphere, vertex
+number, mm position, the overlay value and, for a −log10(p) map, the p-value it stands
+for. A right-click selects one of the shipped surface atlases (the region name is then
+part of that readout, and their borders can be drawn on the surface), switches between the surfaces of the same subject (central,
+inflated, patch) and, separately, what they are shaded with (mean curvature, sulcal
+depth or nothing), saves a screenshot, and opens the **cluster table**: every
+suprathreshold region with its peak, p-value, coordinate, size in mm² and atlas region,
+with an adjustable threshold, rows that mark the peak on the surface, and CSV export for
+the paper. `m` jumps to the strongest vertex, `+`/`-` zoom (the mouse does not — a right-click
+would otherwise leave the view zooming; `-free-zoom` restores it), `h` lists the keys,
+and dropping a surface, overlay or `.annot` file on the window opens it.
+
 In `CAT_VolView`, a right-click opens the display settings — zoom, atlas, overlay,
 contours, raw voxels, crosshair, orientation letters, image information — and they
 apply to all open volumes. The same menu saves a **screenshot** and opens a **montage**

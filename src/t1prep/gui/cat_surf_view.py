@@ -19,7 +19,37 @@ Features:
     surface in both directions: clicking the surface moves the slices, clicking
     a slice marks the closest surface point.  Right-click for the zoom levels.
     It is the same viewer as the standalone CAT_VolView tool (cat_vol_view.py).
-  • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, g screenshot, plus standard VTK keys.
+  • Clicking a vertex reports it in the status bar: hemisphere, vertex number,
+    mm position, overlay value (as a p-value for -log10(p) maps) and — with an
+    atlas selected from the right-click menu — the region it belongs to.  The
+    atlases are the .annot files shipped with T1Prep, and their region borders
+    can be drawn on the surface (Atlas > Show region borders), as in
+    cat_surf_results.
+  • Clusters: the suprathreshold regions of an overlay as a table (peak, p, mm,
+    vertices, mm², region), with a threshold to change, rows that mark the peak
+    on the surface, and CSV export.
+  • 'm' marks the strongest vertex of the overlay.
+  • The right-click menu switches the surface (central, inflated, patch) and,
+    separately, what it is shaded with — mean curvature, sulcal depth or
+    nothing — as in cat_surf_results, whose shading it follows: a signed
+    square root of the curvature, inverted for sulcal depth.  The shading is
+    always that of the folded surface, so an inflated or flattened one keeps
+    the relief instead of turning blank, and it follows a change of surface
+    without being reselected.
+  • The default value range follows cat_surf_results as well: symmetric for
+    two-sided data, whole numbers for -log10(p) maps, and starting at the
+    threshold when there is nothing below the negative one, so the whole
+    colormap is spent on the values that are actually shown.  It also saves a screenshot; dropping a
+    surface, an overlay or an annotation on the window opens it.  A flat patch
+    is shown once per hemisphere rather than rotated into six overlapping
+    views — the two mirroring each other, as cat_surf_results shows flatmaps —
+    and each view shows only the hemisphere it stands for.
+  • The mouse does not change the zoom (a right-click would otherwise leave the
+    view zooming on every move, so a vertex could not be clicked); use '+'/'-',
+    the Zoom entries of the menu, or '-free-zoom' to allow it again.
+  • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, m peak,
+    g screenshot, h for the list, plus the standard VTK keys the viewer does
+    not claim (w/s wireframe/shaded).
 
 Requires: vtk (>=9), PySide6; nibabel (for GIFTI fallback + FreeSurfer textures if VTK lacks vtkGIFTIReader).
 
@@ -40,6 +70,8 @@ import os
 import sys
 import re
 import numpy as np
+from scipy import sparse
+from scipy.sparse import csgraph  # noqa: F401  (sparse.csgraph)
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -88,7 +120,7 @@ DOCK_LEFT = Qt.DockWidgetArea.LeftDockWidgetArea
 # (No local utils needed in this module)
 
 # --- VTK imports (module-accurate for common wheels) ---
-from vtkmodules.util.numpy_support import vtk_to_numpy
+from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 from vtkmodules.vtkCommonCore import vtkLookupTable, vtkDoubleArray, vtkPoints, vtkVariant
 from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray
 from vtkmodules.vtkFiltersGeneral import vtkCurvatures
@@ -176,6 +208,21 @@ except ImportError:  # direct invocation as a script
 MESH_TYPE_TOKENS = frozenset(
     {'central', 'pial', 'white', 'inflated', 'sphere', 'patch', 'mc', 'sqrtsulc'}
 )
+
+#: The even grey a surface gets when there is nothing to shade it with.
+#: cat_surf_results paints 0.5 there; the 3D pipeline gamma-encodes what it is
+#: given, so 0.5 would come out almost white — this value is what renders as
+#: the same mid-grey (and matches the clipped band of the colorbar).
+UNDERLAY_PLAIN_GREY = (0.33, 0.33, 0.33)
+
+#: Darkest and lightest grey the shading uses.  The relief comes out of
+#: shade_from_curvature(); this only says how much of it to show.
+UNDERLAY_GREYS = (0.30, 0.80)
+
+#: Surfaces the viewer offers to switch between, in the order they are shown.
+#: A subset of the tokens above: 'mc' and 'sqrtsulc' name scalar files rather
+#: than meshes, and sphere/pial/white add little next to these three.
+SWITCHABLE_SURFACES = ('central', 'inflated', 'patch')
 
 
 def detect_naming_scheme(filename: str) -> bool:
@@ -392,6 +439,235 @@ def detect_overlay_kind(filename: str) -> Optional[str]:
     if '_desc-pbt' in name or '.pbt.' in name or name.endswith('pbt'):
         return 'pbt'
     return None
+
+
+def default_overlay_range(values, threshold: float = 0.0,
+                          logp: bool = False) -> Optional[Tuple[float, float]]:
+    """The value range an overlay is coloured over, as cat_surf_results picks it.
+
+    Three rules, taken from ``cat_surf_results.m``:
+
+    * data with negative values is scaled symmetrically, so the two tails get
+      the same amount of colour;
+    * a -log10(p) map is rounded outwards to whole numbers;
+    * when nothing lies below the negative threshold, the range *starts* at
+      the threshold — otherwise the lower part of the colormap is spent on
+      values that are hidden anyway.
+
+    Args:
+        values: The overlay values (both hemispheres together).
+        threshold: Where the map is thresholded, i.e. the upper edge of the
+            clip window; 0 for an unthresholded map.
+        logp: True for a -log10(p) map.
+
+    Returns:
+        (low, high), or None when there is nothing to scale.
+    """
+    data = np.asarray(values, dtype=float).ravel()
+    data = data[np.isfinite(data)]
+    if data.size == 0:
+        return None
+    low, high = float(data.min()), float(data.max())
+    if low < 0:
+        edge = max(abs(low), abs(high))
+        low, high = -edge, edge
+    if logp:
+        low, high = float(math.floor(low)), float(math.ceil(high))
+    threshold = abs(float(threshold))
+    if threshold > 0 and float(data.min()) > -threshold:
+        # One-sided: the colours start where the map does
+        low = threshold
+    if not high > low:
+        return None
+    return (low, high)
+
+
+def atlas_border_lines(poly, labels) -> vtkPolyData:
+    """The boundaries between atlas regions, as line segments on the surface.
+
+    cat_surf_results draws the 0.5-isocontour of every region in turn; the
+    same lines come out of one pass over the triangles, taking the segment
+    between the midpoints of the edges whose ends belong to different regions
+    (a triangle with three different regions is closed through its centre).
+
+    Args:
+        poly: The surface the labels belong to.
+        labels: One region number per vertex.
+
+    Returns:
+        Polydata holding the border segments; empty when there is nothing to
+        draw.
+    """
+    border = vtkPolyData()
+    points = vtkPoints()
+    lines = vtkCellArray()
+    border.SetPoints(points)
+    border.SetLines(lines)
+    if poly is None or labels is None or poly.GetNumberOfPoints() != len(labels):
+        return border
+    coordinates = vtk_to_numpy(poly.GetPoints().GetData()).astype(float)
+    faces = vtk_to_numpy(poly.GetPolys().GetData())
+    if faces.size == 0:
+        return border
+    triangles = faces.reshape(-1, 4)[:, 1:]
+    labels = np.asarray(labels)
+    corners = labels[triangles]
+
+    midpoints = {}
+    for first, second in ((0, 1), (1, 2), (2, 0)):
+        midpoints[(first, second)] = 0.5 * (coordinates[triangles[:, first]]
+                                            + coordinates[triangles[:, second]])
+    centres = coordinates[triangles].mean(axis=1)
+
+    segments = []
+    differs = {pair: corners[:, pair[0]] != corners[:, pair[1]]
+               for pair in ((0, 1), (1, 2), (2, 0))}
+    crossings = sum(differs.values())          # 0, 2 or 3 edges per triangle
+    two = crossings == 2
+    if two.any():
+        cut = [pair for pair in differs]
+        for i, first in enumerate(cut):
+            for second in cut[i + 1:]:
+                both = two & differs[first] & differs[second]
+                if both.any():
+                    segments.append((midpoints[first][both],
+                                     midpoints[second][both]))
+    three = crossings == 3
+    if three.any():
+        for pair in differs:
+            segments.append((midpoints[pair][three], centres[three]))
+
+    if not segments:
+        return border
+    starts = np.vstack([start for start, _ in segments])
+    ends = np.vstack([end for _, end in segments])
+    coords = np.empty((2 * len(starts), 3), dtype=float)
+    coords[0::2] = starts
+    coords[1::2] = ends
+    points.SetData(numpy_to_vtk(coords, deep=True))
+    for index in range(len(starts)):
+        lines.InsertNextCell(2)
+        lines.InsertCellPoint(2 * index)
+        lines.InsertCellPoint(2 * index + 1)
+    return border
+
+
+def available_surface_atlases() -> List[Tuple[str, str]]:
+    """The surface atlases shipped with T1Prep, as (name, left annot) pairs.
+
+    Only the left file is listed; the right one is found from its name, the
+    same way the hemispheres of a mesh are.
+    """
+    folder = Path(__file__).resolve().parent.parent / 'data' / 'atlases_surfaces_32k'
+    out: List[Tuple[str, str]] = []
+    if not folder.is_dir():
+        return out
+    for annot in sorted(folder.glob('lh.*.annot')):
+        out.append((annot.name[len('lh.'):-len('.annot')], str(annot)))
+    return out
+
+
+def read_annotation(path: str) -> Tuple["np.ndarray", List[str]]:
+    """Vertex labels and region names of a FreeSurfer ``.annot`` file.
+
+    Returns:
+        The label of every vertex as an index into the returned names, and the
+        names themselves.  Unlabelled vertices carry -1.
+
+    Raises:
+        RuntimeError: when the file cannot be read.
+    """
+    try:
+        import nibabel as nib
+    except ImportError:
+        raise RuntimeError("reading .annot files needs nibabel")
+    try:
+        labels, _ctab, names = nib.freesurfer.io.read_annot(str(path))
+    except Exception as exc:
+        raise RuntimeError(f"cannot read {os.path.basename(str(path))}: {exc}")
+    decoded = [n.decode() if isinstance(n, bytes) else str(n) for n in names]
+    return np.asarray(labels), [n.strip() for n in decoded]
+
+
+def vertex_areas(poly) -> "np.ndarray":
+    """Surface area belonging to each vertex (a third of its triangles).
+
+    Cluster sizes are reported in mm2 rather than in vertices: a 32k mesh has
+    vertices of unequal size, and a count means nothing across resolutions.
+    """
+    points = vtk_to_numpy(poly.GetPoints().GetData()).astype(float)
+    polys = vtk_to_numpy(poly.GetPolys().GetData())
+    areas = np.zeros(len(points), dtype=float)
+    if polys.size == 0:
+        return areas
+    # vtkCellArray stores (n, i0, i1, …) per cell; the meshes here are triangles
+    triangles = polys.reshape(-1, 4)[:, 1:]
+    a, b, c = (points[triangles[:, 0]], points[triangles[:, 1]],
+               points[triangles[:, 2]])
+    face = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    for column in range(3):
+        np.add.at(areas, triangles[:, column], face / 3.0)
+    return areas
+
+
+def find_surface_clusters(poly, values, threshold: float,
+                          min_area: float = 0.0) -> List[dict]:
+    """Connected regions of a surface where |values| exceeds *threshold*.
+
+    Both tails are searched, and a cluster never mixes them: neighbouring
+    vertices only join when they have the same sign, so a positive and a
+    negative blob that touch stay two findings.
+
+    Args:
+        poly: The hemisphere the values belong to.
+        values: One value per vertex.
+        threshold: Vertices with ``|value| > threshold`` take part.
+        min_area: Drop clusters smaller than this (mm2).
+
+    Returns:
+        One dict per cluster with its peak value, peak vertex, area in mm2 and
+        number of vertices, ordered by descending peak.
+    """
+    values = np.asarray(values, dtype=float)
+    polys = vtk_to_numpy(poly.GetPolys().GetData())
+    if polys.size == 0 or values.size == 0:
+        return []
+    triangles = polys.reshape(-1, 4)[:, 1:]
+    areas = vertex_areas(poly)
+
+    above = np.abs(values) > float(threshold)
+    if not above.any():
+        return []
+    # Edges of the mesh, kept only where both ends are in the same tail
+    edges = np.vstack([triangles[:, [0, 1]], triangles[:, [1, 2]],
+                       triangles[:, [2, 0]]])
+    keep = (above[edges[:, 0]] & above[edges[:, 1]]
+            & (np.sign(values[edges[:, 0]]) == np.sign(values[edges[:, 1]])))
+    edges = edges[keep]
+
+    count = len(values)
+    graph = sparse.coo_matrix(
+        (np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(count, count))
+    number, labels = sparse.csgraph.connected_components(graph, directed=False)
+    labels = np.where(above, labels, -1)
+
+    clusters = []
+    for label in range(number):
+        members = np.flatnonzero(labels == label)
+        if members.size == 0:
+            continue
+        area = float(areas[members].sum())
+        if area < min_area:
+            continue
+        peak = int(members[np.argmax(np.abs(values[members]))])
+        clusters.append({
+            'peak_value': float(values[peak]),
+            'peak_vertex': peak,
+            'vertices': int(members.size),
+            'area': area,
+        })
+    clusters.sort(key=lambda c: abs(c['peak_value']), reverse=True)
+    return clusters
 
 
 def is_logp_overlay(filename: Optional[str]) -> bool:
@@ -737,7 +1013,7 @@ def split_combined_mesh(
     Returns:
         (poly_l, poly_r): Separate vtkPolyData objects.
     """
-    from vtkmodules.util.numpy_support import vtk_to_numpy as _v2n
+    from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy as _v2n
 
     pts_all = poly.GetPoints()
     n_total = pts_all.GetNumberOfPoints()
@@ -1166,72 +1442,38 @@ def get_std(arr: vtkDoubleArray) -> float: return float(np.nanstd(vtk_to_numpy(a
 
 # ---- Interactor style ----
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
+#: Keys the viewer acts on itself; VTK must not also act on them.  Kept at
+#: module level so the interactor observer and the help dialog agree.
+VIEWER_KEYS = frozenset({
+    'q', 'Q', 'u', 'U', 'd', 'D', 'l', 'L', 'r', 'R', 'o', 'O', 'b', 'B',
+    'g', 'G', 'h', 'H', 'm', 'M', 'Left', 'Right',
+    'plus', 'equal', 'minus', 'KP_Add', 'KP_Subtract',
+})
+
+
 class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
-    def __init__(self, parent=None):
-        super().__init__(); self._renderer: Optional[vtkRenderer] = None
-        self._viewer = None  # Reference to the main viewer
-        # Keys handled by the Viewer (suppress default VTK behavior for these)
-        self._viewer_keys = {
-            'q','Q','u','U','d','D','l','L','r','R','o','O','b','B','g','G','h','H','Left','Right'
-        }
+    """Trackball style with the viewer's own keys taken out.
+
+    The keys are not taken out here: overriding ``OnKeyPress`` and friends in
+    Python has no effect, because the interactor dispatches events to the C++
+    implementation.  :class:`Viewer` therefore observes ``KeyPressEvent`` at a
+    higher priority and aborts the ones it handles (see VIEWER_KEYS).
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._renderer = None
+        self._viewer = None
+
     def SetRenderer(self, ren: vtkRenderer): self._renderer = ren
     def SetViewer(self, viewer): self._viewer = viewer
+
     def _volume_open(self) -> bool:
         try:
             return bool(self._viewer and getattr(self._viewer, '_volume_windows', None))
         except Exception:
             return False
-    def OnKeyPress(self):
-        # Suppress default handling for keys that our viewer manages (e.g., 'r' reset)
-        try:
-            sym = self.GetInteractor().GetKeySym()
-        except Exception:
-            sym = None
-        try:
-            code = self.GetInteractor().GetKeyCode()
-        except Exception:
-            code = None
-        if sym in self._viewer_keys or (isinstance(code, str) and code in 'uUdDlLrRoObBgGhH'):
-            return
-        return super().OnKeyPress()
 
-    def OnChar(self):
-        # Suppress default handling for keys that our viewer manages
-        try:
-            sym = self.GetInteractor().GetKeySym()
-        except Exception:
-            sym = None
-        try:
-            code = self.GetInteractor().GetKeyCode()
-        except Exception:
-            code = None
-        if sym in self._viewer_keys or (isinstance(code, str) and code in 'uUdDlLrRoObBgGhH'):
-            return
-        return super().OnChar()
-
-    def OnKeyDown(self):
-        # Suppress default handling on key-down as some styles act here
-        try:
-            sym = self.GetInteractor().GetKeySym()
-        except Exception:
-            sym = None
-        try:
-            code = self.GetInteractor().GetKeyCode()
-        except Exception:
-            code = None
-        if sym in self._viewer_keys or (isinstance(code, str) and code in 'uUdDlLrRoObBgGhH'):
-            return
-        return super().OnKeyDown()
-
-    def OnLeftButtonDown(self):
-        # If a volume window is open, consume left-click to avoid starting rotation.
-        # The Viewer installs its own LeftButtonPressEvent handler to perform picking and broadcast to the volume window.
-        try:
-            if self._volume_open():
-                return  # do not call super() -> prevents rotate on drag
-        except Exception:
-            pass
-        return super().OnLeftButtonDown()
 
 # ---- Options & CLI ----
 #: Option sets selected with ``-preset``.  Keys are the command-line option
@@ -1279,6 +1521,7 @@ class Options:
     colormap: int = JET
     debug: bool = False
     fix_scaling: bool = False  # Fix scaling across overlays
+    free_zoom: bool = False    # Let the mouse change the zoom
 
 def parse_args(argv: List[str]) -> Options:
     p = argparse.ArgumentParser(
@@ -1372,6 +1615,9 @@ def parse_args(argv: List[str]) -> Options:
                         + '\n'.join(f'  {n} = {PRESET_HELP.get(n, "")}'
                                     for n in sorted(PRESETS))
                         + '\nOptions given explicitly take precedence.')
+    p.add_argument('-free-zoom', dest='free_zoom', action='store_true',
+                   help='Allow zooming with the mouse or trackpad (off by default, '
+                        'because a right-click then keeps the view zooming)')
     p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true',
                    help='Keep the range of the first overlay for all following ones')
     p.add_argument('-debug', action='store_true', help=argparse.SUPPRESS)  # accepted, not implemented
@@ -1615,6 +1861,7 @@ def parse_args(argv: List[str]) -> Options:
         colormap=cm,
         debug=bool(a.debug),
         fix_scaling=bool(a.fix_scaling),
+        free_zoom=bool(getattr(a, 'free_zoom', False)),
     )
 
 # ---- Control Panel ----
@@ -1677,27 +1924,60 @@ class Viewer(QtWidgets.QMainWindow):
         # interactor style
         self.iren: vtkRenderWindowInteractor = self.rw.GetInteractor()
         style = CustomInteractorStyle(); style.SetRenderer(self.ren); style.SetViewer(self); self.iren.SetInteractorStyle(style)
-        # Also observe key events explicitly for overlay navigation only (avoid duplicates)
-        def _on_keypress(obj, ev):
-            # Prefer handling our toggle here if modifiers are pressed and match
-            try:
-                sym = None
+        # The viewer handles its own keys here.  Overriding the style's
+        # OnKeyPress would not do: the interactor dispatches to the C++
+        # implementation, which knows nothing about a Python subclass — so the
+        # event has to be taken away from the style by aborting it, otherwise
+        # VTK acts on it as well (its 'r' resets the camera, which used to
+        # throw away the rotation the viewer had just applied).
+        def _claim(event: str, handler=None):
+            """Handle *event* before the style, and keep our keys from it."""
+            tag = [None]
+
+            def callback(obj, _event):
                 try:
                     sym = self.iren.GetKeySym()
                 except Exception:
                     sym = None
-            except Exception:
-                pass
-            try:
-                if sym is None:
-                    sym = self.iren.GetKeySym()
-            except Exception:
-                sym = None
-            self._handle_key(sym)
-        self.iren.AddObserver("KeyPressEvent", _on_keypress)
+                if handler is not None:
+                    handler(sym)
+                if sym in VIEWER_KEYS and tag[0] is not None:
+                    command = obj.GetCommand(tag[0])
+                    if command is not None:
+                        command.AbortFlagOn()
+
+            self._key_callbacks.append(callback)
+            tag[0] = self.iren.AddObserver(event, callback, 1.0)
+
+        self._key_callbacks: List = []
+        _claim("KeyPressEvent", self._handle_key)
+        # VTK acts on most keys in OnChar, not on the key press: 'r' resets the
+        # camera there, which used to undo the rotation of the viewer's own 'r'
+        _claim("CharEvent")
+
+        # The mouse must not change the zoom.  Right-drag is the style's zoom
+        # and the context menu opens on the same button, so the menu takes the
+        # release the style waits for and every later mouse move keeps
+        # zooming — which makes clicking a vertex impossible.
+        self.lock_zoom = not bool(getattr(opts, 'free_zoom', False))
+        self._zoom_callbacks: List = []
+        for event in ("RightButtonPressEvent", "RightButtonReleaseEvent",
+                      "MouseWheelForwardEvent", "MouseWheelBackwardEvent",
+                      "StartPinchEvent", "PinchEvent"):
+            self._guard_zoom(event)
 
         # Clicking on the surface marks the spot and moves any open slice viewer
         self._cursor_actors: List[vtkActor] = []
+        #: (hemisphere, vertex) the cursor sits on, and the atlas naming it
+        self._cursor_vertex: Optional[Tuple[int, int]] = None
+        #: What the surface is shaded with; see set_underlay
+        self.underlay: Optional[str] = 'mc'
+        self._atlas: Optional[dict] = None
+        self.atlas_path: Optional[str] = None
+        #: Draw the boundaries between atlas regions on the surface
+        self.show_borders = False
+        self.actor_border_l: Optional[vtkActor] = None
+        self.actor_border_r: Optional[vtkActor] = None
 
         def _on_left_click(_obj, _evt):
             try:
@@ -1822,7 +2102,12 @@ class Viewer(QtWidgets.QMainWindow):
         self._apply_discrete_to_overlay_lut(self.lut_overlay_l)
         self._apply_discrete_to_overlay_lut(self.lut_overlay_r)
         # Clip transparency is applied further below, once the overlay range is final
-        self.lut_bkg = vtkLookupTable(); self.lut_bkg.SetHueRange(0,0); self.lut_bkg.SetSaturationRange(0,0); self.lut_bkg.SetValueRange(0,1); self.lut_bkg.Build()
+        # The underlay is shading, not data: a band of greys rather than the
+        # full black-to-white ramp, so sulci and gyri read as a relief and the
+        # overlay colours stay the brightest thing on the surface
+        self.lut_bkg = vtkLookupTable(); self.lut_bkg.SetHueRange(0, 0)
+        self.lut_bkg.SetSaturationRange(0, 0)
+        self.lut_bkg.SetValueRange(0, 1); self.lut_bkg.Build()
 
         # Background scalar range
         self.range_bkg = list(opts.range_bkg)
@@ -1908,7 +2193,10 @@ class Viewer(QtWidgets.QMainWindow):
     # Layout of the six montage views: lateral/medial for both hemispheres in
     # the two rows, dorsal views in the middle.  order[i] picks the hemisphere
     # (0 = left, 1 = right) an individual view is cloned from.
+    #: Which hemisphere each of the six views shows (0 = left, 1 = right)
     _MONTAGE_ORDER = (0, 1, 0, 1, 0, 1)
+    #: The order actually in use; a flat map has a layout of its own
+    _montage_order = _MONTAGE_ORDER
 
     # Marker linking the surface to the slice viewer: radius in mm, and how
     # far from the surface a picked point may be before it is ignored.
@@ -1956,6 +2244,41 @@ class Viewer(QtWidgets.QMainWindow):
             created = True
         return created
 
+    @staticmethod
+    def is_flat_surface(poly) -> bool:
+        """True for a flattened map, which has no extent across its plane.
+
+        A patch is a cut-open, flattened hemisphere: rotating it into six views
+        would draw the same sheet six times on top of itself.
+        """
+        if poly is None or poly.GetNumberOfPoints() == 0:
+            return False
+        bounds = poly.GetBounds()
+        extents = [bounds[1] - bounds[0], bounds[3] - bounds[2],
+                   bounds[5] - bounds[4]]
+        largest = max(extents)
+        return largest > 0.0 and min(extents) < 0.02 * largest
+
+    def _montage_layout(self):
+        """Where the copies of the hemispheres go: (order, x, y, rotX, rotZ).
+
+        Six views of a folded surface — lateral, medial, superior, inferior —
+        but a flat map is shown once per hemisphere, side by side.
+        """
+        if self.is_flat_surface(self.poly_l):
+            # Both at the origin; _separate_flat_views() moves the right one
+            # aside once its rotated bounds are known.  The two are turned the
+            # opposite way (+90 and -90, the lateral pair cat_surf_results
+            # uses for flatmaps), so the second map is the mirror image of the
+            # first and the pair reads as one figure.
+            return ((0, 1), [0.0, 0.0], [0.0, 0.0], [270, 270], [90, -90])
+        shifts = (180.0, 180.0)
+        posx = [0, 2 * shifts[0], 0.15 * shifts[0], 1.85 * shifts[0], shifts[0], shifts[0]]
+        posy = [0, 0, 0.8 * shifts[1], 0.8 * shifts[1], 0.6 * shifts[1], 0.6 * shifts[1]]
+        rotx = [270, 270, 270, 270, 0, 0]
+        rotz = [90, -90, -90, 90, 0, 0]
+        return (self._MONTAGE_ORDER, posx, posy, rotx, rotz)
+
     def _build_montage(self):
         """(Re)create the six-view montage from the current hemisphere actors.
 
@@ -1964,18 +2287,14 @@ class Viewer(QtWidgets.QMainWindow):
         the set of hemispheres changes (e.g. switching from a single-hemisphere
         overlay to a combined LH+RH one), so previous clones are removed first.
         """
-        shifts = (180.0, 180.0)
-        posx = [0, 2 * shifts[0], 0.15 * shifts[0], 1.85 * shifts[0], shifts[0], shifts[0]]
-        posy = [0, 0, 0.8 * shifts[1], 0.8 * shifts[1], 0.6 * shifts[1], 0.6 * shifts[1]]
-        rotx = [270, 270, 270, 270, 0, 0]
-        rotz = [90, -90, -90, 90, 0, 0]
-        order = self._MONTAGE_ORDER
+        order, posx, posy, rotx, rotz = self._montage_layout()
+        self._montage_order = order
         views = len(order)
 
         # The cursor markers are placed with the matrices of the old clones
         self._clear_surface_cursor()
         # Drop clones of a previous scene
-        for attr in ('_montage_bkg', '_montage_ov'):
+        for attr in ('_montage_bkg', '_montage_ov', '_montage_border'):
             for actor in (getattr(self, attr, None) or []):
                 if actor is not None:
                     try:
@@ -1985,25 +2304,67 @@ class Viewer(QtWidgets.QMainWindow):
         # Keep track of clones per view index for selective operations (e.g., key 'b')
         self._montage_bkg: List[Optional[vtkActor]] = [None] * views
         self._montage_ov: List[Optional[vtkActor]] = [None] * views
+        self._montage_border: List[Optional[vtkActor]] = [None] * views
 
         def add_clone(actor: vtkActor, px, py, rx, rz) -> vtkActor:
             a = vtkActor(); a.ShallowCopy(actor); a.AddPosition(px, py, 0); a.RotateX(rx); a.RotateZ(rz); self.ren.AddActor(a); return a
 
         bkg_l = getattr(self, 'actor_bkg_l', None); bkg_r = getattr(self, 'actor_bkg_r', None)
         ov_l = getattr(self, 'actor_ov_l', None); ov_r = getattr(self, 'actor_ov_r', None)
+        # Each view shows the hemisphere it stands for, and nothing else: an
+        # overlay that covers only one hemisphere used to be cloned into the
+        # views of the other, drawing one surface on top of a different one
         for i in range(views):
             if self.poly_r is None and (i % 2 == 1):
                 continue
-            src = bkg_r if (order[i] == 1 and bkg_r is not None) else bkg_l
+            src = bkg_r if order[i] == 1 else bkg_l
             if src is not None:
                 self._montage_bkg[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
         if ov_l is not None or ov_r is not None:
             for i in range(views):
                 if self.poly_r is None and (i % 2 == 1):
                     continue
-                src = ov_r if (order[i] == 1 and ov_r is not None) else ov_l
+                src = ov_r if order[i] == 1 else ov_l
                 if src is not None:
                     self._montage_ov[i] = add_clone(src, posx[i], posy[i], rotx[i], rotz[i])
+
+        border_l = getattr(self, 'actor_border_l', None)
+        border_r = getattr(self, 'actor_border_r', None)
+        if border_l is not None or border_r is not None:
+            for i in range(views):
+                if self.poly_r is None and (i % 2 == 1):
+                    continue
+                src = border_r if order[i] == 1 else border_l
+                if src is not None:
+                    self._montage_border[i] = add_clone(src, posx[i], posy[i],
+                                                        rotx[i], rotz[i])
+
+        if self.is_flat_surface(self.poly_l):
+            self._separate_flat_views()
+
+    def _separate_flat_views(self):
+        """Move the right flat map clear of the left one.
+
+        How wide a patch ends up on screen depends on where it was cut and on
+        the Y normalization of each hemisphere, so the two are placed by their
+        rotated bounds rather than by a guess from the mesh size — a guess is
+        what let them overlap.
+        """
+        left, right = self._montage_bkg[0], self._montage_bkg[1]
+        if left is None or right is None:
+            return
+        left_bounds, right_bounds = left.GetBounds(), right.GetBounds()
+        width = max(left_bounds[1] - left_bounds[0],
+                    right_bounds[1] - right_bounds[0])
+        gap = 0.04 * width
+        shift_x = (left_bounds[1] + gap) - right_bounds[0]
+        # and level with each other, so the pair reads as one figure
+        shift_y = (0.5 * (left_bounds[2] + left_bounds[3])
+                   - 0.5 * (right_bounds[2] + right_bounds[3]))
+        for actor in (self._montage_bkg[1], self._montage_ov[1],
+                      (getattr(self, '_montage_border', None) or [None, None])[1]):
+            if actor is not None:
+                actor.AddPosition(shift_x, shift_y, 0.0)
 
     def _set_meshes(self, poly_l: vtkPolyData, poly_r: Optional[vtkPolyData]):
         """Install new hemisphere meshes and rewire everything that renders them.
@@ -2034,6 +2395,16 @@ class Viewer(QtWidgets.QMainWindow):
             if self.bkg_scalar_r is not None:
                 self.curv_r_out.GetPointData().SetScalars(self.bkg_scalar_r)
 
+        # The overlay values belong to the vertices, not to the surface they
+        # were loaded on: a switch from central to inflated keeps them, as
+        # long as the two have the same number of vertices
+        for poly, scalars in ((self.poly_l, getattr(self, 'scal_l', None)),
+                              (self.poly_r, getattr(self, 'scal_r', None))):
+            if poly is None or scalars is None:
+                continue
+            if scalars.GetNumberOfTuples() == poly.GetNumberOfPoints():
+                poly.GetPointData().SetScalars(scalars)
+
         # Point existing mappers at the new geometry
         if getattr(self, 'actor_bkg_l', None) is not None:
             self.actor_bkg_l.GetMapper().SetInputData(self.curv_l_out)
@@ -2053,12 +2424,154 @@ class Viewer(QtWidgets.QMainWindow):
         self._update_slider_bounds()
 
     def _show_view_context_menu(self, pos):
+        """Right-click menu: what to look at, and what to look at it with."""
         menu = QtWidgets.QMenu(self)
-        # reuse the same action so state stays in sync
+
+        has_overlay = self.scal_l is not None or self.scal_r is not None
+        peak = menu.addAction("Go to peak")
+        peak.setEnabled(has_overlay)
+        peak.triggered.connect(lambda: self.go_to_peak())
+        clusters = menu.addAction("Clusters…")
+        clusters.setEnabled(has_overlay)
+        clusters.triggered.connect(self.show_cluster_table)
+
+        # Naming a region only means something for a surface the atlas fits,
+        # so it is chosen by hand rather than guessed
+        atlas_menu = menu.addMenu("Atlas")
+        none_action = atlas_menu.addAction("None")
+        none_action.setCheckable(True)
+        none_action.setChecked(self.atlas_path is None)
+        none_action.triggered.connect(lambda: self.set_atlas(None))
+        atlas_menu.addSeparator()
+        for name, path in available_surface_atlases():
+            action = atlas_menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(self.atlas_path == path)
+            action.triggered.connect(lambda _c=False, p=path: self.set_atlas(p))
+        atlas_menu.addSeparator()
+        atlas_menu.addAction("Other…").triggered.connect(self._choose_atlas)
+        atlas_menu.addSeparator()
+        borders = atlas_menu.addAction("Show region borders")
+        borders.setCheckable(True)
+        borders.setChecked(self.show_borders)
+        borders.setEnabled(self._atlas is not None)
+        borders.triggered.connect(
+            lambda checked=False: self.set_atlas_borders(checked))
+
+        surfaces = self.available_surface_types()
+        if surfaces:
+            surface_menu = menu.addMenu("Surface")
+            current = self.current_surface_type()
+            for mesh_type, path in surfaces:
+                action = surface_menu.addAction(mesh_type)
+                action.setCheckable(True)
+                action.setChecked(mesh_type == current)
+                action.triggered.connect(
+                    lambda _c=False, p=path: self.switch_surface_type(p))
+
+        # Which shape is shown and what is painted on it are two questions
+        underlay_menu = menu.addMenu("Underlay")
+        for label, token in self.available_underlays():
+            action = underlay_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(self.underlay == token)
+            action.triggered.connect(lambda _c=False, k=token: self.set_underlay(k))
+
+        menu.addSeparator()
+        lock = menu.addAction("Lock zoom (mouse and touchpad)")
+        lock.setCheckable(True)
+        lock.setChecked(self.lock_zoom)
+        lock.triggered.connect(lambda checked=False: self.set_lock_zoom(checked))
+        zoom_menu = menu.addMenu("Zoom")
+        zoom_menu.addAction("Zoom in").triggered.connect(lambda: self.zoom_by(1.2))
+        zoom_menu.addAction("Zoom out").triggered.connect(lambda: self.zoom_by(1 / 1.2))
+        zoom_menu.addAction("Reset view").triggered.connect(
+            lambda: (self._fit_camera(), self.rw.Render()))
+
         menu.addAction(self.act_show_controls)
-        # position relative to the widget, map to global
-        global_pos = self.vtk_widget.mapToGlobal(pos)
-        menu.exec(global_pos)
+        menu.addAction("Save screenshot…").triggered.connect(self._save_screenshot_dialog)
+        menu.addAction("Keyboard shortcuts…").triggered.connect(self.show_shortcut_help)
+        menu.exec(self.vtk_widget.mapToGlobal(pos))
+
+    def _choose_atlas(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Choose a surface atlas", str(Path(self.opts.mesh_left or '.').parent),
+            "FreeSurfer annotation (*.annot);;All files (*)")
+        if path:
+            self.set_atlas(path)
+
+    def _save_screenshot_dialog(self):
+        """Ask where to write a PNG of the montage and save it."""
+        start = str(Path(self.opts.mesh_left or '.').with_suffix('.png'))
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save screenshot", start, "PNG image (*.png)")
+        if path:
+            self.save_png(path)
+
+    #: Keys, and what they do, for the help dialog
+    SHORTCUTS = (
+        ("u / d / l / r", "rotate up, down, left, right (shift: 1°, ctrl: 180°)"),
+        ("b", "flip the view"),
+        ("o", "reset the view"),
+        ("m", "go to the strongest vertex of the overlay"),
+        ("+ / -", "zoom in and out (the mouse does not zoom, see the menu)"),
+        ("← / →", "step through overlays (or meshes)"),
+        ("g", "save a screenshot"),
+        ("w / s", "wireframe / shaded"),
+        ("h", "this list"),
+        ("Ctrl/Cmd+D", "show or hide the control panel"),
+    )
+
+    def show_shortcut_help(self):
+        """List the keys in a dialog — printing them helps nobody in an app."""
+        rows = "".join(f"<tr><td><b>{keys}</b>&nbsp;&nbsp;</td><td>{what}</td></tr>"
+                       for keys, what in self.SHORTCUTS)
+        QtWidgets.QMessageBox.information(
+            self, "Keyboard shortcuts",
+            f"<table>{rows}</table>"
+            "<p>Click the surface to mark a vertex; right-click for the "
+            "display settings. Dropping a surface or an overlay on the window "
+            "opens it.</p>")
+
+    # ---------- drag and drop ----------
+    def dragEnterEvent(self, event):
+        if any(self._droppable(url) for url in event.mimeData().urls()):
+            event.acceptProposedAction()
+
+    dragMoveEvent = dragEnterEvent
+
+    @staticmethod
+    def _droppable(url) -> bool:
+        return bool(url.isLocalFile()
+                    and str(url.toLocalFile()).lower().endswith(
+                        ('.gii', '.annot', '.txt', '.vtk', '.vtp')))
+
+    def dropEvent(self, event):
+        """A dropped mesh replaces the surface, anything else becomes overlay."""
+        paths = [url.toLocalFile() for url in event.mimeData().urls()
+                 if self._droppable(url)]
+        if not paths:
+            return
+        event.acceptProposedAction()
+        meshes = [p for p in paths if is_gifti_mesh_file(p)]
+        others = [p for p in paths if p not in meshes]
+        if meshes:
+            self.switch_surface_type(meshes[0])
+        annots = [p for p in others if p.lower().endswith('.annot')]
+        overlays = [p for p in others if p not in annots]
+        if annots:
+            self.set_atlas(annots[0])
+        if overlays:
+            self.overlay_list = list(overlays)
+            self.current_overlay_index = 0
+            try:
+                self.ctrl.overlay_combo.clear()
+                for path in self.overlay_list:
+                    self.ctrl.overlay_combo.addItem(path)
+                self.ctrl.overlay_combo.setCurrentIndex(0)
+            except Exception:
+                pass
+            self._set_overlay_from_path(overlays[0])
 
     def _fit_camera(self):
         """Frame the whole scene, keeping the direction it is viewed from.
@@ -2067,8 +2580,32 @@ class Viewer(QtWidgets.QMainWindow):
         montage stays as the user left it.
         """
         self.ren.ResetCamera()
-        self.ren.GetActiveCamera().Zoom(2.0)
+        if self.is_flat_surface(self.poly_l):
+            # ResetCamera fits the bounding sphere, which leaves a wide flat
+            # map small in the middle of the window
+            self._zoom_to_fit()
+        else:
+            self.ren.GetActiveCamera().Zoom(2.0)
         self._capture_camera_state()
+
+    def _zoom_to_fit(self, margin: float = 0.92):
+        """Zoom so the scene fills the window, whatever shape it has."""
+        bounds = self.ren.ComputeVisiblePropBounds()
+        width = bounds[1] - bounds[0]
+        height = bounds[3] - bounds[2]
+        if width <= 0 or height <= 0:
+            return
+        camera = self.ren.GetActiveCamera()
+        window = self.rw.GetSize()
+        aspect = (window[0] / window[1]) if window[1] else 1.0
+        if camera.GetParallelProjection():
+            visible_height = 2.0 * camera.GetParallelScale()
+        else:
+            visible_height = 2.0 * camera.GetDistance() * math.tan(
+                math.radians(camera.GetViewAngle() / 2.0))
+        visible_width = visible_height * aspect
+        camera.Zoom(margin * min(visible_height / height, visible_width / width))
+        self.ren.ResetCameraClippingRange()
 
     def _mesh_title(self, path: str) -> str:
         """Window title for a surface, numbered when several were given."""
@@ -2430,6 +2967,10 @@ class Viewer(QtWidgets.QMainWindow):
             c0 = float(self.ctrl.clip_min.value()); c1 = float(self.ctrl.clip_max.value())
             # Treat (0,0) as disabled, same convention as _apply_controls
             self.opts.clip = (c0, c1) if c1 > c0 else (0.0, 0.0)
+            # The colours span from the threshold to the maximum, so moving the
+            # threshold moves the lower end with it, the way cat_surf_results
+            # sets clim right after clip.  A range the user asked for is kept.
+            self._rescale_overlay_to_clip()
             # Re-apply clip by updating LUT alpha (no data mutation)
             self.lut_overlay_l = get_lookup_table(self.opts.colormap, self.opts.opacity)
             self.lut_overlay_r = get_lookup_table(self.opts.colormap, self.opts.opacity)
@@ -2476,8 +3017,16 @@ class Viewer(QtWidgets.QMainWindow):
             position_dock()
         else:
             dock.hide()
-        # Initial status hint
+        # Initial status hint, next to the readout for the marked vertex
+        self._build_pick_label()
+        self.setAcceptDrops(True)      # a dropped surface or overlay opens
         self._update_status_message(self.opts.panel)
+
+        # Shade the surface the way the menu would, so switching surface or
+        # underlay later changes only what was asked for.  A background given
+        # with -bkg is the user's own and stays as it is.
+        if not self.opts.overlay_bkg:
+            self.set_underlay(self.underlay)
         
         # Initialize slider bounds from current data
         self._update_slider_bounds()
@@ -2520,6 +3069,636 @@ class Viewer(QtWidgets.QMainWindow):
                 self._open_volume(self.opts.volume)
         except Exception as e:
             print(f"Failed to open volume '{self.opts.volume}': {e}")
+
+    # ---------- what is under the cursor ----------
+    def _pick_value(self, side: int, vertex: int) -> Optional[float]:
+        """Overlay value of a vertex, or None when there is no overlay."""
+        scalars = self.scal_r if side == 1 else self.scal_l
+        if scalars is None or vertex is None:
+            return None
+        if vertex >= scalars.GetNumberOfTuples():
+            return None
+        try:
+            return float(scalars.GetTuple1(int(vertex)))
+        except Exception:
+            return None
+
+    def set_atlas(self, path: Optional[str]):
+        """Name the region under the cursor using the annotation *path*.
+
+        The right hemisphere is taken from the matching file next to it.  An
+        atlas only fits a mesh with the same number of vertices (the 32k
+        templates T1Prep works with), so a mismatch is reported rather than
+        silently naming the wrong region.  None switches the lookup off.
+        """
+        self._atlas = None
+        self.atlas_path = None
+        if not path:
+            if self.show_borders:
+                self._build_border_actors()
+                self._build_montage()
+                self.rw.Render()
+            self._update_pick_label()
+            return
+        try:
+            own, names = read_annotation(path)
+            other_labels = None
+            other = _hemi_counterpart(Path(path))
+            if other is not None and other.exists():
+                other_labels, _ = read_annotation(str(other))
+            # An rh.* file names the right hemisphere, whichever of the two was
+            # chosen: putting it on the left surface would draw every region in
+            # the wrong place
+            left, right = order_by_hemisphere(path, own, other_labels)
+            labels = {0: left}
+            if right is not None:
+                labels[1] = right
+        except RuntimeError as exc:
+            QtWidgets.QMessageBox.warning(self, "Atlas", str(exc))
+            self._update_pick_label()
+            return
+
+        for side, poly in ((0, self.poly_l), (1, self.poly_r)):
+            if poly is None or side not in labels:
+                continue
+            if poly.GetNumberOfPoints() != len(labels[side]):
+                QtWidgets.QMessageBox.warning(
+                    self, "Atlas",
+                    f"{os.path.basename(path)} has {len(labels[side])} vertices, "
+                    f"the surface {poly.GetNumberOfPoints()} — they do not match.")
+                self._update_pick_label()
+                return
+        stem = os.path.basename(path)
+        if stem.startswith('lh.'):
+            stem = stem[3:]
+        self._atlas = {'labels': labels, 'names': names,
+                       'name': stem[:-len('.annot')] if stem.endswith('.annot') else stem}
+        self.atlas_path = path
+        if self.show_borders:
+            self._build_border_actors()
+            self._build_montage()
+            self.rw.Render()
+        self._update_pick_label()
+
+    def set_atlas_borders(self, visible: bool):
+        """Show or hide the boundaries between the regions of the atlas."""
+        self.show_borders = bool(visible)
+        self._build_border_actors()
+        self._build_montage()
+        self.rw.Render()
+
+    def _build_border_actors(self):
+        """One actor per hemisphere holding the atlas boundaries."""
+        for attribute in ('actor_border_l', 'actor_border_r'):
+            actor = getattr(self, attribute, None)
+            if actor is not None:
+                try:
+                    self.ren.RemoveActor(actor)
+                except Exception:
+                    pass
+            setattr(self, attribute, None)
+        if not (self.show_borders and self._atlas):
+            return
+        for side, poly, attribute in ((0, self.poly_l, 'actor_border_l'),
+                                      (1, self.poly_r, 'actor_border_r')):
+            labels = self._atlas['labels'].get(side)
+            if poly is None or labels is None:
+                continue
+            border = atlas_border_lines(poly, labels)
+            if border.GetNumberOfLines() == 0:
+                continue
+            mapper = vtkPolyDataMapper()
+            mapper.SetInputData(border)
+            mapper.ScalarVisibilityOff()
+            # Just enough bias to win against the surface the lines lie on.
+            # VTK's default for lines (-66000) is far larger and lets the
+            # borders inside the sulci show through the gyri in front of them,
+            # which fills the view with lines cat_surf_results does not draw.
+            try:
+                mapper.SetResolveCoincidentTopologyToPolygonOffset()
+                mapper.SetRelativeCoincidentTopologyLineOffsetParameters(0.0, -1.0)
+            except Exception:
+                pass
+            actor = vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(0.0, 0.0, 0.0)   # black, as in CAT12
+            actor.GetProperty().SetLineWidth(2.0)
+            actor.GetProperty().SetLighting(False)
+            setattr(self, attribute, actor)
+
+    def _atlas_region(self, side: int, vertex: int) -> Optional[str]:
+        """Region name of the selected atlas at a vertex, if any."""
+        if not self._atlas or vertex is None:
+            return None
+        labels = self._atlas['labels'].get(side)
+        if labels is None or vertex >= len(labels):
+            return None
+        index = int(labels[vertex])
+        if index < 0 or index >= len(self._atlas['names']):
+            return None
+        name = self._atlas['names'][index]
+        return None if name.lower() in ('unknown', '???', 'none', '') else name
+
+    def _pick_text(self) -> str:
+        """The line describing the marked vertex."""
+        if not getattr(self, '_cursor_vertex', None):
+            return ""
+        side, vertex = self._cursor_vertex
+        poly = self.poly_r if side == 1 else self.poly_l
+        if poly is None or vertex >= poly.GetNumberOfPoints():
+            return ""
+        shift = getattr(self, '_y_shift_r' if side == 1 else '_y_shift_l', 0.0)
+        x, y, z = poly.GetPoint(int(vertex))
+        parts = [f"{'rh' if side == 1 else 'lh'} vertex {int(vertex)}",
+                 f"({x:.1f}, {y - float(shift):.1f}, {z:.1f}) mm"]
+        value = self._pick_value(side, vertex)
+        if value is not None:
+            parts.append(f"value {value:g}")
+            if self._uses_logp_scale():
+                parts.append(f"p {format_p_value_label(value)}")
+        region = self._atlas_region(side, vertex)
+        if self._atlas:
+            parts.append(f"{self._atlas['name']}: {region or '-'}")
+        return "    ".join(parts)
+
+    def _update_pick_label(self):
+        """Put the description of the marked vertex into the status bar."""
+        label = getattr(self, '_pick_label', None)
+        if label is not None:
+            label.setText(self._pick_text())
+
+    def go_to_peak(self):
+        """Mark the strongest vertex of the overlay and say where it is.
+
+        The peak of a statistical map is the first thing to look at, and
+        rotating a surface until it appears is no way to find it.
+        """
+        best = None    # (|value|, side, vertex)
+        for side, scalars in ((0, self.scal_l), (1, self.scal_r)):
+            if scalars is None:
+                continue
+            values = np.abs(vtk_to_numpy(scalars).astype(float))
+            if values.size == 0:
+                continue
+            vertex = int(np.nanargmax(values))
+            if best is None or values[vertex] > best[0]:
+                best = (float(values[vertex]), side, vertex)
+        if best is None:
+            self.statusBar().showMessage("No overlay to find a peak in", 4000)
+            return None
+        _magnitude, side, vertex = best
+        poly = self.poly_r if side == 1 else self.poly_l
+        shift = getattr(self, '_y_shift_r' if side == 1 else '_y_shift_l', 0.0)
+        x, y, z = poly.GetPoint(vertex)
+        mm = (x, y - float(shift), z)
+        self._set_surface_cursor(mm)
+        self._broadcast_world_pick(mm)
+        return mm
+
+    def _build_pick_label(self):
+        """The readout for the marked vertex, in the status bar.
+
+        A permanent widget, because showMessage() hides the ordinary ones and
+        the hints would otherwise wipe out what was just picked.
+        """
+        self._pick_label = QtWidgets.QLabel("")
+        self._pick_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)   # copy a coordinate
+        self.statusBar().addPermanentWidget(self._pick_label)
+
+    def _rescale_overlay_to_clip(self):
+        """Recompute the value range after the clip window changed.
+
+        Unless the range was given on the command line or is held fixed across
+        overlays: then it is the user's, and the clip only hides values.
+        """
+        if getattr(self, '_user_set_range', False) or self.opts.fix_scaling:
+            return
+        scaled = self._auto_overlay_range()
+        if scaled is None or not (scaled[1] > scaled[0]):
+            return
+        self.overlay_range = list(scaled)
+        for actor in (self.actor_ov_l, self.actor_ov_r):
+            if actor is not None:
+                actor.GetMapper().SetScalarRange(self.overlay_range)
+        self._apply_clip_to_overlay_luts()
+        if hasattr(self, 'ctrl'):
+            try:
+                self.ctrl.set_overlay_bounds(*self.overlay_range)
+                for widget, value in ((self.ctrl.range_min, self.overlay_range[0]),
+                                      (self.ctrl.range_max, self.overlay_range[1])):
+                    widget.blockSignals(True)
+                    widget.setValue(float(value))
+                    widget.blockSignals(False)
+                self.ctrl._spin_to_slider('overlay', 'min', float(self.overlay_range[0]))
+                self.ctrl._spin_to_slider('overlay', 'max', float(self.overlay_range[1]))
+            except Exception:
+                pass
+
+    def _auto_overlay_range(self) -> Optional[Tuple[float, float]]:
+        """The default range for the overlay now loaded, both hemispheres."""
+        values = []
+        for scalars in (self.scal_l, self.scal_r):
+            if scalars is not None:
+                values.append(vtk_to_numpy(scalars).astype(float))
+        if not values:
+            return None
+        clip = tuple(self.opts.clip or (0.0, -1.0))
+        threshold = float(clip[1]) if clip[1] > clip[0] else 0.0
+        return default_overlay_range(np.concatenate(values), threshold,
+                                     self._uses_logp_scale())
+
+    # ---------- underlay ----------
+    #: What can be shaded under the overlay, as (label, file token).  The
+    #: files sit next to the surface: lh.mc.* is the mean curvature,
+    #: lh.sqrtsulc.* the sulcal depth, as in cat_surf_results.
+    UNDERLAYS = (("Mean curvature", "mc"),
+                 ("Sulcal depth", "sqrtsulc"),
+                 ("None", None))
+
+    def _underlay_file(self, token: str) -> Optional[Path]:
+        """``lh.<token>.<rest>`` next to the current surface, if it exists."""
+        current = self.opts.mesh_left
+        if not current or not token:
+            return None
+        path = Path(current)
+        parts = path.name.split('.')
+        for index, part in enumerate(parts):
+            if part not in MESH_TYPE_TOKENS:
+                continue
+            candidate = list(parts)
+            candidate[index] = token
+            sibling = path.with_name('.'.join(candidate))
+            return sibling if sibling.exists() else None
+        return None
+
+    def available_underlays(self) -> List[Tuple[str, Optional[str]]]:
+        """The shading options that can actually be shown.
+
+        Mean curvature is always there — it is computed from the surface when
+        no file sits next to it — the rest only with their file.
+        """
+        offered = []
+        for label, token in self.UNDERLAYS:
+            if token in (None, 'mc') or self._underlay_file(token) is not None:
+                offered.append((label, token))
+        return offered
+
+    def set_underlay(self, token: Optional[str]):
+        """Shade the surface with *token* ('mc', 'sqrtsulc' or None for plain).
+
+        Separate from the surface itself: which shape is shown and what is
+        painted on it are two questions, as in cat_surf_results.
+        """
+        self.underlay = token
+        self.bkg_scalar_l = self.bkg_scalar_r = None
+        if token:
+            path = self._underlay_file(token)
+            if path is not None:
+                try:
+                    self.bkg_scalar_l = read_scalars(str(path))
+                    other = _hemi_counterpart(path)
+                    if other is not None and other.exists():
+                        self.bkg_scalar_l, self.bkg_scalar_r = order_by_hemisphere(
+                            str(path), self.bkg_scalar_l, read_scalars(str(other)))
+                except Exception as exc:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Underlay", f"Cannot read {path.name}:\n{exc}")
+                    self.bkg_scalar_l = self.bkg_scalar_r = None
+        self._apply_underlay()
+
+    @staticmethod
+    def shade_from_curvature(values, invert: bool = False) -> "np.ndarray":
+        """Turn curvature (or depth) into the grey level CAT12 shades with.
+
+        The mapping of ``cat_surf_results.m``: a signed square root, which
+        pulls in the long tails that otherwise make the surface all black and
+        white, then shifted and normalised into a light band.  Sulcal depth
+        has no negative side and is inverted, so its sulci go dark like the
+        curvature ones.
+
+        Args:
+            values: One curvature or depth value per vertex.
+            invert: Flip the greys (sulcal depth).
+
+        Returns:
+            Grey levels between 0 and 1.
+        """
+        shaded = np.asarray(values, dtype=float).copy()
+        negative = shaded < 0
+        positive = shaded > 0
+        shaded[negative] = -np.sqrt(-shaded[negative])
+        shaded[positive] = np.sqrt(shaded[positive])
+        shaded -= shaded.min()
+        shaded += 0.5
+        peak = shaded.max()
+        if peak > 0:
+            shaded /= peak
+        if invert:
+            shaded = 1.0 - shaded
+        # Matlab draws these greys as they are; here they go through a light
+        # that adds its own contrast, so they are kept inside a band instead
+        # of spanning black to white
+        low, high = UNDERLAY_GREYS
+        return low + shaded * (high - low)
+
+    def _underlay_range(self) -> Optional[List[float]]:
+        """A shading window that fits the data now under the surface.
+
+        Curvature from a file and curvature computed from the mesh are the
+        same quantity on different scales, and sulcal depth on yet another —
+        so the window follows the data instead of a fixed pair of numbers.
+        The outer percentiles are left out, or a few extreme vertices would
+        flatten everything else into one grey.
+        """
+        if self.curv_l_out is None or vtk_to_numpy is None:
+            return None
+        values = []
+        for output in (self.curv_l_out, self.curv_r_out):
+            if output is None:
+                continue
+            scalars = output.GetPointData().GetScalars()
+            if scalars is not None:
+                values.append(np.abs(vtk_to_numpy(scalars).astype(float)))
+        if not values:
+            return None
+        edge = float(np.percentile(np.concatenate(values), 98))
+        if not np.isfinite(edge) or edge <= 0:
+            return None
+        return [-edge, edge]
+
+    def _folded_curvature(self) -> List[Optional["np.ndarray"]]:
+        """Mean curvature of the folded surface, whatever surface is shown.
+
+        An inflated or flattened surface is smooth by construction, so its own
+        curvature carries no relief.  cat_surf_results shades every surface
+        with the curvature of the folded one, which the shared vertices make
+        possible — so that is what is computed here, from the central sibling
+        when the displayed surface is not it.
+        """
+        source = [self.poly_l, self.poly_r]
+        if self.current_surface_type() in ('inflated', 'patch'):
+            central = dict(self.available_surface_types()).get('central')
+            if central:
+                cached = getattr(self, '_folded_meshes', None) or {}
+                if central not in cached:
+                    try:
+                        cached[central] = read_mesh_pair(central)
+                    except Exception:
+                        cached[central] = (None, None)
+                    self._folded_meshes = cached
+                left, right = cached[central]
+                if left is not None:
+                    source = [left, right]
+
+        values: List[Optional["np.ndarray"]] = []
+        for poly, shown in zip(source, (self.poly_l, self.poly_r)):
+            if poly is None or shown is None:
+                values.append(None)
+                continue
+            if poly.GetNumberOfPoints() != shown.GetNumberOfPoints():
+                poly = shown          # not the same subject: use what is shown
+            curvature = vtkCurvatures()
+            curvature.SetInputData(poly)
+            curvature.SetCurvatureTypeToMean()
+            curvature.Update()
+            scalars = curvature.GetOutput().GetPointData().GetScalars()
+            values.append(vtk_to_numpy(scalars).astype(float)
+                          if scalars is not None else None)
+        return values
+
+    def _apply_underlay(self):
+        """Put the current shading on the surface and rescale its colours."""
+        # Recompute the curvature, which the previous shading overwrote
+        for filt, poly in ((getattr(self, 'curv_l', None), self.poly_l),
+                           (getattr(self, 'curv_r', None), self.poly_r)):
+            if filt is not None and poly is not None:
+                filt.SetInputData(poly)
+                filt.Modified()
+                filt.Update()
+        self.curv_l_out = self.curv_l.GetOutput() if getattr(self, 'curv_l', None) else None
+        self.curv_r_out = (self.curv_r.GetOutput()
+                           if getattr(self, 'curv_r', None) is not None else None)
+        # Both hemispheres are shaded on one scale, or they would not match
+        computed = None
+        raw = []
+        for index, (output, scalars) in enumerate(
+                ((self.curv_l_out, self.bkg_scalar_l),
+                 (self.curv_r_out, self.bkg_scalar_r))):
+            if output is None:
+                raw.append(None)
+                continue
+            if scalars is not None and scalars.GetNumberOfTuples() == output.GetNumberOfPoints():
+                raw.append(vtk_to_numpy(scalars).astype(float))
+                continue
+            # No file for this shading: take the curvature of the folded surface
+            if computed is None:
+                computed = self._folded_curvature()
+            values = computed[index] if index < len(computed) else None
+            if values is not None and len(values) != output.GetNumberOfPoints():
+                values = None
+            raw.append(values)
+        present = [values for values in raw if values is not None]
+        if present:
+            shaded = self.shade_from_curvature(
+                np.concatenate(present), invert=(self.underlay == 'sqrtsulc'))
+            at = 0
+            for output, values in zip((self.curv_l_out, self.curv_r_out), raw):
+                if output is None or values is None:
+                    continue
+                part = numpy_to_vtk(shaded[at:at + len(values)], deep=True)
+                part.SetName('shading')
+                output.GetPointData().SetScalars(part)
+                at += len(values)
+
+        plain = self.underlay is None
+        for actor, output in ((getattr(self, 'actor_bkg_l', None), self.curv_l_out),
+                              (getattr(self, 'actor_bkg_r', None), self.curv_r_out)):
+            if actor is None or output is None:
+                continue
+            mapper = actor.GetMapper()
+            mapper.SetInputData(output)
+            # Nothing to shade with: an even mid-grey, so the overlay stands
+            # alone.  cat_surf_results uses 0.5 and turns the lighting off,
+            # which is what keeps it grey — lit, that value washes out white.
+            if plain:
+                mapper.ScalarVisibilityOff()
+                actor.GetProperty().SetColor(*UNDERLAY_PLAIN_GREY)
+                actor.GetProperty().SetLighting(False)
+            else:
+                mapper.ScalarVisibilityOn()
+                actor.GetProperty().SetLighting(True)
+
+        if not plain and self.curv_l_out is not None:
+            # shade_from_curvature() already produced grey levels
+            self.range_bkg = [0.0, 1.0]
+            self.lut_bkg.SetTableRange(self.range_bkg)
+            for actor in (getattr(self, 'actor_bkg_l', None),
+                          getattr(self, 'actor_bkg_r', None)):
+                if actor is not None:
+                    actor.GetMapper().SetScalarRange(self.range_bkg)
+            if hasattr(self, 'ctrl'):
+                try:
+                    self.ctrl.set_bkg_bounds(self.range_bkg[0], self.range_bkg[1])
+                    for widget, value in ((self.ctrl.bkg_min, self.range_bkg[0]),
+                                          (self.ctrl.bkg_max, self.range_bkg[1])):
+                        widget.blockSignals(True)
+                        widget.setValue(value)
+                        widget.blockSignals(False)
+                except Exception:
+                    pass
+        # The montage clones carry copies of the actors
+        self._build_montage()
+        self.rw.Render()
+
+    # ---------- zoom ----------
+    def _guard_zoom(self, event: str):
+        """Take *event* away from the interactor style while zoom is locked.
+
+        Overriding the style in Python would not help: the interactor
+        dispatches to the C++ implementation.  An observer with a higher
+        priority does get called, and aborting there stops the event before
+        the style sees it.
+        """
+        tag = [None]
+
+        def callback(obj, _event):
+            if self.lock_zoom and tag[0] is not None:
+                command = obj.GetCommand(tag[0])
+                if command is not None:
+                    command.AbortFlagOn()
+
+        self._zoom_callbacks.append(callback)
+        tag[0] = self.iren.AddObserver(event, callback, 1.0)
+
+    def set_lock_zoom(self, locked: bool):
+        """Whether the mouse or trackpad may change the zoom.
+
+        Switching it on also ends a zoom drag that lost its button release, so
+        the view stops following the mouse.
+        """
+        self.lock_zoom = bool(locked)
+        if self.lock_zoom:
+            style = self.iren.GetInteractorStyle()
+            if style is not None:
+                try:
+                    style.EndDolly()      # a no-op unless a drag is still running
+                except Exception:
+                    pass
+
+    def zoom_by(self, factor: float):
+        """Zoom the view, which is what the mouse is no longer allowed to do."""
+        camera = self.ren.GetActiveCamera()
+        camera.Zoom(float(factor))
+        self.ren.ResetCameraClippingRange()
+        self.rw.Render()
+
+    # ---------- surface type ----------
+    def available_surface_types(self) -> List[Tuple[str, str]]:
+        """Sibling surfaces of the current one, as (type, path) pairs.
+
+        ``lh.central.sub-01.gii`` has ``lh.inflated.sub-01.gii`` next to it;
+        results buried in a sulcus only become visible on the inflated one, so
+        being able to switch without restarting is worth the lookup.
+
+        Only the surfaces worth switching to are offered, and only when the
+        file really holds a mesh: ``lh.mc.*`` and ``lh.sqrtsulc.*`` sit next to
+        them with the same naming and hold scalars, not geometry.
+        """
+        current = self.opts.mesh_left
+        if not current:
+            return []
+        path = Path(current)
+        parts = path.name.split('.')
+        found: List[Tuple[str, str]] = []
+        for index, part in enumerate(parts):
+            if part not in SWITCHABLE_SURFACES:
+                continue
+            for mesh_type in SWITCHABLE_SURFACES:
+                candidate = list(parts)
+                candidate[index] = mesh_type
+                sibling = path.with_name('.'.join(candidate))
+                if sibling.exists() and is_gifti_mesh_file(str(sibling)):
+                    found.append((mesh_type, str(sibling)))
+            break
+        return found
+
+    def current_surface_type(self) -> Optional[str]:
+        """Which of those the viewer is showing."""
+        for part in Path(self.opts.mesh_left or '').name.split('.'):
+            if part in SWITCHABLE_SURFACES:
+                return part
+        return None
+
+    def switch_surface_type(self, path: str):
+        """Show another surface of the same subject, keeping the overlay."""
+        try:
+            self._switch_mesh(path)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self, "Surface",
+                f"Cannot show {os.path.basename(str(path))}:\n{exc}")
+            return
+        self.opts.mesh_left = path
+        self._update_pick_label()
+
+    # ---------- clusters ----------
+    def _default_cluster_threshold(self) -> float:
+        """Where to cut the map when the table is opened.
+
+        The clip window if one is set — that is the threshold already being
+        looked at — otherwise p<0.05 for a -log10(p) map, and half the range
+        for anything else.
+        """
+        clip = tuple(self.opts.clip or (0.0, -1.0))
+        if clip[1] > clip[0]:
+            return float(clip[1])
+        if self._uses_logp_scale():
+            return float(LOG10_P005)
+        low, high = self.overlay_range
+        return float(low + 0.5 * (high - low)) if high > low else 0.0
+
+    def collect_clusters(self, threshold: float, min_area: float = 0.0) -> List[dict]:
+        """Clusters of both hemispheres, largest peak first."""
+        found: List[dict] = []
+        for side, poly, scalars in ((0, self.poly_l, self.scal_l),
+                                    (1, self.poly_r, self.scal_r)):
+            if poly is None or scalars is None:
+                continue
+            values = vtk_to_numpy(scalars).astype(float)
+            if values.size != poly.GetNumberOfPoints():
+                continue
+            shift = getattr(self, '_y_shift_r' if side == 1 else '_y_shift_l', 0.0)
+            for cluster in find_surface_clusters(poly, values, threshold, min_area):
+                x, y, z = poly.GetPoint(cluster['peak_vertex'])
+                cluster['side'] = side
+                cluster['hemi'] = 'rh' if side == 1 else 'lh'
+                cluster['mm'] = (x, y - float(shift), z)
+                cluster['region'] = self._atlas_region(side, cluster['peak_vertex'])
+                found.append(cluster)
+        found.sort(key=lambda c: abs(c['peak_value']), reverse=True)
+        return found
+
+    def go_to_cluster(self, cluster: dict):
+        """Mark the peak of *cluster* on the surface and in a linked volume."""
+        self._set_surface_cursor(cluster['mm'])
+        self._broadcast_world_pick(cluster['mm'])
+
+    def show_cluster_table(self):
+        """Open (or raise) the table of suprathreshold clusters."""
+        if self.scal_l is None and self.scal_r is None:
+            QtWidgets.QMessageBox.information(
+                self, "Clusters", "There is no overlay to find clusters in.")
+            return None
+        table = getattr(self, '_cluster_table', None)
+        if table is None:
+            table = ClusterTableDialog(self, parent=self)
+            self._cluster_table = table
+        else:
+            table.refresh()
+        table.show()
+        table.raise_()
+        return table
 
     def _update_status_message(self, controls_visible: bool):
         """Show a small hint about the controls shortcut in the window status bar."""
@@ -2606,9 +3785,14 @@ class Viewer(QtWidgets.QMainWindow):
         if s in ('g','G'):
             name = Path(self.rw.GetWindowName() or 'screenshot').with_suffix('.png')
             self.save_png(str(name)); return
+        if s in ('m','M'):
+            self.go_to_peak(); return
+        if s in ('plus', 'equal', 'KP_Add'):
+            self.zoom_by(1.2); return
+        if s in ('minus', 'KP_Subtract'):
+            self.zoom_by(1.0 / 1.2); return
         if s in ('h','H'):
-            hint = '⌘D' if sys.platform == 'darwin' else 'Ctrl+D'
-            print(f"KEYS: u/d/l/r rotate, b flip, o reset, w/s wireframe/shaded, g screenshot, ←/→ overlay navigation, toggle controls: {hint}"); return
+            self.show_shortcut_help(); return
 
     
 
@@ -3017,6 +4201,14 @@ class Viewer(QtWidgets.QMainWindow):
                 self.setWindowTitle(self._mesh_title(new_mesh_path))
             except Exception:
                 pass
+        # The shading belongs to the surface now shown: its curvature has to be
+        # recomputed and put back through the grey mapping
+        if getattr(self, 'actor_bkg_l', None) is not None:
+            self._apply_underlay()
+        if self.show_borders:
+            self._build_border_actors()
+            self._build_montage()
+
         # Surfaces differ in size and position, so the view is framed for the
         # new one instead of keeping the framing of the previous surface
         self._fit_camera()
@@ -3566,12 +4758,11 @@ class Viewer(QtWidgets.QMainWindow):
             # User explicitly provided a range via CLI; keep it
             pass
         else:
-            # Auto-scale: always recompute overlay range from data
-            poly = self.poly_l if self.scal_l is not None else (
-                self.poly_r if self.scal_r is not None else None)
-            if poly is not None:
-                r = [0.0, 0.0]; poly.GetScalarRange(r)
-                self.overlay_range = r
+            # Auto-scale: recompute the range from the data, the way
+            # cat_surf_results does it
+            scaled = self._auto_overlay_range()
+            if scaled is not None:
+                self.overlay_range = list(scaled)
         # The new overlay may cover a hemisphere that had no actor yet
         if self._ensure_hemisphere_actors() and hasattr(self, '_montage_ov'):
             self._build_montage()
@@ -3846,6 +5037,7 @@ class Viewer(QtWidgets.QMainWindow):
 
     def _clear_surface_cursor(self):
         """Remove the cursor markers from the montage."""
+        self._cursor_vertex = None
         for actor in getattr(self, '_cursor_actors', None) or []:
             try:
                 self.ren.RemoveActor(actor)
@@ -3869,7 +5061,7 @@ class Viewer(QtWidgets.QMainWindow):
         if world_xyz is None or self.poly_l is None:
             return None
 
-        best = None  # (squared distance, side, vertex in mesh coordinates)
+        best = None  # (squared distance, side, vertex id, mesh coordinates)
         hemis = ((0, self.poly_l, getattr(self, '_y_shift_l', 0.0)),
                  (1, self.poly_r, getattr(self, '_y_shift_r', 0.0)))
         for side, poly, y_shift in hemis:
@@ -3881,14 +5073,18 @@ class Viewer(QtWidgets.QMainWindow):
             d2 = ((points - target) ** 2).sum(axis=1)
             idx = int(np.argmin(d2))
             if best is None or d2[idx] < best[0]:
-                best = (float(d2[idx]), side, tuple(float(v) for v in points[idx]))
+                best = (float(d2[idx]), side, idx, tuple(float(v) for v in points[idx]))
         if best is None:
             return None
-        dist2, side, vertex = best
+        dist2, side, vertex_id, vertex = best
         if dist2 > self._CURSOR_MAX_DIST ** 2:
             # The point is nowhere near the surface (e.g. deep white matter);
             # showing a marker on the closest vertex would be misleading.
             return None
+        # Which vertex was marked is what the readout, the atlas lookup and the
+        # cluster table all work from
+        self._cursor_vertex = (side, vertex_id)
+        self._update_pick_label()
 
         sphere = vtkSphereSource()
         sphere.SetCenter(*vertex)
@@ -3901,7 +5097,7 @@ class Viewer(QtWidgets.QMainWindow):
         # One marker per montage view showing this hemisphere; the clone's
         # matrix places it exactly like the surface it sits on.
         for i, clone in enumerate(getattr(self, '_montage_bkg', None) or []):
-            if clone is None or self._MONTAGE_ORDER[i] != side:
+            if clone is None or self._montage_order[i] != side:
                 continue
             mapper = vtkPolyDataMapper(); mapper.SetInputData(marker)
             actor = vtkActor(); actor.SetMapper(mapper)
@@ -3963,6 +5159,134 @@ class Viewer(QtWidgets.QMainWindow):
             return (ox, oy - float(y_shift), oz)
         except Exception:
             return None
+
+class ClusterTableDialog(QtWidgets.QDialog):
+    """The suprathreshold clusters of an overlay, as a table.
+
+    What a statistical map is finally reported as: where the peaks are, how
+    big they are and — with an atlas selected — what they are called.  Picking
+    a row marks that peak on the surface, so the table and the view stay
+    together.
+    """
+
+    def __init__(self, viewer: "Viewer", parent=None):
+        super().__init__(parent)
+        self.viewer = viewer
+        self.setWindowTitle("Clusters")
+        self.resize(760, 420)
+        self.clusters: List[dict] = []
+
+        layout = QtWidgets.QVBoxLayout(self)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Threshold |value| >"))
+        self.threshold = QtWidgets.QDoubleSpinBox()
+        self.threshold.setDecimals(3)
+        self.threshold.setRange(0.0, 1e6)
+        self.threshold.setSingleStep(0.1)
+        self.threshold.setValue(viewer._default_cluster_threshold())
+        self.threshold.setKeyboardTracking(False)
+        self.threshold.valueChanged.connect(lambda _v: self.refresh())
+        row.addWidget(self.threshold)
+        row.addWidget(QtWidgets.QLabel("   Smallest cluster (mm²)"))
+        self.min_area = QtWidgets.QDoubleSpinBox()
+        self.min_area.setDecimals(1)
+        self.min_area.setRange(0.0, 1e6)
+        self.min_area.setValue(10.0)
+        self.min_area.setKeyboardTracking(False)
+        self.min_area.valueChanged.connect(lambda _v: self.refresh())
+        row.addWidget(self.min_area)
+        row.addStretch(1)
+        self.save_button = QtWidgets.QPushButton("Save CSV…")
+        self.save_button.clicked.connect(self.save_csv)
+        row.addWidget(self.save_button)
+        layout.addLayout(row)
+
+        self.table = QtWidgets.QTableWidget(0, 0)
+        self.table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
+        self.table.itemSelectionChanged.connect(self._row_selected)
+        layout.addWidget(self.table, 1)
+
+        self.summary = QtWidgets.QLabel("")
+        layout.addWidget(self.summary)
+        self.refresh()
+
+    def columns(self) -> List[str]:
+        names = ["hemi", "peak", "vertex", "x", "y", "z", "vertices", "area (mm²)"]
+        if self.viewer._uses_logp_scale():
+            names.insert(2, "p")
+        if self.viewer._atlas:
+            names.append(self.viewer._atlas['name'])
+        return names
+
+    def refresh(self):
+        """Find the clusters again and fill the table."""
+        self.clusters = self.viewer.collect_clusters(self.threshold.value(),
+                                                     self.min_area.value())
+        columns = self.columns()
+        self.table.setSortingEnabled(False)
+        self.table.clear()
+        self.table.setColumnCount(len(columns))
+        self.table.setHorizontalHeaderLabels(columns)
+        self.table.setRowCount(len(self.clusters))
+        for row, cluster in enumerate(self.clusters):
+            for column, text in enumerate(self._cells(cluster)):
+                item = QtWidgets.QTableWidgetItem()
+                # Numbers have to sort as numbers, not as text
+                try:
+                    item.setData(Qt.ItemDataRole.DisplayRole, float(text))
+                except (TypeError, ValueError):
+                    item.setText(str(text))
+                self.table.setItem(row, column, item)
+        self.table.resizeColumnsToContents()
+        self.table.setSortingEnabled(True)
+        area = sum(c['area'] for c in self.clusters)
+        self.summary.setText(
+            f"{len(self.clusters)} clusters, {area:.0f} mm² in total"
+            if self.clusters else "No cluster above the threshold")
+
+    def _cells(self, cluster: dict) -> List:
+        cells = [cluster['hemi'], round(cluster['peak_value'], 4),
+                 cluster['peak_vertex'],
+                 round(cluster['mm'][0], 1), round(cluster['mm'][1], 1),
+                 round(cluster['mm'][2], 1),
+                 cluster['vertices'], round(cluster['area'], 1)]
+        if self.viewer._uses_logp_scale():
+            cells.insert(2, format_p_value_label(cluster['peak_value']))
+        if self.viewer._atlas:
+            cells.append(cluster.get('region') or '-')
+        return cells
+
+    def _row_selected(self):
+        """Mark the peak of the selected cluster on the surface."""
+        rows = {index.row() for index in self.table.selectedIndexes()}
+        if len(rows) != 1:
+            return
+        vertex_item = self.table.item(rows.pop(), self.columns().index("vertex"))
+        if vertex_item is None:
+            return
+        vertex = int(vertex_item.data(Qt.ItemDataRole.DisplayRole))
+        for cluster in self.clusters:
+            if cluster['peak_vertex'] == vertex:
+                self.viewer.go_to_cluster(cluster)
+                return
+
+    def save_csv(self):
+        """Write the table as it stands, for the paper or the supplement."""
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save cluster table", "clusters.csv", "CSV (*.csv)")
+        if not path:
+            return
+        import csv
+        with open(path, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(self.columns())
+            for cluster in self.clusters:
+                writer.writerow(self._cells(cluster))
+
 
 class HistogramCanvas(QtWidgets.QWidget):
     """Simple widget to draw a histogram of given data using QPainter."""
