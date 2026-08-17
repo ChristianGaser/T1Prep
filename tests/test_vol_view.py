@@ -693,6 +693,8 @@ class TestContours(unittest.TestCase):
                                  affine @ np.diag([2, 2, 2, 1])),
                  str(tmp / "mask.nii.gz"))
         self.mask = str(tmp / "mask.nii.gz")
+        self.tmp = tmp
+        self.affine = affine
 
         self.viewer = CatImageViewer(percentile_range=None)
         self.viewer.load_image(str(tmp / "image.nii.gz"))
@@ -746,6 +748,30 @@ class TestContours(unittest.TestCase):
         self.assertEqual(first['color'], CatImageViewer.CONTOUR_COLORS[0])
         self.assertEqual(second['color'], CatImageViewer.CONTOUR_COLORS[1])
 
+    def test_a_volume_that_lands_elsewhere_is_reported(self):
+        """A silent outline is what "the contour does not work" looks like.
+
+        The two headers decide where a volume ends up; when they put it
+        somewhere else entirely, nothing is drawn and nothing used to be said.
+        """
+        far = self.affine.copy()
+        far[:3, 3] += 1000.0            # a metre away, in millimetre space
+        i, j, k = np.mgrid[0:32, 0:32, 0:32]
+        radius = np.sqrt((i - 16) ** 2 + (j - 16) ** 2 + (k - 16) ** 2)
+        elsewhere = str(self.tmp / "elsewhere.nii.gz")
+        nib.save(nib.Nifti1Image((radius < 10).astype(np.float32), far), elsewhere)
+        with self.assertRaises(ValueError) as caught:
+            self.viewer.add_contour(elsewhere)
+        self.assertIn("header", str(caught.exception))
+        self.assertEqual(self.viewer.contours, [])
+
+    def test_an_outline_that_misses_these_slices_can_be_told_apart(self):
+        """Drawn, but not where the cursor is: the window says so, not raises."""
+        entry = self.viewer.add_contour(self.mask)
+        self.assertGreater(self.viewer.contour_lines_shown(entry), 0)
+        self.viewer.set_contour_level(self.mask, 5.0)     # above a 0..1 mask
+        self.assertEqual(self.viewer.contour_lines_shown(entry), 0)
+
     def test_they_can_be_removed(self):
         self.viewer.add_contour(self.mask)
         self.viewer.add_contour(self.mask, level=0.2)
@@ -759,6 +785,110 @@ class TestContours(unittest.TestCase):
             actors.InitTraversal()
             # only the crosshair lines are left behind
             self.assertLessEqual(actors.GetNumberOfItems(), 2)
+
+
+class TestSurfaceOutlines(unittest.TestCase):
+    """Surfaces cut by the slice planes and drawn as coloured outlines."""
+
+    def setUp(self):
+        from vtkmodules.vtkFiltersSources import vtkSphereSource
+        from vtkmodules.vtkCommonCore import vtkFloatArray
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        affine = np.array([[-1.0, 0, 0, 32.0],
+                           [0, 1.0, 0, -32.0],
+                           [0, 0, 1.0, -32.0],
+                           [0, 0, 0, 1.0]])
+        self.image = str(tmp / "image.nii.gz")
+        nib.save(nib.Nifti1Image(np.zeros((64, 64, 64), dtype=np.float32), affine),
+                 self.image)
+
+        sphere = vtkSphereSource()
+        sphere.SetRadius(20.0)
+        sphere.SetThetaResolution(32)
+        sphere.SetPhiResolution(32)
+        sphere.Update()
+        self.poly = sphere.GetOutput()
+        # Per-vertex values, as an overlay puts them on a surface
+        values = vtkFloatArray()
+        values.SetName("overlay")
+        values.SetNumberOfTuples(self.poly.GetNumberOfPoints())
+        for i in range(self.poly.GetNumberOfPoints()):
+            values.SetValue(i, float(i % 10))
+        self.poly.GetPointData().SetScalars(values)
+
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(self.image)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _setup(self):
+        try:
+            self.viewer.setup(window_title="test")
+        except Exception as exc:  # pragma: no cover - no GL in this environment
+            self.skipTest(f"rendering unavailable: {exc}")
+
+    def test_values_do_not_colour_the_outline_by_themselves(self):
+        """A mapper paints by scalars unless told not to.
+
+        The per-vertex values of a surface then decided the colour of its
+        outline through VTK's default blue-to-red table, which lost the one
+        colour that said which surface the outline belonged to.
+        """
+        self.viewer.add_surface(self.poly, (1.0, 0.0, 0.0))
+        self._setup()
+        for pane in range(3):
+            entry = self.viewer._surface_contours[pane][0]
+            self.assertEqual(len(entry['actors']), 1)
+            actor = entry['actors'][0]
+            self.assertFalse(actor.GetMapper().GetScalarVisibility())
+            self.assertEqual(actor.GetProperty().GetColor(), (1.0, 0.0, 0.0))
+
+    def test_each_surface_keeps_a_colour_of_its_own(self):
+        self.viewer.add_surface(self.poly, VolumeViewerWindow.SURFACE_COLORS[0])
+        self.viewer.add_surface(self.poly, VolumeViewerWindow.SURFACE_COLORS[1])
+        self._setup()
+        colors = [entry['actors'][0].GetProperty().GetColor()
+                  for entry in self.viewer._surface_contours[0]]
+        self.assertEqual(colors, [VolumeViewerWindow.SURFACE_COLORS[0],
+                                  VolumeViewerWindow.SURFACE_COLORS[1]])
+        self.assertEqual(len(set(colors)), 2)
+
+    def test_an_overlay_colours_the_outline_the_way_it_colours_the_surface(self):
+        from t1prep.gui.colormaps import JET, build_overlay_lut
+        lut = build_overlay_lut(JET, 1.0)
+        self.viewer.add_surface(self.poly, (1.0, 0.0, 0.0), lut=lut,
+                                scalar_range=(0.0, 9.0))
+        self._setup()
+        for pane in range(3):
+            plain, colored = self.viewer._surface_contours[pane][0]['actors']
+            # The surface colour stays underneath, for the values the table
+            # leaves transparent
+            self.assertFalse(plain.GetMapper().GetScalarVisibility())
+            self.assertEqual(plain.GetProperty().GetColor(), (1.0, 0.0, 0.0))
+            self.assertTrue(colored.GetMapper().GetScalarVisibility())
+            self.assertIs(colored.GetMapper().GetLookupTable(), lut)
+            self.assertEqual(colored.GetMapper().GetScalarRange(), (0.0, 9.0))
+
+    def test_the_window_takes_the_colours_the_surface_viewer_gives_it(self):
+        """CAT_SurfView hands its hemispheres over with their overlay colours."""
+        from t1prep.gui.cat_vol_view import _surface_display
+        from t1prep.gui.colormaps import JET, build_overlay_lut
+        lut = build_overlay_lut(JET, 1.0)
+
+        given = _surface_display({'poly': self.poly, 'lut': lut,
+                                  'range': (0.5, 5.0)}, (1.0, 0.0, 0.0))
+        self.assertIs(given['surface'], self.poly)
+        self.assertIs(given['lut'], lut)
+        self.assertEqual(given['scalar_range'], (0.5, 5.0))
+        # A hemisphere without an overlay keeps the colour that tells it apart
+        plain = _surface_display({'poly': self.poly}, (0.0, 1.0, 0.0))
+        self.assertEqual(plain['color'], (0.0, 1.0, 0.0))
+        self.assertIsNone(plain['lut'])
+        # And a file name is still just a file name
+        self.assertEqual(_surface_display("lh.central.gii", (0.0, 0.6, 1.0)),
+                         {'surface': "lh.central.gii", 'color': (0.0, 0.6, 1.0)})
 
 
 class TestNeurologicalOrientation(unittest.TestCase):
@@ -1830,6 +1960,49 @@ class TestAppLaunch(unittest.TestCase):
 
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         self.assertEqual(files_opened_by_finder(app, timeout_ms=100), [])
+
+    def test_files_are_still_opened_once_the_viewer_runs(self):
+        """A double-click while a window is open must not be dropped.
+
+        The start-up listener used to be removed again, so every later
+        open-document event went nowhere: double-clicking a volume did nothing
+        at all as long as a viewer was running.
+        """
+        try:
+            from PySide6 import QtCore, QtGui, QtWidgets
+        except Exception as exc:  # pragma: no cover - needs Qt
+            self.skipTest(f"Qt unavailable: {exc}")
+        from t1prep.gui.cat_vol_view import finder_open_files
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        router = finder_open_files(app)
+        opened = []
+        router.set_handler(opened.extend)
+        try:
+            app.sendEvent(app, QtGui.QFileOpenEvent(
+                QtCore.QUrl.fromLocalFile("/tmp/later.nii.gz")))
+            self.assertEqual(opened, ["/tmp/later.nii.gz"])
+        finally:
+            router.set_handler(None)
+
+    def test_files_wait_for_the_window_they_belong_to(self):
+        """The event beats the window; what arrived first is handed over then."""
+        try:
+            from PySide6 import QtCore, QtGui, QtWidgets
+        except Exception as exc:  # pragma: no cover - needs Qt
+            self.skipTest(f"Qt unavailable: {exc}")
+        from t1prep.gui.cat_vol_view import finder_open_files
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        router = finder_open_files(app)
+        app.sendEvent(app, QtGui.QFileOpenEvent(
+            QtCore.QUrl.fromLocalFile("/tmp/early.nii.gz")))
+        opened = []
+        router.set_handler(opened.extend)
+        try:
+            self.assertEqual(opened, ["/tmp/early.nii.gz"])
+        finally:
+            router.set_handler(None)
 
     def test_double_click_reuses_the_application(self):
         """The file dialog and the window must share one QApplication.

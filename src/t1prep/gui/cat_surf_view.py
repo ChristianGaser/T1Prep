@@ -158,8 +158,8 @@ try:
         droppable_url, note, show_shortcuts,
     )
     from .cat_vol_view import (
-        VolumeViewerWindow, ask_for_files, install_qt_message_filter,
-        qt_application, running_as_app,
+        VolumeViewerWindow, ask_for_files, finder_open_files,
+        install_qt_message_filter, qt_application, running_as_app,
     )
 except ImportError:  # direct invocation as a script (no package context)
     from viewer_common import (
@@ -167,8 +167,8 @@ except ImportError:  # direct invocation as a script (no package context)
         droppable_url, note, show_shortcuts,
     )
     from cat_vol_view import (
-        VolumeViewerWindow, ask_for_files, install_qt_message_filter,
-        qt_application, running_as_app,
+        VolumeViewerWindow, ask_for_files, finder_open_files,
+        install_qt_message_filter, qt_application, running_as_app,
     )
 
 # The control panel is shared with the volume viewer
@@ -2596,6 +2596,14 @@ class Viewer(QtWidgets.QMainWindow):
         if not paths:
             return
         event.acceptProposedAction()
+        self.open_paths(paths)
+
+    def open_paths(self, paths: List[str]):
+        """Show *paths*: a mesh replaces the surface, an .annot becomes the atlas.
+
+        Shared by the drop handler and the documents macOS sends when a file is
+        double-clicked while the viewer is running.
+        """
         meshes = [p for p in paths if is_gifti_mesh_file(p)]
         others = [p for p in paths if p not in meshes]
         if meshes:
@@ -5041,18 +5049,27 @@ class Viewer(QtWidgets.QMainWindow):
             pass
         win.show()
 
-    def _surface_outlines(self) -> List[vtkPolyData]:
+    def _surface_outlines(self) -> List[dict]:
         """The displayed hemispheres, in the mm space of a volume.
 
-        Drawn as outlines on the slices of the volume window.  The viewer
-        normalizes the Y origin of every mesh it displays, which has to be
-        undone first.  This is a snapshot taken when the window opens;
+        Drawn as outlines on the slices of the volume window, with the colours
+        this viewer draws them in: an overlay travels with the mesh — the values
+        are on the polydata and the lookup table comes along with them — so the
+        outline of a thickness or statistics map is read against the slices in
+        the same colours as against the surface.  Without an overlay each
+        hemisphere keeps the single colour the volume window hands out, which is
+        what tells the two of them apart.
+
+        The viewer normalizes the Y origin of every mesh it displays, which has
+        to be undone first.  This is a snapshot taken when the window opens;
         switching the surface afterwards does not redraw the outlines.
         """
-        out: List[vtkPolyData] = []
-        hemis = ((self.poly_l, getattr(self, '_y_shift_l', 0.0)),
-                 (self.poly_r, getattr(self, '_y_shift_r', 0.0)))
-        for poly, y_shift in hemis:
+        out: List[dict] = []
+        hemis = ((self.poly_l, getattr(self, '_y_shift_l', 0.0),
+                  getattr(self, 'scal_l', None), getattr(self, 'lut_overlay_l', None)),
+                 (self.poly_r, getattr(self, '_y_shift_r', 0.0),
+                  getattr(self, 'scal_r', None), getattr(self, 'lut_overlay_r', None)))
+        for poly, y_shift, scalars, lut in hemis:
             if poly is None or poly.GetNumberOfPoints() == 0:
                 continue
             try:
@@ -5062,7 +5079,11 @@ class Viewer(QtWidgets.QMainWindow):
                 filt.SetInputData(poly)
                 filt.SetTransform(transform)
                 filt.Update()
-                out.append(filt.GetOutput())
+                entry = {'poly': filt.GetOutput()}
+                if scalars is not None and lut is not None:
+                    entry['lut'] = lut
+                    entry['range'] = tuple(self.overlay_range)
+                out.append(entry)
             except Exception:
                 continue
         return out
@@ -5457,6 +5478,9 @@ def main(argv: Optional[List[str]] = None):
             pass
     app = qt_application()
     win = Viewer(opts); win.show()
+    # Finder keeps sending documents while the viewer runs: a file
+    # double-clicked now belongs in this window, not in the void
+    finder_open_files(app).set_handler(win.open_paths)
     sys.exit(app.exec())
 
 if __name__ == '__main__':

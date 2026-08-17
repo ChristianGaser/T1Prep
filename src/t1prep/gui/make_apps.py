@@ -1,10 +1,19 @@
 """macOS application bundles for the T1Prep viewers.
 
-The bundles are thin: each one launches the installed ``CAT_SurfView`` /
-``CAT_VolView`` console script of the environment it was built from, so they
-follow every update of that installation instead of freezing a copy of VTK and
-Qt.  They exist so the viewers can be started from the Dock, Spotlight or
-Finder, and so Finder can route ``.nii``/``.gii`` documents to them.
+The bundles are thin: each one starts ``CAT_SurfView`` / ``CAT_VolView`` through
+the interpreter of the environment it was built from, so they follow every update
+of that installation instead of freezing a copy of VTK and Qt.  They exist so the
+viewers can be started from the Dock, Spotlight or Finder, and so Finder can
+route ``.nii``/``.gii`` documents to them.
+
+Two things about them are easy to get wrong and were:
+
+* the architectures have to be named, or macOS runs a script-launched bundle
+  under Rosetta and every arm64 extension module fails to load (see
+  :func:`_architecture_priority`);
+* the viewer has to remain the process Launch Services started, because that is
+  where the Apple events carrying the documents to open are sent (see
+  :func:`_launch_script`).
 
 Used in two ways:
 
@@ -22,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import plistlib
 import shutil
 import subprocess
@@ -37,6 +47,12 @@ DISABLE_ENV = "T1PREP_NO_APPS"
 
 _LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks"
                "/LaunchServices.framework/Support/lsregister")
+
+#: Module holding the ``main()`` of each viewer, used by the bundle launcher
+VIEWER_MODULES = {
+    "CAT_SurfView": "t1prep.gui.cat_surf_view",
+    "CAT_VolView": "t1prep.gui.cat_vol_view",
+}
 
 
 def _document_type(name: str, rank: str, content_types: Sequence[str],
@@ -132,6 +148,117 @@ def find_bin_dir() -> Optional[Path]:
     return None
 
 
+def _interpreter(bin_dir: Path) -> Path:
+    """The Python that runs the viewers: the one next to their console scripts."""
+    for name in ("python3", "python"):
+        candidate = bin_dir / name
+        if candidate.exists():
+            return candidate
+    return Path(sys.executable)
+
+
+def _architecture_priority(interpreter: Path) -> List[str]:
+    """The architectures the bundle may run in, the preferred one first.
+
+    Launch Services cannot read the architectures of a shell script, and on
+    Apple silicon it then starts such a bundle **under Rosetta**: the launcher
+    runs translated, the interpreter it starts picks its x86_64 slice, and every
+    native extension module built for arm64 fails to load — the viewers died in
+    ``dlopen`` before they could draw anything, while the very same command
+    worked in a terminal.  Naming the architectures keeps the app on the one the
+    interpreter is installed for.  ``LSRequiresNativeExecution`` does not: it is
+    ignored for script bundles, only this key is honoured.
+
+    Args:
+        interpreter: The Python the launcher starts; its slices decide the
+            order, so an x86_64-only installation is not forced onto arm64.
+    """
+    available: List[str] = []
+    if shutil.which("lipo"):
+        try:
+            result = subprocess.run(["lipo", "-archs", str(interpreter)],
+                                    capture_output=True, text=True, check=False)
+            available = [word for word in result.stdout.split()
+                         if word in ("arm64", "x86_64")]
+        except Exception:
+            available = []
+    native = platform.machine()
+    if not available:
+        return [native] if native in ("arm64", "x86_64") else ["arm64", "x86_64"]
+    # The native slice first, so a universal2 interpreter is not translated
+    return ([native] if native in available else []) + \
+        [arch for arch in available if arch != native]
+
+
+def _launch_script(name: str) -> str:
+    """The Python the bundle starts: the viewer, plus a visible failure.
+
+    Finder discards stdout and stderr, so anything that keeps the viewer from
+    starting — a broken installation, a missing dependency, an extension module
+    for the wrong architecture — used to look like a bundle that does nothing at
+    all.  Going through this instead of straight through the console script
+    turns that into an alert naming the reason, with the log behind it.
+
+    It must stay the process Launch Services started: opening a document sends
+    an Apple event to *that* process, so the launcher execs the interpreter and
+    the interpreter must not fork the viewer off into a child of its own.
+    """
+    return f'''"""Start {name} from its macOS application bundle.
+
+Written by t1prep-make-apps; edit src/t1prep/gui/make_apps.py instead.
+"""
+
+import importlib
+import subprocess
+import sys
+import traceback
+
+NAME = "{name}"
+MODULE = "{VIEWER_MODULES[name]}"
+LOG = "~/Library/Logs/T1Prep/{name}.log"
+
+
+def report_failure():
+    """Put the reason on screen, since Finder shows no output at all."""
+    report = traceback.format_exc()
+    print(report, file=sys.stderr)
+    lines = [line for line in report.strip().splitlines() if line.strip()]
+    message = "\\n".join(lines[-3:]) + "\\n\\nFull report: " + LOG
+    script = ('on run argv\\n'
+              '  display alert (item 1 of argv) message (item 2 of argv) '
+              'as critical\\n'
+              'end run')
+    try:
+        subprocess.run(["osascript", "-", NAME + " could not start", message],
+                       input=script, text=True, capture_output=True,
+                       check=False, timeout=300)
+    except Exception:
+        pass
+    return 1
+
+
+def main():
+    try:
+        module = importlib.import_module(MODULE)
+    except BaseException:
+        return report_failure()
+    # sys.argv, not an argument list: with no files to open both viewers ask
+    # for one, and they decide that from sys.argv the way the console scripts
+    # leave it
+    sys.argv = [NAME] + sys.argv[1:]
+    try:
+        return module.main()
+    except SystemExit:
+        raise
+    except BaseException:
+        return report_failure()
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
+'''
+
+
 def _package_version() -> str:
     try:
         from t1prep import __version__
@@ -193,8 +320,10 @@ def build_app(name: str, bin_dir: Path, out_dir: Path,
     (contents / "MacOS").mkdir(parents=True)
     (contents / "Resources").mkdir(parents=True)
 
-    # Finder discards stdout/stderr, so a crash would be silent; keep the last
-    # run in a log the user can be pointed at.
+    # Finder discards stdout/stderr, so keep the last run in a log; the launch
+    # script also puts the reason for a failed start on screen.
+    interpreter = _interpreter(bin_dir)
+    (contents / "Resources" / "t1prep_launch.py").write_text(_launch_script(name))
     launcher = contents / "MacOS" / name
     launcher.write_text(
         "#!/bin/bash\n"
@@ -202,7 +331,11 @@ def build_app(name: str, bin_dir: Path, out_dir: Path,
         "export T1PREP_APP=1\n"
         'log_dir="$HOME/Library/Logs/T1Prep"\n'
         'mkdir -p "$log_dir"\n'
-        f'exec "{bin_dir / name}" "$@" > "$log_dir/{name}.log" 2>&1\n'
+        'here="$(cd "$(dirname "$0")" && pwd)"\n'
+        # exec, so the viewer stays the process Launch Services started and
+        # keeps receiving the Apple events that carry the opened documents
+        f'exec "{interpreter}" "$here/../Resources/t1prep_launch.py" "$@"'
+        f' > "$log_dir/{name}.log" 2>&1\n'
     )
     launcher.chmod(0o755)
 
@@ -218,6 +351,7 @@ def build_app(name: str, bin_dir: Path, out_dir: Path,
         "CFBundleVersion": _package_version(),
         "LSApplicationCategoryType": "public.app-category.medical",
         "LSMinimumSystemVersion": "11.0",
+        "LSArchitecturePriority": _architecture_priority(interpreter),
         "NSHighResolutionCapable": True,
         "CFBundleDocumentTypes": spec["document_types"],
     }

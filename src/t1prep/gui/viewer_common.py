@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Sequence
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 #: Whether the viewers report what they fall back on.  Off by default: a
 #: reader that fails and is replaced by the next one is normal, not an error.
@@ -103,6 +104,132 @@ def dropped_files(event, suffixes: Sequence[str]) -> List[str]:
             if droppable_url(url, suffixes)]
 
 
+#: Set by the macOS app bundles, so a double-click asks for a file instead of
+#: printing the command-line help
+APP_BUNDLE_ENV = "T1PREP_APP"
+
+
+def running_as_app() -> bool:
+    """True when started from the macOS application bundle."""
+    return bool(os.environ.get(APP_BUNDLE_ENV))
+
+
+class FinderOpenFiles(QtCore.QObject):
+    """The documents macOS asks the viewer to open, for as long as it runs.
+
+    Finder never passes them on the command line — not on a double-click, not
+    through "Open With", not when files are dropped on the app icon.  It sends
+    the process an open-document Apple event instead, which Qt delivers as a
+    ``FileOpen`` event.  Those arrive at any time: the first one a moment after
+    the QApplication exists, further ones whenever the user opens another file
+    while the viewer is already running.  So this stays installed for the whole
+    session rather than listening once during start-up and dropping the rest,
+    which is what made a double-click do nothing at all once a viewer was open.
+
+    Files that arrive before a handler is set are kept until there is one.
+    """
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._app = app
+        self._pending: List[str] = []
+        self._handler: Optional[Callable[[List[str]], None]] = None
+        app.installEventFilter(self)
+
+    def eventFilter(self, obj, event):    # noqa: N802 - Qt's spelling
+        if event.type() == QtCore.QEvent.Type.FileOpen:
+            name = event.file()
+            if name:
+                self._pending.append(name)
+                self._deliver()
+            return True
+        return False
+
+    def _deliver(self) -> None:
+        if self._handler is None or not self._pending:
+            return
+        files, self._pending = self._pending, []
+        self._handler(files)
+
+    def set_handler(self, handler: Optional[Callable[[List[str]], None]]) -> None:
+        """Open every file macOS sends from now on with *handler*.
+
+        Anything that arrived while there was none is handed over right away,
+        so nothing is lost between the QApplication and the window.
+        """
+        self._handler = handler
+        self._deliver()
+
+    def take(self, timeout_ms: int = 0, grace_ms: int = 250) -> List[str]:
+        """The files collected so far, waiting up to *timeout_ms* for the first.
+
+        Args:
+            timeout_ms: How long to wait for a document to turn up.  The event
+                follows the launch by a moment, so a viewer that has nothing to
+                show yet can afford to wait for it.
+            grace_ms: How much longer to collect once the first one has arrived.
+                A selection of several files arrives as one event each, and
+                stopping at the first would open only one of them.
+        """
+        clock = QtCore.QElapsedTimer()
+        clock.start()
+        while not self._pending and clock.elapsed() < timeout_ms:
+            self._app.processEvents(
+                QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+        if self._pending:
+            clock.restart()
+            while clock.elapsed() < grace_ms:
+                self._app.processEvents(
+                    QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+        files, self._pending = self._pending, []
+        return files
+
+
+def finder_open_files(app=None) -> FinderOpenFiles:
+    """The :class:`FinderOpenFiles` of *app*, created on first use.
+
+    Kept on the application itself rather than in a module variable, so it lives
+    exactly as long as the application it filters the events of.
+    """
+    app = app if app is not None else qt_application()
+    router = getattr(app, "_t1prep_finder_files", None)
+    if router is None:
+        router = FinderOpenFiles(app)
+        app._t1prep_finder_files = router
+    return router
+
+
+def files_opened_by_finder(app, timeout_ms: int = 400) -> List[str]:
+    """Files macOS sent as open-document events, e.g. a drop on the app icon."""
+    return finder_open_files(app).take(timeout_ms=timeout_ms)
+
+
+def ask_for_files(app, caption: str, patterns: str,
+                  wait_ms: int = 600) -> List[str]:
+    """Files to open when the app was started without any (double-click).
+
+    A document that macOS has already sent wins; otherwise the user is asked.
+    The dialog closes by itself when a document turns up while it is open,
+    which is what happens when the open-document event is slower than the
+    viewer — the alternative is a file dialog covering the file the user
+    double-clicked.
+    """
+    router = finder_open_files(app)
+    files = router.take(timeout_ms=wait_ms)
+    if files:
+        return files
+    dialog = QtWidgets.QFileDialog(None, caption, str(Path.home()))
+    dialog.setFileMode(QtWidgets.QFileDialog.FileMode.ExistingFiles)
+    dialog.setNameFilters([part for part in patterns.split(";;") if part])
+    router.set_handler(lambda _files: dialog.reject())
+    try:
+        if dialog.exec():
+            return list(dialog.selectedFiles())
+    finally:
+        router.set_handler(None)
+    return router.take()     # a document arrived while the dialog was open
+
+
 def show_shortcuts(parent, shortcuts: Iterable[Sequence[str]], footer: str = "") -> None:
     """List keys and what they do, as a dialog.
 
@@ -151,8 +278,14 @@ def qt_application():
 
     A second instance raises, and both viewers may need one early — to ask for
     a file when started from the macOS app bundle — and again for the window.
+
+    The open-document listener is installed with it: the event macOS sends for
+    a double-clicked file follows the launch closely, and anything not listening
+    yet loses it.
     """
-    return QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
+    finder_open_files(app)
+    return app
 
 
 def shorten_path(path: str, max_parts: int = 3, max_chars: int = 40) -> str:

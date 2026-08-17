@@ -168,16 +168,20 @@ except ImportError:  # direct invocation as a script
 
 try:
     from .controls import ControlPanel, LOGP_THRESHOLDS
-    from .viewer_common import (
-        VOLUME_SUFFIXES, ZOOM_EVENTS, ask_and_save_png, claim_event,
-        dropped_files, droppable_url, note, set_verbose, shorten_path,
+    from .viewer_common import (          # noqa: F401 re-exported
+        APP_BUNDLE_ENV, VOLUME_SUFFIXES, ZOOM_EVENTS,
+        ask_and_save_png, ask_for_files, claim_event, dropped_files,
+        droppable_url, files_opened_by_finder, finder_open_files, note,
+        qt_application, running_as_app, set_verbose, shorten_path,
         show_shortcuts,
     )
 except ImportError:  # direct invocation as a script
     from controls import ControlPanel, LOGP_THRESHOLDS
-    from viewer_common import (
-        VOLUME_SUFFIXES, ZOOM_EVENTS, ask_and_save_png, claim_event,
-        dropped_files, droppable_url, note, set_verbose, shorten_path,
+    from viewer_common import (           # noqa: F401 re-exported
+        APP_BUNDLE_ENV, VOLUME_SUFFIXES, ZOOM_EVENTS,
+        ask_and_save_png, ask_for_files, claim_event, dropped_files,
+        droppable_url, files_opened_by_finder, finder_open_files, note,
+        qt_application, running_as_app, set_verbose, shorten_path,
         show_shortcuts,
     )
 
@@ -596,8 +600,8 @@ class CatImageViewer:
             (0.5, 0.5, 1.0, 1.0),   # Coronal  (top-right)
         ]
 
-        # Surfaces to overlay: list of (polydata, colour)
-        self.surfaces: List[Tuple[vtkPolyData, Tuple[float, float, float]]] = []
+        #: Surfaces outlined on the slices; see :meth:`add_surface` for the keys
+        self.surfaces: List[dict] = []
         # Cursor: the exact world (mm) position is the truth, the voxel index
         # is derived from it for the displayed slices and the intensity readout
         self._cursor: Optional[List[float]] = None
@@ -1235,14 +1239,25 @@ class CatImageViewer:
         self.render_window.Render()
 
     def _build_surface_contours(self):
+        """Cut every surface with the three slice planes, once per pane.
+
+        Each cut is drawn in the colour that identifies its surface, so several
+        surfaces can be told apart — the outline of a surface that carries
+        per-vertex values gets a second pass over it, coloured through the
+        lookup table of those values.  Without a table the values must not
+        colour the line at all: a mapper paints by scalars whenever the data
+        carries them, which turned the outlines into VTK's default blue-to-red
+        rainbow and lost the one colour that said which surface they were.
+        """
         # Remove existing contour actors
         for vi in range(3):
             ren = self.renderers[vi]
             for entry in self._surface_contours[vi]:
-                try:
-                    ren.RemoveActor(entry.get('actor'))
-                except Exception:
-                    pass
+                for actor in entry.get('actors', ()):
+                    try:
+                        ren.RemoveActor(actor)
+                    except Exception:
+                        pass
             self._surface_contours[vi] = []
 
         # World-space normal of the voxel axis each pane slices along
@@ -1252,26 +1267,50 @@ class CatImageViewer:
         # which slices at integer voxel indices. Do NOT add the +0.5 voxel-center shift here.
         origins = [self._world_from_index(tuple(self._ijk))] * 3
 
-        for (poly, color) in self.surfaces:
+        for surface in self.surfaces:
             for vi in range(3):
                 plane = vtkPlane()
                 plane.SetNormal(*normals[vi])
                 plane.SetOrigin(*origins[vi])
                 cutter = vtkCutter()
                 cutter.SetCutFunction(plane)
-                cutter.SetInputData(poly)
-                mapper = vtkPolyDataMapper()
-                mapper.SetInputConnection(cutter.GetOutputPort())
-                actor = vtkActor()
-                actor.SetMapper(mapper)
-                actor.GetProperty().SetColor(color)
-                actor.GetProperty().SetLineWidth(1.2)
-                actor.GetProperty().LightingOff()
-                # The contour lies exactly in the slice plane, where the image
-                # would win the depth test; nudge it towards the camera
-                actor.SetPosition(*self._camera_offset(vi))
-                self.renderers[vi].AddActor(actor)
-                self._surface_contours[vi].append({'plane': plane, 'cutter': cutter, 'actor': actor})
+                cutter.SetInputData(surface['poly'])
+                actors = [self._surface_contour_actor(
+                    cutter, vi, color=surface['color'], distance=0.5)]
+                if surface.get('lut') is not None:
+                    # Over the plain line, so the clipped and missing values the
+                    # table leaves transparent still show which surface it is
+                    actors.append(self._surface_contour_actor(
+                        cutter, vi, lut=surface['lut'],
+                        scalar_range=surface.get('range'), distance=0.6))
+                for actor in actors:
+                    self.renderers[vi].AddActor(actor)
+                self._surface_contours[vi].append(
+                    {'plane': plane, 'cutter': cutter, 'actors': actors})
+
+    def _surface_contour_actor(self, cutter, pane: int, color=None, lut=None,
+                               scalar_range=None, distance: float = 0.5):
+        """One line actor for the cut of a surface, coloured flat or by values."""
+        mapper = vtkPolyDataMapper()
+        mapper.SetInputConnection(cutter.GetOutputPort())
+        if lut is None:
+            mapper.ScalarVisibilityOff()
+        else:
+            mapper.SetLookupTable(lut)
+            mapper.ScalarVisibilityOn()
+            mapper.SetColorModeToMapScalars()
+            if scalar_range is not None and scalar_range[1] > scalar_range[0]:
+                mapper.SetScalarRange(*scalar_range)
+        actor = vtkActor()
+        actor.SetMapper(mapper)
+        if color is not None:
+            actor.GetProperty().SetColor(*color)
+        actor.GetProperty().SetLineWidth(1.2)
+        actor.GetProperty().LightingOff()
+        # The contour lies exactly in the slice plane, where the image would win
+        # the depth test; nudge it towards the camera
+        actor.SetPosition(*self._camera_offset(pane, distance))
+        return actor
 
     def _update_surface_planes(self):
         if not self.surfaces:
@@ -1754,6 +1793,7 @@ class CatImageViewer:
         except Exception:
             pass
         lo, hi = image.GetScalarRange()
+        level = float(level) if level is not None else 0.5 * (lo + hi)
         if not self._same_grid(image, vox2world):
             # Smoothly, unlike the overlay: an outline traced through blocky
             # nearest-neighbour values would look like a staircase.  Outside
@@ -1762,12 +1802,23 @@ class CatImageViewer:
             image = self._resample_to_image(
                 image, vox2world, from_header, os.path.basename(path),
                 interpolate=True, background=float(lo))
+            landed = image.GetScalarRange()
+            if not landed[0] <= level <= landed[1]:
+                # Nothing of the volume reached the image: the two headers put
+                # them in different places.  Say so — an outline that is simply
+                # not drawn looks like a viewer that ignores the file.
+                raise ValueError(
+                    f"{os.path.basename(path)} does not land on the image: "
+                    "mapped through the two headers it falls outside it, so "
+                    f"there is nothing at level {level:g} to outline. Are the "
+                    "two registered, and does the header of each say where it "
+                    "is?")
         entry = {
             'path': str(path),
             'name': os.path.basename(path),
             'image': image,
             'range': (float(lo), float(hi)),
-            'level': float(level) if level is not None else 0.5 * (lo + hi),
+            'level': level,
             'color': tuple(color) if color else
                      self.CONTOUR_COLORS[len(self.contours) % len(self.CONTOUR_COLORS)],
             'actors': [None, None, None],
@@ -1820,6 +1871,21 @@ class CatImageViewer:
                 slice_extent[2 * axis] = slice_extent[2 * axis + 1] = self._ijk[axis]
                 squares.SetImageRange(*slice_extent)
                 squares.Modified()
+
+    def contour_lines_shown(self, entry: dict) -> int:
+        """How many segments the outline of *entry* draws on the slices shown.
+
+        Zero is not necessarily wrong — the level may be crossed only on other
+        slices — but it is what an outline that fails to appear looks like, so
+        the window says as much instead of leaving the user guessing.
+        """
+        total = 0
+        for squares in entry['filters']:
+            if squares is None:
+                continue
+            squares.Update()
+            total += squares.GetOutput().GetNumberOfLines()
+        return total
 
     def set_contour_level(self, path: str, level: float):
         """Change the intensity the outline of *path* follows."""
@@ -2229,12 +2295,24 @@ class CatImageViewer:
                     print(f"[cat_vol_view] Percentile scaling failed: {exc}")
         return self
 
-    def add_surface(self, surface: "str | vtkPolyData", color: Tuple[float, float, float]):
+    def add_surface(self, surface: "str | vtkPolyData",
+                    color: Tuple[float, float, float],
+                    lut=None, scalar_range=None):
         """Draw a surface as an outline on the slices, in *color*.
 
         The surface has to be in the millimetre space of the image; only when
         the image carries no transform of its own is a surface far from it
         nudged onto the image centre.
+
+        Args:
+            surface: Surface file or ``vtkPolyData``.
+            color: Line colour identifying this surface among the others.
+            lut: Lookup table for the per-vertex values the surface carries, if
+                any.  The outline is then coloured by them, the way the surface
+                viewer colours the surface itself, over a line in *color* that
+                shows where the values are clipped or missing.
+            scalar_range: Value range *lut* covers; the surface viewer keeps it
+                on the mapper rather than in the table.
         """
         if isinstance(surface, vtkPolyData):
             poly = surface
@@ -2283,7 +2361,12 @@ class CatImageViewer:
                         print(f"[cat_vol_view] Recentered surface by translation (dx,dy,dz)=({dx:.3f},{dy:.3f},{dz:.3f})")
         except Exception as exc:
             note(f"could not check whether the surface needs recentring: {exc}")
-        self.surfaces.append((poly, color))
+        self.surfaces.append({
+            'poly': poly,
+            'color': tuple(color),
+            'lut': lut,
+            'range': tuple(scalar_range) if scalar_range is not None else None,
+        })
         return self
 
     def _apply_surface_convention(self, poly: vtkPolyData) -> vtkPolyData:
@@ -2498,61 +2581,11 @@ class _OrthoStyle(vtkInteractorStyleImage):
 #  Qt window                                                          #
 # ------------------------------------------------------------------ #
 
-#: Set by the macOS app bundles, so a double-click asks for a file instead of
-#: printing the command-line help
-APP_BUNDLE_ENV = "T1PREP_APP"
-
-
-def running_as_app() -> bool:
-    """True when started from the macOS application bundle."""
-    return bool(os.environ.get(APP_BUNDLE_ENV))
-
-
-def files_opened_by_finder(app, timeout_ms: int = 400) -> List[str]:
-    """Files macOS sent as open-document events, e.g. a drop on the app icon.
-
-    Finder does not pass them on the command line; they arrive as Qt
-    ``FileOpen`` events shortly after launch, so the event loop is given a
-    moment to deliver them.
-    """
-    collected: List[str] = []
-
-    class _Filter(QtCore.QObject):
-        def eventFilter(self, obj, event):
-            if event.type() == QtCore.QEvent.Type.FileOpen:
-                name = event.file()
-                if name:
-                    collected.append(name)
-                return True
-            return False
-
-    filter_ = _Filter()
-    app.installEventFilter(filter_)
-    deadline = QtCore.QElapsedTimer()
-    deadline.start()
-    while deadline.elapsed() < timeout_ms and not collected:
-        app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
-    app.removeEventFilter(filter_)
-    return collected
-
-
-def ask_for_files(app, caption: str, patterns: str) -> List[str]:
-    """Files to open when the app was started without any (double-click)."""
-    files = files_opened_by_finder(app)
-    if files:
-        return files
-    chosen, _ = QtWidgets.QFileDialog.getOpenFileNames(
-        None, caption, str(Path.home()), patterns)
-    return list(chosen)
-
-
-def qt_application():
-    """The QApplication, created once.
-
-    A second instance raises, and both viewers may need one early — to ask for
-    a file when started from the macOS app bundle — and again for the window.
-    """
-    return QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
+# APP_BUNDLE_ENV, running_as_app, files_opened_by_finder, ask_for_files,
+# finder_open_files and qt_application come from viewer_common; both viewers open
+# documents the way macOS hands them over, so that lives next to the other
+# shared behaviour.  They are re-exported here because the surface viewer
+# imports them from this module.
 
 
 def install_qt_message_filter():
@@ -3133,7 +3166,10 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
     Args:
         image_path: Volume to display.
         surfaces: Surface files or ``vtkPolyData`` drawn as outlines on the
-            slices; they must be in the millimetre space of the image.
+            slices; they must be in the millimetre space of the image.  A
+            ``dict`` with ``poly`` and, optionally, ``color``, ``lut`` and
+            ``range`` says how to colour one — that is how the surface viewer
+            passes the colours of its overlay on.
         on_position_changed: Called as ``callback(world_xyz, window)`` when the
             user moves the cursor by clicking or scrolling.
         viewer_kwargs: Passed on to :class:`CatImageViewer`.
@@ -3150,7 +3186,11 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         ("10 x 10 mm", 10.0),
     )
 
-    SURFACE_COLORS = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.6, 1.0))
+    #: Colours handed out to surface outlines, in this order.  One per surface,
+    #: so the two hemispheres — or a central and a pial surface — can be told
+    #: apart on the slices; they stay clear of the yellow of a volume contour.
+    SURFACE_COLORS = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.6, 1.0),
+                      (1.0, 0.0, 1.0), (0.0, 1.0, 1.0), (1.0, 0.55, 0.0))
 
     def __init__(self, image_path, parent=None, on_position_changed=None,
                  surfaces: Sequence = (), overlay: Optional[str] = None,
@@ -3191,8 +3231,8 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         )
         self.viewer.load_image(self.image_path)
         for i, surface in enumerate(surfaces):
-            self.viewer.add_surface(
-                surface, self.SURFACE_COLORS[i % len(self.SURFACE_COLORS)])
+            self.viewer.add_surface(**_surface_display(
+                surface, self.SURFACE_COLORS[i % len(self.SURFACE_COLORS)]))
         self.viewer.setup(window_title=os.path.basename(self.image_path))
         self.viewer.on_position_changed = self._position_changed
 
@@ -3899,6 +3939,14 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(
                 self, "Contour",
                 f"Cannot outline {os.path.basename(path)}:\n{failed[0]}")
+            return
+        entry = next((e for e in self.viewer.contours
+                      if e['path'] == str(path)), None)
+        if entry is not None and not self.viewer.contour_lines_shown(entry):
+            self.statusBar().showMessage(
+                f"{entry['name']} is outlined, but nothing crosses level "
+                f"{entry['level']:g} on these slices — move the cursor, or set "
+                "another level from the Contours menu", 8000)
 
     def remove_contour(self, path: str):
         """Remove the outline of *path* everywhere."""
@@ -4252,6 +4300,22 @@ def is_logp_name(filename: Optional[str]) -> bool:
     return 'log' in os.path.basename(str(filename)).lower()
 
 
+def _surface_display(surface, color) -> dict:
+    """The :meth:`CatImageViewer.add_surface` arguments for one surface.
+
+    A file name or a polydata is outlined in *color*.  A dict is how the surface
+    viewer hands a hemisphere over: it brings the mesh, and with an overlay on
+    it the lookup table and value range it is coloured through, so the outline
+    on the slices matches the surface it was taken from.
+    """
+    if isinstance(surface, dict):
+        return {'surface': surface['poly'],
+                'color': surface.get('color') or color,
+                'lut': surface.get('lut'),
+                'scalar_range': surface.get('range')}
+    return {'surface': surface, 'color': color}
+
+
 def _split_inputs(inputs: Sequence[str]) -> Tuple[List[str], List[str]]:
     """Sort the positional arguments into volumes and surfaces by extension."""
     volumes, surfaces = [], []
@@ -4442,8 +4506,9 @@ def _render_without_a_window(args, options: dict, volumes: Sequence[str],
     for i, volume in enumerate(volumes):
         viewer = CatImageViewer(**options)
         viewer.load_image(volume)
+        colors = VolumeViewerWindow.SURFACE_COLORS
         for s, surf in enumerate(surfaces):
-            viewer.add_surface(surf, VolumeViewerWindow.SURFACE_COLORS[s])
+            viewer.add_surface(surf, colors[s % len(colors)])
         viewer.setup(window_title=os.path.basename(volume))
         if args.overlay:
             viewer.set_overlay(args.overlay)
@@ -4451,7 +4516,12 @@ def _render_without_a_window(args, options: dict, volumes: Sequence[str],
         if args.atlas:
             viewer.set_atlas(args.atlas)
         for contour in (args.contour or ()):
-            viewer.add_contour(contour)
+            try:
+                viewer.add_contour(contour)
+            except Exception as exc:
+                # A batch figure is worth finishing without its outline, but the
+                # reason has to be said rather than left to a blank slice
+                print(f"[cat_vol_view] {exc}", file=sys.stderr)
         screenshot = args.screenshot
         if screenshot and len(volumes) > 1:
             stem, ext = os.path.splitext(screenshot)
@@ -4501,7 +4571,32 @@ def _open_windows(args, options: dict, volumes: Sequence[str],
     if args.montage:
         for window in windows:
             window.open_montage(**montage_options)
+    # A file double-clicked in Finder while the viewer runs is opened as if it
+    # had been dropped on the window, rather than being dropped on the floor
+    finder_open_files(app).set_handler(
+        lambda paths: _open_from_finder(windows, paths))
     return int(app.exec())
+
+
+def _open_from_finder(windows: List["VolumeViewerWindow"], paths: Sequence[str]):
+    """Open what macOS sent in the window that is still there.
+
+    Windows the user has closed are skipped: the first one that is still open
+    takes the files, and its peers follow it as they do for a drop.
+    """
+    known = list(windows)
+    for window in windows:
+        for peer in getattr(window, "peers", ()):
+            if peer not in known:
+                known.append(peer)     # opened after the start, e.g. by a drop
+    alive = [w for w in known if w.isVisible()]
+    if not alive:
+        return
+    volumes, surfaces = _split_inputs(paths)
+    for surface in surfaces:
+        alive[0].add_surface(surface)
+    for volume in volumes:
+        alive[0].open_volume(volume)
 
 
 if __name__ == "__main__":

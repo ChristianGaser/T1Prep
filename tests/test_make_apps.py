@@ -1,4 +1,5 @@
 import os
+import platform
 import plistlib
 import sys
 import tempfile
@@ -45,14 +46,43 @@ class TestBundleContents(unittest.TestCase):
         for app in apps:
             self.assertTrue((app / "Contents" / "Info.plist").exists())
 
-    def test_launcher_points_at_the_console_script(self):
+    def test_launcher_starts_the_viewer_of_this_installation(self):
         self._build()
         launcher = self.out_dir / "CAT_VolView.app" / "Contents" / "MacOS" / "CAT_VolView"
         self.assertTrue(os.access(launcher, os.X_OK))
         text = launcher.read_text()
-        self.assertIn(str(self.bin_dir / "CAT_VolView"), text)
+        self.assertIn("Resources/t1prep_launch.py", text)
         self.assertIn("T1PREP_APP=1", text)          # so a double-click asks for a file
         self.assertIn("Library/Logs/T1Prep", text)   # failures stay visible
+        # exec, so the viewer keeps the process Launch Services started: the
+        # documents to open arrive as Apple events addressed to exactly that one
+        self.assertIn("exec ", text)
+
+    def test_launch_script_reports_a_failed_start(self):
+        """Finder shows no output, so the reason has to reach a dialog."""
+        self._build()
+        script = (self.out_dir / "CAT_VolView.app" / "Contents" / "Resources"
+                  / "t1prep_launch.py")
+        text = script.read_text()
+        compile(text, str(script), "exec")            # it has to be valid Python
+        self.assertIn("t1prep.gui.cat_vol_view", text)
+        self.assertIn("osascript", text)
+        self.assertIn("traceback", text)
+
+    def test_the_architectures_are_named(self):
+        """Without them a script bundle is started under Rosetta.
+
+        Launch Services cannot read the architectures of a script and then picks
+        x86_64 on Apple silicon, where the interpreter loads its translated
+        slice and every arm64 extension module fails in dlopen — the viewers
+        died before their first window while the same command worked in a shell.
+        """
+        self._build()
+        for name in make_apps.VIEWERS:
+            architectures = self._info(name)["LSArchitecturePriority"]
+            self.assertTrue(architectures)
+            if platform.machine() in ("arm64", "x86_64"):
+                self.assertEqual(architectures[0], platform.machine())
 
     def test_volume_viewer_claims_nifti_and_offers_gzip(self):
         self._build()

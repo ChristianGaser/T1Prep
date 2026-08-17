@@ -124,7 +124,24 @@ transparent.
 
 Contours outline another volume on the slices — the fastest check of a
 registration or a segmentation, as `CheckReg` does it. Several can be shown at
-once, each in its own colour, with an editable level.
+once, each in its own colour, with an editable level. Registration is what the
+headers say it is: a volume they place outside the image is refused with the
+reason, and one that is outlined only where the two overlap says so in the
+status bar instead of leaving a slice mysteriously blank.
+
+### Surfaces on the slices
+
+Surfaces given on the command line, dropped on a window, or opened from
+`CAT_SurfView` are cut by the three slice planes and drawn as outlines, one
+colour per surface (red, green, blue, …) so the hemispheres — or a central and a
+pial surface — can be told apart.
+
+A surface that carries an overlay keeps the colours it has in the surface viewer:
+the per-vertex values are drawn through the same colour table, range and clip
+window, so a thickness or statistics map is read against the slices exactly as
+against the surface. Where the table leaves values out — clipped, or missing
+altogether — the plain colour of that surface shows through, the way the
+background surface does in `CAT_SurfView`.
 
 ### Reading values and positions
 
@@ -205,6 +222,18 @@ Finder. `.nii` and `.gii` can be owned outright; `.nii.gz` is a gzip archive to
 macOS, so the viewer can only be offered as an alternative for it. See
 [scripts/README.md](../scripts/README.md#make_macos_appssh) for the details of
 registering them as the default.
+
+A double-clicked file is opened whether or not a viewer is already running: with
+a window open, another volume joins it in a linked window and a surface is
+outlined on its slices, as if it had been dropped there. Should a viewer fail to
+start, the bundle reports the reason in a dialog and keeps the whole report in
+`~/Library/Logs/T1Prep/`.
+
+Rebuild the bundles with `t1prep-make-apps` after updating T1Prep, so they name
+the interpreter of the current installation and the architectures it is built
+for. Without those, macOS starts a bundle whose launcher is a script under
+Rosetta on Apple silicon, where an arm64 build of VTK or of the T1Prep
+extensions cannot be loaded and the viewer dies before its first window.
 
 ---
 

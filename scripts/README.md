@@ -264,10 +264,11 @@ file in Finder, press ⌘I, pick the app under *Open with* and click *Change All
 The apps also have to live where Launch Services looks — `/Applications` or
 `~/Applications`; the script registers them with `lsregister` either way.
 
-**When an app does not start.** Finder throws away whatever the program prints, so each
-launcher writes it to `~/Library/Logs/T1Prep/<name>.log` — check there first. The bundles
-point at the entry points of the environment they were built from, so re-run the script
-after moving or reinstalling that environment.
+**When an app does not start.** Finder throws away whatever the program prints, so the
+bundle puts the reason in a dialog and the whole report in `~/Library/Logs/T1Prep/<name>.log`
+— check there first. The bundles point at the interpreter and the package of the
+environment they were built from, so re-run the script after moving or reinstalling that
+environment.
 
 ### `CAT_SurfView` / `CAT_VolView`
 
