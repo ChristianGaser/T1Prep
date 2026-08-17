@@ -2278,3 +2278,88 @@ class TestSharedViewerHelpers(unittest.TestCase):
         from t1prep.gui.viewer_common import shorten_path
         from t1prep.gui.cat_vol_view import shorten_path as imported
         self.assertIs(imported, shorten_path)
+
+
+class TestFinderOpenEvents(unittest.TestCase):
+    """macOS sends an open-document event for the command-line files as well.
+
+    Opening them again gave every volume a second window: two files on the
+    command line, four windows on screen.
+    """
+
+    class _Window:
+        """Stands in for a viewer window, recording what it was asked to open."""
+
+        def __init__(self, image_path, visible=True):
+            self.image_path = image_path
+            self.peers = [self]
+            self.surface_paths = []
+            self._visible = visible
+            self.opened = []
+            self.raised = 0
+
+        def isVisible(self):
+            return self._visible
+
+        def open_volume(self, path):
+            self.opened.append(path)
+
+        def add_surface(self, path):
+            self.surface_paths.append(path)
+
+        def raise_(self):
+            self.raised += 1
+
+        def activateWindow(self):
+            pass
+
+    def setUp(self):
+        from t1prep.gui.cat_vol_view import _open_from_finder
+        self._open = _open_from_finder
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        affine = np.eye(4)
+        self.first = str(_write_volume(tmp / "a.nii.gz", affine))
+        self.second = str(_write_volume(tmp / "b.nii.gz", affine))
+        self.third = str(_write_volume(tmp / "c.nii.gz", affine))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_a_file_already_open_is_raised_not_opened_again(self):
+        windows = [self._Window(self.first), self._Window(self.second)]
+        self._open(windows, [self.first, self.second])
+        self.assertEqual([w.opened for w in windows], [[], []])
+        self.assertEqual(windows[0].raised, 1)
+        self.assertEqual(windows[1].raised, 1)
+
+    def test_a_new_file_still_opens(self):
+        windows = [self._Window(self.first)]
+        self._open(windows, [self.third])
+        self.assertEqual(windows[0].opened, [self.third])
+
+    def test_the_same_file_by_another_path(self):
+        """A relative path or a symlink names the same volume."""
+        windows = [self._Window(self.first)]
+        awkward = str(Path(self.first).parent / "." / Path(self.first).name)
+        self._open(windows, [awkward])
+        self.assertEqual(windows[0].opened, [])
+        self.assertEqual(windows[0].raised, 1)
+
+    def test_windows_the_user_closed_are_skipped(self):
+        closed = self._Window(self.first, visible=False)
+        alive = self._Window(self.second)
+        self._open([closed, alive], [self.third])
+        self.assertEqual(alive.opened, [self.third])
+        self.assertEqual(closed.opened, [])
+
+    def test_a_surface_is_not_outlined_twice(self):
+        window = self._Window(self.first)
+        window.surface_paths = ["/data/lh.central.gii"]
+        self._open([window], ["/data/lh.central.gii"])
+        self.assertEqual(window.surface_paths, ["/data/lh.central.gii"])
+
+    def test_nothing_open_at_all(self):
+        closed = self._Window(self.first, visible=False)
+        self._open([closed], [self.third])       # must not raise
+        self.assertEqual(closed.opened, [])

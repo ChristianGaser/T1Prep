@@ -3203,6 +3203,9 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         self.on_position_changed = on_position_changed
         #: Windows the context menu settings are applied to; see link_windows
         self.peers: List["VolumeViewerWindow"] = [self]
+        #: Surfaces outlined on the slices, so the same one is not added twice
+        self.surface_paths: List[str] = [str(s) for s in surfaces
+                                         if isinstance(s, (str, os.PathLike))]
 
         central = QtWidgets.QWidget(self)
         box = QtWidgets.QVBoxLayout(central)
@@ -3414,6 +3417,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
 
     def add_surface(self, path: str):
         """Draw a surface as an outline on the slices."""
+        self.surface_paths.append(str(path))
         try:
             self.viewer.add_surface(path, self.SURFACE_COLORS[
                 len(self.viewer.surfaces) % len(self.SURFACE_COLORS)])
@@ -4583,6 +4587,12 @@ def _open_from_finder(windows: List["VolumeViewerWindow"], paths: Sequence[str])
 
     Windows the user has closed are skipped: the first one that is still open
     takes the files, and its peers follow it as they do for a drop.
+
+    A file that is already on screen is raised instead of opened again.  macOS
+    sends an open-document event for the files given on the command line as
+    well, so without this every one of them would appear twice; and a
+    double-click on a volume that is already open should bring it forward
+    rather than clone it.
     """
     known = list(windows)
     for window in windows:
@@ -4594,9 +4604,26 @@ def _open_from_finder(windows: List["VolumeViewerWindow"], paths: Sequence[str])
         return
     volumes, surfaces = _split_inputs(paths)
     for surface in surfaces:
-        alive[0].add_surface(surface)
+        if not any(_same_file(surface, shown)
+                   for w in alive for shown in getattr(w, "surface_paths", ())):
+            alive[0].add_surface(surface)
     for volume in volumes:
+        shown = next((w for w in alive if _same_file(w.image_path, volume)), None)
+        if shown is not None:
+            shown.raise_()
+            shown.activateWindow()
+            continue
         alive[0].open_volume(volume)
+
+
+def _same_file(one: Optional[str], other: Optional[str]) -> bool:
+    """Whether two paths name the same file, symlinks and ``..`` included."""
+    if not one or not other:
+        return False
+    try:
+        return os.path.realpath(str(one)) == os.path.realpath(str(other))
+    except OSError:
+        return str(one) == str(other)
 
 
 if __name__ == "__main__":

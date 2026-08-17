@@ -1166,3 +1166,38 @@ class TestPlainUnderlay(unittest.TestCase):
     def test_it_is_darker_than_the_shading_band(self):
         """Otherwise 'nothing' would look brighter than the shaded surfaces."""
         self.assertLess(UNDERLAY_PLAIN_GREY[0], UNDERLAY_GREYS[1])
+
+
+class TestFinderOpenEventsSurface(unittest.TestCase):
+    """The surface viewer gets the same re-sent files and must ignore them."""
+
+    class _Stub:
+        _already_shown = Viewer._already_shown
+
+        class _Opts:
+            mesh_left = None
+            overlay = None
+
+        def __init__(self, mesh=None, overlay=None, atlas=None, overlays=()):
+            self.opts = self._Opts()
+            self.opts.mesh_left = mesh
+            self.opts.overlay = overlay
+            self.atlas_path = atlas
+            self.overlay_list = list(overlays)
+
+    def test_the_displayed_surface_is_recognised(self):
+        stub = self._Stub(mesh="/data/lh.central.gii")
+        self.assertTrue(stub._already_shown("/data/lh.central.gii"))
+        self.assertTrue(stub._already_shown("/data/./lh.central.gii"))
+        self.assertFalse(stub._already_shown("/data/lh.inflated.gii"))
+
+    def test_the_atlas_and_the_overlays_too(self):
+        stub = self._Stub(mesh="/data/lh.central.gii", atlas="/data/lh.aparc.annot",
+                          overlays=["/data/lh.thickness"])
+        self.assertTrue(stub._already_shown("/data/lh.aparc.annot"))
+        self.assertTrue(stub._already_shown("/data/lh.thickness"))
+        self.assertFalse(stub._already_shown("/data/lh.other"))
+
+    def test_nothing_displayed_yet(self):
+        self.assertFalse(self._Stub()._already_shown("/data/lh.central.gii"))
+        self.assertFalse(self._Stub(mesh="/data/lh.central.gii")._already_shown(""))

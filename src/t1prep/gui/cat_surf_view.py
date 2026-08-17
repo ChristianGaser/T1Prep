@@ -2598,12 +2598,32 @@ class Viewer(QtWidgets.QMainWindow):
         event.acceptProposedAction()
         self.open_paths(paths)
 
+    def _already_shown(self, path: str) -> bool:
+        """Whether *path* is the surface, the atlas or an overlay on screen."""
+        def same(other) -> bool:
+            if not other:
+                return False
+            try:
+                return os.path.realpath(str(other)) == os.path.realpath(str(path))
+            except OSError:
+                return str(other) == str(path)
+
+        return (same(self.opts.mesh_left) or same(self.atlas_path)
+                or any(same(overlay) for overlay in (self.overlay_list or []))
+                or same(self.opts.overlay))
+
     def open_paths(self, paths: List[str]):
         """Show *paths*: a mesh replaces the surface, an .annot becomes the atlas.
 
         Shared by the drop handler and the documents macOS sends when a file is
-        double-clicked while the viewer is running.
+        double-clicked while the viewer is running.  What is already displayed
+        is left alone: macOS sends an open-document event for the files given
+        on the command line as well, and reloading them would throw away the
+        view the user has set up.
         """
+        paths = [p for p in paths if not self._already_shown(p)]
+        if not paths:
+            return
         meshes = [p for p in paths if is_gifti_mesh_file(p)]
         others = [p for p in paths if p not in meshes]
         if meshes:
