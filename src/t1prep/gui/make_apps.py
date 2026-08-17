@@ -270,8 +270,8 @@ def _package_version() -> str:
 def _logo() -> Optional[Path]:
     """The T1Prep logo, from the package or from a source checkout."""
     here = Path(__file__).resolve()
-    for candidate in (here.parent.parent / "data" / "T1Prep_logo.svg",
-                      here.parents[3] / "T1Prep_logo.svg"):
+    for candidate in (here.parent.parent / "data" / "CAT_logo.svg",
+                      here.parents[3] / "CAT_logo.svg"):
         if candidate.exists():
             return candidate
     return None

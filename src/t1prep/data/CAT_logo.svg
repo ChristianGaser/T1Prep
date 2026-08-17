@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 500" width="400" height="500">
+  <rect x="0"   y="0"   width="400" height="400" fill="#f4f1ea"/>
+  <rect x="0"   y="400" width="400" height="100" fill="#141414"/>
+
+  <!-- ============ CAT ============ -->
+  <g transform="translate(200, 220)">
+    <path d="M 95 85 C 142 78, 168 110, 156 144 C 144 174, 102 178, 88 148 C 96 150, 116 156, 130 142 C 144 126, 132 102, 98 108 Z" fill="#141414"/>
+    <path d="M -105 130 C -118 90, -125 40, -115 -10 C -110 -40, -100 -65, -85 -85 L -52 -138 L -28 -78 C -10 -85, 10 -85, 28 -78 L 52 -138 L 85 -85 C 100 -65, 110 -40, 115 -10 C 125 40, 118 90, 105 130 C 90 144, 60 150, 0 150 C -60 150, -90 144, -105 130 Z" fill="#141414"/>
+    <ellipse cx="-34" cy="-22" rx="22" ry="27" fill="#FFCC2A"/>
+    <ellipse cx="34"  cy="-22" rx="22" ry="27" fill="#FFCC2A"/>
+    <ellipse cx="-34" cy="-22" rx="4" ry="20" fill="#0a0a0a"/>
+    <ellipse cx="34"  cy="-22" rx="4" ry="20" fill="#0a0a0a"/>
+    <circle cx="-28" cy="-33" r="3.5" fill="#ffffff" opacity="0.9"/>
+    <circle cx="40"  cy="-33" r="3.5" fill="#ffffff" opacity="0.9"/>
+    <g stroke="#5a5a5a" stroke-width="1.5" stroke-linecap="round" opacity="0.55">
+      <line x1="-22" y1="22" x2="-94" y2="14"/>
+      <line x1="-22" y1="32" x2="-94" y2="40"/>
+      <line x1="22"  y1="22" x2="94"  y2="14"/>
+      <line x1="22"  y1="32" x2="94"  y2="40"/>
+    </g>
+    <path d="M -5 7 Q 0 14 5 7 Z" fill="#FFCC2A" opacity="0.65"/>
+  </g>
+
+
+  <text x="200" y="468" font-family="'Helvetica Neue','Inter','Arial',sans-serif" font-size="60" font-weight="500" fill="#f4f1ea" text-anchor="middle" letter-spacing="-1.0">PyCat</text>
+  
+</svg>
