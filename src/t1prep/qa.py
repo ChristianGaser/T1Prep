@@ -70,12 +70,12 @@ _BOX3 = np.ones((3, 3, 3), dtype=bool)
 # same mark as ``res_RMS`` does for those voxel sizes.
 # Re-derive all bounds with ``scripts/qa_calibrate.py``.
 _RATING_BOUNDS: dict[str, tuple[float, float]] = {
-    "NCR":       (0.0225, 0.1506),   # BWP noise level 1 .. 6
-    "CNR":       (0.0225, 0.1506),   # rated via NCR
-    "ICR":       (0.3401, 0.9564),   # BWP bias level 1 .. 6
+    "NCR":       (0.0232, 0.1585),   # BWP noise level 1 .. 6
+    "CNR":       (0.0232, 0.1585),   # rated via NCR
+    "ICR":       (0.3397, 0.9579),   # BWP bias level 1 .. 6
     "contrastr": (1.0 / 3.0, 0.0),   # cat_stat_marks default: CM=[1/3 0]
     "res_RMS":   (0.50, 3.00),       # cat_stat_marks default
-    "res_ECR":   (0.0000, 0.0687),   # effective resolution of 0.5 .. 3.0 mm
+    "res_ECR":   (0.0081, 0.0481),   # effective resolution of 0.5 .. 3.0 mm
     "EC_abs":    (21.1904, 128.6649),
 }
 
