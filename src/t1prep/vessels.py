@@ -733,7 +733,6 @@ def apply_blood_vessel_correction(
     min_volume=MIN_VESSEL_VOLUME,
     device="cpu",
     verbose=False,
-    debug=False,
     mri_dir=None,
     out_name=None,
     ext="nii.gz",
@@ -830,21 +829,6 @@ def apply_blood_vessel_correction(
 
     if verbose:
         _report_terms(terms, ym01 * 3.0, yp0, vx)
-
-    if debug and mri_dir and out_name:
-        nib.save(
-            nib.Nifti1Image(weight, brain.affine, brain.header),
-            f"{mri_dir}/{out_name}_vessel_weight.{ext}",
-        )
-        for name, term in terms.items():
-            nib.save(
-                nib.Nifti1Image(
-                    np.ascontiguousarray(term, dtype=np.float32),
-                    brain.affine,
-                    brain.header,
-                ),
-                f"{mri_dir}/{out_name}_vessel_term-{name}.{ext}",
-            )
 
     if not applied:
         return brain, label
