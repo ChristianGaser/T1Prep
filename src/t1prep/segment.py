@@ -153,7 +153,7 @@ class CustomBrainSegmentation(BrainSegmentation):
     """
     Custom class to override BrainSegmentation
     Furthermore use run_model function with linear interpolation for p0, which
-    prevents negative values due to sinc-interpolation
+    prevents negative values due to B-spline interpolation
     """
 
     def __init__(self, *args, **kwargs):
@@ -200,7 +200,7 @@ class CustomBrainSegmentation(BrainSegmentation):
     def run_model(self, x, scale_factor=1.5):
         x = x.to(device=self.inference_device)
         
-        # Use linear interpolation, since sinc-interpolation caused issues with
+        # Use linear interpolation, since B-spline interpolation caused issues with
         # negative values in label image and resulted in less accurate segmentations
         with torch.no_grad():
             p0 = self.model(
@@ -212,7 +212,7 @@ class CustomPreprocess(Preprocess):
     """
     Custom class to override Preprocess
     Use linear interpolation for p0, which prevents negative values due to
-    sinc-interpolation
+    B-spline interpolation
     """
 
     def __init__(self, *args, **kwargs):
@@ -530,7 +530,7 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     t1 = nib.Nifti1Image(denoised, t1.affine, t1.header)
 
 
-    # This is a bit faster since for initial segmentation the sinc-interpolation
+    # This is a bit faster since for initial segmentation the B-spline interpolation
     # of the segmentations does not help and is slower.
     # Furthermore, CustomBrainSegmentation supports mps device
     prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
@@ -1401,7 +1401,7 @@ def run_segment():
 
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
 
-    # Ensure that minimum of brain is not negative (which can happen after sinc-interpolation)
+    # Ensure that minimum of brain is not negative (which can happen after B-spline interpolation)
     brain_value = brain_large.get_fdata().copy()
     mask_value = binary_closing(brain_value > 0.0, generate_binary_structure(3, 3), 7)
     min_brain = np.min(brain_value)
@@ -1421,7 +1421,7 @@ def run_segment():
     release_cache(device)
     p0_large = output_seg["p0_large"]
 
-    # Due to sinc-interpolation we have to change values below zero
+    # Due to B-spline interpolation we have to change values below zero
     p0_value = p0_large.get_fdata()
     if np.min(p0_value) < 0:
         p0_value[p0_value < 0] = 0
