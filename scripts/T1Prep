@@ -175,6 +175,9 @@ parse_args()
       --no-bvc*)
         vessel=0
         ;;
+      --no-sulcus-repair*)
+        sulcus_repair=0
+        ;;
       --no-overwrite*)
         exit_if_empty "$optname" "$optarg"
         no_overwrite=$optarg
@@ -720,6 +723,7 @@ process()
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"
       [ "${skullstrip_only}" -eq 1 ] && cmd+=" --skullstrip-only"
       [ "${skip_skullstrip}" -eq 1 ] && cmd+=" --skip-skullstrip"
+      [ "${sulcus_repair}" -eq 0 ] && cmd+=" --no-sulcus-repair"
 
       cmd+=" --seed ${seed} --vessel \"${vessel}\" --label-dir \"${label_dir}\""
       cmd+=" --input \"${input}\" --mri-dir \"${mri_dir}\""
@@ -1148,6 +1152,11 @@ ${BOLD}${GREEN}Expert Options:${NC}
 
   --no-vessel
       Disable vessel removal
+
+  --no-sulcus-repair
+      Disable the anatomy-aware repair of the 0.5mm label map, which recovers
+      sulcal CSF in glued sulci and reconnects broken gyral WM blades before
+      surface reconstruction.
 
   --median-filter <NUMBER>    
       Apply the specified number of median filter passes to reduce topology artifacts

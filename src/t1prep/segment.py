@@ -448,6 +448,15 @@ def parse_arguments() -> argparse.Namespace:
         default=1.0,
         help="Use vessel removal",
     )
+    parser.add_argument(
+        "--no-sulcus-repair",
+        dest="sulcus_repair",
+        action="store_false",
+        help=(
+            "Disable the anatomy-aware sulcus/gyrus repair of the 0.5 mm label "
+            "map (CAT_VolSulcusRepair)."
+        ),
+    )
 
     skullstrip_group = parser.add_mutually_exclusive_group()
     skullstrip_group.add_argument(
@@ -707,6 +716,91 @@ def run_amap_segmentation(
         f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}",
     )
     return brain_large, p0_large
+
+
+def apply_sulcus_repair(
+    brain_large: nib.Nifti1Image,
+    p0_large: nib.Nifti1Image,
+    refine_pve: bool = False,
+    verbose: bool = False,
+    debug: bool = False,
+    mri_dir: str = "",
+    out_name: str = "",
+    ext: str = "nii",
+) -> nib.Nifti1Image:
+    """Repair glued sulci and broken gyral WM blades in the 0.5 mm label map.
+
+    In-process binding of ``CAT_VolSulcusRepair`` (``cat_surf.vol_sulcus_repair``).
+    Three classifier failures survive any amount of regularisation because they
+    are failures of *evidence* rather than of smoothness: the two banks of a
+    tight sulcus labelled as one thick GM band, a thin gyral WM blade
+    interrupted by a small missegmentation, and the residual partial-volume
+    error that accompanies the first.  The tool goes back to the bias-corrected
+    intensities and uses a Hessian sheetness filter as a shape prior to recover
+    what the classifier discarded, which is why it needs ``brain_large`` and
+    not the label map alone.
+
+    It belongs at the 0.5 mm working resolution: a tight sulcus is about one
+    voxel wide at 1 mm, so there is no gap left to carve once the label map has
+    been resampled to the native grid.
+
+    Args:
+        brain_large (nib.Nifti1Image): Bias-corrected T1 on the 0.5 mm affine
+            template grid, after ``apply_LAS`` and the blood-vessel correction.
+        p0_large (nib.Nifti1Image): PVE label map on the same grid, with
+            CSF = 1, GM = 2, WM = 3.
+        refine_pve (bool, optional): Also run the narrow-band PVE refit, the
+            most aggressive of the three steps.  Defaults to False, matching
+            the library default.
+        verbose (bool, optional): Report how much of the label map moved.
+        debug (bool, optional): Save the label difference alongside the other
+            debug volumes.
+        mri_dir, out_name, ext (str, optional): Only used to name that volume.
+
+    Returns:
+        nib.Nifti1Image: The repaired label map on ``p0_large``'s grid.
+    """
+    label = np.asarray(p0_large.get_fdata(), dtype=np.float32)
+    t1 = np.asarray(brain_large.get_fdata(), dtype=np.float32)
+
+    repaired = np.asarray(
+        cat_surf.vol_sulcus_repair(
+            t1,
+            label,
+            voxelsize=np.asarray(p0_large.header.get_zooms()[:3], dtype=np.float64),
+            refine_pve=refine_pve,
+            sheet_strength=50,
+            verbose=bool(verbose and debug),
+        ),
+        dtype=np.float32,
+    )
+
+    # The repair only has business inside the brain; keep the background
+    # exactly as the segmentation left it, the way cleanup_vessels does, so the
+    # mask every later step assumes is untouched.
+    background = label <= 0
+    repaired[background] = label[background]
+
+    if verbose:
+        delta = np.abs(repaired - label)
+        moved = delta > 1e-3
+        n_moved, n_brain = int(moved.sum()), int((label > 0).sum())
+        if n_moved:
+            print(
+                f"    sulcus repair  {n_moved:,} voxels changed "
+                f"({100.0 * n_moved / max(n_brain, 1):.2f}% of brain), "
+                f"mean |delta| {float(delta[moved].mean()):.3f}"
+            )
+        else:
+            print("    sulcus repair  no change (sheetness response too weak)")
+
+    if debug and mri_dir and out_name:
+        nib.save(
+            nib.Nifti1Image(repaired - label, p0_large.affine, p0_large.header),
+            f"{mri_dir}/{out_name}_sulcus_repair_large.{ext}",
+        )
+
+    return nib.Nifti1Image(repaired, p0_large.affine, p0_large.header)
 
 
 def final_cleanup(
@@ -1329,6 +1423,7 @@ def run_segment():
     use_amap = args.amap
     use_bids = args.bids
     vessel = args.vessel
+    sulcus_repair = args.sulcus_repair
     verbose = args.verbose
     debug = args.debug
     skullstrip_only = args.skullstrip_only
@@ -1520,6 +1615,29 @@ def run_segment():
                 ext=ext,
             )
 
+    # Sulcus repair goes *after* the blood-vessel correction, deliberately.
+    # Both of its active steps key on bright, sheet-like structure in the
+    # intensity image: a vessel running along a sulcus is exactly that, so an
+    # uncorrected vessel is the ideal false positive -- step 2 would strengthen
+    # it into a WM blade, and by filling the intensity dip across the sulcus it
+    # would suppress the CSF recovery of step 1 at the same time.  The vessel
+    # correction rewrites both ``brain_large`` and ``p0_large``, so running
+    # second is also what lets the repair see the cleaned intensities.
+    #
+    # It runs before ``run_segment_nogm`` so the repaired label propagates into
+    # p1/p2/p3, which keeps the tissue maps consistent with the label map that
+    # ``get_partition`` later turns into the hemisphere maps for the surfaces.
+    if sulcus_repair:
+        p0_large = apply_sulcus_repair(
+            brain_large,
+            p0_large,
+            verbose=verbose,
+            debug=debug,
+            mri_dir=mri_dir,
+            out_name=out_name,
+            ext=ext,
+        )
+
     if debug:
         nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
         nib.save(p0_large, f"{mri_dir}/{out_name}_seg_large.{ext}")
@@ -1587,7 +1705,8 @@ def run_segment():
 
     # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) 
     # to refine segmentation
-    if vessel > 0:
+    # not sure how good this correction still is since we have a much better one
+    if (vessel > 0) and False: 
         # Same protection mask the pre-AMAP correction used; the grid has not
         # changed, so it is only rebuilt if something upstream resampled.
         excl_regions = protect

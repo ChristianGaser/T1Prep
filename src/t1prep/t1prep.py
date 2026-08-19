@@ -144,6 +144,7 @@ def _build_segment_cmd(
     verbose: bool = True,
     debug: bool = False,
     vessel: float = 1.0,
+    sulcus_repair: bool = True,
     skullstrip_only: bool = False,
     skip_skullstrip: bool = False,
     seed: int = 0,
@@ -181,6 +182,8 @@ def _build_segment_cmd(
     # --surf tells segment.py to emit hemisphere partition maps consumed by
     # surface_estimation; also required when any warped/atlas output is requested.
     flag("--surf",            need_surf_outputs)
+
+    flag("--no-sulcus-repair", not sulcus_repair)
 
     cmd += ["--seed",       str(seed)]
     cmd += ["--vessel",     str(vessel)]
@@ -268,6 +271,7 @@ def _process_single(
     pre_fwhm: float = 2.0,
     median_filter: int = 1,
     vessel: float = 1.0,
+    sulcus_repair: bool = True,
     thickness_method: int = 3,
     seed: int = 0,
     atlas: str = "",
@@ -381,6 +385,7 @@ def _process_single(
             verbose=verbose,
             debug=debug,
             vessel=vessel,
+            sulcus_repair=sulcus_repair,
             skullstrip_only=skullstrip_only,
             skip_skullstrip=skip_skullstrip,
             seed=seed,
@@ -514,6 +519,7 @@ def run_t1prep(
     pre_fwhm: float = 2.0,
     median_filter: int = 1,
     vessel: float = 1.0,
+    sulcus_repair: bool = True,
     thickness_method: int = 3,
     seed: int = 0,
     # atlas options
@@ -580,6 +586,9 @@ def run_t1prep(
         Number of median-filter passes to reduce topology artefacts (default 1).
     vessel:
         Blood-vessel-correction weight; set to 0 to disable (default 1).
+    sulcus_repair:
+        Repair glued sulci and broken gyral WM blades in the 0.5 mm label map
+        before surface reconstruction; set to False to disable (default True).
     thickness_method:
         Cortical thickness algorithm (1 = Tfs, 2 = pial/white, 3 = PBT; default 3).
     seed:
@@ -696,6 +705,7 @@ def run_t1prep(
             pre_fwhm=float(pre_fwhm),
             median_filter=int(median_filter),
             vessel=float(vessel),
+            sulcus_repair=bool(sulcus_repair),
             thickness_method=int(thickness_method),
             seed=int(seed),
             atlas=atlas_str,
@@ -813,6 +823,9 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="Median-filter passes (default 1)")
     g3.add_argument("--vessel", type=float, default=1.0,
                     help="Blood-vessel correction weight; 0 = off (default 1)")
+    g3.add_argument("--no-sulcus-repair", dest="sulcus_repair",
+                    action="store_false",
+                    help="Disable the sulcus/gyrus repair of the 0.5 mm label map")
     g3.add_argument("--thickness-method", type=int, default=3, metavar="N",
                     choices=[1, 2, 3],
                     help="Thickness algorithm: 1=Tfs, 2=pial/white, 3=PBT "
@@ -859,6 +872,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         pre_fwhm=args.pre_fwhm,
         median_filter=args.median_filter,
         vessel=args.vessel,
+        sulcus_repair=args.sulcus_repair,
         thickness_method=args.thickness_method,
         seed=args.seed,
         atlas=args.atlas,

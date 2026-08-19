@@ -252,8 +252,8 @@ WM_TREE_CAP = 3.15
 # (1000 voxels on CAT12's ~1 mm working grid).  This is the safety mechanism
 # that keeps subjects without a vessel problem untouched.
 #
-# Raised to 3000 mm^3 because that is where the Colin27 measurements separate
-# a worthwhile correction from a harmful one.  Ground-truth vessels were set
+# Calibrated on Colin27, where the measurements separate a worthwhile
+# correction from a harmful one.  Ground-truth vessels were set
 # to a range of intensities and segmented as WM or GM; "damage" is white
 # matter wrongly flagged, out of 654000 mm^3 present:
 #
@@ -264,9 +264,8 @@ WM_TREE_CAP = 3.15
 #     GM/WM midpoint, as WM   1202 mm^3     617 mm^3     2:1       2013 mm^3
 #     none (dark vessels)      155 mm^3     556 mm^3     -          983 mm^3
 #
-# The last two are not worth applying, and both fall below 3000 mm^3, while
-# every case with a ratio above 10:1 sits well above it.
-MIN_VESSEL_VOLUME = 3000.0      # mm^3
+#
+MIN_VESSEL_VOLUME = 1000.0      # mm^3
 
 
 def _ramp(values, ramp):

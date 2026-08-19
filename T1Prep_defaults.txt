@@ -44,6 +44,8 @@ thickness_method=3    # Set the thickness method
 correct_folding=1     # Correct for cortical thickness by folding effects
 pre_fwhm=2            # Set the pre-smoothing FWHM size in CAT_VolMarchingCubes
 vessel=1              # Use vessel removal
+sulcus_repair=1       # Repair glued sulci and broken gyral WM blades in
+                      # the 0.5mm label map before surface reconstruction
 median_filter=1       # Set the number of median filter applications to reduce 
                       # topology artefacts
 fast=0                # Skip spherical registration and estimating atlases and 
