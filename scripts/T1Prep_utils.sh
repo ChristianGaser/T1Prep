@@ -86,6 +86,7 @@ else
   _env_python="${python:-}"
   python=""
   data_dir=""
+  _broken_python=""
   for _cand in \
       "${_cli_python}" \
       "${T1PREP_PYTHON:-}" \
@@ -106,9 +107,38 @@ else
       data_dir="${_dd}"
       break
     fi
+    # The probe failed.  Remember the first interpreter that *has* t1prep
+    # installed but still cannot import it: that is a broken installation
+    # (typically a compiled extension linked against an outdated library),
+    # not a missing one, and needs a completely different hint.  find_spec
+    # only locates the package, it does not execute it, so it still answers
+    # for an installation whose import raises.
+    if [ -z "${_broken_python}" ] &&
+       "${_cand}" -c 'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("t1prep") else 1)' >/dev/null 2>&1; then
+      _broken_python="${_cand}"
+    fi
   done
 
   if [ -z "${data_dir}" ] || [ ! -d "${data_dir}" ]; then
+    # Installed but unimportable: show the real traceback instead of blaming
+    # the interpreter choice, which sends users chasing the wrong problem.
+    if [ -n "${_broken_python}" ]; then
+      echo "ERROR: the t1prep package is installed but cannot be imported." >&2
+      echo "Interpreter: ${_broken_python}" >&2
+      echo "" >&2
+      echo "--- original import error ---" >&2
+      "${_broken_python}" -c 'from importlib.resources import files; print(files("t1prep").joinpath("data"))' >/dev/null || true
+      echo "-----------------------------" >&2
+      echo "" >&2
+      echo "This is a broken or half-upgraded installation, not the wrong" >&2
+      echo "interpreter.  Common causes:" >&2
+      echo "  * 'symbol not found in flat namespace' — a compiled extension" >&2
+      echo "    (e.g. cat_surf) was linked against an outdated C library;" >&2
+      echo "    rebuild that library and reinstall the package." >&2
+      echo "  * ModuleNotFoundError — a dependency is missing; reinstall with:" >&2
+      echo "        ${_broken_python} -m pip install --force-reinstall T1Prep" >&2
+      exit 1
+    fi
     echo "ERROR: cannot locate the t1prep package data." >&2
     echo "T1Prep must run with the Python interpreter it was installed into" >&2
     echo "(supported: Python 3.9-3.12)." >&2
