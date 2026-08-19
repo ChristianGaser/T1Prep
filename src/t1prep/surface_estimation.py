@@ -369,7 +369,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 n_median_filter=median_filter,
                 strength_gyri_mask=0.1,
                 strength_sulci=2.0,
-                sulci_sheet_strength=15.0,
+                sulci_sheet_strength=10.0,
                 sulci_cutoff=0.1,
                 verbose=verbose,
             )
