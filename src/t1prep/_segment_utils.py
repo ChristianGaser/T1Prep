@@ -1227,80 +1227,24 @@ def _octagon_dilation(mask, iterations, mask_region=None):
     return out
 
 
-def cortical_reach(p0_data, n_steps, subsample=2):
-    """Mark everything a front from outside the head reaches without crossing WM.
+def ventricle_fill(p0_data, atlas_data, regions, vx=0.5, reach_mm=5.0):
+    """Grow the atlas ventricle labels through the subject's own ventricle.
 
-    The front starts in the air around the head and is allowed to travel only
-    through non-WM voxels, so it flows over the cortical surface, down every
-    sulcus and through the whole cortical ribbon, but it is stopped by the
-    white matter.  Reaching the ventricles or the basal ganglia therefore means
-    either crossing WM -- impossible -- or squeezing through a segmentation
-    leak, which costs far more steps than the ``n_steps`` budget allows.
+    The fill that makes the hemisphere maps usable for surface extraction has
+    to cover the whole ventricular system, and dilating the warped atlas label
+    by a fixed margin does not: on a brain with enlarged ventricles the label
+    sits inside the real cavity and the margin runs out before the roof, which
+    leaves a CSF band under the cingulate that PBT then tracks as a sulcus.
+    Worse, the same misregistration puts the atlas *cortical* label over that
+    band, so the ``gm_mask`` veto blocks it a second time.
 
-    Everything the front does *not* reach is, by construction, interior to the
-    cortical ribbon: white matter, the ventricular system whatever its size,
-    and the deep grey nuclei.  That is exactly the region the hemisphere maps
-    have to present as solid WM, and unlike an atlas mask it adapts to the
-    subject.
-
-    Parameters
-    ----------
-    p0_data : np.ndarray
-        PVE label map (0 = background, 1 = CSF, 2 = GM, 3 = WM).
-    n_steps : int
-        Propagation budget, in voxels of axis-aligned travel.  It has to exceed
-        the deepest sulcus (otherwise a sulcal fundus is mistaken for interior)
-        and stay below the cost of squeezing through a leak in the ventricular
-        wall.  Around 37 mm sits comfortably between the two.
-    subsample : int, optional
-        Factor by which the front is propagated on a coarser grid.  The
-        resulting boundary lies inside the white matter, where a voxel of
-        imprecision is invisible, so the default of 2 buys a ~25x speed-up at a
-        Dice of 0.95 against the full-resolution front.
-
-    Returns
-    -------
-    np.ndarray
-        Boolean array, ``True`` where the front arrived.
-    """
-    if subsample > 1:
-        k = subsample
-        crop = tuple(slice(0, d - d % k) for d in p0_data.shape)
-        blocks = p0_data[crop].reshape(
-            p0_data.shape[0] // k, k,
-            p0_data.shape[1] // k, k,
-            p0_data.shape[2] // k, k,
-        )
-        # A coarse voxel blocks the front only if *all* of its fine voxels are
-        # WM, and seeds it only if all of them are background: both choices
-        # keep the coarse front from leaking where the fine one would not.
-        passable = blocks.min(axis=(1, 3, 5)) < 2.5
-        seed = blocks.max(axis=(1, 3, 5)) <= 0.5
-        front = _octagon_dilation(seed, n_steps // k, passable)
-        # Dimensions that are not a multiple of k leave a slab of up to k-1
-        # voxels at the far edge outside the coarse grid.  It borders the
-        # volume edge, so it is air, and marking it reached keeps it out of the
-        # fill even if the brain mask happens to touch the field of view.
-        reached = np.ones(p0_data.shape, dtype=bool)
-        reached[crop] = np.repeat(np.repeat(np.repeat(front, k, 0), k, 1), k, 2)
-        return reached
-
-    return _octagon_dilation(p0_data <= 0.5, n_steps, p0_data < 2.5)
-
-
-def interior_fill(p0_data, atlas_data, regions, vx=0.5, min_cluster_ml=0.1):
-    """Return the region of the cerebrum that has to be presented as WM.
-
-    Surface extraction wants a hemisphere map whose only non-WM interior is the
-    cortical ribbon, so the ventricles and the deep grey nuclei are filled in.
-    Filling a *dilated atlas mask* -- the previous approach -- ties the filled
-    extent to how well a single-subject atlas registers: on brains with large
-    ventricles the warped ventricle label plus its dilation stops short of the
-    real ventricle roof, leaving a CSF band under the cingulate that PBT then
-    tracks as if it were a sulcus.
-
-    Here the atlas only says *where* filling is allowed; the subject's own
-    label map says *how far* it goes, via :func:`cortical_reach`.
+    Growing the label geodesically instead -- through non-WM voxels only --
+    follows the cavity rather than a distance: the front flows along the
+    ventricle to its true extent whatever the size, and stops at the wall
+    because white matter blocks it.  ``reach_mm`` is therefore not the size of
+    the ventricle but the margin of error allowed on the atlas: it bounds how
+    far the fill can stray if the registration is off, and 5 mm is far too
+    short to cross the corpus callosum into the interhemispheric fissure.
 
     Parameters
     ----------
@@ -1311,69 +1255,24 @@ def interior_fill(p0_data, atlas_data, regions, vx=0.5, min_cluster_ml=0.1):
     regions : dict
         Mapping from IBSR ``ROIabbr`` to ``ROIid``.
     vx : float, optional
-        Voxel size in mm, used to convert the millimetre-valued parameters.
-    min_cluster_ml : float, optional
-        Fill clusters smaller than this (in ml) are dropped.  The front stops
-        one voxel short in a few isolated spots, and those specks would turn
-        into handles in the WM rather than into anything anatomical.
+        Voxel size in mm, used to convert ``reach_mm`` into steps.
+    reach_mm : float, optional
+        Geodesic budget for the growth.  Raising it past ~7 mm lets the front
+        reach the callosal sulcus and the medial cortex, so it is deliberately
+        tight.
 
     Returns
     -------
     np.ndarray
-        Boolean array, ``True`` where the label map should read WM.
+        Boolean array, ``True`` on the ventricular system as segmented.
     """
-    reached = cortical_reach(p0_data, n_steps=int(round(37.5 / vx)))
-    deep = ~reached & (p0_data > 0.5)
-
-    # The atlas guard keeps the fill inside the cerebral interior, so an
-    # unusually deep sulcus elsewhere -- or an insula whose front arrives late
-    # -- can never be painted over.  Cerebral WM is part of it because that is
-    # the label the atlas puts over a ventricle that has since expanded.
-    deep_regions = [
-        "lCbrWM", "rCbrWM",
-        "lThaPro", "rThaPro", "lCau", "rCau", "lPut", "rPut",
-        "lPal", "rPal", "lAcc", "rAcc",
-        "lLatVen", "rLatVen", "lInfLatVen", "rInfLatVen",
-        "lVenDC", "rVenDC",
-    ]
-    territory = np.isin(atlas_data, [regions[r] for r in deep_regions])
-    territory = _octagon_dilation(territory, int(round(3.0 / vx)))
-
-    # Hippocampus and amygdala sit against the temporal horn and merge into the
-    # entorhinal cortex, so they are cortex for our purposes and must survive.
-    protect = np.isin(
-        atlas_data, [regions[r] for r in ["lHip", "rHip", "lAmy", "rAmy"]]
-    )
-    protect = _octagon_dilation(protect, int(round(1.0 / vx)))
-
-    # The atlas structures act as a floor, so that a subject whose ventricle the
-    # front does manage to leak into is no worse off than before.  This is the
-    # fill the previous implementation applied on its own; what has changed is
-    # that it is now bounded by the deep territory rather than by dilated
-    # cortical GM, which is what used to veto it along the cingulate.
-    seed_regions = [
-        "lThaPro", "rThaPro", "lCau", "rCau", "lPut", "rPut",
-        "lPal", "rPal", "lAcc", "rAcc",
-        "lLatVen", "rLatVen", "lInfLatVen", "rInfLatVen",
-    ]
-    seed = np.isin(atlas_data, [regions[r] for r in seed_regions])
-    seed = _octagon_dilation(seed, int(round(5.0 / vx)))
-
-    fill = (deep | seed) & territory & ~protect
-
-    # Only the voxels the fill actually converts can introduce topology, so the
-    # speck removal is restricted to those; WM the fill merely re-states is
-    # left alone.
-    converts = fill & (p0_data > 0.5) & (p0_data < 2.5)
-    labels, n_clusters = label_image(converts, generate_binary_structure(3, 3))
-    if n_clusters:
-        sizes = np.bincount(labels.ravel())
-        sizes[0] = 0
-        min_vox = min_cluster_ml * 1000.0 / (vx ** 3)
-        keep = np.isin(labels, np.flatnonzero(sizes >= min_vox))
-        fill = (fill & ~converts) | keep
-
-    return fill
+    ventricles = ["lLatVen", "rLatVen", "lInfLatVen", "rInfLatVen"]
+    seed = np.isin(atlas_data, [regions[r] for r in ventricles])
+    # Grow through everything that is not white matter.  The ventricle is
+    # CSF, but on brains like this the segmentation calls parts of its
+    # interior GM, so keying on CSF alone would stop at the first mislabelled
+    # voxel.
+    return _octagon_dilation(seed, int(round(reach_mm / vx)), p0_data < 2.5)
 
 
 def get_partition(p0_large, atlas):
@@ -1383,11 +1282,15 @@ def get_partition(p0_large, atlas):
     ]
     regions = dict(zip(rois.ROIabbr, rois.ROIid))
 
-    vx = float(np.mean(p0_large.header.get_zooms()[:3])) or 0.5
+    bin_struct3 = generate_binary_structure(3, 3)
     atlas_data = atlas.get_fdata().copy()
-    atlas_mask = _octagon_dilation(atlas_data > 0, 3)
+    atlas_mask = atlas_data > 0
+    atlas_mask = binary_dilation(atlas_mask, bin_struct3, 3)
 
     p0_data = p0_large.get_fdata().copy()
+    gm_regions = ["lCbrGM", "rCbrGM", "lAmy", "lHip", "rAmy", "rHip"]
+    gm_mask = np.isin(atlas_data, [regions[r] for r in gm_regions])
+    gm_mask = binary_dilation(gm_mask, bin_struct3, 2)
 
     left_regions = [
         "lCbrWM",
@@ -1412,8 +1315,8 @@ def get_partition(p0_large, atlas):
     left = binary_opening(left, bin_struct3, 3)
     left = binary_closing(left, bin_struct3, 3)
 
-    lh = _octagon_dilation(left, 5) & ~right
-    rh = _octagon_dilation(right, 5) & ~left
+    lh = binary_dilation(left, bin_struct3, 5) & ~right
+    rh = binary_dilation(right, bin_struct3, 5) & ~left
 
     left = binary_closing(lh, bin_struct3, 2) & ~rh
     right = binary_closing(rh, bin_struct3, 2) & ~left
@@ -1421,12 +1324,41 @@ def get_partition(p0_large, atlas):
     excl_regions = ["lCbeWM", "lCbeGM", "rCbeWM", "rCbeGM", "b3thVen", "b4thVen"]
     exclude = np.isin(atlas_data, [regions[r] for r in excl_regions])
     exclude = binary_dilation(exclude, bin_struct3, 1)
-    exclude = exclude | _octagon_dilation(
-        np.isin(atlas_data, regions["bBst"]), 5
+    exclude = exclude | binary_dilation(
+        np.isin(atlas_data, regions["bBst"]), bin_struct3, 5
     )
     exclude = exclude | ~atlas_mask
 
-    wm_fill = interior_fill(p0_data, atlas_data, regions, vx=vx)
+    wm_regions = [
+        "lThaPro",
+        "lCau",
+        "lPut",
+        "lPal",
+        "lAcc",
+        "lLatVen",
+        "lInfLatVen",
+        "rThaPro",
+        "rCau",
+        "rPut",
+        "rPal",
+        "rAcc",
+        "rLatVen",
+        "rInfLatVen",
+    ]
+
+    # Blind dilation of the atlas structures, vetoed by the dilated atlas
+    # cortical label so it cannot eat into the ribbon where the warp is off.
+    # This is what covers the deep grey nuclei.
+    wm_fill = np.isin(atlas_data, [regions[r] for r in wm_regions])
+    wm_fill = binary_dilation(wm_fill, bin_struct3, 10) & ~gm_mask
+
+    # The ventricles get a subject-driven fill on top.  The veto above is
+    # exactly what used to block their roof: on a brain with enlarged
+    # ventricles the warp puts the atlas cortical label over the roof, so the
+    # one place the blind dilation still had to reach was the one place it was
+    # forbidden from.
+    vx = float(np.mean(p0_large.header.get_zooms()[:3])) or 0.5
+    wm_fill = wm_fill | ventricle_fill(p0_data, atlas_data, regions, vx=vx)
 
     lh = np.copy(p0_data)
     lh[lh < 1] = 1
