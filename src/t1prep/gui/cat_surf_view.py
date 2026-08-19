@@ -72,6 +72,7 @@ import re
 import numpy as np
 from scipy import sparse
 from scipy.sparse import csgraph  # noqa: F401  (needed for sparse.csgraph)
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -1911,6 +1912,9 @@ class Viewer(QtWidgets.QMainWindow):
         """
         super().__init__()
         self.opts = opts
+        # Render batching state, before anything that could draw a frame.
+        self._render_depth = 0
+        self._render_pending = False
         self._build_window()
         self._build_interaction()
         self._load_surfaces()
@@ -2328,6 +2332,38 @@ class Viewer(QtWidgets.QMainWindow):
         rotz = [90, -90, -90, 90, 0, 0]
         return (self._MONTAGE_ORDER, posx, posy, rotx, rotz)
 
+    def _render(self):
+        """Draw a frame, unless a :meth:`_batch_render` block is collecting them."""
+        if self._render_depth > 0:
+            self._render_pending = True
+            return
+        self.rw.Render()
+
+    @contextmanager
+    def _batch_render(self):
+        """Coalesce a composite update into a single frame.
+
+        Switching surface or overlay is not one operation but several, and each
+        of them used to render: the meshes are replaced, the underlay
+        re-shaded, the montage clones rebuilt, the camera re-framed and then
+        restored.  Rendering in between publishes half-updated scenes -- the
+        new surface at the old camera, or, when the new surface has a different
+        vertex count, before its overlay has been re-attached, which is what
+        showed as a flicker with the label briefly missing.  Inside this block
+        :meth:`_render` only records that a frame is due, and the outermost
+        block draws it once everything is in place.
+        """
+        self._render_depth += 1
+        try:
+            yield
+        finally:
+            self._render_depth -= 1
+            if self._render_depth <= 0:
+                self._render_depth = 0
+                if self._render_pending:
+                    self._render_pending = False
+                    self.rw.Render()
+
     def _build_montage(self):
         """(Re)create the six-view montage from the current hemisphere actors.
 
@@ -2535,7 +2571,7 @@ class Viewer(QtWidgets.QMainWindow):
         zoom_menu.addAction("Zoom in").triggered.connect(lambda: self.zoom_by(1.2))
         zoom_menu.addAction("Zoom out").triggered.connect(lambda: self.zoom_by(1 / 1.2))
         zoom_menu.addAction("Reset view").triggered.connect(
-            lambda: (self._fit_camera(), self.rw.Render()))
+            lambda: (self._fit_camera(), self._render()))
 
         menu.addAction(self.act_show_controls)
         menu.addAction("Save screenshot…").triggered.connect(self._save_screenshot_dialog)
@@ -2697,7 +2733,7 @@ class Viewer(QtWidgets.QMainWindow):
             self._base_cam_state = dict(self._cam_state) if self._cam_state else None
             if not self.opts.overlay:
                 self.setWindowTitle(self._mesh_title(self.opts.mesh_left or ""))
-            self.rw.Render()
+            self._render()
         except Exception:
             pass
         # Batch mode: -output writes the rendered view and terminates, so the
@@ -2709,7 +2745,7 @@ class Viewer(QtWidgets.QMainWindow):
         """Write the screenshot requested via -output and close the application."""
         status = 0
         try:
-            self.rw.Render()
+            self._render()
             self.save_png(self.opts.output)
         except Exception as e:
             print(f"Failed to save {self.opts.output}: {e}", file=sys.stderr)
@@ -2917,7 +2953,7 @@ class Viewer(QtWidgets.QMainWindow):
                 self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
             if self.opts.colorbar:
                 self._ensure_colorbar()
-            self.rw.Render()
+            self._render()
         self.ctrl.colormap.currentIndexChanged.connect(_on_colormap_changed)
         if hasattr(self.ctrl, 'cb_discrete'):
             def _on_discrete_toggled(checked: bool):
@@ -2943,7 +2979,7 @@ class Viewer(QtWidgets.QMainWindow):
                         self.actor_ov_r.GetMapper().SetScalarRange(self.overlay_range)
                 if self.opts.colorbar:
                     self._ensure_colorbar()
-                self.rw.Render()
+                self._render()
             self.ctrl.cb_discrete.toggled.connect(_on_discrete_toggled)
 
         # Live: overlay range (spin + slider)
@@ -2961,7 +2997,7 @@ class Viewer(QtWidgets.QMainWindow):
                     lut_cb = self.scalar_bar.GetLookupTable()
                     if lut_cb is not None:
                         lut_cb.SetTableRange(self.overlay_range)
-                self.rw.Render()
+                self._render()
         self.ctrl.range_min.valueChanged.connect(lambda _=None: _on_overlay_range_changed())
         self.ctrl.range_max.valueChanged.connect(lambda _=None: _on_overlay_range_changed())
         self.ctrl.range_slider_min.valueChanged.connect(lambda _=None: _on_overlay_range_changed())
@@ -2975,7 +3011,7 @@ class Viewer(QtWidgets.QMainWindow):
                 for actor in (getattr(self, 'actor_bkg_l', None), getattr(self, 'actor_bkg_r', None)):
                     if actor:
                         actor.GetMapper().SetScalarRange(self.range_bkg)
-                self.rw.Render()
+                self._render()
         self.ctrl.bkg_min.valueChanged.connect(lambda _=None: _on_bkg_range_changed())
         self.ctrl.bkg_max.valueChanged.connect(lambda _=None: _on_bkg_range_changed())
         self.ctrl.bkg_slider_min.valueChanged.connect(lambda _=None: _on_bkg_range_changed())
@@ -2999,7 +3035,7 @@ class Viewer(QtWidgets.QMainWindow):
                 self.actor_ov_r.GetMapper().SetLookupTable(self.lut_overlay_r)
             if self.opts.colorbar:
                 self._ensure_colorbar()
-            self.rw.Render()
+            self._render()
         self.ctrl.opacity.valueChanged.connect(_on_opacity_changed)
 
         # Live: colorbar toggle
@@ -3019,7 +3055,7 @@ class Viewer(QtWidgets.QMainWindow):
                 # Discrete remains enabled independent of colorbar visibility
             except Exception:
                 pass
-            self.rw.Render()
+            self._render()
         self.ctrl.cb_colorbar.toggled.connect(_on_colorbar_toggled)
 
         # Live: title mode change
@@ -3027,7 +3063,7 @@ class Viewer(QtWidgets.QMainWindow):
             self.opts.title_mode = _text
             if self.opts.colorbar:
                 self._ensure_colorbar()
-                self.rw.Render()
+                self._render()
         self.ctrl.title_mode.currentTextChanged.connect(_on_title_mode_changed)
 
         # Live: inverse toggle
@@ -3036,7 +3072,7 @@ class Viewer(QtWidgets.QMainWindow):
                 return
             self.opts.inverse = bool(checked)
             self._apply_inverse()
-            self.rw.Render()
+            self._render()
         self.ctrl.cb_inverse.toggled.connect(_on_inverse_toggled)
 
         # Live: fix scaling toggle
@@ -3060,7 +3096,7 @@ class Viewer(QtWidgets.QMainWindow):
                 self.ctrl.range_max.setValue(float(self.overlay_range[1]))
             if self.opts.colorbar:
                 self._ensure_colorbar()
-            self.rw.Render()
+            self._render()
         self.ctrl.cb_fix_scaling.toggled.connect(_on_fix_scaling_toggled)
 
         # Live: histogram toggle
@@ -3097,7 +3133,7 @@ class Viewer(QtWidgets.QMainWindow):
                 self._ensure_colorbar()
             # Keep the threshold entry in sync when the clip is edited by hand
             self.ctrl.set_threshold_from_clip(self.opts.clip)
-            self.rw.Render()
+            self._render()
         self.ctrl.clip_slider_min.sliderReleased.connect(_apply_clip_live)
         self.ctrl.clip_slider_max.sliderReleased.connect(_apply_clip_live)
         self.ctrl.clip_min.editingFinished.connect(_apply_clip_live)
@@ -3212,7 +3248,7 @@ class Viewer(QtWidgets.QMainWindow):
             if self.show_borders:
                 self._build_border_actors()
                 self._build_montage()
-                self.rw.Render()
+                self._render()
             self._update_pick_label()
             return
         try:
@@ -3252,7 +3288,7 @@ class Viewer(QtWidgets.QMainWindow):
         if self.show_borders:
             self._build_border_actors()
             self._build_montage()
-            self.rw.Render()
+            self._render()
         self._update_pick_label()
 
     def set_atlas_borders(self, visible: bool):
@@ -3260,7 +3296,7 @@ class Viewer(QtWidgets.QMainWindow):
         self.show_borders = bool(visible)
         self._build_border_actors()
         self._build_montage()
-        self.rw.Render()
+        self._render()
 
     def _build_border_actors(self):
         """One actor per hemisphere holding the atlas boundaries."""
@@ -3639,7 +3675,7 @@ class Viewer(QtWidgets.QMainWindow):
                     pass
         # The montage clones carry copies of the actors
         self._build_montage()
-        self.rw.Render()
+        self._render()
 
     # ---------- zoom ----------
     def set_lock_zoom(self, locked: bool):
@@ -3662,7 +3698,7 @@ class Viewer(QtWidgets.QMainWindow):
         camera = self.ren.GetActiveCamera()
         camera.Zoom(float(factor))
         self.ren.ResetCameraClippingRange()
-        self.rw.Render()
+        self._render()
 
     # ---------- surface type ----------
     def available_surface_types(self) -> List[Tuple[str, str]]:
@@ -3704,14 +3740,15 @@ class Viewer(QtWidgets.QMainWindow):
     def switch_surface_type(self, path: str):
         """Show another surface of the same subject, keeping the overlay."""
         try:
-            self._switch_mesh(path)
+            with self._batch_render():
+                self._switch_mesh(path)
+                self.opts.mesh_left = path
+                self._update_pick_label()
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self, "Surface",
                 f"Cannot show {os.path.basename(str(path))}:\n{exc}")
             return
-        self.opts.mesh_left = path
-        self._update_pick_label()
 
     # ---------- clusters ----------
     def _default_cluster_threshold(self) -> float:
@@ -3795,7 +3832,7 @@ class Viewer(QtWidgets.QMainWindow):
         # sym can be like 'Left', 'Right', or single letters
         camera: vtkCamera = self.ren.GetActiveCamera()
         shift = self.iren.GetShiftKey(); ctrl = self.iren.GetControlKey()
-        def do_render(): self.ren.ResetCameraClippingRange(); self.rw.Render()
+        def do_render(): self.ren.ResetCameraClippingRange(); self._render()
         s = str(sym)
         # Overlay navigation
         if s == 'Left':
@@ -3859,7 +3896,7 @@ class Viewer(QtWidgets.QMainWindow):
                     a_b.RotateX(180)
                 if a_o is not None:
                     a_o.RotateX(180)
-            camera.OrthogonalizeViewUp(); self.rw.Render(); return
+            camera.OrthogonalizeViewUp(); self._render(); return
         if s in ('g','G'):
             name = Path(self.rw.GetWindowName() or 'screenshot').with_suffix('.png')
             self.save_png(str(name)); return
@@ -4051,7 +4088,7 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             pass
         # Ensure proper rendering (avoid ResetCameraClippingRange to prevent subtle shifts)
-        self.rw.Render()
+        self._render()
 
     def _pick_overlay(self):
         start_dir = (self.ctrl.overlay_combo.currentText().strip()
@@ -4184,37 +4221,39 @@ class Viewer(QtWidgets.QMainWindow):
                 self.setWindowTitle(self.opts.title or _title_from_path(self.opts.mesh_left))
             except Exception:
                 pass
-            self.rw.Render()
+            self._render()
+
+    def _step_overlay(self, step: int):
+        """Show the overlay *step* places along the list, in a single frame.
+
+        Changing overlay can also change the surface underneath it, so this is
+        several updates in a row; :meth:`_batch_render` keeps the half-finished
+        states off the screen.
+        """
+        if len(self.overlay_list) <= 1:
+            return
+        self._capture_camera_state()
+        self.current_overlay_index = (
+            self.current_overlay_index + step) % len(self.overlay_list)
+        with self._batch_render():
+            overlay = self.overlay_list[self.current_overlay_index]
+            self._maybe_switch_mesh_for_overlay(overlay)
+            self._load_overlay(overlay)
+            self._update_overlay_info()
+            # Update control panel with current overlay range
+            if hasattr(self, 'ctrl'):
+                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
+                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+            # Restore camera state
+            self._apply_camera_state()
 
     def _next_overlay(self):
         """Switch to next overlay in the list."""
-        if len(self.overlay_list) > 1:
-            self._capture_camera_state()
-            self.current_overlay_index = (self.current_overlay_index + 1) % len(self.overlay_list)
-            self._maybe_switch_mesh_for_overlay(self.overlay_list[self.current_overlay_index])
-            self._load_overlay(self.overlay_list[self.current_overlay_index])
-            self._update_overlay_info()
-            # Update control panel with current overlay range
-            if hasattr(self, 'ctrl'):
-                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
-                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
-            # Restore camera state
-            self._apply_camera_state()
+        self._step_overlay(1)
 
     def _prev_overlay(self):
         """Switch to previous overlay in the list."""
-        if len(self.overlay_list) > 1:
-            self._capture_camera_state()
-            self.current_overlay_index = (self.current_overlay_index - 1) % len(self.overlay_list)
-            self._maybe_switch_mesh_for_overlay(self.overlay_list[self.current_overlay_index])
-            self._load_overlay(self.overlay_list[self.current_overlay_index])
-            self._update_overlay_info()
-            # Update control panel with current overlay range
-            if hasattr(self, 'ctrl'):
-                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
-                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
-            # Restore camera state
-            self._apply_camera_state()
+        self._step_overlay(-1)
 
     def _update_overlay_info(self):
         """Update the overlay path display and window title."""
@@ -4271,30 +4310,33 @@ class Viewer(QtWidgets.QMainWindow):
         # Load left mesh plus its opposite hemisphere (sibling file or, for
         # combined mesh.* surfaces, the second half of the same file)
         poly_l, poly_r = read_mesh_pair(str(p))
-        self._set_meshes(poly_l, poly_r)
-        # Update stored mesh_left
-        try:
-            self.opts.mesh_left = str(p)
-        except Exception:
-            pass
-        # Update window title to mesh name if no overlay is active
-        if not self.opts.overlay:
+        # Re-shading, montage rebuild and re-framing are separate updates; the
+        # screen only sees the finished result of all of them.
+        with self._batch_render():
+            self._set_meshes(poly_l, poly_r)
+            # Update stored mesh_left
             try:
-                self.setWindowTitle(self._mesh_title(new_mesh_path))
+                self.opts.mesh_left = str(p)
             except Exception:
                 pass
-        # The shading belongs to the surface now shown: its curvature has to be
-        # recomputed and put back through the grey mapping
-        if getattr(self, 'actor_bkg_l', None) is not None:
-            self._apply_underlay()
-        if self.show_borders:
-            self._build_border_actors()
-            self._build_montage()
+            # Update window title to mesh name if no overlay is active
+            if not self.opts.overlay:
+                try:
+                    self.setWindowTitle(self._mesh_title(new_mesh_path))
+                except Exception:
+                    pass
+            # The shading belongs to the surface now shown: its curvature has
+            # to be recomputed and put back through the grey mapping
+            if getattr(self, 'actor_bkg_l', None) is not None:
+                self._apply_underlay()
+            if self.show_borders:
+                self._build_border_actors()
+                self._build_montage()
 
-        # Surfaces differ in size and position, so the view is framed for the
-        # new one instead of keeping the framing of the previous surface
-        self._fit_camera()
-        self.rw.Render()
+            # Surfaces differ in size and position, so the view is framed for
+            # the new one instead of keeping the framing of the previous one
+            self._fit_camera()
+            self._render()
 
     def _next_mesh(self):
         if not getattr(self, 'mesh_list', None) or len(self.mesh_list) <= 1:
@@ -4775,6 +4817,10 @@ class Viewer(QtWidgets.QMainWindow):
     # _remove_colorbar removed; use _detach_colorbar instead
 
     def _load_overlay(self, overlay_path: str):
+        with self._batch_render():
+            self._load_overlay_body(overlay_path)
+
+    def _load_overlay_body(self, overlay_path: str):
         # Capture camera before modifying actors/ranges
         self._capture_camera_state()
         self.opts.overlay = overlay_path
@@ -4903,7 +4949,7 @@ class Viewer(QtWidgets.QMainWindow):
         
         # Restore camera and render
         self._apply_camera_state()
-        self.rw.Render()
+        self._render()
 
     def _toggle_histogram(self, checked: bool):
         """Show/hide histogram window for current overlay scalars."""
@@ -5017,7 +5063,7 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             pass
         try:
-            self.rw.Render()
+            self._render()
             w2i = vtkWindowToImageFilter()
             w2i.SetInput(self.rw)
             try:
@@ -5203,7 +5249,7 @@ class Viewer(QtWidgets.QMainWindow):
             self.ren.AddActor(actor)
             self._cursor_actors.append(actor)
         try:
-            self.rw.Render()
+            self._render()
         except Exception:
             pass
         y_shift = self._y_shift_r if side == 1 else self._y_shift_l
