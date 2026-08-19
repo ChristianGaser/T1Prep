@@ -29,8 +29,11 @@ dictionary of quality measures and a 1--6 school-mark style rating.
 
 References
 ----------
-- Gaser C, Dahnke R et al., *CAT – A Computational Anatomy Toolbox for
-  the Analysis of Structural MRI Data*, 2024.
+- Gaser C, Dahnke R et al., *CAT: a computational anatomy toolbox for the 
+analysis of structural MRI data*, GigaScience, Volume 13, 2024, giae049.
+- Dahnke R, Kalz P et al., *Segmentation-based quality control of structural 
+MRI using the CAT12 toolbox*, GigaScience, Volume 14, 2025, giaf146
+
 """
 
 from __future__ import annotations
