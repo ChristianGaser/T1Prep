@@ -84,6 +84,7 @@ main()
   if ! [[ "${save_pial_white}" =~ ^[0-9]+$ ]]; then save_pial_white=1; fi
   if ! [[ "${thickness_method}" =~ ^-?[0-9]+$ ]]; then thickness_method=3; fi
   if ! [[ "${debug}" =~ ^[0-9]+$ ]]; then debug=0; fi
+  if ! [[ "${sulcus_repair}" =~ ^[0-9]+$ ]]; then sulcus_repair=1; fi
   if ! [[ "${retry}" =~ ^[0-9]+$ ]]; then retry=0; fi
   if ! [[ "${use_bids_naming}" =~ ^[0-9]+$ ]]; then use_bids_naming=0; fi
   if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=10; fi
@@ -390,6 +391,7 @@ surface_estimation()
       --median-filter "${median_filter}" \
       --vessel "${vessel}" \
       --amap "${use_amap}" \
+      --sulcus-repair "${sulcus_repair}" \
       --correct-folding "${correct_folding}" \
       --debug "${debug}" \
       --multi "${multi}" \

@@ -649,7 +649,7 @@ def run_amap_segmentation(
             protect=protect,
             bv_prior=bv_prior,
             device=device,
-            verbose=verbose,
+            verbose=bool(verbose and debug),
             mri_dir=mri_dir,
             out_name=out_name,
             ext=ext,
@@ -781,7 +781,7 @@ def apply_sulcus_repair(
     background = label <= 0
     repaired[background] = label[background]
 
-    if verbose:
+    if verbose and debug:
         delta = np.abs(repaired - label)
         moved = delta > 1e-3
         n_moved, n_brain = int(moved.sum()), int((label > 0).sum())
@@ -1609,7 +1609,7 @@ def run_segment():
                 protect=protect,
                 bv_prior=bv_prior,
                 device=device,
-                verbose=verbose,
+                verbose=bool(verbose and debug),
                 mri_dir=mri_dir,
                 out_name=out_name,
                 ext=ext,
@@ -1720,6 +1720,10 @@ def run_segment():
             p1_large, p2_large, p3_large, mri_dir, out_name, ext, 
             debug, excl_regions)
     else:
+        # ``cleanup_vessels`` above is the only producer of the pre-cleanup
+        # copy the debug output below diffs against; keep the name defined so
+        # the disabled branch does not turn --debug into a NameError.
+        p0_value_original = None
         gm = p1_large.get_fdata()
         wm = p2_large.get_fdata()
         csf = p3_large.get_fdata()
@@ -1732,7 +1736,7 @@ def run_segment():
     p0_value[mask_large_value == 0] = 0
     p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
-    if debug and (vessel > 0):
+    if debug and (vessel > 0) and p0_value_original is not None:
         p0_value = p0_value_original - p0_value
         nib.save(nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header), 
             f"{mri_dir}/{out_name}_vessels_large.{ext}")
