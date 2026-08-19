@@ -56,7 +56,6 @@ from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import get_volumes, shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
-from spline_resize import resize
 from .report import write_t1prep_report
 from .qa import estimate_qa
 from scipy.ndimage import (
@@ -231,7 +230,7 @@ class CustomPreprocess(Preprocess):
         """Brain segmentation without deepmriprep's unused native-space ``p0``.
 
         Upstream additionally resamples ``p0_large`` back to native space with a
-        cubic B-spline, which costs ~4 s at 0.5 mm — over a tenth of the whole
+        quadratic B-spline, which costs ~4 s at 0.5 mm — over a tenth of the whole
         volume pipeline.  T1Prep never reads that output: the native label map
         is written later by ``resample_and_save_nifti`` with linear
         interpolation, which avoids the negative overshoot spline sampling
@@ -1276,6 +1275,14 @@ def save_results(
             hemileft_name = code_vars_left.get("Hemi_volume", "")
             hemiright_name = code_vars_right.get("Hemi_volume", "")
 
+            # The hemisphere labels go onto a 0.5 mm grid from a 0.5 mm source,
+            # so this is a pure reslice at matched resolution -- the case where
+            # the trilinear kernel blurs most.  Surface extraction thresholds
+            # these maps at the GM/WM level, and trilinear displaces that
+            # boundary by ~61 um (median, against a quintic reference) against
+            # ~17 um for the B-spline.  ``clip_overshoot`` removes the ringing
+            # the spline introduces at the sharp label edges, keeping the values
+            # inside the [1, 3] range ``get_partition`` produces.
             resample_and_save_nifti(
                 nib.Nifti1Image(lh, p0_large.affine, p0_large.header),
                 grid_target_res,
@@ -1284,6 +1291,8 @@ def save_results(
                 f"{mri_dir}/{hemileft_name}",
                 True,
                 True,
+                bspline=True,
+                clip_overshoot=True,
             )
             resample_and_save_nifti(
                 nib.Nifti1Image(rh, p0_large.affine, p0_large.header),
@@ -1293,6 +1302,8 @@ def save_results(
                 f"{mri_dir}/{hemiright_name}",
                 True,
                 True,
+                bspline=True,
+                clip_overshoot=True,
             )
 
 

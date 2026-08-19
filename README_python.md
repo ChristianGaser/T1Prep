@@ -366,7 +366,7 @@ from t1prep import (
 | Function | Description |
 |----------|-------------|
 | `get_filenames(input_file, out_dir, bids)` | Resolve all output filenames for a given input |
-| `resample_and_save_nifti(img, voxel_size, out_path)` | Resample a NIfTI to a new voxel size and save |
+| `resample_and_save_nifti(img, grid, affine, header, out_path, ...)` | Resample a NIfTI onto a sampling grid and save. `bspline=True` swaps the default trilinear kernel for a quadratic B-spline (sharper edges, ~10x slower); `clip_overshoot=True` clamps the result to the input range to remove spline ringing |
 | `get_resampled_header(header, voxel_size)` | Build a resampled NIfTI header |
 | `align_brain(img, template)` | Reorient to match template orientation |
 | `get_volume_native_space(warped, deform, reference)` | Warp a volume back to native space |
