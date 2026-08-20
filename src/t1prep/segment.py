@@ -769,7 +769,7 @@ def apply_sulcus_repair(
             label,
             voxelsize=np.asarray(p0_large.header.get_zooms()[:3], dtype=np.float64),
             refine_pve=refine_pve,
-            sheet_strength=15.0,
+            sheet_strength=20.0,
             sheet_sigma_max=3.0,
             wm_sulcus_guard=1.0,
             sheet_skeleton=True,
