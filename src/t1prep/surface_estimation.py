@@ -328,7 +328,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             # resulting thickness comes out ~0.25 mm lower, so the offset has
             # to make that back up.
             correct_thickness=(0.1 if amap else 0.05)
-            + (0.25 if sulcus_repair else 0.0),
+            + (0.15 if sulcus_repair else 0.0),
             sulcal_width=5.0,
             pve_distance=False,
             verbose=verbose,
