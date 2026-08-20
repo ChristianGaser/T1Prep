@@ -370,6 +370,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 strength_gyri_mask=0.1,
                 strength_sulci=2.0,
                 sulci_sheet_strength=10.0,
+                sulci_skeleton=True,
                 sulci_cutoff=0.1,
                 verbose=verbose,
             )
