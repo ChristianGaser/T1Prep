@@ -41,11 +41,6 @@ Longitudinal / advanced flags:
 
 Segmentation refinement:
 - `--no-vessel`: disable the blood-vessel correction.
-- `--no-sulcus-repair`: disable the anatomy-aware repair of the 0.5&nbsp;mm label map.
-  The repair recovers sulcal CSF where two banks of a tight sulcus were labelled as
-  one thick GM band, and reconnects thin gyral WM blades broken by a small
-  missegmentation, both of which otherwise distort the central surface. It runs
-  after the blood-vessel correction, so it sees vessel-cleaned intensities.
 
 Robustness:
 - `--retry`: retry a failed processing step once. By default, if segmentation or surface

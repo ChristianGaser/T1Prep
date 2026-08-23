@@ -448,7 +448,6 @@ def index():
         "no_seg": _to_int(defaults.get("estimate_seg", "1"), 1) == 0,
         "amap": _to_int(defaults.get("use_amap", "0"), 0) == 1,
         "no_vessel": _to_int(defaults.get("vessel", "1"), 1) == 0,
-        "no_sulcus_repair": _to_int(defaults.get("sulcus_repair", "1"), 1) == 0,
         "no_sphere_reg": _to_int(defaults.get("estimate_spherereg", "1"), 1) == 0,
         "save_mwp": (
             (_to_int(defaults.get("save_mwp", "1"), 1) == 1)

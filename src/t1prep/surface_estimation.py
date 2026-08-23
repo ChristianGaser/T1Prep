@@ -168,7 +168,6 @@ def surface_estimation(
     median_filter: int = 2,
     vessel: int = 1,
     amap: int = 0,
-    sulcus_repair: int = 1,
     correct_folding: int = 0,
     debug: int = 0,
     multi: int = -1,
@@ -214,7 +213,7 @@ def surface_estimation(
             thickness_method=thickness_method,
             save_pial_white=save_pial_white,
             pre_fwhm=pre_fwhm, median_filter=median_filter,
-            vessel=vessel, amap=amap, sulcus_repair=sulcus_repair,
+            vessel=vessel, amap=amap,
             correct_folding=correct_folding, debug=debug, multi=multi,
             nii_ext=nii_ext, names_tsv=names_tsv,
             bids_naming=bids_naming,
@@ -234,7 +233,7 @@ def surface_estimation(
 
 def _run(*, log, bname, side, mri, surf, estimate_spherereg,
          thickness_method, save_pial_white, pre_fwhm, median_filter,
-         vessel, amap, sulcus_repair, correct_folding, debug, multi, nii_ext,
+         vessel, amap, correct_folding, debug, multi, nii_ext,
          names_tsv, bids_naming, surf_templates_dir, atlas_templates_dir,
          atlas_surf, initial_surface, fmriprep, bar) -> int:
 
@@ -317,18 +316,16 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             vol,
             voxelsize=img.header.get_zooms()[:3],
             n_avgs=5,
-            n_median_filter=median_filter,
+            n_median_filter=0,
             median_subsample=2,
             range_val=0.45,
+            sulcal_barrier=True,
+            barrier_gmtfactor=1.75,
+            barrier_q=0.8,
             # Additive thickness correction in mm.  It compensates the
             # systematic border shift of the segmentation, so it depends on
-            # which segmentation produced the label map.  The sulcus repair
-            # un-glues touching sulcal banks, which recovers the CSF between
-            # them and moves the GM/CSF boundary inwards on both banks: the
-            # resulting thickness comes out ~0.25 mm lower, so the offset has
-            # to make that back up.
-            correct_thickness=(0.1 if amap else 0.05)
-            + (0.15 if sulcus_repair else 0.0),
+            # which segmentation produced the label map.
+            correct_thickness=0.1 if amap else 0.05,
             sulcal_width=5.0,
             pve_distance=False,
             verbose=verbose,
@@ -370,6 +367,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 strength_gyri_mask=0.1,
                 strength_sulci=5.0,
                 sulci_sheet_strength=15.0,
+                sheet_offset=0.3,
                 sulci_skeleton=True,
                 sulci_cutoff=0.1,
                 verbose=verbose,
@@ -614,7 +612,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--median-filter", type=int, default=2)
     ap.add_argument("--vessel", type=int, default=1)
     ap.add_argument("--amap", type=int, default=0)
-    ap.add_argument("--sulcus-repair", type=int, default=1)
     ap.add_argument("--correct-folding", type=int, default=0)
     ap.add_argument("--debug", type=int, default=0)
     ap.add_argument("--multi", type=int, default=-1)

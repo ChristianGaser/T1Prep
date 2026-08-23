@@ -80,13 +80,29 @@ def _resolve_template_file(name: str, ext: str) -> str:
     )
 
 def scale_intensity(x, low=.5, high=99.5):
-    x_nonzero = x[x > 0].cpu()
+    """Rescale ``x`` to the given percentile range, compressing the top tail.
+
+    Boolean-mask indexing is deliberately avoided on the accelerator.  Both
+    ``x[mask]`` and ``x[mask] = ...`` resolve the mask through ``nonzero``, so
+    the mask is materialised once per occurrence; the write form additionally
+    has to agree with the value tensor produced by the read form.  On MPS
+    those resolutions have been observed to disagree, which aborts the run
+    with "shape mismatch: value tensor of shape [N] cannot be broadcast to
+    indexing result of shape [M]".  ``torch.where`` computes the same result
+    in a single elementwise pass with no mask materialisation at all.
+    """
+    # Mask on the host: CPU nonzero is not subject to the disagreement above,
+    # where a short read would silently skew the percentiles instead of
+    # raising.
+    x_host = x.cpu()
+    x_nonzero = x_host[x_host > 0]
     low = np.percentile(x_nonzero, low)
     high = np.percentile(x_nonzero, high)
     x = (x - low) / (high - low)
-    x_ind = x > 1
-    x[x_ind] = 1 + torch.log10(x[x_ind])
-    return x
+    # clamp(min=1) only guards the discarded branch: where x > 1 it is the
+    # identity, so the retained values are bit-for-bit what log10(x) gave
+    # before, while values <= 1 no longer feed -inf/NaN into the unused side.
+    return torch.where(x > 1, 1 + torch.log10(x.clamp(min=1)), x)
 
 def normalize_to_sum1(
     data1: Union[np.ndarray, nib.Nifti1Image],
