@@ -88,6 +88,9 @@ package-dir = {"" = "src"}
 #   - process_longitudinal.sh                         (depends on the above)
 script-files = [
     "scripts/T1Prep",
+    # Symlink to T1Prep; setuptools dereferences it into a second copy in bin/.
+    # Same orchestrator either way — T1Prep dispatches on $0 to pick the banner.
+    "scripts/PyCAT",
     "scripts/T1Prep_utils.sh",
     "scripts/parallelize",
     "scripts/progress_bar_multi.sh",

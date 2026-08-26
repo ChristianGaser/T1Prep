@@ -24,7 +24,8 @@ Run in background automatically:
 **T1Prep** is a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data (bias-field correction, segmentation, lesion detection, cortical surface reconstruction, CAT12 integration). Code lives in `src/`, helper/dev scripts in `scripts/`, Flask web UI in `src/t1prep/webui/`.
 
 Entry points are installed into the environment's `bin/` (the canonical way to
-run T1Prep): `T1Prep` (bash orchestrator), `t1prep-ui`, `t1prep-run` (Python
+run T1Prep): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`; same
+CLI, PyCAT startup banner), `t1prep-ui`, `t1prep-run` (Python
 single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`. The
 `scripts/` folder
 is a source-tree/dev fallback and should not be put on `PATH`.

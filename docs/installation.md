@@ -64,6 +64,7 @@ the following commands are available:
 
 ```bash
 T1Prep file.nii.gz                              # main CLI (batch + parallel, --multi)
+PyCAT  file.nii.gz                              # same thing, PyCAT banner
 t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
 t1prep-ui                                       # web UI
 CAT_SurfView lh.central.gii                     # surface viewer
@@ -73,7 +74,8 @@ t1prep-make-apps                                # macOS: build the viewer .app b
 ```
 
 > The `T1Prep` command is the bash orchestrator (full features including
-> `--multi` batch parallelism); `t1prep-run` is the equivalent single-subject
+> `--multi` batch parallelism); `PyCAT` is a symlink to it, identical in every
+> respect but the startup banner; `t1prep-run` is the equivalent single-subject
 > Python entry. Add the environment's `bin/` to `PATH` and you never need to
 > call anything from the source `scripts/` folder.
 
@@ -190,7 +192,7 @@ pip install -e .                    # editable; tracks local edits
 pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
-Either way the entry points (`T1Prep`, `t1prep-ui`, `t1prep-run`,
+Either way the entry points (`T1Prep`, `PyCAT`, `t1prep-ui`, `t1prep-run`,
 `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`) are
 placed in `env/bin`. Activating
 the venv — or adding `env/bin` to your `PATH` — is all that is needed; the

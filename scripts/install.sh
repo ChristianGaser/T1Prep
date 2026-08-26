@@ -551,6 +551,7 @@ main() {
   echo ""
   info "Then the following commands are available:"
   echo "  T1Prep                 # main CLI (batch + parallel, --multi)"
+  echo "  PyCAT                  # symlink to T1Prep, PyCAT banner"
   echo "  t1prep-ui              # web UI"
   echo "  t1prep-run             # single-subject Python entry"
   echo "  CAT_SurfView           # surface viewer"

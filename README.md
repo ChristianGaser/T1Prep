@@ -58,8 +58,9 @@ T1Prep is on PyPI and needs nothing but Python:
 python3 -m pip install T1Prep
 ```
 
-That places every command — `T1Prep`, `t1prep-ui`, `t1prep-run`, `CAT_SurfView`,
-`CAT_VolView` and the helpers — into the active environment's `bin/`. Model
+That places every command — `T1Prep` (aka `PyCAT`), `t1prep-ui`, `t1prep-run`,
+`CAT_SurfView`, `CAT_VolView` and the helpers — into the active environment's
+`bin/`. Model
 weights are fetched on the first run (or ahead of time with
 `t1prep-download-models`).
 
@@ -84,7 +85,8 @@ examples and the experimental longitudinal pipeline are in
 **[docs/usage.md](docs/usage.md)**.
 
 > `T1Prep` is the bash orchestrator (full features including `--multi` batch
-> parallelism); `t1prep-run` is the equivalent single-subject Python entry. Add
+> parallelism); `PyCAT` is a symlink to it that differs only in the startup
+> banner; `t1prep-run` is the equivalent single-subject Python entry. Add
 > the environment's `bin/` to `PATH` and you never need to call anything from
 > the source `scripts/` folder.
 

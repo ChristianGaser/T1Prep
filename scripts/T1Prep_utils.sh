@@ -412,9 +412,28 @@ check_python_module() {
 logo() {
     local BLOCK_COLOR="$BLUE"    # colour for the █ glyphs
     local TEXT_COLOR="$GRAY"    # colour for every other character
+    local art banner_width
 
-    # ASCII art in one variable (can be here-doc or external file)
-    local art='
+    # The PyCAT symlink (scripts/PyCAT -> T1Prep) runs this very same
+    # orchestrator, so only the banner differs: pick it from the name the user
+    # actually invoked.  $0 carries that name even though logo() itself lives in
+    # this sourced helper.
+    if [ "$(basename -- "$0")" = "PyCAT" ]; then
+        # Padded out to the banner width below, because this art's last row
+        # holds only the descender of the "y".
+        banner_width=42
+        art='
+██████╗           ██████╗ █████╗ ████████╗
+██╔══██╗██╗   ██╗██╔════╝██╔══██╗╚══██╔══╝
+██████╔╝██║   ██║██║     ███████║   ██║
+██╔═══╝ ╚███████║██║     ██╔══██║   ██║
+██║      ╚════██║╚██████╗██║  ██║   ██║
+╚═╝      ██████╔╝ ╚═════╝╚═╝  ╚═╝   ╚═╝
+         ╚═════╝
+'
+    else
+        banner_width=0
+        art='
 ████████╗ ██╗ ██████╗ ██████╗ ███████╗██████╗ 
 ╚══██╔══╝███║ ██╔══██╗██╔══██╗██╔════╝██╔══██╗
    ██║    ██║ ██████╔╝██████╔╝█████╗  ██████╔╝
@@ -422,19 +441,30 @@ logo() {
    ██║    ██║ ██║     ██║  ██║███████╗██║     
    ╚═╝    ╚═╝ ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝   
 '
-
-    # Parameter substitution: colourise each █, keep rest in TEXT_COLOR
-    art=${art//█/${BLOCK_COLOR}█${TEXT_COLOR}}
+    fi
 
     # trim one trailing newline if present (so last-line extraction works)
     [[ ${art: -1} == $'\n' ]] && art="${art%$'\n'}"
 
     # split into head (everything up to last newline) and last line
     local last="${art##*$'\n'}"
-    local head="${art%$last}"
+    local head="${art%"$last"}"
+
+    # Pad the final row out to the banner width so "version ..." stays flush
+    # right.  Under a non-UTF-8 locale ${#last} counts bytes rather than glyphs,
+    # which just yields no padding instead of a broken banner.
+    if [ "${banner_width}" -gt 0 ]; then
+        local pad
+        printf -v pad '%*s' "${banner_width}" ''
+        last+="${pad:${#last}}"
+    fi
 
     # append version to the last line (stay in TEXT_COLOR)
     last+="${TEXT_COLOR} version ${T1PREP_VERSION}"
+
+    # Parameter substitution: colourise each █, keep rest in TEXT_COLOR
+    head=${head//█/${BLOCK_COLOR}█${TEXT_COLOR}}
+    last=${last//█/${BLOCK_COLOR}█${TEXT_COLOR}}
 
     # print
     printf "%b%s%b\n" "$TEXT_COLOR" "$head$last" "$NC"

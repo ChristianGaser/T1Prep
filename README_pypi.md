@@ -47,6 +47,7 @@ following commands are available:
 | Command | Role |
 | --- | --- |
 | `T1Prep` | main CLI — batch + parallel processing (`--multi`) |
+| `PyCAT` | symlink to `T1Prep`; identical, only the banner differs |
 | `t1prep-ui` | browser-based web UI |
 | `t1prep-run` | single-subject Python entry |
 | `CAT_SurfView` | surface viewer |

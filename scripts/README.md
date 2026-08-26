@@ -4,7 +4,7 @@ This directory contains the shell scripts behind the T1Prep command-line interfa
 
 > **Installed usage:** after `pip install` (or the bash bootstrapper), these
 > entry points are placed into the environment's `bin/` directory — put that on
-> your `PATH` and call them directly (`T1Prep`, `t1prep-ui`, `t1prep-run`,
+> your `PATH` and call them directly (`T1Prep`, `PyCAT`, `t1prep-ui`, `t1prep-run`,
 > `CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
 > `./scripts/<name>` form shown below is the source-tree/dev fallback; the
 > `scripts/` folder itself does not need to be on `PATH`.
@@ -51,6 +51,20 @@ T1Prep --fast sub-01_T1w.nii.gz
 - Automatic parallelization across multiple files (`--multi`)
 - Supports both CAT-style and BIDS derivatives naming (`--bids`)
 - Configurable via `T1Prep_defaults.txt`
+
+### `PyCAT`
+
+A symbolic link to `T1Prep` — same script, same options, same behaviour. The only
+difference is the startup banner: `logo()` in `T1Prep_utils.sh` checks
+`basename "$0"` and prints the PyCAT wordmark instead of the T1Prep one.
+
+```bash
+PyCAT --out-dir /tmp/out sub-01_T1w.nii.gz   # identical to the T1Prep call above
+```
+
+`setuptools` dereferences the symlink at build time, so an installed environment
+gets `bin/PyCAT` as a second copy of the orchestrator; the `$0` dispatch keeps
+the banner correct either way.
 
 ### `T1Prep_ui`
 
