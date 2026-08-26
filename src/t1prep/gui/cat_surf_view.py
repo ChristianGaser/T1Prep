@@ -2657,7 +2657,8 @@ class Viewer(QtWidgets.QMainWindow):
         on the command line as well, and reloading them would throw away the
         view the user has set up.
         """
-        paths = [p for p in paths if not self._already_shown(p)]
+        paths = [p for p in paths
+                 if os.path.exists(p) and not self._already_shown(p)]
         if not paths:
             return
         meshes = [p for p in paths if is_gifti_mesh_file(p)]

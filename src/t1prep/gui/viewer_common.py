@@ -139,7 +139,12 @@ class FinderOpenFiles(QtCore.QObject):
     def eventFilter(self, obj, event):    # noqa: N802 - Qt's spelling
         if event.type() == QtCore.QEvent.Type.FileOpen:
             name = event.file()
-            if name:
+            # macOS also turns a leftover command-line token into an
+            # open-document event: in "-range 1.5 3.5 lh.thickness.*" AppKit
+            # claims "-range 1.5" as an NSUserDefaults key/value pair and asks
+            # for "3.5" to be opened.  A document event always names a file
+            # that exists, so anything else is not a document of ours.
+            if name and os.path.exists(name):
                 self._pending.append(name)
                 self._deliver()
             return True
