@@ -165,7 +165,7 @@ def surface_estimation(
     thickness_method: int = 3,
     save_pial_white: int = 1,
     pre_fwhm: float = 1.0,
-    median_filter: int = 2,
+    median_filter: int = 0,
     vessel: int = 1,
     amap: int = 0,
     correct_folding: int = 0,
@@ -317,12 +317,13 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             vol,
             voxelsize=img.header.get_zooms()[:3],
             n_avgs=5,
-            n_median_filter=0,
+            n_median_filter=median_filter,
             median_subsample=2,
             range_val=0.45,
             sulcal_barrier=True,
             barrier_gmtfactor=1.75,
             barrier_q=0.7,
+            oriented_filter=True,
             # Additive thickness correction in mm.  It compensates the
             # systematic border shift of the segmentation, so it depends on
             # which segmentation produced the label map.
