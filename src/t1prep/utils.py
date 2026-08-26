@@ -512,7 +512,10 @@ def crop_nifti_image_with_border(img, border=5, threshold=0):
                                     Defaults to 0.
 
     Returns:
-        nib.Nifti1Image: The cropped NIfTI image.
+        nib.Nifti1Image: The cropped NIfTI image.  An image with nothing above
+        ``threshold`` is returned uncropped -- there is no bounding box to crop
+        to, and raising here would only mask the upstream failure that emptied
+        it.
     """
     # Load image data, affine, and header
     data = img.get_fdata().copy()
@@ -522,6 +525,8 @@ def crop_nifti_image_with_border(img, border=5, threshold=0):
     # Find the bounding box of non-zero values
     mask = data > threshold
     coords = np.array(np.where(mask))
+    if coords.size == 0:
+        return img
     min_coords = coords.min(axis=1)
     max_coords = coords.max(axis=1)
 

@@ -326,7 +326,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             # Additive thickness correction in mm.  It compensates the
             # systematic border shift of the segmentation, so it depends on
             # which segmentation produced the label map.
-            correct_thickness=0.1 if amap else 0.05,
+            correct_thickness=0.0 if amap else -0.05,
             sulcal_width=5.0,
             pve_distance=False,
             verbose=verbose,

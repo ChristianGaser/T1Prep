@@ -801,8 +801,6 @@ def handle_lesions(
     p1_large: nib.Nifti1Image,
     p2_large: nib.Nifti1Image,
     p3_large: nib.Nifti1Image,
-    affine_resamp_reordered,
-    header_resamp_reordered,
     mri_dir: str,
     out_name: str,
     ext: str,
@@ -857,9 +855,7 @@ def handle_lesions(
         p0_value = p0_large_orig.get_fdata().copy()
         p0_value[csf | wm] = 1.5
         p0_value -= 1.5
-        p1_large = nib.Nifti1Image(
-            p0_value, affine_resamp_reordered, header_resamp_reordered
-        )
+        p1_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
         # Reference CSF map, on the probability scale: the label value 1 is
         # pure CSF, 2 is pure GM, so the CSF fraction is 2 - p0 clipped to
@@ -869,9 +865,7 @@ def handle_lesions(
         # brain-wide offset instead of a discrepancy.
         p0_value = np.clip(2.0 - p0_large_orig.get_fdata(), 0.0, 1.0)
         p0_value[~csf] = 0
-        p3_large = nib.Nifti1Image(
-            p0_value, affine_resamp_reordered, header_resamp_reordered
-        )
+        p3_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
         wmh_value = p1_large_uncorr.get_fdata().copy() - p1_large.get_fdata().copy()
     else:
         # brain_large is for the deepmriprep method the LAS corrected orignal
@@ -894,7 +888,7 @@ def handle_lesions(
     wmh_value = np.clip(wmh_value, -1, 1)
     p0_large_diff_value = np.clip(p0_large_diff_value, -1, 1)
     p0_large_diff = nib.Nifti1Image(
-        p0_large_diff_value, affine_resamp_reordered, header_resamp_reordered
+        p0_large_diff_value, p0_large.affine, p0_large.header
     )
 
     deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
@@ -962,15 +956,9 @@ def handle_lesions(
         tmp_p1, tmp_p2, tmp_p3 = normalize_to_sum1(tmp_p1, tmp_p2, tmp_p3)
 
         # Convert back to nifti
-        p1_large = nib.Nifti1Image(
-            tmp_p1, affine_resamp_reordered, header_resamp_reordered
-        )
-        p2_large = nib.Nifti1Image(
-            tmp_p2, affine_resamp_reordered, header_resamp_reordered
-        )
-        p3_large = nib.Nifti1Image(
-            tmp_p3, affine_resamp_reordered, header_resamp_reordered
-        )
+        p1_large = nib.Nifti1Image(tmp_p1, p0_large.affine, p0_large.header)
+        p2_large = nib.Nifti1Image(tmp_p2, p0_large.affine, p0_large.header)
+        p3_large = nib.Nifti1Image(tmp_p3, p0_large.affine, p0_large.header)
 
     return p1_large, p2_large, p3_large, p0_large_diff, wmh_value, ind_wmh
 

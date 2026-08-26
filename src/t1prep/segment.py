@@ -1444,9 +1444,6 @@ def run_segment():
     header_resamp, affine_resamp = get_resampled_header(
         brain.header, brain.affine, target_res, ras_affine
     )
-    header_resamp_reordered, affine_resamp_reordered = get_resampled_header(
-        brain.header, brain.affine, target_res, ras_affine, reorder_method=0
-    )
     dim_target_res = header_resamp["dim"]
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
 
@@ -1566,8 +1563,6 @@ def run_segment():
             p1_large,
             p2_large,
             p3_large,
-            affine_resamp_reordered,
-            header_resamp_reordered,
             mri_dir,
             out_name,
             ext,
@@ -1628,12 +1623,15 @@ def run_segment():
         np.clip(p0_value, 0, 3, out=p0_value)
         p0_value[ind_wmh] += wmh_value[ind_wmh]
         np.clip(p0_value, 0, 4, out=p0_value)
-        p0_large = nib.Nifti1Image(
-            p0_value, affine_resamp_reordered, header_resamp_reordered
-        )
-        wmh_large = nib.Nifti1Image(
-            wmh_value, affine_resamp_reordered, header_resamp_reordered
-        )
+        # These maps live on the working ("large") grid, so they keep that
+        # grid's affine.  Stamping the native image resampled to ``target_res``
+        # on them instead put ``p0_large`` ~180 mm off in world space, and
+        # ``get_atlas`` places the atlas from exactly that affine -- the
+        # hemisphere atlas then landed outside the volume, so ``get_partition``
+        # returned empty hemispheres and the crop below had nothing to crop to.
+        p0_affine, p0_header = p0_large.affine, p0_large.header
+        p0_large = nib.Nifti1Image(p0_value, p0_affine, p0_header)
+        wmh_large = nib.Nifti1Image(wmh_value, p0_affine, p0_header)
     else:
         wmh_large = None
 

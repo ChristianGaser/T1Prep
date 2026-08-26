@@ -143,6 +143,14 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(sy % 2, 0)
         self.assertEqual(sz % 2, 0)
 
+    def test_crop_nifti_image_with_border_empty(self):
+        # Nothing above threshold: there is no bounding box, so the image comes
+        # back uncropped instead of blowing up inside numpy's min reduction.
+        data = np.zeros((6, 6, 6), dtype=np.float32)
+        img = nib.Nifti1Image(data, affine=np.eye(4))
+        cropped = crop_nifti_image_with_border(img, border=5, threshold=1.1)
+        self.assertEqual(cropped.shape, data.shape)
+
 
 class TestResampleAndSaveNifti(unittest.TestCase):
     """Kernel selection and overshoot clipping in ``resample_and_save_nifti``."""
