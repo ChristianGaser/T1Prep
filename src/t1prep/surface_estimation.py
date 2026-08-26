@@ -312,6 +312,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             zooms = img.header.get_zooms()[:3]
             vol = cat_surf.vol_blood_vessel_correction(vol, voxelsize=zooms)
             vol = suppress_vessels_for_surface(vol, zooms, strength=float(vessel))
+            
         gmt, ppm, dcsf, dwm = cat_surf.vol_thickness_pbt(
             vol,
             voxelsize=img.header.get_zooms()[:3],
@@ -321,7 +322,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             range_val=0.45,
             sulcal_barrier=True,
             barrier_gmtfactor=1.75,
-            barrier_q=0.8,
+            barrier_q=0.7,
             # Additive thickness correction in mm.  It compensates the
             # systematic border shift of the segmentation, so it depends on
             # which segmentation produced the label map.
@@ -365,11 +366,12 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 iter_laplacian=50,
                 n_median_filter=median_filter,
                 strength_gyri_mask=0.1,
-                strength_sulci=5.0,
-                sulci_sheet_strength=15.0,
-                sheet_offset=0.3,
-                sulci_skeleton=True,
-                sulci_cutoff=0.1,
+                strength_sulci=15,
+                sulci_sheet_strength=30.0,
+                sheet_offset=0.6,
+                sulci_sigma_factor=0.9,
+                sulci_skeleton=False,
+                sulci_cutoff=0.4,
                 verbose=verbose,
             )
             cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
