@@ -410,7 +410,6 @@ check_python_module() {
 # ----------------------------------------------------------------------
 
 logo() {
-    local BLOCK_COLOR="$BLUE"    # colour for the █ glyphs
     local TEXT_COLOR="$GRAY"    # colour for every other character
     local art banner_width
 
@@ -421,17 +420,19 @@ logo() {
     if [ "$(basename -- "$0")" = "PyCAT" ]; then
         # Padded out to the banner width below, because this art's last row
         # holds only the descender of the "y".
+        BLOCK_COLOR="$YELLOW"    # colour for the █ glyphs
         banner_width=41
         art='
-██████╗           ██████╗ █████╗ ████████╗
+██████╗          ██████╗ █████╗ ████████╗
 ██╔══██╗██╗  ██╗██╔════╝██╔══██╗╚══██╔══╝
 ██████╔╝██║  ██║██║     ███████║   ██║
 ██╔═══╝ ╚██████║██║     ██╔══██║   ██║
 ██║      ╚═══██║╚██████╗██║  ██║   ██║
 ╚═╝      █████╔╝ ╚═════╝╚═╝  ╚═╝   ╚═╝
-         ╚═════╝
+         ╚════╝
 '
     else
+        BLOCK_COLOR="$BLUE"    # colour for the █ glyphs
         banner_width=0
         art='
 ████████╗ ██╗ ██████╗ ██████╗ ███████╗██████╗ 

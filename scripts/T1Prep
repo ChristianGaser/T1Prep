@@ -889,8 +889,17 @@ process()
 # ----------------------------------------------------------------------
 
 help() {
+
+  if [ "$(basename -- "$0")" = "PyCAT" ]; then
+    COLOR=$YELLOW
+    TXT="PyCAT Computational Anatomy Pipeline (aka T1Prep)"
+  else
+    COLOR=$BLUE
+    TXT="T1Prep Computational Anatomy Pipeline (aka PyCAT)"
+  fi
+
 cat << EOM
-${BOLD}${BLUE}T1Prep Computational Anatomy Pipeline (aka PyCAT)
+${BOLD}${COLOR}${TXT}
 -----------------------------------------------------------------------------------${NC}
 
 ${BOLD}USAGE:${NC}
