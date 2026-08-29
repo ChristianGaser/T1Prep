@@ -448,6 +448,51 @@ def parse_arguments() -> argparse.Namespace:
         default=1.0,
         help="Use vessel removal",
     )
+    parser.add_argument(
+        "--myelin",
+        action="store_true",
+        help=(
+            "Correct PVE labels for cortical myelination before the "
+            "hemispheres are split off.  In the motor strip and in V1 the "
+            "deep cortical layers are myelinated enough to reach WM "
+            "intensity, so they are classified as white matter, the GM/WM "
+            "boundary is placed too far out and the thickness comes back too "
+            "low.  Affects the surface pipeline only; the volumetric outputs "
+            "are written from the uncorrected labels."
+        ),
+    )
+    parser.add_argument(
+        "--myelin-erosion",
+        type=float,
+        default=3.0,
+        help=(
+            "Erosion radius in mm defining the deep-WM core for --myelin. "
+            "This also sets how deep the correction reaches: a myelinated "
+            "band thicker than this lies inside the core, where it is both "
+            "invisible to the filter and contaminating the WM statistics it "
+            "would be compared against."
+        ),
+    )
+    parser.add_argument(
+        "--myelin-median",
+        type=int,
+        default=1,
+        help=(
+            "Median-filter iterations on the --myelin correction field. "
+            "A sparse correction does not survive one pass, so 0 is often "
+            "needed for the correction to reach the labels at all."
+        ),
+    )
+    parser.add_argument(
+        "--myelin-max-corr",
+        type=float,
+        default=0.5,
+        help=(
+            "Largest PVE shift toward GM for --myelin. The WM isovalue is "
+            "at 2.5, so at 0.5 even a maximally confident voxel only just "
+            "reaches the boundary and nothing weaker crosses it."
+        ),
+    )
 
     skullstrip_group = parser.add_mutually_exclusive_group()
     skullstrip_group.add_argument(
@@ -825,6 +870,74 @@ def save_deformation_h5(warp_nii: nib.Nifti1Image, out_path: str) -> None:
         g1.create_dataset("TransformParameters", data=transform_params)
 
 
+def apply_myelin_correction(
+    p0_large: nib.Nifti1Image,
+    brain_large: nib.Nifti1Image,
+    erosion_mm: float = 3.0,
+    n_median_filter: int = 1,
+    max_correction: float = 0.5,
+    verbose: bool = False,
+) -> nib.Nifti1Image:
+    """Correct PVE labels for cortical myelination.
+
+    In the primary motor and somatosensory strip, and along the line of
+    Gennari in V1, the deep cortical layers carry enough myelin to reach
+    white-matter intensity on T1w.  The classifier labels them WM, the
+    GM/WM boundary is placed too far out, and the thickness comes back too
+    low.  ``cat_surf.vol_correct_myelination`` finds boundary voxels that
+    are too dark for white matter, sit in a weak intensity gradient, and
+    lie far enough from the eroded deep-WM core, and shifts them back
+    toward GM.
+
+    Args:
+        p0_large: PVE label map on the working grid.  Values above WM
+            (white-matter hyperintensities, coded 3 < p0 <= 4) are left
+            exactly as they are -- see below.
+        brain_large: bias-corrected T1w on the same grid.
+        erosion_mm: erosion radius in mm for the deep-WM core.  This also
+            bounds how deep the correction can reach, because a voxel
+            inside the core is excluded from the boundary band -- and a
+            myelinated band deeper than this additionally contaminates the
+            WM statistics it would be compared against.
+        n_median_filter: iterations of a 3x3x3 median on the correction
+            field.  This erases sparse corrections outright, so the
+            library default of 1 can take an otherwise working correction
+            down to nothing; 0 disables it.
+        max_correction: largest PVE shift toward GM.  The WM isovalue is
+            at 2.5, so at the library default of 0.5 a voxel at 3.0 lands
+            exactly on the boundary and nothing less confident crosses at
+            all.  Selectivity is meant to come from the criteria, not from
+            this cap.
+        verbose: report the flagged and isovalue-crossing counts.  Only a
+            voxel that crosses the WM isovalue at 2.5 moves the surface.
+
+    Returns:
+        A new image with the corrected labels, on the input's grid.
+    """
+    p0_value = p0_large.get_fdata().astype(np.float32)
+
+    # WMH are coded above WM and are T1-hypointense, so they look exactly
+    # like the myelinated GM this is hunting for.  Clip them into WM so the
+    # core geometry stays intact, then keep the result away from them.
+    corrected = cat_surf.vol_correct_myelination(
+        np.clip(p0_value, 0.0, 3.0),
+        brain_large.get_fdata().astype(np.float32),
+        voxelsize=p0_large.header.get_zooms()[:3],
+        erosion_mm=erosion_mm,
+        n_median_filter=n_median_filter,
+        max_correction=max_correction,
+        # The deep-CSF core is the CSF mask eroded by the same radius, which
+        # removes sulcal CSF entirely and leaves the ventricles, so the pial
+        # half would be calibrated on ventricular rather than sulcal CSF.
+        correct_csf=False,
+        verbose=verbose,
+    )
+
+    keep = p0_value <= 3.0
+    p0_value[keep] = corrected[keep]
+    return nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
+
+
 def save_results(
     prep: CustomPreprocess,
     t1: nib.Nifti1Image,
@@ -863,6 +976,10 @@ def save_results(
     header_resamp,
     atlas_list,
     t1_raw=None,
+    myelin: bool = False,
+    myelin_erosion: float = 3.0,
+    myelin_median: int = 1,
+    myelin_max_corr: float = 0.5,
 ) -> None:
     """Save segmentation and atlas results to disk."""
 
@@ -1213,6 +1330,21 @@ def save_results(
                 is_label_atlas=True,
             )
 
+            # Myelination correction, immediately before the split.  The
+            # corrected labels reach PBT through the hemisphere maps written
+            # below; the volumetric outputs above are already on disk and keep
+            # the uncorrected labels, so this only moves the surfaces and the
+            # thickness.
+            if myelin:
+                p0_large = apply_myelin_correction(
+                    p0_large,
+                    brain_large,
+                    erosion_mm=myelin_erosion,
+                    n_median_filter=myelin_median,
+                    max_correction=myelin_max_corr,
+                    verbose=bool(verbose),
+                )
+
             lh, rh = get_partition(p0_large, atlas)
             
             if save_fmriprep:
@@ -1329,6 +1461,10 @@ def run_segment():
     use_amap = args.amap
     use_bids = args.bids
     vessel = args.vessel
+    myelin = args.myelin
+    myelin_erosion = args.myelin_erosion
+    myelin_median = args.myelin_median
+    myelin_max_corr = args.myelin_max_corr
     verbose = args.verbose
     debug = args.debug
     skullstrip_only = args.skullstrip_only
@@ -1673,6 +1809,10 @@ def run_segment():
         header_resamp,
         atlas_list,
         t1_raw,
+        myelin=myelin,
+        myelin_erosion=myelin_erosion,
+        myelin_median=myelin_median,
+        myelin_max_corr=myelin_max_corr,
     )
 
     final_cleanup(mri_dir, out_name, ext, use_amap, save_lesions, debug)

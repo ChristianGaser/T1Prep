@@ -16,8 +16,8 @@
 #   - Dockerfile          → installs T1Prep from PyPI (pin via build-arg
 #                            T1PREP_VERSION=$(VERSION) at `docker build` time)
 # ---------------------------------------------------------------------------
-PREV_VERSION := 0.6.1
-VERSION      := 0.6.2
+PREV_VERSION := 0.6.2
+VERSION      := 0.6.3
 
 ZIPFILE = T1Prep_$(VERSION).zip
 
