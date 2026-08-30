@@ -895,7 +895,9 @@ def estimate_myelin_thickness_offset(
             cortex counts as myelinated; ``None`` uses the libCAT default.
         gain: thickness correction per unit excess width; ``None`` uses the
             libCAT default.
-        verbose: report the derived threshold and the corrected share.
+        verbose: report the derived threshold and the corrected share.  Off
+            in a normal run: the pipeline passes --verbose always, so this
+            follows the --debug convention of the other per-step reports.
 
     Returns:
         The per-voxel thickness correction in mm, on the input's grid.
@@ -953,6 +955,7 @@ def save_results(
     header_resamp,
     atlas_list,
     t1_raw=None,
+    debug: bool = False,
     myelin: bool = False,
     myelin_pct: float = None,
     myelin_gain: float = None,
@@ -1317,7 +1320,11 @@ def save_results(
                     brain_large,
                     width_pct=myelin_pct,
                     gain=myelin_gain,
-                    verbose=bool(verbose),
+                    # Detailed algorithm output follows the convention used by
+                    # apply_LAS and the vessel correction: the pipeline passes
+                    # --verbose on every normal run, so it is --debug that
+                    # actually asks for this.
+                    verbose=bool(verbose and debug),
                 )
                 nib.save(offset_img,
                          f"{mri_dir}/{out_name}_thickness_offset.{ext}")
@@ -1785,6 +1792,7 @@ def run_segment():
         header_resamp,
         atlas_list,
         t1_raw,
+        debug=debug,
         myelin=myelin,
         myelin_pct=myelin_pct,
         myelin_gain=myelin_gain,

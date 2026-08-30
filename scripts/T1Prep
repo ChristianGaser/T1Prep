@@ -723,7 +723,7 @@ process()
 
       cmd+=" --seed ${seed} --vessel \"${vessel}\" --label-dir \"${label_dir}\""
       cmd+=" --input \"${input}\" --mri-dir \"${mri_dir}\""
-      cmd+=" --report-dir \"${report_dir}\" --atlas \"${atlas_vol}\" --count ${end_count}"
+      cmd+=" --myelin --report-dir \"${report_dir}\" --atlas \"${atlas_vol}\" --count ${end_count}"
       
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
