@@ -66,6 +66,7 @@ CAT_SurfView = "t1prep.gui.cat_surf_view:main"
 CAT_VolView = "t1prep.gui.cat_vol_view:main"
 t1prep-make-apps = "t1prep.gui.make_apps:main"
 t1prep-download-models = "t1prep._models:main"
+t1prep-bbreg = "t1prep.bbreg:main"
 
 [project.urls]
 "Homepage" = "https://github.com/ChristianGaser/T1Prep"
@@ -126,6 +127,7 @@ t1prep = [
     "data/templates_surfaces/**",
     "data/templates_surfaces_32k/**",
     "data/templates_surfaces_4k/**",
+    "data/templates_surfaces_fsLR/**",
 ]
 # Flask templates/static for the packaged web UI (`t1prep-ui`).
 "t1prep.webui" = [
