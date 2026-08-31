@@ -231,47 +231,6 @@ def surface_estimation(
         os.chdir(cwd_prev)
 
 
-def _load_thickness_offset(mri, bname, nii_ext, target_img, log):
-    """Fetch the myelination thickness correction onto the hemisphere grid.
-
-    ``segment.py`` measures it once for the whole brain, on the grid where
-    the labels and the T1w are natively co-registered, and writes it there.
-    The hemisphere maps live on a different grid -- resliced to the target
-    resolution and then cropped to each hemisphere's own bounding box -- so
-    it has to be resampled here.
-
-    Resampling this rather than the T1w is the right way round.  The offset
-    is a smooth field, deliberately averaged over 8 mm within the boundary
-    sheet, so interpolating it is near-exact; the transition width it was
-    derived from is a sub-voxel quantity that interpolation would change.
-
-    Returns None when no correction was written, which is the normal case
-    when ``--myelin`` was not asked for.
-    """
-    path = os.path.join(mri, f"{bname}_thickness_offset.{nii_ext}")
-    if not os.path.exists(path):
-        return None
-
-    import nibabel as nib
-    from scipy.ndimage import affine_transform
-
-    src = nib.load(path)
-    # Map every target voxel back to a source voxel.
-    m = np.linalg.inv(src.affine) @ target_img.affine
-    out = affine_transform(
-        src.get_fdata().astype(np.float32),
-        m[:3, :3], offset=m[:3, 3],
-        output_shape=target_img.shape, order=1, mode="constant", cval=0.0,
-    )
-    # Linear interpolation cannot overshoot, but the correction is
-    # one-sided by construction and this keeps it so under any future
-    # change of kernel.
-    out = np.clip(out, 0.0, None).astype(np.float32)
-    log.info("Myelination thickness correction: %s (max %.3f mm)",
-             os.path.basename(path), float(out.max()))
-    return out
-
-
 def _run(*, log, bname, side, mri, surf, estimate_spherereg,
          thickness_method, save_pial_white, pre_fwhm, median_filter,
          vessel, amap, correct_folding, debug, multi, nii_ext,
@@ -354,15 +313,9 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             vol = cat_surf.vol_blood_vessel_correction(vol, voxelsize=zooms)
             vol = suppress_vessels_for_surface(vol, zooms, strength=float(vessel))
             
-        # Myelination correction, if segment.py measured one.  It is added
-        # to the thickness at the very end of PBT, so the PPM and hence the
-        # surfaces are bit-identical with and without it.
-        thickness_offset = _load_thickness_offset(mri, bname, nii_ext, img, log)
-
         gmt, ppm, dcsf, dwm = cat_surf.vol_thickness_pbt(
             vol,
             voxelsize=img.header.get_zooms()[:3],
-            thickness_offset=thickness_offset,
             n_avgs=5,
             n_median_filter=median_filter,
             median_subsample=2,

@@ -448,40 +448,6 @@ def parse_arguments() -> argparse.Namespace:
         default=1.0,
         help="Use vessel removal",
     )
-    parser.add_argument(
-        "--myelin",
-        action="store_true",
-        help=(
-            "Correct cortical thickness for myelination. In the motor strip "
-            "and along the line of Gennari in V1 the deep cortical layers "
-            "approach WM intensity, so the classifier places the GM/WM "
-            "boundary too far out and the ribbon comes back too thin. The "
-            "displacement is measured from the width of the intensity "
-            "transition across the boundary and written as a map for PBT to "
-            "add to the thickness. Thickness only: the surfaces and the "
-            "volumetric outputs are untouched."
-        ),
-    )
-    parser.add_argument(
-        "--myelin-pct",
-        type=float,
-        default=None,
-        help=(
-            "Upper percentile of the measured transition widths above which "
-            "cortex counts as myelinated (default: the libCAT value, 88) -- "
-            "the share of the GM/WM boundary the correction may touch."
-        ),
-    )
-    parser.add_argument(
-        "--myelin-gain",
-        type=float,
-        default=None,
-        help=(
-            "Thickness correction per unit excess transition width (default: "
-            "the libCAT value, 0.5). This scales the correction linearly and "
-            "is the least validated part of it."
-        ),
-    )
 
     skullstrip_group = parser.add_mutually_exclusive_group()
     skullstrip_group.add_argument(
@@ -859,64 +825,6 @@ def save_deformation_h5(warp_nii: nib.Nifti1Image, out_path: str) -> None:
         g1.create_dataset("TransformParameters", data=transform_params)
 
 
-def estimate_myelin_thickness_offset(
-    p0_large: nib.Nifti1Image,
-    brain_large: nib.Nifti1Image,
-    width_pct: float = None,
-    gain: float = None,
-    verbose: bool = False,
-) -> nib.Nifti1Image:
-    """Measure the myelination-induced cortical thickness correction.
-
-    In the primary motor and somatosensory strip, and along the line of
-    Gennari in V1, the deep cortical layers carry enough myelin to approach
-    white-matter intensity on T1w.  The classifier follows the intensity,
-    the GM/WM boundary is placed too far out, and the ribbon comes back too
-    thin.  ``cat_surf.vol_boundary_offset`` measures how far, in mm, from
-    the *width* of the intensity transition across the boundary -- the
-    label map is derived from the intensity, so the position of the two
-    boundaries agrees by construction and measures nothing, while the shape
-    of the profile does not.
-
-    This is deliberately computed here, before the hemispheres are split
-    off, rather than next to the thickness estimation that consumes it.
-    ``p0_large`` and ``brain_large`` are natively co-registered at this
-    point -- the same pair AMAP was fitted on -- whereas the hemisphere maps
-    and ``mT1`` end up on different grids.  Since the quantity being
-    measured is a sub-voxel transition width, reading it off an interpolated
-    image would measure the interpolator's point spread along with the
-    scanner's: reslicing a 0.75 mm pair to 0.5 mm moves the median width by
-    6% and the mean correction by 15%.
-
-    Args:
-        p0_large: PVE label map on the working grid.
-        brain_large: bias-corrected T1w on the same grid.
-        width_pct: upper percentile of the transition widths above which
-            cortex counts as myelinated; ``None`` uses the libCAT default.
-        gain: thickness correction per unit excess width; ``None`` uses the
-            libCAT default.
-        verbose: report the derived threshold and the corrected share.  Off
-            in a normal run: the pipeline passes --verbose always, so this
-            follows the --debug convention of the other per-step reports.
-
-    Returns:
-        The per-voxel thickness correction in mm, on the input's grid.
-    """
-    tuning = {"width_pct": width_pct, "gain": gain}
-    tuning = {k: v for k, v in tuning.items() if v is not None}
-
-    # White-matter hyperintensities are coded above WM (3 < p0 <= 4); clip
-    # them into WM so they do not read as a boundary of their own.
-    offset = cat_surf.vol_boundary_offset(
-        np.clip(p0_large.get_fdata().astype(np.float32), 0.0, 3.0),
-        brain_large.get_fdata().astype(np.float32),
-        voxelsize=p0_large.header.get_zooms()[:3],
-        verbose=verbose,
-        **tuning,
-    )
-    return nib.Nifti1Image(offset, p0_large.affine, p0_large.header)
-
-
 def save_results(
     prep: CustomPreprocess,
     t1: nib.Nifti1Image,
@@ -955,10 +863,6 @@ def save_results(
     header_resamp,
     atlas_list,
     t1_raw=None,
-    debug: bool = False,
-    myelin: bool = False,
-    myelin_pct: float = None,
-    myelin_gain: float = None,
 ) -> None:
     """Save segmentation and atlas results to disk."""
 
@@ -1309,26 +1213,6 @@ def save_results(
                 is_label_atlas=True,
             )
 
-            # Myelination thickness correction.  Measured here, on the one
-            # grid where the labels and the T1w are natively co-registered,
-            # and written for the thickness estimation to pick up; it never
-            # touches p0_large itself, so the surfaces and every volumetric
-            # output stay exactly as they are.
-            if myelin:
-                offset_img = estimate_myelin_thickness_offset(
-                    p0_large,
-                    brain_large,
-                    width_pct=myelin_pct,
-                    gain=myelin_gain,
-                    # Detailed algorithm output follows the convention used by
-                    # apply_LAS and the vessel correction: the pipeline passes
-                    # --verbose on every normal run, so it is --debug that
-                    # actually asks for this.
-                    verbose=bool(verbose and debug),
-                )
-                nib.save(offset_img,
-                         f"{mri_dir}/{out_name}_thickness_offset.{ext}")
-
             lh, rh = get_partition(p0_large, atlas)
             
             if save_fmriprep:
@@ -1445,9 +1329,6 @@ def run_segment():
     use_amap = args.amap
     use_bids = args.bids
     vessel = args.vessel
-    myelin = args.myelin
-    myelin_pct = args.myelin_pct
-    myelin_gain = args.myelin_gain
     verbose = args.verbose
     debug = args.debug
     skullstrip_only = args.skullstrip_only
@@ -1792,10 +1673,6 @@ def run_segment():
         header_resamp,
         atlas_list,
         t1_raw,
-        debug=debug,
-        myelin=myelin,
-        myelin_pct=myelin_pct,
-        myelin_gain=myelin_gain,
     )
 
     final_cleanup(mri_dir, out_name, ext, use_amap, save_lesions, debug)
