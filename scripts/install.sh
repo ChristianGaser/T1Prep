@@ -558,6 +558,7 @@ main() {
   echo "  CAT_VolView            # volume viewer (3 orthogonal slices)"
   echo "  t1prep-make-apps       # macOS: .app bundles for the viewers"
   echo "  t1prep-download-models # fetch model weights"
+  echo "  t1prep-bbreg           # BOLD-to-T1w BBR for fMRIPrep"
   echo ""
   if [ -n "${CREATED_TEMP_DIR:-}" ]; then
     warn "Note: T1Prep was installed to a temporary directory."

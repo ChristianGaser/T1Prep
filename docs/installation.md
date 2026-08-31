@@ -193,7 +193,8 @@ pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
 Either way the entry points (`T1Prep`, `PyCAT`, `t1prep-ui`, `t1prep-run`,
-`CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`) are
+`CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`,
+`t1prep-bbreg`) are
 placed in `env/bin`. Activating
 the venv — or adding `env/bin` to your `PATH` — is all that is needed; the
 source `scripts/` folder is only a dev fallback and should not be put on `PATH`.
