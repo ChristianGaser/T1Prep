@@ -249,6 +249,7 @@ def _build_surface_cmd(
         "--report-log",          report_log,
         "--surf-templates-dir",  str(DATA_PATH_T1PREP / "templates_surfaces_32k"),
         "--atlas-templates-dir", str(DATA_PATH_T1PREP / "atlases_surfaces_32k"),
+        "--fslr-templates-dir",  str(DATA_PATH_T1PREP / "templates_surfaces_fsLR"),
         "--atlas-surf",          atlas_surf,
         "--initial-surface",     initial_surf or "",
         "--fmriprep",            str(int(fmriprep)),

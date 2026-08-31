@@ -63,6 +63,11 @@ from scipy.ndimage import (
     generate_binary_structure,
     map_coordinates,
 )
+from .itk_transforms import save_affine_itk_txt
+from .bids_derivatives import (
+    write_dataset_description,
+    write_sidecar,
+)
 from .utils import (
     smart_round,
     remove_file,
@@ -728,31 +733,6 @@ def final_cleanup(
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
 
 
-def save_affine_itk_txt(affine_ras: np.ndarray, out_path: str) -> None:
-    """Save a 4×4 RAS affine matrix as an ITK/ANTs plain-text transform file.
-
-    Writes the ``#Insight Transform File V1.0`` format used by ANTs, ITK,
-    and fMRIPrep.  Handles the RAS→LPS coordinate-system conversion: the
-    3×3 rotation/scaling block and the translation vector are both negated
-    on their x and y components before writing.
-
-    Args:
-        affine_ras: 4×4 affine matrix in RAS coordinates (e.g. the T1w-to-MNI
-            registration matrix returned by deepmriprep).
-        out_path: Output file path (should end with ``.txt``).
-    """
-    ras2lps = np.diag([-1.0, -1.0, 1.0])
-    M_lps = ras2lps @ affine_ras[:3, :3] @ ras2lps
-    T_lps = ras2lps @ affine_ras[:3, 3]
-    params = np.concatenate([M_lps.ravel(order="C"), T_lps])
-    with open(out_path, "w") as fh:
-        fh.write("#Insight Transform File V1.0\n")
-        fh.write("#Transform 0\n")
-        fh.write("Transform: AffineTransform_float_3_3\n")
-        fh.write("Parameters: " + " ".join(f"{v:.10g}" for v in params) + "\n")
-        fh.write("FixedParameters: 0 0 0\n")
-
-
 #: Reference grid the displacement fields are written on: the grid of
 #: ``tpl-MNI152NLin2009cAsym_res-01``, which is what ANTs uses for the warp
 #: it stores in fMRIPrep's ``*_mode-image_xfm.h5``.  T1Prep's own warp lives on
@@ -1073,6 +1053,7 @@ def save_results(
     header_resamp,
     atlas_list,
     t1_raw=None,
+    t1_name=None,
 ) -> None:
     """Save segmentation and atlas results to disk."""
 
@@ -1370,12 +1351,15 @@ def save_results(
                 warp_yx, affine, mask, f"{mri_dir}/{invdef_h5_name}", inverse=True
             )
 
-            # Save affine registration transform as ITK plain-text files
-            affine_mat = affine.values if hasattr(affine, "values") else np.asarray(affine)
+            # T1w <-> fsnative.  T1Prep reconstructs its surfaces directly on
+            # the preprocessed T1w grid and has no separate FreeSurfer
+            # conformed space, so both directions are the identity.  (This is
+            # not the MNI affine: that one lives in the composites above, and
+            # is a normalised grid transform rather than a millimetre one.)
             affine_txt_name = code_vars.get("Affine_txt_volume", "")
-            #save_affine_itk_txt(affine_mat, f"{mri_dir}/{affine_txt_name}")
+            save_affine_itk_txt(np.eye(4), f"{mri_dir}/{affine_txt_name}")
             invaffine_txt_name = code_vars.get("invAffine_txt_volume", "")
-            #save_affine_itk_txt(np.linalg.inv(affine_mat), f"{mri_dir}/{invaffine_txt_name}")
+            save_affine_itk_txt(np.eye(4), f"{mri_dir}/{invaffine_txt_name}")
 
             # Save dseg in native space and reorder tissue class intensities
             dseg_value = np.round(p0_large.get_fdata().copy())
@@ -1405,6 +1389,23 @@ def save_results(
                 mask.header,
                 f"{mri_dir}/{mask_name}",
                 clip=[0, 1],
+            )
+
+            # BIDS bookkeeping.  PyBIDS ignores a derivatives tree without a
+            # dataset description, and the specification requires ``Type`` on
+            # every mask, so without these fMRIPrep cannot see any of the
+            # files above and recomputes them.
+            raw_sources = [os.path.abspath(t1_name)] if t1_name else None
+            write_dataset_description(mri_dir)
+            write_sidecar(
+                f"{mri_dir}/{mask_name}", Type="Brain", RawSources=raw_sources
+            )
+            write_sidecar(
+                f"{mri_dir}/{code_vars.get('mT1_volume', '')}",
+                # T1Prep's preprocessed T1w is the bias-corrected brain, unlike
+                # fMRIPrep's, which keeps the skull.
+                SkullStripped=True,
+                RawSources=raw_sources,
             )
 
         # save deformation as nifti-file
@@ -1446,6 +1447,7 @@ def save_results(
                     f"{mri_dir}/{ribbon_name}",
                     round=True,
                 )
+                write_sidecar(f"{mri_dir}/{ribbon_name}", Type="ROI")
 
             # Compute Euler numbers at GM/WM boundary for QA
             euler_lh = compute_euler_number(lh, threshold=2.5)
@@ -1890,6 +1892,7 @@ def run_segment():
         header_resamp,
         atlas_list,
         t1_raw,
+        t1_name,
     )
 
     final_cleanup(mri_dir, out_name, ext, use_amap, save_lesions, debug)

@@ -63,6 +63,9 @@ import numpy as np
 import cat_surf
 from cat_surf import cli as cs_cli
 
+from . import fslr
+from .bids_derivatives import write_sidecar
+
 # ---------------------------------------------------------------------------
 # Shared utilities (NameTable and ProgressBar live in utils to avoid duplication)
 # ---------------------------------------------------------------------------
@@ -177,6 +180,7 @@ def surface_estimation(
     report_log: Optional[str] = None,
     surf_templates_dir: str,
     atlas_templates_dir: str,
+    fslr_templates_dir: str = "",
     atlas_surf: str = "",
     initial_surface: str = "",
     fmriprep: int = 0,
@@ -219,6 +223,7 @@ def surface_estimation(
             bids_naming=bids_naming,
             surf_templates_dir=surf_templates_dir,
             atlas_templates_dir=atlas_templates_dir,
+            fslr_templates_dir=fslr_templates_dir,
             atlas_surf=atlas_surf,
             initial_surface=initial_surface,
             fmriprep=fmriprep,
@@ -235,6 +240,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
          thickness_method, save_pial_white, pre_fwhm, median_filter,
          vessel, amap, correct_folding, debug, multi, nii_ext,
          names_tsv, bids_naming, surf_templates_dir, atlas_templates_dir,
+         fslr_templates_dir,
          atlas_surf, initial_surface, fmriprep, bar) -> int:
 
     # Hemisphere coding
@@ -257,6 +263,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     codes = ("PBT_shape Area_shape Sulc_shape GMT_shape Mask_label "
              "Hemi_volume mT1_volume PPM_volume GMT_volume Mid_surface "
              "Pial_surface WM_surface Sphere_surface Spherereg_surface "
+             "SphereregFsLR_surface SphereregMSM_surface "
              "Inflated_surface Intensity_Mid Intensity_Pial Intensity_WM "
              "Topochange_volume").split()
     paths = {code: f(code) for code in codes}
@@ -584,6 +591,37 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 output_values_file=p(surf, "Mask_label"),
                 label=True,
             )
+        write_sidecar(
+            p(surf, "Mask_label"),
+            Type="ROI",
+            Sources=[os.path.abspath(p(surf, "Mid_surface"))],
+        )
+
+        # fsLR spheres.  fMRIPrep skips both its own fsLR registration and
+        # MSMSulc when it finds these, so they have to carry the exact BIDS
+        # entities -- see t1prep.fslr for what each one is.
+        if estimate_spherereg:
+            fslr_dir = fslr_templates_dir or os.path.join(
+                os.path.dirname(surf_templates_dir), "templates_surfaces_fsLR"
+            )
+            with _run_step(log, "fsLR project-unproject", verbose=verbose):
+                fslr.write_reg_sphere(
+                    sphere_reg_file=p(surf, "Spherereg_surface"),
+                    out_file=p(surf, "SphereregFsLR_surface"),
+                    fslr_templates_dir=fslr_dir,
+                    fsaverage_sphere_file=Fsavgsphere,
+                    fshemi=fshemi,
+                )
+            bar.step("fsLR registration")
+            with _run_step(log, "CAT_SurfSphericalDemon -> fsLR", verbose=verbose):
+                fslr.write_msm_sphere(
+                    mid_surface_file=p(surf, "Mid_surface"),
+                    reg_sphere_file=p(surf, "SphereregFsLR_surface"),
+                    out_file=p(surf, "SphereregMSM_surface"),
+                    fslr_templates_dir=fslr_dir,
+                    fshemi=fshemi,
+                    verbose=verbose,
+                )
 
     # =====================================================================
     # Clean up
@@ -625,6 +663,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--report-log", default=None)
     ap.add_argument("--surf-templates-dir", required=True)
     ap.add_argument("--atlas-templates-dir", required=True)
+    ap.add_argument("--fslr-templates-dir", default="")
     ap.add_argument("--atlas-surf", default="")
     ap.add_argument("--initial-surface", default="")
     ap.add_argument("--fmriprep", type=int, default=0)
