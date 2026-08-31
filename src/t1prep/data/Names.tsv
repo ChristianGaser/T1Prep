@@ -29,6 +29,8 @@ Pial_surface {side}.pial.{bname}.gii {bname}_hemi-{side}{space}{desc}_pial.surf.
 WM_surface {side}.white.{bname}.gii {bname}_hemi-{side}{space}{desc}_white.surf.gii
 Inflated_surface {side}.inflated.{bname}.gii {bname}_hemi-{side}{desc}_inflated.surf.gii
 Spherereg_surface {side}.sphere.reg.{bname}.gii {bname}_hemi-{side}{desc}_space-fsaverage_desc-reg_sphere.surf.gii
+SphereregFsLR_surface {side}.sphere.reg.fsLR.{bname}.gii {bname}_hemi-{side}{desc}_space-fsLR_desc-reg_sphere.surf.gii
+SphereregMSM_surface {side}.sphere.reg.msm.{bname}.gii {bname}_hemi-{side}{desc}_space-fsLR_desc-msmsulc_sphere.surf.gii
 Sphere_surface {side}.sphere.{bname}.gii {bname}_hemi-{side}{desc}_sphere.surf.gii
 Area_shape {side}.area.{bname} {bname}_hemi-{side}{space}{desc}_area.shape.gii
 Sulc_shape {side}.sulc.{bname} {bname}_hemi-{side}{space}{desc}_sulc.shape.gii

@@ -663,6 +663,10 @@ process()
     if [ "${estimate_surf}" -eq 1 ]; then
       if [ "${estimate_spherereg}" -eq 1 ]; then
         ((end_count+=6))
+        # fsLR registration replaces MSMSulc and only runs with --fmriprep
+        if [ "${fmriprep}" -eq 1 ]; then
+          ((end_count++))
+        fi
       else
         ((end_count+=4))
       fi
@@ -1063,10 +1067,16 @@ ${BOLD}${GREEN}Save Options:${NC}
   --fmriprep
       Save fMRIPrep-compatible results:
         Save deformation fields as ANTs/ITK-compatible HDF5 (.h5) files
+        Save T1w<->fsnative transforms as ITK text files
         Save dseg files
-        Save cortex mask
+        Save cortex mask and cortical ribbon mask
         Save inflated surfaces
+        Save fsLR spheres (desc-reg and desc-msmsulc), replacing fMRIPrep's
+          own fsLR registration and MSMSulc
+        Save BIDS dataset_description.json and JSON sidecars, without which
+          fMRIPrep cannot see any of the above
         Save spatially registered data with 2mm voxel size
+      Use t1prep-bbreg afterwards to replace fMRIPrep's bbregister step.
       
   --no-track
       Do not collect telemetry information for T1Prep.
