@@ -61,6 +61,7 @@ from .qa import estimate_qa
 from scipy.ndimage import (
     binary_closing,
     generate_binary_structure,
+    map_coordinates,
 )
 from .utils import (
     smart_round,
@@ -752,17 +753,181 @@ def save_affine_itk_txt(affine_ras: np.ndarray, out_path: str) -> None:
         fh.write("FixedParameters: 0 0 0\n")
 
 
-def save_deformation_h5(warp_nii: nib.Nifti1Image, out_path: str) -> None:
-    """Save a NIfTI displacement field as an ANTs/ITK-compatible HDF5 file.
+#: Reference grid the displacement fields are written on: the grid of
+#: ``tpl-MNI152NLin2009cAsym_res-01``, which is what ANTs uses for the warp
+#: it stores in fMRIPrep's ``*_mode-image_xfm.h5``.  T1Prep's own warp lives on
+#: the smaller 1.5 mm ``Template_4_GS`` grid; resampling it onto the full MNI
+#: field of view matters because ITK returns a *zero* displacement for points
+#: outside a displacement field's buffer, which would tear the transform at the
+#: template edge when fMRIPrep normalises whole-head BOLD data.
+MNI152NLIN2009CASYM_SHAPE = (193, 229, 193)
+MNI152NLIN2009CASYM_AFFINE = np.array(
+    [
+        [1.0, 0.0, 0.0, -96.0],
+        [0.0, 1.0, 0.0, -132.0],
+        [0.0, 0.0, 1.0, -78.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
 
-    Writes the ITK CompositeTransform HDF5 format that ANTs and fMRIPrep
-    expect.  Handles the RAS→LPS coordinate-system conversion: voxel
-    spacings and grid dimensions are preserved; the x and y components of
-    both the origin and the displacement vectors are negated.
+#: RAS (NIfTI) to LPS (ITK/ANTs) axis flip.
+_RAS2LPS = np.diag([-1.0, -1.0, 1.0])
+
+
+def _normalized_grid_to_ras(img: nib.Nifti1Image) -> np.ndarray:
+    """Map ``torch`` sampling-grid coordinates of ``img`` to RAS millimetres.
+
+    deepmriprep expresses every spatial mapping as a :func:`torch.nn.functional.
+    grid_sample` grid: coordinates are normalised to ``[-1, 1]`` with
+    ``align_corners=True``, and the last axis is ordered ``(x, y, z)`` where
+    ``x`` indexes the *fastest* tensor dimension.  Because ``nifti_to_tensor``
+    feeds the RAS-canonical array to torch unpermuted, that ``x`` is array axis
+    2 and ``z`` is array axis 0 — the reverse of the NIfTI axis order.
 
     Args:
-        warp_nii: NIfTI displacement-field image (shape x,y,z,1,3 or x,y,z,3).
-        out_path: Output file path (should end with ``.h5``).
+        img: Image defining the grid (only its shape and affine are used).
+
+    Returns:
+        A 4×4 matrix mapping homogeneous ``(x, y, z)`` grid coordinates to RAS
+        millimetres.
+    """
+    img = nib.as_closest_canonical(img)
+    n0, n1, n2 = img.shape[:3]
+    grid_to_voxel = np.array(
+        [
+            [0.0, 0.0, (n0 - 1) / 2, (n0 - 1) / 2],
+            [0.0, (n1 - 1) / 2, 0.0, (n1 - 1) / 2],
+            [(n2 - 1) / 2, 0.0, 0.0, (n2 - 1) / 2],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    return img.affine @ grid_to_voxel
+
+
+def _warp_to_displacement(warp_nii: nib.Nifti1Image):
+    """Convert a deepmriprep sampling grid into an RAS displacement field.
+
+    ``warp_xy`` / ``warp_yx`` hold *absolute* normalised sampling coordinates,
+    not displacements.  ITK wants a displacement in millimetres, so subtract
+    each voxel's own position after converting the grid to RAS.
+
+    Args:
+        warp_nii: ``warp_xy`` or ``warp_yx`` as returned by ``run_warp_register``.
+
+    Returns:
+        Tuple ``(displacement, img)`` where ``displacement`` has shape
+        ``(x, y, z, 3)`` in RAS millimetres and ``img`` is the RAS-canonical
+        warp image defining its grid.
+    """
+    img = nib.as_closest_canonical(warp_nii)
+    grid = np.asarray(img.dataobj, dtype=np.float64)
+    if grid.ndim == 5:
+        grid = grid[:, :, :, 0, :]
+
+    grid_to_ras = _normalized_grid_to_ras(img)
+    target = grid @ grid_to_ras[:3, :3].T + grid_to_ras[:3, 3]
+
+    index = np.indices(grid.shape[:3], dtype=np.float64)
+    source = np.einsum("ij,jxyz->xyzi", img.affine[:3, :3], index) + img.affine[:3, 3]
+    return target - source, img
+
+
+def _resample_displacement(
+    displacement: np.ndarray,
+    warp_img: nib.Nifti1Image,
+    out_shape,
+    out_affine: np.ndarray,
+) -> np.ndarray:
+    """Interpolate an RAS displacement field onto another grid.
+
+    Extrapolates by edge replication rather than with zeros, so the field stays
+    continuous where the output grid reaches past T1Prep's template.
+
+    Args:
+        displacement: ``(x, y, z, 3)`` RAS displacement on ``warp_img``'s grid.
+        warp_img: RAS-canonical image defining ``displacement``'s grid.
+        out_shape: Target grid shape.
+        out_affine: Target grid RAS affine.
+
+    Returns:
+        The displacement resampled to ``(*out_shape, 3)``.
+    """
+    ras_to_warp = np.linalg.inv(warp_img.affine)
+    out = np.empty((*out_shape, 3), dtype=np.float32)
+    # One slab at a time: the coordinate arrays for the full 193x229x193 grid
+    # would be several hundred megabytes on their own.
+    for i in range(out_shape[0]):
+        index = np.indices((1, *out_shape[1:]), dtype=np.float64)
+        index[0] += i
+        ras = np.einsum("ij,jxyz->ixyz", out_affine[:3, :3], index) + out_affine[:3, 3, None, None, None]
+        vox = np.einsum("ij,jxyz->ixyz", ras_to_warp[:3, :3], ras) + ras_to_warp[:3, 3, None, None, None]
+        for c in range(3):
+            out[i, ..., c] = map_coordinates(
+                displacement[..., c], vox, order=1, mode="nearest"
+            )[0]
+    return out
+
+
+def _itk_affine(affine_ras: np.ndarray):
+    """Build the ITK datasets for an ``AffineTransform_float_3_3``.
+
+    Args:
+        affine_ras: 4×4 affine in RAS millimetres.
+
+    Returns:
+        Tuple ``(transform_type, fixed_parameters, parameters)``.
+    """
+    matrix = _RAS2LPS @ affine_ras[:3, :3] @ _RAS2LPS
+    translation = _RAS2LPS @ affine_ras[:3, 3]
+    return (
+        "AffineTransform_float_3_3",
+        np.zeros(3),  # centre of rotation
+        np.concatenate([matrix.ravel(order="C"), translation]),
+    )
+
+
+def _itk_displacement_field(displacement: np.ndarray, affine: np.ndarray):
+    """Build the ITK datasets for a ``DisplacementFieldTransform_float_3_3``.
+
+    Args:
+        displacement: ``(x, y, z, 3)`` RAS displacement field.
+        affine: RAS affine of the field's grid.
+
+    Returns:
+        Tuple ``(transform_type, fixed_parameters, parameters)``.
+    """
+    spacing = np.sqrt((affine[:3, :3] ** 2).sum(axis=0))
+    direction = (_RAS2LPS @ affine[:3, :3]) / spacing
+    origin = _RAS2LPS @ affine[:3, 3]
+    fixed = np.concatenate(
+        [
+            np.array(displacement.shape[:3], dtype=np.float64),
+            origin,
+            spacing,
+            direction.ravel(order="C"),
+        ]
+    )
+    # ITK buffers vector images component-fastest, then x, then y, then z.
+    # ``ravel`` already copies, so flip x and y to LPS on its result rather than
+    # on a second full-size copy of the field.
+    parameters = np.moveaxis(displacement, -1, 0).ravel(order="F")
+    parameters[0::3] *= -1.0
+    parameters[1::3] *= -1.0
+    return "DisplacementFieldTransform_float_3_3", fixed, parameters
+
+
+def _write_itk_composite(out_path: str, transforms) -> None:
+    """Write an ITK ``CompositeTransform`` HDF5 file.
+
+    Mirrors the layout ITK 5.x writes from ANTs: variable-length ASCII
+    type strings, ``float64`` fixed parameters, gzip-compressed ``float32``
+    parameters, and a group ``0`` that carries only the composite's type.
+
+    Args:
+        out_path: Destination ``.h5`` path.
+        transforms: ``(type, fixed_parameters, parameters)`` tuples in ITK queue
+            order.  ITK applies the queue back to front, so the transform that
+            acts *first* is written last.
 
     Raises:
         ImportError: If ``h5py`` is not installed.
@@ -775,54 +940,99 @@ def save_deformation_h5(warp_nii: nib.Nifti1Image, out_path: str) -> None:
             "Install it with: pip install h5py"
         ) from exc
 
-    # Normalise to (x, y, z, 3)
-    data = np.asarray(warp_nii.dataobj, dtype=np.float64)
-    if data.ndim == 5:
-        data = data[:, :, :, 0, :]
+    string_dtype = h5py.string_dtype(encoding="ascii")
 
-    affine = warp_nii.affine
-    shape = data.shape[:3]
-
-    # Voxel spacings = column norms of the rotation/scaling part of the affine
-    spacing = np.sqrt((affine[:3, :3] ** 2).sum(axis=0))
-
-    # Direction cosines in LPS (negate first two rows of the RAS direction matrix)
-    direction_lps = (np.diag([-1.0, -1.0, 1.0]) @ affine[:3, :3]) / spacing
-
-    # Origin in LPS (negate x and y of the RAS origin)
-    origin_lps = np.array([-1.0, -1.0, 1.0]) * affine[:3, 3]
-
-    # TransformFixedParameters: [nx,ny,nz, ox,oy,oz, sx,sy,sz, dir_cosines(9)]
-    fixed_params = np.concatenate([
-        np.array(shape, dtype=np.float64),
-        origin_lps,
-        spacing,
-        direction_lps.ravel(order="C"),
-    ])
-
-    # TransformParameters: displacements in LPS, vector-dim first, Fortran order
-    field_lps = data.copy()
-    field_lps[..., :2] *= -1.0
-    transform_params = np.moveaxis(field_lps, -1, 0).ravel(order="F")
+    def write_string(parent, name, value):
+        dataset = parent.create_dataset(name, (1,), dtype=string_dtype)
+        dataset[0] = value
 
     with h5py.File(out_path, "w") as hf:
-        tg = hf.create_group("TransformGroup")
-        # Group 0: composite-transform header (required by ANTs/ITK)
-        g0 = tg.create_group("0")
-        g0.create_dataset(
-            "TransformType",
-            data=np.array([b"CompositeTransform_double_3_3"]),
-        )
-        g0.create_dataset("TransformFixedParameters", data=np.array([], dtype=np.float64))
-        g0.create_dataset("TransformParameters", data=np.array([], dtype=np.float64))
-        # Group 1: the displacement field transform
-        g1 = tg.create_group("1")
-        g1.create_dataset(
-            "TransformType",
-            data=np.array([b"DisplacementFieldTransform_double_3_3"]),
-        )
-        g1.create_dataset("TransformFixedParameters", data=fixed_params)
-        g1.create_dataset("TransformParameters", data=transform_params)
+        write_string(hf, "HDFVersion", h5py.version.hdf5_version)
+        # Declares the format generation, not a library T1Prep links against;
+        # ITK and nitransforms record it but do not check it on read.
+        write_string(hf, "ITKVersion", "5.4.0")
+        write_string(hf, "OSName", platform.system())
+        write_string(hf, "OSVersion", platform.release())
+        group = hf.create_group("TransformGroup")
+        write_string(group.create_group("0"), "TransformType",
+                     "CompositeTransform_float_3_3")
+        for i, (transform_type, fixed, parameters) in enumerate(transforms, start=1):
+            sub = group.create_group(str(i))
+            write_string(sub, "TransformType", transform_type)
+            sub.create_dataset(
+                "TransformFixedParameters", data=np.asarray(fixed, dtype=np.float64)
+            )
+            parameters = np.asarray(parameters, dtype=np.float32)
+            sub.create_dataset(
+                "TransformParameters",
+                data=parameters,
+                chunks=(min(parameters.size, 1048576),),
+                compression="gzip",
+                compression_opts=5,
+            )
+
+
+def save_deformation_h5(
+    warp_nii: nib.Nifti1Image,
+    affine_norm: np.ndarray,
+    native_img: nib.Nifti1Image,
+    out_path: str,
+    inverse: bool = False,
+    ref_shape=MNI152NLIN2009CASYM_SHAPE,
+    ref_affine: np.ndarray = MNI152NLIN2009CASYM_AFFINE,
+) -> None:
+    """Save T1Prep's registration as an ANTs/ITK-compatible composite HDF5 file.
+
+    T1Prep splits the T1w-to-MNI mapping the same way ANTs does — a linear stage
+    followed by a non-linear one — but expresses both as ``torch`` sampling
+    grids in normalised ``[-1, 1]`` coordinates rather than as millimetre
+    displacements.  This writes the pair out as the two-element ITK
+    ``CompositeTransform`` that ``antsApplyTransforms`` and fMRIPrep consume.
+
+    Following ITK, the stored transforms map points from the *output* image's
+    space back to the *input* image's space, which is the opposite of the
+    direction the BIDS ``from-``/``to-`` filename entities name.  So the default
+    (``inverse=False``) writes the ``from-T1w_to-MNI152NLin2009cAsym`` file — the
+    one that resamples T1w *images* into MNI — from ``warp_xy``, whose point
+    mapping runs MNI to T1w.
+
+    Args:
+        warp_nii: ``warp_xy`` when ``inverse`` is False, ``warp_yx`` otherwise.
+        affine_norm: The 4×4 normalised affine from ``run_affine_register``
+            (deepmriprep's ``affine``), mapping template-space grid coordinates
+            to native ones.
+        native_img: Image defining the native grid, i.e. the one T1Prep writes
+            its native-space outputs on (``mask``).
+        out_path: Output file path (should end with ``.h5``).
+        inverse: Write the ``from-MNI152NLin2009cAsym_to-T1w`` composite.
+        ref_shape: Grid shape for the stored displacement field.
+        ref_affine: RAS affine of the grid for the stored displacement field.
+    """
+    affine_norm = np.asarray(
+        affine_norm.values if hasattr(affine_norm, "values") else affine_norm,
+        dtype=np.float64,
+    )
+    displacement, warp_img = _warp_to_displacement(warp_nii)
+
+    # The linear stage in millimetres.  The intermediate space it maps from is
+    # the warp template's physical space, which is also what the field above
+    # maps into, so the two compose exactly.
+    affine_ras = (
+        _normalized_grid_to_ras(native_img)
+        @ affine_norm
+        @ np.linalg.inv(_normalized_grid_to_ras(warp_img))
+    )
+
+    field = _itk_displacement_field(
+        _resample_displacement(displacement, warp_img, ref_shape, ref_affine),
+        np.asarray(ref_affine, dtype=np.float64),
+    )
+    if inverse:
+        # Points run native -> linear -> non-linear, so the affine is applied
+        # first and therefore written last.
+        _write_itk_composite(out_path, [field, _itk_affine(np.linalg.inv(affine_ras))])
+    else:
+        _write_itk_composite(out_path, [_itk_affine(affine_ras), field])
 
 
 def save_results(
@@ -1147,11 +1357,18 @@ def save_results(
 
 
         if save_fmriprep:
-            # save deformation as fMRIPrep-compatible h5-file
+            # save deformation as fMRIPrep-compatible h5-file.  ``Def_h5_volume``
+            # is the T1w-to-MNI direction (CAT12's ``y_``) and is built from
+            # warp_xy, which maps template points back onto the subject;
+            # ``invDef_h5_volume`` is the opposite direction, from warp_yx.
             def_h5_name = code_vars.get("Def_h5_volume", "")
-            #save_deformation_h5(warp_xy, f"{mri_dir}/{def_h5_name}")
+            save_deformation_h5(
+                warp_xy, affine, mask, f"{mri_dir}/{def_h5_name}"
+            )
             invdef_h5_name = code_vars.get("invDef_h5_volume", "")
-            #save_deformation_h5(warp_yx, f"{mri_dir}/{invdef_h5_name}")
+            save_deformation_h5(
+                warp_yx, affine, mask, f"{mri_dir}/{invdef_h5_name}", inverse=True
+            )
 
             # Save affine registration transform as ITK plain-text files
             affine_mat = affine.values if hasattr(affine, "values") else np.asarray(affine)
