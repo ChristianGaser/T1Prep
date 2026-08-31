@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Overview
-This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`, PyCAT banner), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`.
+This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`, PyCAT banner), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`.
 
 ## Project Structure
 

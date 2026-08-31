@@ -26,7 +26,7 @@ Run in background automatically:
 Entry points are installed into the environment's `bin/` (the canonical way to
 run T1Prep): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`; same
 CLI, PyCAT startup banner), `t1prep-ui`, `t1prep-run` (Python
-single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`. The
+single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`. The
 `scripts/` folder
 is a source-tree/dev fallback and should not be put on `PATH`.
 
