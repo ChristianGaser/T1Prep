@@ -9,7 +9,7 @@ the test does not depend on the interpolation it is checking.
 import numpy as np
 import pytest
 
-from t1prep.fslr import project_unproject, spherical_barycentric
+from t1prep.fslr import project_unproject, rigid_align_sphere, spherical_barycentric
 
 
 def _icosphere(subdivisions=3, radius=100.0):
@@ -110,3 +110,35 @@ def test_query_points_need_not_be_mesh_vertices(sphere):
     rotation = _rotation(0.2, 0.1, -0.3)
     moved = project_unproject(inside[None], vertices, vertices @ rotation.T, faces)
     np.testing.assert_allclose(moved[0], inside @ rotation.T, atol=1e-6)
+
+
+def test_rigid_alignment_recovers_a_known_rotation(sphere):
+    """The Procrustes fit must undo exactly the rotation that was applied."""
+    vertices, _ = sphere
+    rotation = _rotation(0.7, -0.25, 0.9)
+    target = vertices @ rotation.T
+
+    aligned = rigid_align_sphere(vertices, target)
+    np.testing.assert_allclose(aligned, target, atol=1e-8)
+
+
+def test_rigid_alignment_stays_on_the_sphere(sphere):
+    """No scale or shear, so the radius is untouched -- unlike an affine fit."""
+    vertices, _ = sphere
+    rng = np.random.default_rng(0)
+    target = vertices @ _rotation(0.4, 0.2, -0.1).T * 1.7    # rotated *and* scaled
+    target += rng.normal(scale=2.0, size=target.shape)       # and noisy
+
+    aligned = rigid_align_sphere(vertices, target)
+    np.testing.assert_allclose(
+        np.linalg.norm(aligned, axis=1), np.linalg.norm(vertices, axis=1), atol=1e-8
+    )
+
+
+def test_rigid_alignment_never_reflects(sphere):
+    """A reflected target must not induce a determinant -1 'rotation'."""
+    vertices, _ = sphere
+    aligned = rigid_align_sphere(vertices, vertices * np.array([1.0, 1.0, -1.0]))
+    # Recover the operator from the fit and check it is a proper rotation.
+    operator = np.linalg.lstsq(vertices, aligned, rcond=None)[0]
+    assert np.linalg.det(operator) > 0
