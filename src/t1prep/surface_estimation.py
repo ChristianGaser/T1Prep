@@ -577,9 +577,14 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 invert_values=True,
             )
         with _run_step(log, "CAT_Surf2Sphere stop_at=2", verbose=verbose):
+            # Stopping the inflation short of a sphere is how the inflated
+            # surface is made -- it is *not* a midthickness any more (every
+            # vertex moves ~42 mm), so it must not be written back over
+            # Mid_surface, which fMRIPrep and the fsLR registration below both
+            # need.  ``Inflated_surface`` is the output fMRIPrep expects.
             cs_cli.surf2sphere(
                 surface_file=p(surf, "Mid_surface"),
-                output_file=p(surf, "Mid_surface"),
+                output_file=p(surf, "Inflated_surface"),
                 stop_at=2,
                 verbose=verbose,
             )
