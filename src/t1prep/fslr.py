@@ -23,12 +23,14 @@ template surfaces both functions rely on.
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 import numpy as np
 from scipy.spatial import cKDTree
 
 __all__ = [
     "project_unproject",
+    "rigid_align_sphere",
     "spherical_barycentric",
     "write_reg_sphere",
     "write_msm_sphere",
@@ -155,6 +157,33 @@ def project_unproject(sphere_in, project_to, unproject_from, faces):
 # ---------------------------------------------------------------------------
 
 
+def rigid_align_sphere(sphere, target):
+    """Rotate a sphere onto a target parameterisation of the same mesh.
+
+    The rotation that best maps ``sphere`` onto ``target`` in the least-squares
+    sense, from the orthogonal Procrustes solution.  This is the pre-alignment
+    MSMSulc performs with ``wb_command -surface-affine-regression`` followed by
+    ``-surface-modify-sphere``; restricting it to a rotation makes the
+    reprojection unnecessary, since a rotation already maps the sphere onto
+    itself.
+
+    Args:
+        sphere: ``(n, 3)`` vertices to rotate.
+        target: ``(n, 3)`` vertices of the same mesh in the destination frame.
+
+    Returns:
+        ``(n, 3)`` rotated vertices, on ``sphere``'s own radius.
+    """
+    sphere = np.asarray(sphere, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+    u, _, vt = np.linalg.svd(sphere.T @ target)
+    rotation = u @ vt
+    if np.linalg.det(rotation) < 0:  # forbid a reflection
+        u[:, -1] *= -1
+        rotation = u @ vt
+    return sphere @ rotation
+
+
 def _template(templates_dir: str, fshemi: str, name: str) -> str:
     path = os.path.join(templates_dir, f"{fshemi}.{name}.gii")
     if not os.path.exists(path):
@@ -202,36 +231,60 @@ def write_msm_sphere(
     out_file: str,
     fslr_templates_dir: str,
     fshemi: str,
+    sphere_file: Optional[str] = None,
     verbose: bool = False,
 ) -> None:
     """Write the ``space-fsLR_desc-msmsulc`` sphere for one hemisphere.
 
-    Stands in for sMRIPrep's MSMSulc step.  Spherical Demons refines the
-    baseline fsLR sphere against the fsLR average midthickness, driven by the
-    depth-potential features CAT-Surface derives from the two anatomies —
-    which play the role MSMSulc gives to sulcal depth.
+    Stands in for sMRIPrep's MSMSulc step.  Spherical Demons registers the
+    subject onto the fsLR average midthickness, driven by the depth-potential
+    features CAT-Surface derives from the two anatomies — which play the role
+    MSMSulc gives to sulcal depth.
 
-    Unlike MSMSulc, which restarts from a rigidly rotated native sphere, this
-    starts from the already non-linearly aligned ``desc-reg`` sphere and only
-    refines it.  The output is therefore the fsaverage registration, the fixed
-    fsaverage-to-fsLR deformation, and this refinement composed.
+    Following MSMSulc, the registration starts from the subject's *native*
+    sphere rigidly rotated onto the fsLR frame, not from the non-linearly
+    aligned ``desc-reg`` sphere.  Starting from ``desc-reg`` would compose this
+    refinement on top of the fsaverage registration and inherit its areal
+    distortion; from a rigid start the whole non-linear deformation is this
+    one registration's, which is what keeps distortion comparable to MSMSulc's.
 
     Args:
         mid_surface_file: The subject's central (midthickness) surface.
-        reg_sphere_file: The ``desc-reg`` sphere from :func:`write_reg_sphere`,
-            used as the starting point.
+        reg_sphere_file: The ``desc-reg`` sphere from :func:`write_reg_sphere`.
+            Used as the target of the rigid pre-alignment, and as the starting
+            point itself when ``sphere_file`` is not given.
         out_file: Destination ``.surf.gii``.
         fslr_templates_dir: Directory holding the fsLR template surfaces.
         fshemi: ``"lh"`` or ``"rh"``.
+        sphere_file: The subject's native sphere.  Omit to refine
+            ``reg_sphere_file`` directly instead of restarting from a rigid
+            alignment.
         verbose: Forwarded to CAT-Surface.
     """
+    import cat_surf
     from cat_surf import cli as cs_cli
 
-    cs_cli.surf_spherical_demon(
-        source_file=mid_surface_file,
-        source_sphere_file=reg_sphere_file,
-        target_file=_template(fslr_templates_dir, fshemi, "midthickness.fsLR"),
-        target_sphere_file=_template(fslr_templates_dir, fshemi, "sphere.fsLR"),
-        output_sphere_file=out_file,
-        verbose=verbose,
-    )
+    start_file = reg_sphere_file
+    tmp_start = None
+    if sphere_file:
+        sphere, faces = cat_surf.read_surface(sphere_file)
+        target, _ = cat_surf.read_surface(reg_sphere_file)
+        rotated = rigid_align_sphere(sphere, target)
+        # CAT-Surface works on files, so the rotated sphere needs one; it is
+        # an intermediate and is removed once the registration has read it.
+        tmp_start = f"{out_file}.rigid-init.gii"
+        cat_surf.write_surface(tmp_start, rotated.astype(np.float32), faces)
+        start_file = tmp_start
+
+    try:
+        cs_cli.surf_spherical_demon(
+            source_file=mid_surface_file,
+            source_sphere_file=start_file,
+            target_file=_template(fslr_templates_dir, fshemi, "midthickness.fsLR"),
+            target_sphere_file=_template(fslr_templates_dir, fshemi, "sphere.fsLR"),
+            output_sphere_file=out_file,
+            verbose=verbose,
+        )
+    finally:
+        if tmp_start and os.path.exists(tmp_start):
+            os.remove(tmp_start)

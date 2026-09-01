@@ -545,8 +545,12 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
             value = names.substitute("ATLAS_label", name_columns,
                                      bname=bname, hemi=hemi,
                                      atlas=atl, nii_ext=nii_ext)
+            # The shipped annots are named lh./rh., so the template lookup
+            # uses ``fshemi``; ``hemi`` is L/R under --bids and only belongs in
+            # the output filename.  Getting this wrong is not a caught error:
+            # CAT-Surface exits the process from C when the file is missing.
             annot_in = os.path.join(atlas_templates_dir,
-                                    f"{hemi}.{atl}.annot")
+                                    f"{fshemi}.{atl}.annot")
             with _run_step(log, f"CAT_SurfResample -label {atl}", verbose=verbose):
                 cs_cli.surf_resample_annot(
                     source_surface_file=Fsavg,
@@ -620,6 +624,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                     out_file=p(surf, "SphereregMSM_surface"),
                     fslr_templates_dir=fslr_dir,
                     fshemi=fshemi,
+                    sphere_file=p(surf, "Sphere_surface"),
                     verbose=verbose,
                 )
 

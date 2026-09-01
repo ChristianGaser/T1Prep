@@ -1123,13 +1123,59 @@ def save_results(
         f"{mri_dir}/{label_name}",
         clip=[0, 4],
     )
-    resample_and_save_nifti(
-        brain_large, 
-        grid_native, 
-        mask.affine, 
-        mask.header, 
-        f"{mri_dir}/{mT1_name}"
-    )
+    # ``desc-preproc_T1w`` keeps the skull under --fmriprep, matching what
+    # fMRIPrep means by the name and what it coregisters BOLD against.  The
+    # bias field is refitted on the whole head from the native label; the
+    # spline is driven by the WM mask either way, so the tissue intensities
+    # come out on the same scale as the skull-stripped image (WM at 1), and
+    # scalp and skull are extrapolated rather than zeroed.
+    full_head = None
+    if save_fmriprep:
+        # Both images have to be in the same array order before the bias fit
+        # can pair a voxel with its label, and the result has to go back into
+        # the orientation the other native outputs are stored in -- which is
+        # not RAS in general.  Writing a canonical array under ``mask.affine``
+        # would flip it against its own affine.
+        t1_canonical = nib.as_closest_canonical(t1)
+        label_native = nib.as_closest_canonical(nib.load(f"{mri_dir}/{label_name}"))
+        if np.allclose(t1_canonical.affine, label_native.affine, atol=1e-3) and (
+            t1_canonical.shape[:3] == label_native.shape[:3]
+        ):
+            full_head = correct_bias_field(t1_canonical, label_native)
+            # The native outputs share ``mask``'s uint8 header, which would
+            # quantise a whole-head image whose scalp reaches ~5x the WM
+            # intensity.  fMRIPrep stores this one as float32; so do we.
+            header = mask.header.copy()
+            header.set_data_dtype(np.float32)
+            nib.save(
+                reoriented_nifti(
+                    full_head.get_fdata().astype(np.float32), mask.affine, header
+                ),
+                f"{mri_dir}/{mT1_name}",
+            )
+        else:
+            print(
+                "Warning: the input does not share the native output grid; "
+                "writing a skull-stripped desc-preproc_T1w instead."
+            )
+    if full_head is None:
+        resample_and_save_nifti(
+            brain_large,
+            grid_native,
+            mask.affine,
+            mask.header,
+            f"{mri_dir}/{mT1_name}"
+        )
+    if save_fmriprep:
+        # The skull-stripped, bias-corrected brain that used to be written as
+        # desc-preproc_T1w is still useful, so keep it under its own name.
+        resample_and_save_nifti(
+            brain_large,
+            grid_native,
+            mask.affine,
+            mask.header,
+            f"{mri_dir}/{code_vars.get('skullstripped_volume', '')}",
+        )
 
     # Save remaining data in native space
     if save_p:
@@ -1402,8 +1448,11 @@ def save_results(
             )
             write_sidecar(
                 f"{mri_dir}/{code_vars.get('mT1_volume', '')}",
-                # T1Prep's preprocessed T1w is the bias-corrected brain, unlike
-                # fMRIPrep's, which keeps the skull.
+                SkullStripped=False,
+                RawSources=raw_sources,
+            )
+            write_sidecar(
+                f"{mri_dir}/{code_vars.get('skullstripped_volume', '')}",
                 SkullStripped=True,
                 RawSources=raw_sources,
             )
