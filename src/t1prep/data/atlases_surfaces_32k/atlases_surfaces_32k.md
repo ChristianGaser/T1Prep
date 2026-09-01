@@ -7,6 +7,39 @@ Notes:
 - FreeSurfer data are based on the `fsaverage` mesh, which has no vertex-to-vertex correspondence between hemispheres.
 - `?h` is a placeholder for hemisphere and typically expands to `lh` (left) and `rh` (right).
 
+## Which space each atlas comes from
+
+This mesh is the fs_LR 32k mesh: `templates_surfaces_32k/?h.sphere.freesurfer.gii`
+is bit-identical to HCP's `fs_LR-deformed_to-fsaverage.?.sphere.32k_fs_LR.surf.gii`,
+so vertex *i* here is vertex *i* of fs_LR.  Each atlas is therefore taken from
+whichever space it was defined in:
+
+- **DK40** and **Destrieux** are defined on fsaverage and are carried here from
+  fsaverage, which is authoritative for them.
+- **HCP-MMP1** and **Schaefer2018** are defined on fs_LR, and are taken from
+  their own fs_LR 32k releases and dropped on by vertex index with no
+  resampling.
+
+Earlier versions shipped fsaverage projections of the latter two.  Those are
+gone: the two renditions of the same atlas assign a different parcel to roughly
+14 % of vertices (86.2 % agreement for Schaefer-400, 85.8 % for HCP-MMP1), a
+difference that comes from the atlas authors projecting into each space
+independently.  Results are therefore **not comparable with T1Prep output from
+before this change**, and are now directly comparable with HCP and
+CIFTI-pipeline results.
+
+Using the fs_LR rendition also respects left/right correspondence better, which
+only this mesh can express: for HCP-MMP1, 81.6 % of labelled vertices carry the
+homologous area in both hemispheres, against 75.8 % for the fsaverage
+rendition.  (The same figure is not meaningful for Schaefer, whose parcels are
+not bilaterally homologous by construction.)
+
+The fs_LR files were converted from the CIFTI `dlabel.nii` releases listed in
+the per-atlas `.txt` files by scattering each hemisphere's labels onto the full
+32492-vertex mesh -- HCP's dlabels omit the medial wall -- and re-indexing them
+per hemisphere with index 0 as the medial wall.  No spatial interpolation is
+involved.
+
 ## Desikan–Killiany atlas (DK40)
 
 File:
@@ -37,10 +70,10 @@ Reference:
 ## HCP Multi-Modal Parcellation (HCP-MMP1.0)
 
 File:
-- `?h.aparc_HCP_MMP1.freesurfer.annot`
+- `?h.aparc_HCP_MMP1.annot`
 
-Conversion source (to FreeSurfer fsaverage):
-- https://figshare.com/articles/HCP-MMP1_0_projected_on_fsaverage/3498446/2
+Source (native fs_LR 32k):
+- `Q1-Q6_RelatedValidation210.CorticalAreas_dil_Final_Final_Areas_Group_Colors.32k_fs_LR.dlabel.nii`
 
 Website:
 - https://balsa.wustl.edu/study/show/RVVG
@@ -52,7 +85,7 @@ Reference:
 ## Schaefer 2018 parcellations
 
 Pattern:
-- `?h.Schaefer2018_*Parcels_*Networks_order.annot`
+- `?h.Schaefer2018_*Parcels_17Networks_order.annot` (native fs_LR 32k)
 
 Description:
 - Local-Global Intrinsic Functional Connectivity Parcellation by Schaefer et al.

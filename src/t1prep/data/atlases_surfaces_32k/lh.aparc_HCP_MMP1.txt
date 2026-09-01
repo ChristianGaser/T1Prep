@@ -1,0 +1,20 @@
+HCP Multi-Modal Parcellation (HCP-MMP1.0)
+
+File:
+- ?h.aparc_HCP_MMP1.annot
+
+Taken from the parcellation's own fs_LR 32k release.  This mesh *is* fs_LR 32k,
+so the labels transfer by vertex index with no resampling; earlier versions of
+T1Prep shipped an fsaverage projection instead, which assigned a different
+parcel to about 14 % of vertices.
+
+Source:
+- Q1-Q6_RelatedValidation210.CorticalAreas_dil_Final_Final_Areas_Group_Colors.32k_fs_LR.dlabel.nii
+  (HCP S1200 group average, redistributed in https://github.com/edickie/ciftify)
+
+Website:
+- https://balsa.wustl.edu/study/show/RVVG
+
+Reference:
+- Glasser MF, Coalson TS, Robinson EC, et al. *A multi-modal parcellation of human cerebral cortex.*
+  Nature. 2016;536(7615):171-178.
