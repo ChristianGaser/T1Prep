@@ -37,7 +37,7 @@ dependencies = [
     "scipy>=1.10.1,<1.14; sys_platform == 'darwin' and python_version < '3.11'",
     # PyTorch 2.9 dropped cp39 wheels; 2.8 is the last line supporting Python 3.9.
     # On macOS the 2.9 MPS kernels are missing under 2.8 -> CPU fallback (slower).
-    "torch>=2.9; python_version >= '3.10'",
+    "torch>=2.9.1; python_version >= '3.10'",
     "torch>=2.8,<2.9; python_version < '3.10'",
     "deepmriprep>=0.3.0",
     "deepbet>=1.0.2",
