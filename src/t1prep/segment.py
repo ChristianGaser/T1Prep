@@ -817,6 +817,8 @@ def _resample_displacement(
     warp_img: nib.Nifti1Image,
     out_shape,
     out_affine: np.ndarray,
+    pre_displacement=None,
+    post_displacement=None,
 ) -> np.ndarray:
     """Interpolate an RAS displacement field onto another grid.
 
@@ -828,23 +830,60 @@ def _resample_displacement(
         warp_img: RAS-canonical image defining ``displacement``'s grid.
         out_shape: Target grid shape.
         out_affine: Target grid RAS affine.
+        pre_displacement: RAS displacement field applied to each output point
+            *before* T1Prep's warp is looked up.  Used to retarget the
+            composite at another template by stepping through the fixed
+            template-to-template warp first.
+        post_displacement: RAS displacement field applied to the mapped point
+            *after* T1Prep's warp, for the opposite direction.
 
     Returns:
         The displacement resampled to ``(*out_shape, 3)``.
     """
     ras_to_warp = np.linalg.inv(warp_img.affine)
     out = np.empty((*out_shape, 3), dtype=np.float32)
+
+    def sample(field_img, ras):
+        """Look an RAS displacement field up at RAS points."""
+        field = nib.as_closest_canonical(field_img)
+        data = np.asarray(field.dataobj, dtype=np.float64)
+        if data.ndim == 5:
+            data = data[:, :, :, 0, :]
+        inverse = np.linalg.inv(field.affine)
+        vox = np.einsum("ij,jxyz->ixyz", inverse[:3, :3], ras) + inverse[:3, 3, None, None, None]
+        return np.stack(
+            [map_coordinates(data[..., c], vox, order=1, mode="nearest") for c in range(3)]
+        )
+
     # One slab at a time: the coordinate arrays for the full 193x229x193 grid
     # would be several hundred megabytes on their own.
     for i in range(out_shape[0]):
         index = np.indices((1, *out_shape[1:]), dtype=np.float64)
         index[0] += i
         ras = np.einsum("ij,jxyz->ixyz", out_affine[:3, :3], index) + out_affine[:3, 3, None, None, None]
-        vox = np.einsum("ij,jxyz->ixyz", ras_to_warp[:3, :3], ras) + ras_to_warp[:3, 3, None, None, None]
-        for c in range(3):
-            out[i, ..., c] = map_coordinates(
-                displacement[..., c], vox, order=1, mode="nearest"
-            )[0]
+        if pre_displacement is None and post_displacement is None:
+            # Same result as the general path below, but without forming
+            # (ras + d) - ras, whose cancellation perturbs the stored float32
+            # by ~1e-6 mm.  Keeps the single-template output bit-exact.
+            vox = np.einsum("ij,jxyz->ixyz", ras_to_warp[:3, :3], ras) + ras_to_warp[:3, 3, None, None, None]
+            for c in range(3):
+                out[i, ..., c] = map_coordinates(
+                    displacement[..., c], vox, order=1, mode="nearest"
+                )[0]
+            continue
+
+        source = ras
+        if pre_displacement is not None:
+            # Step into the space T1Prep's warp is defined on before looking
+            # it up, so the stored displacement spans both hops.
+            source = ras + sample(pre_displacement, ras)
+        vox = np.einsum("ij,jxyz->ixyz", ras_to_warp[:3, :3], source) + ras_to_warp[:3, 3, None, None, None]
+        target = source + np.stack(
+            [map_coordinates(displacement[..., c], vox, order=1, mode="nearest") for c in range(3)]
+        )
+        if post_displacement is not None:
+            target = target + sample(post_displacement, target)
+        out[i] = np.moveaxis(target - ras, 0, -1)[0]
     return out
 
 
@@ -960,6 +999,7 @@ def save_deformation_h5(
     inverse: bool = False,
     ref_shape=MNI152NLIN2009CASYM_SHAPE,
     ref_affine: np.ndarray = MNI152NLIN2009CASYM_AFFINE,
+    template_displacement=None,
 ) -> None:
     """Save T1Prep's registration as an ANTs/ITK-compatible composite HDF5 file.
 
@@ -987,6 +1027,11 @@ def save_deformation_h5(
         inverse: Write the ``from-MNI152NLin2009cAsym_to-T1w`` composite.
         ref_shape: Grid shape for the stored displacement field.
         ref_affine: RAS affine of the grid for the stored displacement field.
+        template_displacement: A fixed template-to-template RAS displacement
+            field, to retarget the composite at a second template.  It is
+            applied before T1Prep's warp in the forward direction and after it
+            in the inverse one, so the same field serves both -- pass the one
+            whose direction matches ``inverse``.
     """
     affine_norm = np.asarray(
         affine_norm.values if hasattr(affine_norm, "values") else affine_norm,
@@ -1004,7 +1049,14 @@ def save_deformation_h5(
     )
 
     field = _itk_displacement_field(
-        _resample_displacement(displacement, warp_img, ref_shape, ref_affine),
+        _resample_displacement(
+            displacement,
+            warp_img,
+            ref_shape,
+            ref_affine,
+            pre_displacement=None if inverse else template_displacement,
+            post_displacement=template_displacement if inverse else None,
+        ),
         np.asarray(ref_affine, dtype=np.float64),
     )
     if inverse:
@@ -1396,6 +1448,30 @@ def save_results(
             save_deformation_h5(
                 warp_yx, affine, mask, f"{mri_dir}/{invdef_h5_name}", inverse=True
             )
+
+            # The same pair retargeted at MNI152NLin6Asym, which fMRIPrep adds
+            # to its normalisation targets for --cifti-output and would
+            # otherwise spend a full ANTs registration computing.  The fixed
+            # 2009cAsym<->6Asym warp is composed into the stored field, so
+            # these stay two-element composites like the pair above.
+            for code, disp_name, is_inverse in (
+                ("Def6_h5_volume",
+                 "tpl-MNI152NLin6Asym_to-MNI152NLin2009cAsym_desc-disp_xfm.nii.gz", False),
+                ("invDef6_h5_volume",
+                 "tpl-MNI152NLin2009cAsym_to-MNI152NLin6Asym_desc-disp_xfm.nii.gz", True),
+            ):
+                disp_path = os.path.join(TEMPLATE_PATH_T1PREP, disp_name)
+                if not os.path.exists(disp_path):
+                    print(f"Warning: {disp_name} not found; skipping MNI152NLin6Asym transform.")
+                    continue
+                save_deformation_h5(
+                    warp_yx if is_inverse else warp_xy,
+                    affine,
+                    mask,
+                    f"{mri_dir}/{code_vars.get(code, '')}",
+                    inverse=is_inverse,
+                    template_displacement=nib.load(disp_path),
+                )
 
             # T1w <-> fsnative.  T1Prep reconstructs its surfaces directly on
             # the preprocessed T1w grid and has no separate FreeSurfer
