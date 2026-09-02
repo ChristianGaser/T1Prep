@@ -20,6 +20,7 @@ VALUE_OUTPUTS = [
     "PBT_shape",
     "Area_shape",
     "Sulc_shape",
+    "Curv_shape",
     "GMT_shape",
     "Intensity_Mid",
     "Intensity_Pial",

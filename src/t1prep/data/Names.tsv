@@ -34,6 +34,7 @@ SphereregMSM_surface {side}.sphere.reg.msm.{bname}.gii {bname}_hemi-{side}{desc}
 Sphere_surface {side}.sphere.{bname}.gii {bname}_hemi-{side}{desc}_sphere.surf.gii
 Area_shape {side}.area.{bname} {bname}_hemi-{side}{space}{desc}_area.shape.gii
 Sulc_shape {side}.sulc.{bname} {bname}_hemi-{side}{space}{desc}_sulc.shape.gii
+Curv_shape {side}.curv.{bname}                {bname}_hemi-{side}{space}{desc}_curv.shape.gii
 GMT_shape {side}.thickness.{bname} {bname}_hemi-{side}{space}{desc}_thickness.shape.gii
 PBT_shape {side}.pbt.{bname} {bname}_hemi-{side}{space}{desc}_pbt.shape.gii
 Mask_label {side}.mask.{bname} {bname}_hemi-{side}{space}_desc-cortex_mask.label.gii

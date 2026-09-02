@@ -260,7 +260,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                                 nii_ext=nii_ext)
 
     # Symbolic filename codes used by the bash function
-    codes = ("PBT_shape Area_shape Sulc_shape GMT_shape Mask_label "
+    codes = ("PBT_shape Area_shape Sulc_shape Curv_shape GMT_shape Mask_label "
              "Hemi_volume mT1_volume PPM_volume GMT_volume Mid_surface "
              "Pial_surface WM_surface Sphere_surface Spherereg_surface "
              "SphereregFsLR_surface SphereregMSM_surface "
@@ -573,6 +573,24 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 output_values_file=p(surf, "Sulc_shape"),
                 curvtype=11,
                 fwhm=0.0,
+                use_abs_values=False,
+                invert_values=True,
+            )
+        with _run_step(log, "CAT_SurfCurvature (curvtype=4, invert)", verbose=verbose):
+            # fMRIPrep's ``curv`` mirrors FreeSurfer's ?h.curv: mean curvature
+            # in mm^-1, positive in sulci.  That is curvtype 4 -- (k1+k2)/2 in
+            # radians -- and *not* curvtype 0, which is the same measure
+            # averaged over 3 mm and expressed in degrees, so ~190x larger.
+            # The 5 mm kernel tames the outliers of the raw pointwise estimate;
+            # against FreeSurfer's own curv for sub-01 this gives r = 0.95 with
+            # a near-identical distribution (sd 0.156 vs 0.166, range
+            # -0.90..1.27 vs -0.98..1.17), where the unsmoothed measure reaches
+            # r = 0.73 only.
+            cs_cli.surf_curvature(
+                surface_file=p(surf, "Mid_surface"),
+                output_values_file=p(surf, "Curv_shape"),
+                curvtype=4,
+                fwhm=5.0,
                 use_abs_values=False,
                 invert_values=True,
             )
