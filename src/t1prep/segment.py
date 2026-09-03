@@ -812,6 +812,59 @@ def _warp_to_displacement(warp_nii: nib.Nifti1Image):
     return target - source, img
 
 
+def save_deformation_spm(
+    warp_nii: nib.Nifti1Image,
+    affine_norm: np.ndarray,
+    native_img: nib.Nifti1Image,
+    out_path: str,
+) -> None:
+    """Save the T1w-to-MNI mapping as an SPM12-compatible deformation field.
+
+    ``warp_xy`` on its own is only the non-linear half of the registration, in
+    normalised ``[-1, 1]`` sampling coordinates, stored 4-D.  SPM needs all
+    three of those things different:
+
+    * the **linear stage composed in** -- without it the field lands on the
+      wrong anatomy and roughly half the brain falls outside the native image;
+    * **millimetres** in the native image's world space, not normalised
+      coordinates;
+    * a **5-D** ``[X, Y, Z, 1, 3]`` array.  ``spm_deformations:get_def`` reads
+      ``Nii.dat(:,:,:,1,:)`` and then indexes ``d(4)`` and ``d(5)``; given a 4-D
+      field that read collapses to 3-D and SPM fails with "Index exceeds the
+      number of array elements. Index must not exceed 3."
+
+    The grid stays the warp's own -- MNI space -- because SPM's
+    ``Normalise: Write`` derives its default output bounding box from the
+    deformation's geometry, and the values are the native millimetres each of
+    those output voxels pulls from.
+
+    Args:
+        warp_nii: ``warp_xy`` as returned by ``run_warp_register``.
+        affine_norm: The 4x4 normalised affine from ``run_affine_register``,
+            mapping template-space grid coordinates to native ones.
+        native_img: Image defining the native grid (``mask``).
+        out_path: Output ``.nii`` path.
+    """
+    img = nib.as_closest_canonical(warp_nii)
+    grid = np.asarray(img.dataobj, dtype=np.float64)
+    if grid.ndim == 5:
+        grid = grid[:, :, :, 0, :]
+
+    affine_norm = np.asarray(
+        affine_norm.values if hasattr(affine_norm, "values") else affine_norm,
+        dtype=np.float64,
+    )
+    # grid holds template-normalised sampling coordinates; affine_norm carries
+    # those to native-normalised ones and the native grid-to-RAS matrix to
+    # millimetres.  The warp's own grid-to-RAS cancels out of the composition
+    # that save_deformation_h5 uses, which is why it does not appear here.
+    to_mm = _normalized_grid_to_ras(nib.as_closest_canonical(native_img)) @ affine_norm
+    mm = grid @ to_mm[:3, :3].T + to_mm[:3, 3]
+
+    out = np.ascontiguousarray(mm[:, :, :, None, :], dtype=np.float32)
+    nib.save(nib.Nifti1Image(out, img.affine), out_path)
+
+
 def _resample_displacement(
     displacement: np.ndarray,
     warp_img: nib.Nifti1Image,
@@ -1536,7 +1589,9 @@ def save_results(
         # save deformation as nifti-file
         else:
             def_name = code_vars.get("Def_volume", "")
-            nib.save(warp_xy, f"{mri_dir}/{def_name}")
+            save_deformation_spm(
+                warp_xy, affine, mask, f"{mri_dir}/{def_name}"
+            )
             invdef_name = code_vars.get("invDef_volume", "")
             # nib.save(warp_yx, f"{mri_dir}/{invdef_name}")
 
