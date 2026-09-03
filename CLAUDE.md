@@ -52,6 +52,10 @@ pytest
 # Recalibrate the QA rating bounds from a processed BrainWeb Phantom set
 python scripts/qa_calibrate.py /path/to/BWP/report
 
+# Score the spherical registration against the Mindboggle-101 manual labels
+python scripts/eval_mindboggle.py project --mindboggle DIR... --t1prep DIR --work DIR
+python scripts/eval_mindboggle.py dice --work DIR --protocol both
+
 # Linting / formatting
 black src scripts
 flake8 src scripts       # or: ruff check src scripts

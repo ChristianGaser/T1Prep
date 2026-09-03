@@ -45,6 +45,7 @@ T1Prep/
 │   #                                 (alternative to `pip install T1Prep` from PyPI)
 │   ├── dice.sh                     # Dice similarity metric wrapper
 │   ├── qa_calibrate.py             # Derive QA rating bounds from BrainWeb Phantom runs
+│   ├── eval_mindboggle.py         # Spherical-registration accuracy on Mindboggle-101
 │   ├── process_longitudinal.sh     # Batch longitudinal processing
 │   ├── realign_longitudinal.sh     # Longitudinal rigid realignment
 │   ├── CAT_GrepJson                # Extract fields from JSON reports
