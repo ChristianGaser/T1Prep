@@ -211,82 +211,12 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 
 **Geometry:** the NIfTI affine (`sform`/`qform`) of both images is honoured. If `--pred` differs from `--gt` in shape, voxel size, orientation or rotation, it is resampled onto the grid of `--gt` — nearest neighbour for label maps, trilinear with `--soft` — and a note is written to stderr. Pass `--no-resample` to disable this and compare voxel-to-voxel.
 
-### `eval_mindboggle.py`
+### `eval_mindboggle.py` → moved
 
-Measures how accurately T1Prep's spherical registration aligns the cortex
-across subjects, using the manual DKT labels of [Mindboggle-101](https://mindboggle.info/data.html)
-(Klein & Tourville 2012) as ground truth. This is the public counterpart of the
-internal Buckner40/DK40 benchmark, so the resulting Dice values are directly
-comparable to the FreeSurfer / Spherical Demons / MSM numbers in the surface
-registration literature.
-
-The ground truth never passes through a second registration: Mindboggle's
-labelled surfaces and volumes share the world space of the `t1weighted.nii.gz`
-that T1Prep was run on, so the labels are attached to T1Prep's own central
-surface by nearest neighbour — a sub-millimetre geometric transfer — and only
-then carried into the group template by the sphere under test.
-
-**Data.** Only cohorts whose `*_volumes.tar.gz` you have can be evaluated:
-T1Prep needs the `t1weighted.nii.gz`, and the `SurfaceLabels_*.tar.gz` archives
-contain labelled `.vtk` surfaces and nothing else. The volumes archives carry
-`t1weighted.nii.gz` and `labels.DKT31.manual.nii.gz` together, so a cohort's
-volumes archive is self-sufficient. Extract the trees side by side and pass
-every root to `--mindboggle`.
-
-```bash
-# 1) process the T1w volumes, one output directory per subject
-for s in /data/mb/OASIS-TRT-20_volumes/*/; do
-    T1Prep --out-dir /data/mb_t1prep/$(basename "$s") "$s/t1weighted.nii.gz"
-done
-
-# 2) project every subject's manual labels into the template
-python scripts/eval_mindboggle.py project \
-    --mindboggle /data/mb/OASIS-TRT-20_surfaces /data/mb/OASIS-TRT-20_volumes \
-    --t1prep /data/mb_t1prep --work /data/mb_eval --space fsaverage
-
-# 3) score, and write the per-region rows for further analysis
-python scripts/eval_mindboggle.py dice --work /data/mb_eval \
-    --protocol both --csv /data/mb_eval/dice.csv
-```
-
-**Protocols:** `loo` builds a leave-one-out majority-vote atlas from the other
-N−1 subjects and Dices it against the held-out subject (the FreeSurfer-style
-protocol, registration plus atlas); `pairs` Dices every two subjects directly
-in template space (registration alone, as reported by SphereMorph / S3Reg /
-SUGAR); `both` runs the two.
-
-**`--labels`** picks the ground truth. `surface` (default) reads Mindboggle's
-labelled surfaces `?h.labels.DKT31.manual.vtk`; `volume` reads
-`labels.DKT31.manual.nii.gz`; `auto` prefers the surfaces and falls back to the
-volumes per subject, for cohorts that ship no `SurfaceLabels_*` archive. A run
-records which route each subject used and the report prints the split, so a
-mixed benchmark says so rather than hiding it. Prefer the surfaces: they are the primary manual
-product and the volumes are a ribbon-filled rasterisation of them. Measured on
-OASIS-TRT-20-1, recovering the surface labels from the volume costs ~4.6 % Dice
-(96.9 % of vertices agree) — the same order as the differences between
-registration methods — whereas the surface route costs 0.5–0.9 % at a realistic
-1–1.5 mm offset between T1Prep's central surface and Mindboggle's.
-
-**`--space`** selects the registration under test: `fsaverage` for
-`Spherereg_surface` (Spherical Demons onto fsaverage), `fsLR` for
-`SphereregFsLR_surface`, `msm` for `SphereregMSM_surface`. Note that the last
-one is *not* FSL's MSM — it is Spherical Demons onto the fsLR average standing
-in for MSMSulc (see `src/t1prep/fslr.py`). To score real MSM, register the same
-subjects with FSL and point `--sphere-file` at its output.
-
-**QC:** `project` prints, per subject, the median distance from each vertex to
-the nearest label — over *every* vertex, so a ground truth in the wrong space
-cannot hide behind the vertices that happen to land near something — and the
-fraction left unlabelled. On real data expect ~1.4 mm with 3 % unlabelled
-(surfaces) or ~0.5 mm with 4 % (volumes); the unlabelled remainder is the
-medial wall, which the cortex mask drops at scoring time anyway. A far median
-or more than ~15 % unlabelled is flagged `<-- CHECK SPACE` and means the
-surfaces and the ground truth are not in the same world space.
-
-Every subject ships its labels in native *and* MNI152 space, and the MNI152
-name sorts first; the script drops those (and the `+aseg` variants) unless
-`--label-glob` names them explicitly, since scoring against them would measure
-an affine misalignment rather than the registration.
+The Mindboggle-101 registration benchmark now lives in
+[`evaluation/`](../evaluation/) together with the scripts for the tools it is
+compared against (ANTs, CAT12, the affine baseline) and the results. See
+[`evaluation/README.md`](../evaluation/README.md).
 
 ### `qa_calibrate.py`
 

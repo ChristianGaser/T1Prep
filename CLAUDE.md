@@ -53,8 +53,8 @@ pytest
 python scripts/qa_calibrate.py /path/to/BWP/report
 
 # Score the spherical registration against the Mindboggle-101 manual labels
-python scripts/eval_mindboggle.py project --mindboggle DIR... --t1prep DIR --work DIR
-python scripts/eval_mindboggle.py dice --work DIR --protocol both
+python evaluation/tools/eval_mindboggle.py project --mindboggle DIR... --t1prep DIR --work DIR
+python evaluation/tools/eval_mindboggle.py dice --work DIR --protocol both
 
 # Linting / formatting
 black src scripts

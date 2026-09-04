@@ -71,32 +71,88 @@ Two caveats:
 
 ---
 
-## Surface registration — 100 subjects
+## Surface registration
 
-| space | registration | LOO | pairs |
+### All 100 subjects — T1Prep's own registrations
+
+All three are Spherical Demons; they differ only in what they target.
+
+| space | what it is | LOO | pairs |
 |---|---|---|---|
-| `fsaverage` | Spherical Demons → fsaverage | 0.8193 | 0.7438 |
-| `fsLR` | *same registration*, project-unprojected | 0.8200 | 0.7424 |
-| `msm` | independent Spherical Demons → fsLR | 0.8249 | 0.7481 |
+| **`fsaverage`** | **T1Prep's default registration** | 0.8193 | 0.7438 |
+| `fsLR` | the same result carried into the fsLR frame by a fixed project-unproject | 0.8200 | 0.7424 |
+| `msm` | a second, independent run onto the fsLR average | 0.8249 | 0.7481 |
 
-`fsLR` performs no registration of its own — it is a fixed barycentric remap of
-the fsaverage result — so it serves as a control: it isolates what changing the
-template mesh costs (nothing, ±0.001), which is what makes `msm` vs `fsLR` the
-only clean registration comparison here (+0.005 [+0.004, +0.006]).
+`fsLR` performs no registration of its own, so it is a control: it isolates
+what changing the template mesh costs (nothing, ±0.001), which makes `msm` vs
+`fsLR` the only comparison of the three where the registration actually
+differs (+0.005 [+0.004, +0.006]).  The `msm` name is the BIDS
+`desc-msmsulc` entity T1Prep writes so fMRIPrep skips its own MSMSulc step --
+it is not an MSM-derived method.
 
-`msm` is **not** FSL's MSM; it is Spherical Demons onto the fsLR average
-standing in for MSMSulc. All three agree within 0.006 Dice.
+`NKI-RS-22-16` is excluded: its right-hemisphere labelled surface sits ~40 mm
+from its own anatomy.  Mindboggle's own `label-issues_201903.txt`
+independently lists that subject as defective.
 
-Surface Dice exceeds volume Dice substantially (0.819 vs 0.729 LOO), which
-reproduces Klein & Ghosh 2010. Read the direction, not the exact difference:
-vertex Dice on a surface and voxel Dice on a filled ribbon are different
-measurements on different supports.
+### 20-subject subset — T1Prep vs FSL newMSM
 
-`NKI-RS-22-16` is excluded from the surface arms: its right-hemisphere labelled
-surface sits ~40 mm from its own anatomy. Mindboggle's own
-`label-issues_201903.txt` independently lists that subject as defective.
+Same subjects as the volume comparison, so the two are directly comparable.
 
----
+| arm | registration | target | LOO | pairs | time / hemisphere |
+|---|---|---|---|---|---|
+| **`fsaverage`** | **T1Prep default: Spherical Demons → fsaverage** | fsaverage 32k | **0.8154** | **0.7454** | seconds |
+| `fsavg164k` | *the same registration*, scored at 164k | fsaverage 164k | 0.8158 | 0.7436 | — |
+| **`newmsm`** | **FSL newMSM, fMRIPrep's MSMSulc config** | fs_LR 164k | **0.7317** | **0.6405** | ~4 min |
+
+T1Prep also writes two further spheres, neither of which is a different
+algorithm from the default -- both are Spherical Demons, and they are included
+only to show that the choice of target costs almost nothing:
+
+| arm | what it actually is | LOO | pairs |
+|---|---|---|---|
+| `fsLR` | the fsaverage registration carried into the fsLR frame by a fixed project-unproject -- no new registration at all | 0.8162 | 0.7444 |
+| `msm` | a second, independent Spherical Demons run, this time onto the fsLR average | 0.8199 | 0.7485 |
+
+The `msm` name is a filename convention, not an algorithm: T1Prep writes that
+sphere under the BIDS entity `desc-msmsulc` so that fMRIPrep finds it and skips
+its own MSMSulc step.  Nothing in it derives from MSM.
+
+Paired differences (mean, 95 % CI):
+
+| comparison | LOO | pairs |
+|---|---|---|
+| fsaverage @164k − @32k (**mesh control**) | +0.0004 [−0.0004, +0.0013] | −0.0018 [−0.0020, −0.0015] |
+| **newMSM − T1Prep default** (both at 164k) | **−0.0841** [−0.0912, −0.0771] | **−0.1031** [−0.1059, −0.1003] |
+| T1Prep onto fsLR − T1Prep carried to fsLR | +0.0037 [+0.0013, +0.0061] | +0.0041 [+0.0032, +0.0050] |
+
+**The mesh control matters.** newMSM targets the 164k fs_LR sphere while the
+default arm scores on a 32k mesh, so the comparison could have been an
+artifact of vertex density.  Scoring the *same* registration at 164k moves it
+by ±0.002 -- so the newMSM gap is real, not a measurement effect.
+
+### Reading the newMSM result
+
+newMSM is run exactly as sMRIPrep runs MSMSulc: the config
+(`MSMSulcStrainFinalconf`) and both reference files are copied verbatim from
+sMRIPrep, and the four preprocessing steps (affine regression onto the
+fsLR-registered sphere, apply, re-sphere to radius 100, **invert sulc**) are
+reproduced.  So this is what fMRIPrep's surface registration achieves on this
+benchmark -- not a mis-tuned MSM.
+
+The gap is nevertheless expected rather than surprising.  MSMSulc is a
+deliberately conservative, strain-regularised *refinement*: it is meant to
+improve an already-aligned sphere without introducing areal distortion, and
+`MSMSulcStrainFinalconf` limits it to 15 iterations at the finest level with a
+strain penalty.  Spherical Demons optimises folding alignment far harder.  On
+a fold-defined parcellation like DKT that difference shows up directly, and
+the ordering (Spherical Demons > MSM) reproduces what the literature reports:
+0.786 vs 0.766 in Zhao's pediatric comparison, and 0.881 vs 0.872 in the
+SphereMorph table.
+
+Cortical-parcel Dice is not the criterion MSMSulc is optimised for, so this
+number should not be read as "MSM is a worse algorithm" -- it says that for
+carrying fold-defined labels between subjects, T1Prep's default registration
+is substantially better than what fMRIPrep currently does on the surface.
 
 ## Comparison with published numbers
 
@@ -130,6 +186,12 @@ reporting shooting ahead of DARTEL and of Klein 2009's best on both datasets.
 * Data: Mindboggle-101, CC-BY (Klein & Tourville 2012).
 * ANTs 2.6.5 (macOS ARM64 binaries), `antsRegistration` + `antsApplyTransforms`.
 * CAT12 via `cat_batch_cat.sh -ns -p 4` (geodesic shooting, surfaces skipped).
+* FSL newMSM built against FSL 6.0.7.23; config and reference surfaces copied
+  verbatim from sMRIPrep (`tools/msm_data/`).  On macOS the build needs
+  `$FSLDIR/bin/make` (Apple ships GNU Make 3.81, which cannot parse the
+  `define VAR =` syntax in FSL's `rules.mk` and silently generates no compile
+  rules) and libomp via `USRCXXFLAGS`/`USRLDFLAGS` -- see
+  `tools/build_newmsm.sh`.
 * T1Prep deformations are the SPM-format `y_*.nii` (5-D, native mm, affine and
   non-linear composed).
 * Per-region, per-comparison Dice for every arm is in `d20_*.csv`.
