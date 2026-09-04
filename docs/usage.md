@@ -42,6 +42,17 @@ Longitudinal / advanced flags:
 Segmentation refinement:
 - `--no-vessel`: disable the blood-vessel correction.
 
+Deformation fields:
+- `--save-h5`: additionally save the T1w↔MNI152NLin2009cAsym deformations as
+  ANTs/ITK composite HDF5 files (`y_*.h5`, `iy_*.h5`), next to the NIfTI `y_`
+  field. The composites are what `antsApplyTransforms` and `nitransforms`
+  consume, and unlike `--fmriprep` this does not switch the run to fMRIPrep
+  output mode. Requires the `nitransforms` package.
+
+  The NIfTI `y_*.nii` written by default is an SPM12-compatible deformation
+  (5-D `[X, Y, Z, 1, 3]`, native millimetres, affine and non-linear stages
+  composed), so it can be passed straight to SPM's *Normalise: Write*.
+
 Robustness:
 - `--retry`: retry a failed processing step once. By default, if segmentation or surface
   estimation fails for a subject it is reported as an error straight away.
