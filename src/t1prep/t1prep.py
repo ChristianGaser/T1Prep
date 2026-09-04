@@ -138,6 +138,7 @@ def _build_segment_cmd(
     save_csf: bool = False,
     save_lesions: bool = False,
     save_fmriprep: bool = False,
+    save_h5: bool = False,
     use_amap: bool = False,
     use_bids: bool = False,
     gz: bool = False,
@@ -171,6 +172,7 @@ def _build_segment_cmd(
     flag("--p",               save_p)
     flag("--gz",              gz)
     flag("--save-fmriprep",   save_fmriprep)
+    flag("--save-h5",         save_h5)
     flag("--lesions",         save_lesions)
     flag("--bids",            use_bids)
     flag("--verbose",         verbose)
@@ -292,6 +294,7 @@ def _process_single(
     bids: bool = False,
     correct_folding: bool = True,
     fmriprep: bool = False,
+    save_h5: bool = False,
     debug: bool = False,
     verbose: bool = True,
     initial_surf: str = "",
@@ -376,6 +379,7 @@ def _process_single(
             save_csf=csf,
             save_lesions=lesions,
             save_fmriprep=fmriprep,
+            save_h5=save_h5,
             use_amap=amap,
             use_bids=bids,
             gz=gz,
@@ -544,6 +548,7 @@ def run_t1prep(
     lesions: bool = False,
     amap: bool = False,
     fmriprep: bool = False,
+    save_h5: bool = False,
     # fast mode
     fast: bool = False,
     # misc
@@ -720,6 +725,7 @@ def run_t1prep(
             bids=bool(bids),
             correct_folding=not no_correct_folding,
             fmriprep=bool(fmriprep),
+            save_h5=bool(save_h5),
             debug=bool(debug),
             verbose=bool(verbose),
             initial_surf=str(initial_surf) if initial_surf else "",
@@ -780,6 +786,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Save hemispheric (lh/rh) partitions of the label map")
     g.add_argument("--lesions", action="store_true",
                    help="Save WMH lesion maps")
+    g.add_argument("--save-h5", action="store_true",
+                   help="Also save the T1w<->MNI deformations as ANTs/ITK "
+                        "composite .h5 files next to the NIfTI y_ field.")
     g.add_argument("--fmriprep", action="store_true",
                    help="Save fMRIPrep-compatible outputs")
     g.add_argument("--fast", action="store_true",
@@ -883,6 +892,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         lesions=args.lesions,
         amap=args.amap,
         fmriprep=args.fmriprep,
+        save_h5=args.save_h5,
         fast=args.fast,
         debug=args.debug,
         verbose=args.verbose,

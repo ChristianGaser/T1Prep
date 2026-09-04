@@ -425,6 +425,15 @@ def parse_arguments() -> argparse.Namespace:
         "--lesions", action="store_true", help="Save also WMH lesion maps (if available)."
     )
     parser.add_argument(
+        "--save-h5",
+        action="store_true",
+        help=(
+            "Save the T1w<->MNI deformations as ANTs/ITK composite HDF5 "
+            "(.h5) files alongside the NIfTI y_ field, without switching the "
+            "run to fMRIPrep output mode.  Requires the nitransforms package."
+        ),
+    )
+    parser.add_argument(
         "--save-fmriprep",
         action="store_true",
         help=(
@@ -1144,6 +1153,7 @@ def save_results(
     save_lesions: bool,
     save_csf: bool,
     save_fmriprep: bool,
+    save_h5: bool,
     verbose: bool,
     count: int,
     end_count: int,
@@ -1488,7 +1498,7 @@ def save_results(
                 # nib.save(wp3, f"{mri_dir}/{csf_name}")
 
 
-        if save_fmriprep:
+        if save_fmriprep or save_h5:
             # save deformation as fMRIPrep-compatible h5-file.  ``Def_h5_volume``
             # is the T1w-to-MNI direction (CAT12's ``y_``) and is built from
             # warp_xy, which maps template points back onto the subject;
@@ -1526,6 +1536,7 @@ def save_results(
                     template_displacement=nib.load(disp_path),
                 )
 
+        if save_fmriprep:
             # T1w <-> fsnative.  T1Prep reconstructs its surfaces directly on
             # the preprocessed T1w grid and has no separate FreeSurfer
             # conformed space, so both directions are the identity.  (This is
@@ -1587,7 +1598,7 @@ def save_results(
             )
 
         # save deformation as nifti-file
-        else:
+        if not save_fmriprep:
             def_name = code_vars.get("Def_volume", "")
             save_deformation_spm(
                 warp_xy, affine, mask, f"{mri_dir}/{def_name}"
@@ -1743,6 +1754,7 @@ def run_segment():
     save_lesions = args.lesions
     save_hemilabel = args.surf
     save_fmriprep = args.save_fmriprep
+    save_h5 = args.save_h5
 
     # Check for GPU support
     device, no_gpu = setup_device()
@@ -2058,6 +2070,7 @@ def run_segment():
         save_lesions,
         save_csf,
         save_fmriprep,
+        save_h5,
         verbose,
         count,
         end_count,

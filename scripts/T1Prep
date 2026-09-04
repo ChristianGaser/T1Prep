@@ -220,6 +220,9 @@ parse_args()
         long_data=$optarg
         shift
         ;;
+      --save-h5*)
+        save_h5=1
+        ;;
       --fmriprep)
         fmriprep=1
         use_bids_naming=1
@@ -714,6 +717,7 @@ process()
       [ "${save_p}" -eq 1 ] && cmd+=" --p"
       [ "${nii_ext}" == "nii.gz" ] && cmd+=" --gz"
       [ "${fmriprep}" -eq 1 ] && cmd+=" --save-fmriprep"
+      [ "${save_h5:-0}" -eq 1 ] && cmd+=" --save-h5"
       [ "${save_lesions}" -eq 1 ] && cmd+=" --lesions"
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
       [ "${multi}" -ne -2 ] && cmd+=" --verbose"
@@ -1063,6 +1067,11 @@ ${BOLD}${GREEN}Save Options:${NC}
 
   --no-overwrite <STRING>     
       Prevent overwriting existing results by checking for the given filename pattern.
+
+  --save-h5
+      Additionally save the T1w<->MNI152NLin2009cAsym deformations as
+      ANTs/ITK composite HDF5 (.h5) files, next to the NIfTI y_ field.
+      Useful for antsApplyTransforms or nitransforms outside fMRIPrep.
 
   --fmriprep
       Save fMRIPrep-compatible results:
