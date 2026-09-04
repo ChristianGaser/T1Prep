@@ -85,6 +85,10 @@ class NameTable:
                     continue
                 self._rows[parts[0]] = parts
 
+    def codes(self) -> list:
+        """Every symbolic code defined in the table."""
+        return list(self._rows)
+
     def pattern(self, code: str, column: int) -> str:
         row = self._rows.get(code)
         if row is None or column >= len(row):
