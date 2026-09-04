@@ -356,6 +356,115 @@ def _assemble(source: np.ndarray, dist: np.ndarray, idx: np.ndarray,
     return native, qc
 
 
+def warp_labels_to_mni(label_file: Path, def_file: Path) -> tuple:
+    """Resample a native label volume into MNI with T1Prep's deformation.
+
+    ``y_*.nii`` is SPM's pull convention: defined on the MNI grid, holding for
+    each output voxel the native millimetres it samples from.  Labels are
+    categorical, so the lookup is nearest neighbour.
+
+    Returns:
+        Tuple of the MNI-grid label array and the grid's affine.
+    """
+    y = nib.load(str(def_file))
+    if y.ndim != 5 or y.shape[3] != 1 or y.shape[4] != 3:
+        raise ValueError(
+            f"{def_file} is {y.shape}; expected a 5-D [X,Y,Z,1,3] SPM "
+            "deformation.  Runs before the y_ fix wrote a 4-D field holding "
+            "normalised coordinates and only the non-linear half of the "
+            "transform -- those subjects have to be reprocessed."
+        )
+    mm = np.asanyarray(y.dataobj)[:, :, :, 0, :].reshape(-1, 3)
+    img = nib.load(str(label_file))
+    data = np.asanyarray(img.dataobj).astype(np.int32)
+    # SPM leaves the deformation undefined outside the field of view and
+    # writes NaN there -- CAT12's fields are ~5 % NaN.  Rounding those to int
+    # yields arbitrary indices, so they have to be dropped before the lookup.
+    finite = np.isfinite(mm).all(axis=1)
+    safe = np.where(finite[:, None], mm, 0.0)
+    vox = np.rint(
+        nib.affines.apply_affine(np.linalg.inv(img.affine), safe)
+    ).astype(int)
+    inside = finite & np.all((vox >= 0) & (vox < np.array(data.shape)), axis=1)
+    out = np.zeros(len(vox), dtype=np.int32)
+    out[inside] = data[vox[inside, 0], vox[inside, 1], vox[inside, 2]]
+    return out.reshape(y.shape[:3]), y.affine
+
+
+def cmd_project_volume(args: argparse.Namespace) -> int:
+    """Warp every subject's manual labels into MNI with the volume warp.
+
+    The output is the same per-subject label vector the surface path caches,
+    so ``dice`` scores both with identical code -- but note that voxel Dice on
+    a filled ribbon and vertex Dice on a surface are different measurements,
+    comparable across volume methods rather than against the surface numbers.
+    """
+    subjects = sorted(p.name for p in Path(args.t1prep).iterdir() if p.is_dir())
+    if args.subjects:
+        subjects = [s for s in subjects if s in set(args.subjects)]
+    out_dir = Path(args.work) / args.out_space
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = Path(args.work) / f"manifest_{args.out_space}.json"
+    manifest = {"space": args.out_space,
+                "sphere": "identity" if args.preresampled else args.def_glob,
+                "labels": "volume",
+                "max_dist_mm": 0.0, "subjects": {}}
+    prior = {}
+    if manifest_path.exists() and not args.fresh:
+        prior = json.loads(manifest_path.read_text()).get("subjects", {})
+
+    shape = None
+    for n, subject in enumerate(subjects, 1):
+        try:
+            labels = find_labels(args.mindboggle, subject, args.label_glob
+                                 or LABEL_PATTERNS["volume"])
+            if args.preresampled:
+                # Labels already in the target space -- an affine baseline, or
+                # any other tool's normalisation scored through this same
+                # protocol.  Every subject must share one grid.
+                img = nib.load(str(labels))
+                mni = np.asanyarray(img.dataobj).astype(np.int32)
+            else:
+                defs = sorted((Path(args.t1prep) / subject).glob(
+                    f"*/{args.def_glob}")) or sorted(
+                    (Path(args.t1prep) / subject).glob(args.def_glob))
+                if not defs:
+                    raise FileNotFoundError(
+                        f"no {args.def_glob} for {subject}")
+                mni, _ = warp_labels_to_mni(labels, defs[0])
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[{n}/{len(subjects)}] {subject}: skipped — {exc}",
+                  file=sys.stderr, flush=True)
+            continue
+        if shape is None:
+            shape = mni.shape
+        elif mni.shape != shape:
+            print(f"[{n}/{len(subjects)}] {subject}: skipped — grid "
+                  f"{mni.shape} differs from {shape}", file=sys.stderr)
+            continue
+        per_hemi = {}
+        for fshemi in ("lh", "rh"):
+            base = HEMI_CODE_BASE[fshemi]
+            off = np.where((mni >= base + 1) & (mni < base + 1000),
+                           mni - base, 0).astype(np.int32)
+            np.save(out_dir / f"{subject}_{fshemi}.npy", off.ravel())
+            per_hemi[fshemi] = {
+                "n_vertices": int(off.size),
+                "frac_unlabelled": float((off == 0).mean()),
+                "median_dist_mm": 0.0, "p95_dist_mm": 0.0, "route": "volume",
+            }
+        manifest["subjects"][subject] = per_hemi
+        print(f"[{n}/{len(subjects)}] {subject}: "
+              f"{int((mni > 0).sum())} labelled voxels", flush=True)
+
+    fresh_count = len(manifest["subjects"])
+    manifest["subjects"] = {**prior, **manifest["subjects"]}
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    print(f"\nprojected {fresh_count} subjects -> {out_dir}")
+    return 0
+
+
 def native_to_template(native: np.ndarray, mid: Path, sphere: Path,
                        template_sphere: Path) -> np.ndarray:
     """Resample native-mesh labels onto the template mesh.
@@ -533,6 +642,15 @@ def cmd_dice(args: argparse.Namespace) -> int:
         raise SystemExit(f"{manifest_path} not found — run `project` first")
     manifest = json.loads(manifest_path.read_text())
     subjects = sorted(manifest["subjects"])
+    if args.subjects:
+        # Restricting every arm to one subject list is how a method compared
+        # on a subset stays comparable with one run over everything.
+        wanted = set(args.subjects)
+        missing = wanted - set(subjects)
+        if missing:
+            raise SystemExit(
+                f"not in {manifest_path.name}: " + ", ".join(sorted(missing)))
+        subjects = [s for s in subjects if s in wanted]
     in_dir = Path(args.work) / args.space
 
     tmpl_root = Path(args.data_dir) if args.data_dir else DATA_PATH_T1PREP
@@ -681,15 +799,41 @@ def main(argv: list[str] | None = None) -> int:
                    help="ignore any cached manifest instead of topping it up")
     p.set_defaults(func=cmd_project)
 
+    v = sub.add_parser("project-volume",
+                       help="manual labels -> MNI via the volume warp")
+    v.add_argument("--mindboggle", required=True, nargs="+")
+    v.add_argument("--t1prep", required=True,
+                   help="root holding one T1Prep output directory per subject")
+    v.add_argument("--work", required=True)
+    v.add_argument("--def-glob", default="y_*.nii",
+                   help="the SPM deformation inside the subject's output "
+                        "(default y_*.nii, searched one level down too)")
+    v.add_argument("--label-glob",
+                   help="override the manual label volume name")
+    v.add_argument("--subjects", nargs="+")
+    v.add_argument("--fresh", action="store_true")
+    v.add_argument("--preresampled", action="store_true",
+                   help="the label volumes are already in the target space "
+                        "(no warp applied) -- for an affine baseline, or for "
+                        "scoring another tool's normalisation")
+    v.add_argument("--out-space", default="mni",
+                   help="name for this cache/manifest (default: mni)")
+    v.set_defaults(func=cmd_project_volume)
+
     d = sub.add_parser("dice", help="score the projected labels")
     d.add_argument("--work", required=True)
-    d.add_argument("--space", default="fsaverage", choices=sorted(SPACES))
+    d.add_argument("--space", default="fsaverage",
+                   help="fsaverage/fsLR/msm for the surface spaces, or the "
+                        "--out-space name a volume projection used")
     d.add_argument("--protocol", default="loo",
                    choices=("loo", "pairs", "both"))
     d.add_argument("--csv", help="write the long-format per-region rows here")
     d.add_argument("--max-pairs", type=int, default=0,
                    help="subsample the pairwise protocol (0 = all pairs)")
     d.add_argument("--seed", type=int, default=0)
+    d.add_argument("--subjects", nargs="+",
+                   help="score only these subjects (use the same list across "
+                        "arms when comparing methods on a subset)")
     d.add_argument("--no-cortex-mask", dest="cortex_mask",
                    action="store_false",
                    help="score the medial wall too (default: exclude it)")
