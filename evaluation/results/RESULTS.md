@@ -92,6 +92,41 @@ number should not be read as "MSM is a worse algorithm" -- it says that for
 carrying fold-defined labels between subjects, T1Prep's default registration
 is substantially better than what fMRIPrep currently does on the surface.
 
+---
+
+## Distributions
+
+![Dice distributions per method](dice_boxplots.png)
+
+The means in the tables above summarise wide distributions, and the boxplots
+change how several of them should be read.
+
+**The spread within a method dwarfs the differences between methods.** Every
+non-linear arm has an interquartile range about 0.10 wide (LOO) or 0.13
+(pairs), while the means separate by 0.01-0.03.  Which region is being measured
+matters far more than which of these methods produced the registration -- the
+ranking is a statement about averages over many regions, not a prediction for
+any single parcel.
+
+**Affine is not merely lower, it is a different kind of distribution.** Its
+pairwise IQR spans 0.000-0.526 -- more than a quarter of region-pairs get
+essentially *no* overlap from an affine alignment -- against 0.52-0.66 for
+ANTs.  69 % of its pairwise values fall below 0.5, versus 10-19 % for the
+non-linear methods.  That is the gap the non-linear step actually closes.
+
+**newMSM is both lower and less consistent than T1Prep on the surface.** Its
+IQR is half again as wide (0.199 vs 0.129 for pairs) and its lower whisker
+reaches 0.27 where T1Prep's stops at 0.51; 17.3 % of its values fall below 0.5
+against T1Prep's 4.6 %.  The mean difference understates it -- the two are
+closest on the regions that are easy for both.
+
+**The volume arms overlap heavily.** ANTs, T1Prep and CAT12 have visually
+similar boxes, consistent with paired differences of 0.012-0.028.  Their
+ordering is reliable -- the paired intervals exclude zero -- but no visible
+difference should be expected on any one subject.
+
+Regenerate with `tools/plot_dice.py`.
+
 ## Comparison with published numbers
 
 Published volume-registration results are not directly comparable, for three

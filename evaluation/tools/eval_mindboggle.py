@@ -692,21 +692,28 @@ def cmd_dice(args: argparse.Namespace) -> int:
                                            tmpl_root)]
 
         n, v = labels.shape
-        if args.protocol in ("loo", "both"):
+        wants = {"loo", "atlas"} & (
+            {"loo", "atlas"} if args.protocol == "both" else {args.protocol})
+        if wants:
             counts = np.zeros((k, v), dtype=np.int32)
             cols = np.arange(v)
             for i in range(n):
                 counts[labels[i], cols] += 1
             for i, subject in enumerate(subjects):
-                left = counts.copy()
-                left[labels[i], cols] -= 1
-                left[0] = -1          # never let "unlabelled" win the vote
-                pred = left.argmax(0).astype(np.int16)
-                dice = _dice_from_confusion(pred, labels[i], k)
-                for j, off in enumerate(DKT_OFFSETS, 1):
-                    if np.isfinite(dice[j]):
-                        rows.append(("loo", subject, "", fshemi,
-                                     names[off], float(dice[j])))
+                for protocol in sorted(wants):
+                    left = counts.copy()
+                    if protocol == "loo":
+                        # Without this the subject votes for the answer it is
+                        # then scored against, which flips exactly the split
+                        # vertices that discriminate between registrations.
+                        left[labels[i], cols] -= 1
+                    left[0] = -1      # never let "unlabelled" win the vote
+                    pred = left.argmax(0).astype(np.int16)
+                    dice = _dice_from_confusion(pred, labels[i], k)
+                    for j, off in enumerate(DKT_OFFSETS, 1):
+                        if np.isfinite(dice[j]):
+                            rows.append((protocol, subject, "", fshemi,
+                                         names[off], float(dice[j])))
 
         if args.protocol in ("pairs", "both"):
             pairs = list(combinations(range(n), 2))
@@ -764,7 +771,7 @@ def report(rows: list[tuple], space: str, manifest: dict) -> None:
                 print(f"    {region:<28s} {m:.4f}"
                       f"  (sd {np.std(per_region[region]):.4f})")
 
-        if protocol == "loo":
+        if protocol in ("loo", "atlas"):
             # A subject well below the rest is usually a failed surface, not
             # a hard anatomy, so name the worst few for inspection.
             per_subject: dict[str, list[float]] = {}
@@ -861,7 +868,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="fsaverage/fsLR/msm for the surface spaces, or the "
                         "--out-space name a volume projection used")
     d.add_argument("--protocol", default="loo",
-                   choices=("loo", "pairs", "both"))
+                   choices=("loo", "atlas", "pairs", "both"),
+                   help="'loo' leaves the subject out of the majority-vote "
+                        "atlas; 'atlas' includes it (every subject scored "
+                        "against one atlas built from all of them); 'pairs' "
+                        "uses no atlas at all.  'both' runs loo and pairs")
     d.add_argument("--csv", help="write the long-format per-region rows here")
     d.add_argument("--max-pairs", type=int, default=0,
                    help="subsample the pairwise protocol (0 = all pairs)")

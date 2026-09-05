@@ -106,4 +106,5 @@ normalisation can be dropped into the same comparison.
 | `gen_fslr_msm_spheres.py` | fsLR and msmsulc spheres from an existing run |
 | `build_newmsm.sh` | build FSL newMSM on macOS |
 | `run_newmsm.py` | newMSM as sMRIPrep runs MSMSulc |
+| `plot_dice.py` | boxplots of the Dice distributions behind the means |
 | `msm_data/` | sMRIPrep's MSM config and reference surfaces, verbatim |
