@@ -139,7 +139,14 @@ Runs any Python script with the T1Prep virtual environment automatically activat
 
 ### `process_longitudinal.sh`
 
-Batch helper for longitudinal studies. Groups time-point scans by subject, runs inverse-consistent rigid realignment, then invokes T1Prep on each time point.
+Batch helper for longitudinal studies. Groups time-point scans by subject, runs inverse-consistent rigid realignment, optionally estimates the non-linear between-scan change, then invokes T1Prep on each time point.
+
+`--long-model` selects the model, following CAT12's naming:
+
+| model | what it does |
+|---|---|
+| `plasticity` (default) | Rigid realignment only. Assumes the anatomy itself is unchanged between scans; appropriate for short intervals. |
+| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average. Adds a few seconds per subject. |
 
 ```bash
 # Process time points for a single subject
@@ -151,6 +158,12 @@ Batch helper for longitudinal studies. Groups time-point scans by subject, runs 
 ./scripts/process_longitudinal.sh \
     --out-dir /path/to/output \
     --t1prep-arg "--no-surf" \
+    /path/to/tp1.nii.gz /path/to/tp2.nii.gz
+
+# Ageing model: also estimate the non-linear between-scan change
+./scripts/process_longitudinal.sh \
+    --out-dir /path/to/output \
+    --long-model ageing \
     /path/to/tp1.nii.gz /path/to/tp2.nii.gz
 
 # Dry run (show what would be executed)
@@ -176,6 +189,29 @@ Wrapper around the Python module `t1prep.realign_longitudinal`. Performs inverse
     --out-dir /path/to/output \
     --sample-strategy gradient
 ```
+
+### `warp_longitudinal.sh`
+
+Wrapper around the Python module `t1prep.warp_longitudinal`. Estimates one
+small, smooth, diffeomorphic deformation per time point towards an unbiased
+subject average -- the non-linear half of CAT12's ageing model, and what
+`process_longitudinal.sh --long-model ageing` calls. Run it on volumes that
+`realign_longitudinal.sh` has already rigidly aligned.
+
+```bash
+./scripts/warp_longitudinal.sh \
+    --inputs scan1.nii.gz scan2.nii.gz \
+    --out-dir /path/to/output --save-template
+```
+
+Per time point it writes `<stem>_desc-longLogJacobian.nii[.gz]`, the log volume
+ratio against the subject average -- the map longitudinal VBM runs statistics
+on. `--save-displacement` adds the RAS displacement field in mm, and `--apply`
+writes the time point resampled onto the average.
+
+Key options: `--control-spacing` (12 mm; larger is stiffer),
+`--regularisation` (0.05; 0 disables the membrane prior),
+`--resolution` (1.5 mm working grid) and `--max-step-mm`.
 
 ---
 

@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 REALIGN_SCRIPT="$SCRIPT_DIR/realign_longitudinal.sh"
+WARP_SCRIPT="$SCRIPT_DIR/warp_longitudinal.sh"
 T1PREP_CMD="$SCRIPT_DIR/T1Prep"
 
 # We run with nounset, but utils.sh is shared with scripts that don't.
@@ -19,11 +20,16 @@ USE_AMAP=0
 OUT_DIR=""
 DRY_RUN=0
 DEBUG=0
+# Which longitudinal model to apply, following CAT12's naming:
+#   plasticity - rigid only; the anatomy is assumed unchanged between scans
+#   ageing     - rigid, then a small low-dimensional non-linear deformation
+LONG_MODEL="plasticity"
 
 declare -a T1PREP_ARGS=()
 declare -a TIMEPOINT_ORDER=()
 declare -a TIMEPOINT_DATA=()
 declare -a REALIGN_ARGS=()
+declare -a WARP_ARGS=()
 declare -a SUBJECT_IDS=()
 declare -a INPUT_PATHS=()
 INPUT_MODE=""
@@ -57,9 +63,19 @@ Batch longitudinal processing.
 Usage:
     scripts/process_longitudinal.sh \
         [--out-dir /path/to/output-or-dataset-root] \
+        [--long-model plasticity|ageing] \
         [--t1prep-arg "--flag"] \
-        [--realign-arg "--some-option"] [--dry-run] \
+        [--realign-arg "--some-option"] [--warp-arg "--some-option"] [--dry-run] \
         /path/to/tp1.nii.gz /path/to/tp2.nii.gz [...]
+
+Longitudinal models (CAT12 naming):
+    plasticity  (default) Rigid realignment only. Assumes the anatomy itself is
+                unchanged between scans -- appropriate for short intervals.
+    ageing      Rigid realignment, then a small low-dimensional diffeomorphic
+                deformation of each time point towards an unbiased subject
+                average. Writes '<stem>_desc-longLogJacobian.nii[.gz]' per time
+                point -- the log volume ratio against the average -- plus
+                'longitudinal_average.nii[.gz]'. Adds a few seconds per subject.
 
 Notes:
     - If inputs are NIfTI files: treated as time points for a single subject.
@@ -68,6 +84,7 @@ Notes:
     - If --t1prep-arg is omitted, only the realignment step is performed.
     - Time points are taken in the given order.
     - Additional arguments can be supplied via repeated --*-arg flags.
+    - --warp-arg is only used when --long-model ageing is selected.
     - If --out-dir is omitted, the output folder is derived like scripts/T1Prep.
 USAGE
 }
@@ -86,6 +103,24 @@ parse_args() {
             --realign-arg)
                 shift || die "--realign-arg needs a value"
                 REALIGN_ARGS+=("$1")
+                ;;
+            --warp-arg)
+                shift || die "--warp-arg needs a value"
+                WARP_ARGS+=("$1")
+                ;;
+            --long-model)
+                shift || die "--long-model requires a value"
+                case "$1" in
+                    plasticity)
+                        LONG_MODEL="plasticity"
+                        ;;
+                    ageing|aging)
+                        LONG_MODEL="ageing"
+                        ;;
+                    *)
+                        die "--long-model must be 'plasticity' or 'ageing' (got: $1)"
+                        ;;
+                esac
                 ;;
             --dry-run)
                 DRY_RUN=1
@@ -161,6 +196,9 @@ validate_inputs() {
     fi
 
     [[ -x "$REALIGN_SCRIPT" ]] || die "Realignment script not executable: $REALIGN_SCRIPT"
+    if [[ "$LONG_MODEL" == "ageing" ]]; then
+        [[ -x "$WARP_SCRIPT" ]] || die "Warp script not executable: $WARP_SCRIPT"
+    fi
 
     read_timepoint_to_array "${TIMEPOINT_DATA[0]}"
     SUBJECT_COUNT=${#READ_TIMEPOINT_RESULT[@]}
@@ -190,11 +228,13 @@ run_step() {
 }
 
 process_subjects() {
-    echo ${BOLD}${RED}
+    # T1Prep_utils.sh only defines the colour variables when stdout is a TTY,
+    # so under `set -u` a piped or logged run would abort here.
+    echo "${BOLD:-}${RED:-}"
     echo -----------------------------------------------------------------------------------
     echo This code is still experimental and not yet optimized for VBM!
     echo -----------------------------------------------------------------------------------
-    echo ${NC}
+    echo "${NC:-}"
     
     for ((idx = 0; idx < SUBJECT_COUNT; idx++)); do
         local -a subject_tp_paths=()
@@ -252,6 +292,28 @@ process_subjects() {
             fi
         done
         run_step "${REALIGN_SCRIPT}" --use-skullstrip --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "./" --out-subfolders "${realign_subfolders[@]}" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
+
+        # Ageing model: the rigid stage above removes position, but an ageing
+        # brain also changes shape between scans.  Estimate that residual as one
+        # small low-dimensional diffeomorphism per time point towards an
+        # unbiased subject average, and keep its log Jacobian -- the per-voxel
+        # log volume ratio that longitudinal VBM runs statistics on.
+        #
+        # This only writes the deformations and their Jacobians alongside the
+        # realigned volumes.  It deliberately does not redirect what T1Prep is
+        # given below: warping a time point onto the average would make its
+        # segmentation and surfaces describe the average anatomy rather than
+        # that time point's own.  Pass --warp-arg --apply to also write the
+        # warped volumes.
+        if [[ "$LONG_MODEL" == "ageing" ]]; then
+            local -a realigned_paths=()
+            for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
+                realigned_paths+=("${realign_subfolders[$tp_idx]}/$(basename "${subject_tp_paths[$tp_idx]}")")
+            done
+            run_step "${WARP_SCRIPT}" --inputs "${realigned_paths[@]}" --out-dir "./" \
+                --out-subfolders "${realign_subfolders[@]}" --save-template \
+                "${WARP_ARGS[@]+"${WARP_ARGS[@]}"}"
+        fi
 
         # Compute Mid_surface filename for the first timepoint to use as initial surface
         local first_tp_path="${subject_tp_paths[0]}"
