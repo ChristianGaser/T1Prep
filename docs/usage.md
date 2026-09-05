@@ -10,6 +10,7 @@ other tools see [viewers.md](viewers.md) and [tools.md](tools.md).
 - [Output folder structure and naming](#output-folder-structure-and-naming-conventions)
 - [Examples](#examples)
 - [Longitudinal realignment](#longitudinal-realignment-experimental)
+- [Longitudinal models](#longitudinal-models)
 - [Input](#input)
 
 Back to the [README](../README.md).
@@ -218,6 +219,46 @@ New tuning flags in the Python realigner:
 - `--no-intensity-scale`: disable SPM-like global intensity scaling.
 - `--overlap-penalty-weight <FLOAT>`: penalize samples that fall outside the moving FOV.
 - `--sample-strategy {grid,gradient}`: choose deterministic grid or edge-biased gradient sampling.
+
+### Longitudinal models
+
+`scripts/process_longitudinal.sh --long-model` selects how much of the
+between-scan difference is modelled, following CAT12's naming:
+
+- `plasticity` (default): rigid realignment only. The anatomy itself is assumed
+  unchanged between scans, which is appropriate for short intervals.
+- `ageing`: rigid realignment, then one small low-dimensional diffeomorphic
+  deformation per time point towards an unbiased subject average.
+
+The ageing model is a stationary velocity field stored on a coarse control
+lattice (12 mm by default) and integrated by scaling and squaring, re-centred
+on its mean across time points so no scan is the reference -- the non-linear
+analogue of the SE(3) barycentre the rigid stage already uses. It follows
+Ashburner & Ridgway (2013), which is what SPM's serial longitudinal
+registration and CAT12's ageing model use; over the small deformations between
+serial scans a velocity field and a true geodesic agree to high order, so
+geodesic shooting would add cost without adding accuracy here.
+
+Per time point it writes `<stem>_desc-longLogJacobian.nii[.gz]`: the per-voxel
+log volume ratio against the subject average, which is the map longitudinal VBM
+runs statistics on. Note that the membrane prior shrinks the estimate towards
+zero, so the map is better read as a spatial pattern than as a calibrated
+absolute rate.
+
+The deformations are estimated but **not** applied to what T1Prep then
+processes: warping a time point onto the average would make its segmentation
+and surfaces describe the average anatomy rather than that time point's own.
+Pass `--warp-arg --apply` to also write the warped volumes.
+
+Run the step on its own with:
+
+```bash
+./scripts/warp_longitudinal.sh --help
+```
+
+At the 1.5 mm default working resolution this costs a few seconds per subject
+(about 4.5 s for two time points, 14 s for five, on CPU); `--resolution 1.0`
+raises that to roughly three minutes for a pair.
 - `--grad-quantile <FLOAT>`: threshold for selecting high-gradient samples.
 
 ## Input

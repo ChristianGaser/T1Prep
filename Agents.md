@@ -17,6 +17,7 @@ T1Prep/
 │       ├── metrics.py              # Dice/evaluation metrics + CLI
 │       ├── dice.py                 # CLI wrapper for metrics (python -m t1prep.dice)
 │       ├── realign_longitudinal.py
+│       ├── warp_longitudinal.py
 │       ├── bin/                    # Compiled CAT-Surface binaries
 │       ├── data/                   # Templates, atlases, default files
 │       │   ├── templates_MNI152NLin2009cAsym/  # Volume atlases + .txt descriptions
@@ -51,6 +52,7 @@ T1Prep/
 │   └── results/RESULTS.md          # numbers, protocol and caveats
 │   ├── process_longitudinal.sh     # Batch longitudinal processing
 │   ├── realign_longitudinal.sh     # Longitudinal rigid realignment
+│   ├── warp_longitudinal.sh       # Longitudinal low-dimensional non-linear registration
 │   ├── CAT_GrepJson                # Extract fields from JSON reports
 │   ├── CAT_Surf2ROIMulti_ui        # Surface ROI extraction
 │   ├── CAT_SurfParameters_ui       # Curvature-based surface parameters

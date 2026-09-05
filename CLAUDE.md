@@ -52,6 +52,10 @@ pytest
 # Recalibrate the QA rating bounds from a processed BrainWeb Phantom set
 python scripts/qa_calibrate.py /path/to/BWP/report
 
+# Longitudinal: rigid realignment, then the low-dimensional ageing deformation
+./scripts/process_longitudinal.sh --long-model ageing tp1.nii.gz tp2.nii.gz
+./scripts/warp_longitudinal.sh --inputs tp1.nii.gz tp2.nii.gz --out-dir DIR
+
 # Score the spherical registration against the Mindboggle-101 manual labels
 python evaluation/tools/eval_mindboggle.py project --mindboggle DIR... --t1prep DIR --work DIR
 python evaluation/tools/eval_mindboggle.py dice --work DIR --protocol both
