@@ -26,23 +26,8 @@ Stratified subset (`../data/subset20.txt`), MNI152NLin2009cAsym, identical
 | Affine only (Mindboggle's own) | 0.5173 | 0.3317 | — |
 | ANTs SyN, Mattes MI 100×70×50×20 | 0.6972 | 0.5672 | ~1 min |
 | **ANTs — fMRIPrep's exact config** | 0.7133 | 0.5854 | ~9 min |
-| **T1Prep** | 0.7289 | 0.6085 | seconds |
-| **CAT12 — geodesic shooting** | **0.7410** | **0.6249** | ~15 min |
-
-Paired differences (mean, 95 % CI over all region × comparison pairs):
-
-| comparison | LOO | pairs |
-|---|---|---|
-| CAT12 − T1Prep | +0.0120 [+0.0099, +0.0142] | +0.0163 [+0.0155, +0.0171] |
-| T1Prep − ANTs (fMRIPrep) | +0.0156 [+0.0136, +0.0177] | +0.0231 [+0.0223, +0.0239] |
-| CAT12 − ANTs (fMRIPrep) | +0.0277 [+0.0255, +0.0299] | +0.0395 [+0.0386, +0.0403] |
-| ANTs (fMRIPrep) − affine | +0.1960 | +0.2539 |
-| T1Prep − affine | +0.2116 | +0.2771 |
-| CAT12 − affine | +0.2236 | +0.2934 |
-
-**Ordering: CAT12 > T1Prep > ANTs (fMRIPrep) > ANTs (MI) ≫ affine.** Every
-interval is clear of zero, but the spread between the three good methods is
-only ~0.03 Dice — an order of magnitude smaller than the gap to affine.
+| **T1Prep** | 0.7289 | 0.6085 | ~1 min |
+| **CAT12 — geodesic shooting** | **0.7410** | **0.6249** | 5-15 min |
 
 ### For replacing ANTs in fMRIPrep
 
@@ -73,27 +58,6 @@ Two caveats:
 
 ## Surface registration
 
-### All 100 subjects — T1Prep's own registrations
-
-All three are Spherical Demons; they differ only in what they target.
-
-| space | what it is | LOO | pairs |
-|---|---|---|---|
-| **`fsaverage`** | **T1Prep's default registration** | 0.8193 | 0.7438 |
-| `fsLR` | the same result carried into the fsLR frame by a fixed project-unproject | 0.8200 | 0.7424 |
-| `msm` | a second, independent run onto the fsLR average | 0.8249 | 0.7481 |
-
-`fsLR` performs no registration of its own, so it is a control: it isolates
-what changing the template mesh costs (nothing, ±0.001), which makes `msm` vs
-`fsLR` the only comparison of the three where the registration actually
-differs (+0.005 [+0.004, +0.006]).  The `msm` name is the BIDS
-`desc-msmsulc` entity T1Prep writes so fMRIPrep skips its own MSMSulc step --
-it is not an MSM-derived method.
-
-`NKI-RS-22-16` is excluded: its right-hemisphere labelled surface sits ~40 mm
-from its own anatomy.  Mindboggle's own `label-issues_201903.txt`
-independently lists that subject as defective.
-
 ### 20-subject subset — T1Prep vs FSL newMSM
 
 Same subjects as the volume comparison, so the two are directly comparable.
@@ -103,32 +67,6 @@ Same subjects as the volume comparison, so the two are directly comparable.
 | **`fsaverage`** | **T1Prep default: Spherical Demons → fsaverage** | fsaverage 32k | **0.8154** | **0.7454** | seconds |
 | `fsavg164k` | *the same registration*, scored at 164k | fsaverage 164k | 0.8158 | 0.7436 | — |
 | **`newmsm`** | **FSL newMSM, fMRIPrep's MSMSulc config** | fs_LR 164k | **0.7317** | **0.6405** | ~4 min |
-
-T1Prep also writes two further spheres, neither of which is a different
-algorithm from the default -- both are Spherical Demons, and they are included
-only to show that the choice of target costs almost nothing:
-
-| arm | what it actually is | LOO | pairs |
-|---|---|---|---|
-| `fsLR` | the fsaverage registration carried into the fsLR frame by a fixed project-unproject -- no new registration at all | 0.8162 | 0.7444 |
-| `msm` | a second, independent Spherical Demons run, this time onto the fsLR average | 0.8199 | 0.7485 |
-
-The `msm` name is a filename convention, not an algorithm: T1Prep writes that
-sphere under the BIDS entity `desc-msmsulc` so that fMRIPrep finds it and skips
-its own MSMSulc step.  Nothing in it derives from MSM.
-
-Paired differences (mean, 95 % CI):
-
-| comparison | LOO | pairs |
-|---|---|---|
-| fsaverage @164k − @32k (**mesh control**) | +0.0004 [−0.0004, +0.0013] | −0.0018 [−0.0020, −0.0015] |
-| **newMSM − T1Prep default** (both at 164k) | **−0.0841** [−0.0912, −0.0771] | **−0.1031** [−0.1059, −0.1003] |
-| T1Prep onto fsLR − T1Prep carried to fsLR | +0.0037 [+0.0013, +0.0061] | +0.0041 [+0.0032, +0.0050] |
-
-**The mesh control matters.** newMSM targets the 164k fs_LR sphere while the
-default arm scores on a 32k mesh, so the comparison could have been an
-artifact of vertex density.  Scoring the *same* registration at 164k moves it
-by ±0.002 -- so the newMSM gap is real, not a measurement effect.
 
 ### Reading the newMSM result
 
