@@ -10,6 +10,11 @@ but the registration differs.
 * **`loo`** — a leave-one-out majority-vote atlas built from the other N−1
   subjects, applied to the held-out subject. The FreeSurfer-style protocol;
   measures registration *and* the atlas the group forms.
+* **`atlas`** — the same, but with the subject left *in* the atlas. Inflates
+  every arm by ~0.012, more than the CAT12-vs-T1Prep gap, because each subject
+  votes for the answer it is scored against. Not used for any number below;
+  see [How the protocols are built](../README.md#protocols) for the
+  construction and the measured bias.
 
 Ground truth never passes through a second registration: labels are attached
 to each subject's own anatomy geometrically, and only then moved.

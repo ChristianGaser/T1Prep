@@ -8,6 +8,70 @@ protocol for every method: each subject's *manual* labels are carried into a
 common space by the transform under test and compared there, so nothing but
 the registration differs between arms.
 
+## Protocols
+
+Once every subject's manual labels sit in one common space, there are three
+ways to turn them into a number.  `--protocol` picks one.
+
+### `pairs` — no atlas at all
+
+Dice between every two subjects' labels directly, over all 190 pairs of the
+20-subject subset.  Nothing is estimated from the group, so this measures the
+registration and only the registration.  It is what surface-registration
+papers report, and it is the lowest of the three because there is no averaging
+to smooth boundary error.
+
+### `loo` — leave-one-out majority-vote atlas
+
+The atlas is built and used per subject:
+
+1. **Tally.**  At every vertex (or voxel) of the common space, count how many
+   of the *N* subjects carry each of the 31 DKT labels there.
+2. **Hold one out.**  For subject *i*, subtract that subject's own vote from
+   the tally, so the atlas is built from the other *N−1* only.
+3. **Vote.**  The label with the highest remaining count wins the vertex.
+   "Unlabelled" is barred from winning, so medial-wall vertices cannot absorb
+   a parcel.
+4. **Score.**  Dice that predicted parcellation against subject *i*'s own
+   manual labels, per region, per hemisphere.
+5. Repeat for every subject.
+
+In code that is one line — `left[labels[i], cols] -= 1` — and it is the whole
+difference from the next protocol.
+
+This mirrors how FreeSurfer-style atlas parcellation is validated, which is
+why it is the number to compare against published atlas-based figures (and
+against a Buckner40/DK40 result).  Note the labeller here is a plain
+per-vertex majority vote: no intensity features, no spatial prior, no
+smoothing.  That isolates the registration, but it also scores lower than a
+trained classifier such as `mris_ca_label` would on the same alignment.
+
+### `atlas` — the same, but including the subject
+
+Identical except that step 2 is skipped: one atlas is built from all *N*
+subjects and every subject is scored against it.  This is the more obvious
+construction, and it is what `--protocol atlas` does — but each subject then
+votes for the answer it is scored against, which flips exactly the split
+vertices that discriminate between registrations.
+
+**Measured on this data (N = 20):**
+
+| arm | `loo` | `atlas` | inflation |
+|---|---|---|---|
+| T1Prep volume | 0.7289 | 0.7404 | **+0.0115** [+0.0113, +0.0117] |
+| T1Prep surface | 0.8154 | 0.8272 | **+0.0118** [+0.0114, +0.0123] |
+
+That bias is larger than most of the differences this benchmark resolves —
+CAT12 beats T1Prep by +0.0120 and T1Prep beats ANTs by +0.0156 under `loo`.
+It inflates every arm by roughly the same amount, so it would not reorder
+them, but it would make the absolute numbers incomparable with published
+leave-one-out figures.  The effect is ~1/N of the vote, so it shrinks with
+larger cohorts and grows sharply with smaller ones; it is not a constant that
+can be subtracted.  `loo` is therefore the default.
+
+See [`results/RESULTS.md`](results/RESULTS.md) for the numbers each protocol
+produces, and `results/dice_boxplots.png` for the distributions behind them.
+
 ## Layout
 
 | path | contents |
