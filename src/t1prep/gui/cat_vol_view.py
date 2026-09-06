@@ -4067,9 +4067,11 @@ def _attach_minus_values(argv: Sequence[str]) -> List[str]:
 
 def _parse_args(argv: Optional[Sequence[str]] = None):
     p = argparse.ArgumentParser(
+        prog="CAT_VolView",
         description=(
-            "Single-window orthogonal VTK image viewer (SPM12-like "
-            "layout) with optional surface overlays."
+            "Orthogonal slice viewer (SPM12-like layout) with overlays, "
+            "contours and surface outlines; every volume opens its own "
+            "linked window (CAT_VolView)."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

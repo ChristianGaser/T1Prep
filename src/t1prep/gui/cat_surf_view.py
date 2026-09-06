@@ -65,6 +65,7 @@ From a source checkout:
 """
 from __future__ import annotations
 import argparse
+import functools
 import math
 import os
 import sys
@@ -187,8 +188,8 @@ except ImportError:  # direct invocation as a script
 import vtkmodules.qt as vtk_qt
 vtk_qt.QVTKRWIBase = "QOpenGLWidget"
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-import vtkmodules.vtkRenderingOpenGL2   # registers OpenGL2 backend (fixes vtkShaderProperty)
-import vtkmodules.vtkRenderingFreeType  # text rendering for labels/ScalarBar
+import vtkmodules.vtkRenderingOpenGL2   # noqa: F401  registers OpenGL2 backend (fixes vtkShaderProperty)
+import vtkmodules.vtkRenderingFreeType  # noqa: F401  text rendering for labels/ScalarBar
 
 # --- Defaults ---
 DEFAULT_WINDOW_SIZE = (1800, 800)
@@ -266,6 +267,73 @@ def detect_naming_scheme(filename: str) -> bool:
     # Default to FreeSurfer if no clear pattern found
     return False
 
+#: The producer's BIDS pattern for the display surface (column 2 of
+#: ``Names.tsv``, code ``Mid_surface``).  Read from the table when it can be
+#: found so the viewer follows the pipeline; this literal is the same pattern
+#: and only stands in when the packaged data is missing.
+_BIDS_MID_SURFACE_DEFAULT = "{bname}_hemi-{side}{space}{desc}_midthickness.surf.gii"
+
+#: BIDS overlay file: ``<bname>_hemi-<L|R>[_key-value ...]_<suffix>.shape|label.gii``.
+_BIDS_OVERLAY_RE = re.compile(
+    r"^(?P<bname>.+?)_hemi-(?P<side>[LR])(?P<rest>.*)\.(?:shape|label)\.gii$",
+    flags=re.IGNORECASE,
+)
+
+
+@functools.lru_cache(maxsize=None)
+def _bids_mid_surface_pattern() -> str:
+    """Column 2 of ``Names.tsv`` for ``Mid_surface``.
+
+    Parsed directly rather than through :class:`t1prep.utils.NameTable`
+    because importing ``t1prep.utils`` pulls in torch and deepmriprep, which
+    the viewer must not pay for at start-up.
+    """
+    try:
+        tsv = _get_template_surface_dir().parent / "Names.tsv"
+        with open(tsv, encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) >= 3 and parts[0] == "Mid_surface":
+                    return parts[2]
+    except Exception:
+        pass
+    return _BIDS_MID_SURFACE_DEFAULT
+
+
+def _bids_overlay_to_mesh(overlay_path: Path) -> Optional[Path]:
+    """Map a BIDS overlay to the midthickness surface it belongs to.
+
+    ``sub-01_hemi-L_thickness.shape.gii`` -> ``sub-01_hemi-L_midthickness.surf.gii``,
+    built from the same ``Names.tsv`` pattern the pipeline used to write it.
+    The overlay's own ``_space-``/``_desc-`` entities are tried first, then
+    the native surface.  Returns the first candidate that exists, else the
+    native candidate (so a caller's later fallbacks still have a name to work
+    with), or ``None`` when the name is not a BIDS overlay at all.
+    """
+    m = _BIDS_OVERLAY_RE.match(overlay_path.name)
+    if not m:
+        return None
+    bname = m.group("bname")
+    if bname.endswith("_T1w"):  # the producer strips it; mirror that
+        bname = bname[:-4]
+    side = m.group("side").upper()
+    rest = m.group("rest") or ""
+    space = next(iter(re.findall(r"(_space-[^_.]+)", rest)), "")
+    desc = next(iter(re.findall(r"(_desc-[^_.]+)", rest)), "")
+    pattern = _bids_mid_surface_pattern()
+
+    def _build(sp: str, de: str) -> Path:
+        name = (pattern.replace("{bname}", bname).replace("{side}", side)
+                .replace("{space}", sp).replace("{desc}", de).replace("..", "."))
+        return overlay_path.parent / name
+
+    native = _build("", "")
+    for candidate in (_build(space, desc), _build(space, ""), _build("", desc), native):
+        if candidate.exists():
+            return candidate
+    return native
+
+
 def convert_filename_to_mesh(overlay_filename: str) -> str:
     """
     Convert an overlay filename to the corresponding mesh filename.
@@ -338,16 +406,13 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
         if mesh_name is not None:
             return str(overlay_path.parent / mesh_name)
 
-    # Try BIDS-style conversion first; only succeed when a hemisphere token exists
+    # BIDS overlays: derive the midthickness surface from the producer's own
+    # naming pattern.  (An earlier hand-rolled pattern here used Path.stem,
+    # which leaves ``thickness.shape`` in the base name, and a
+    # ``_space-..._desc-midthickness`` form the pipeline never wrote.)
     mesh_candidate: Optional[Path] = None
     if detect_naming_scheme(overlay_filename):
-        name_parts = overlay_path.stem.split('_')
-        hemi_part = next((p for p in name_parts if p.startswith('hemi-')), None)
-        if hemi_part:
-            base_parts = [p for p in name_parts if not p.startswith('hemi-') and not p.startswith('desc-')]
-            base_name = '_'.join(base_parts)
-            mesh_filename = f"{base_name}_{hemi_part}_space-MNI152NLin2009cAsym_desc-midthickness.surf.gii"
-            mesh_candidate = overlay_path.parent / mesh_filename
+        mesh_candidate = _bids_overlay_to_mesh(overlay_path)
 
     # FreeSurfer naming: convert overlay to central surface
     # Accept both with and without a subject token:
@@ -429,7 +494,8 @@ def is_overlay_file(filename: str) -> bool:
         return True
 
     overlay_patterns = [
-        '_desc-thickness.', '_desc-pbt.',  # BIDS shape files
+        '.shape.gii', '.label.gii',  # BIDS: per-vertex values / labels by definition
+        '_desc-thickness.', '_desc-pbt.',  # older BIDS shape names
         '.annot',  # FreeSurfer annotation
         '_label-',  # BIDS label files
         '.txt'  # Text overlays
@@ -439,9 +505,12 @@ def is_overlay_file(filename: str) -> bool:
 def detect_overlay_kind(filename: str) -> Optional[str]:
     """Detect overlay kind such as 'thickness' or 'pbt' from filename."""
     name = Path(filename).name.lower()
-    if '_desc-thickness' in name or '.thickness.' in name or name.endswith('thickness'):
+    # Match the kind as a whole token so ``sub-01_hemi-L_thickness.shape.gii``
+    # (the current BIDS form), ``_desc-thickness`` (the older one),
+    # ``lh.thickness.subj`` and a bare ``lh.thickness`` all count.
+    if re.search(r'(^|[._-])thickness([._-]|$)', name):
         return 'thickness'
-    if '_desc-pbt' in name or '.pbt.' in name or name.endswith('pbt'):
+    if re.search(r'(^|[._-])pbt([._-]|$)', name):
         return 'pbt'
     return None
 
@@ -1632,7 +1701,8 @@ def _build_parser() -> argparse.ArgumentParser:
             '  An overlay does not reference its surface, so it is looked up in this order:\n'
             '    1. geometry stored inside the overlay file itself (CAT12 mesh.* and\n'
             '       statistic results usually carry it),\n'
-            '    2. the mesh matching the overlay name (lh.thickness.subj -> lh.central.subj.gii)\n'
+            '    2. the mesh matching the overlay name (lh.thickness.subj -> lh.central.subj.gii,\n'
+            '       sub-01_hemi-L_thickness.shape.gii -> sub-01_hemi-L_midthickness.surf.gii)\n'
             '       or a central/midthickness surface in the same folder,\n'
             '    3. the number of values, matched against the 4k/32k/164k templates.\n'
             '  Step 3 is what makes free-form names work, e.g. CAT12/SPM statistic folders\n'
@@ -1654,6 +1724,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     # Accept one or more positional inputs. If more than one is given, treat all as overlays
     # and derive the mesh from the first overlay via naming rules.
+    # Every other option here is single-dash, and the docs say '-help';
+    # argparse would otherwise read that as '-h' with a stray 'elp'.
+    p.add_argument('-help', action='help', help=argparse.SUPPRESS)
     p.add_argument(
         'inputs', nargs='*',
         help='Mesh and/or overlay files. Several overlays can be stepped through with ←/→.'
@@ -4450,7 +4523,12 @@ class Viewer(QtWidgets.QMainWindow):
         # Step 2: glob for meshes near the overlay
         patterns = []
         if hemi:
+            # ``lh``/``rh`` never appear in a BIDS name; that side is spelled
+            # ``_hemi-L_`` / ``_hemi-R_``.
+            bids_hemi = 'L' if hemi == 'lh' else 'R'
             patterns.append(f"{hemi}.central*.gii")
+            patterns.append(f"*_hemi-{bids_hemi}_*midthickness*.surf.gii")
+            patterns.append(f"*_hemi-{bids_hemi}_*midthickness*.gii")
             patterns.append(f"*{hemi}*midthickness*.surf.gii")
             patterns.append(f"*{hemi}*midthickness*.gii")
             patterns.append(f"*{hemi}*central*.gii")
