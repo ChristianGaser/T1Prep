@@ -23,7 +23,9 @@ DRY_RUN=0
 DEBUG=0
 # Which longitudinal model to apply, following CAT12's naming:
 #   plasticity - rigid only; the anatomy is assumed unchanged between scans
-#   ageing     - rigid, then a small low-dimensional non-linear deformation
+#   ageing     - rigid, then a small low-dimensional non-linear deformation,
+#                then Jacobian modulation (mwmwp1r*)
+#   both       - ageing, plus the plasticity-model maps (mwp1r*) as well
 LONG_MODEL="plasticity"
 
 declare -a T1PREP_ARGS=()
@@ -79,7 +81,7 @@ Longitudinal models (CAT12 naming):
                 average. Writes '<stem>_desc-longLogJacobian.nii[.gz]' per time
                 point -- the log volume ratio against the average -- plus
                 'longitudinal_average.nii[.gz]', and the modulated maps
-                'mwmwp1<name>' (modulated twice: longitudinal Jacobian, then
+                'mwmwp1r<name>' (modulated twice: longitudinal Jacobian, then
                 spatial normalisation). Adds a few seconds per subject.
     both        Save both models, as CAT12's "detect both models" option does:
                 'mwmwp1r<name>' for ageing and 'mwp1r<name>' for plasticity,
@@ -90,8 +92,13 @@ Longitudinal models (CAT12 naming):
 Notes:
     - If inputs are NIfTI files: treated as time points for a single subject.
     - If inputs are text files: each file is a time point list; each line is a subject.
-    - realign_longitudinal.sh must succeed before temp_tool steps run.
-    - If --t1prep-arg is omitted, only the realignment step is performed.
+    - Every step runs in order (realign, warp, T1Prep per time point,
+      modulation) and the run stops at the first failure.
+    - Inputs must sit in a plain folder. A BIDS 'anat/' layout is not yet
+      supported by this pipeline: the realigned copies would land on top of
+      the inputs, and T1Prep would be handed a directory as --long-data.
+    - With --long-model both, do not pass --model via --modulate-arg; the
+      pipeline sets it for each of the two runs.
     - Time points are taken in the given order.
     - Additional arguments can be supplied via repeated --*-arg flags.
     - --warp-arg and --modulate-arg are used with --long-model ageing or both.
@@ -216,6 +223,9 @@ validate_inputs() {
     fi
 
     [[ -x "$REALIGN_SCRIPT" ]] || die "Realignment script not executable: $REALIGN_SCRIPT"
+    if [[ "$LONG_MODEL" == "both" ]] && [[ " ${MODULATE_ARGS[*]-} " == *" --model "* ]]; then
+        die "--long-model both runs the modulation once per model; do not also pass --model via --modulate-arg"
+    fi
     if [[ "$LONG_MODEL" != "plasticity" ]]; then
         [[ -x "$WARP_SCRIPT" ]] || die "Warp script not executable: $WARP_SCRIPT"
         [[ -x "$MODULATE_SCRIPT" ]] || die "Modulation script not executable: $MODULATE_SCRIPT"
@@ -281,16 +291,18 @@ process_subjects() {
             surf_dir="$outdir0/surf"
         fi
 
+        # A BIDS 'anat/' layout (use_subfolder=0) has never worked here: the
+        # realigned copies would be written on top of the inputs, T1Prep would
+        # be handed '.' as --long-data, and the seeded surface would use 'lh.'
+        # where BIDS derivatives use '-L'.  Refuse up front rather than after
+        # minutes of skull-stripping.
+        if [[ "${use_subfolder}" -eq 0 ]]; then
+            die "BIDS 'anat/' input layout is not yet supported by the longitudinal pipeline (input: $first_tp). Copy the time points into a plain folder and rerun."
+        fi
+
         mkdir -p "$mri_dir"
 
         echo "Processing -> $subject_root"
-
-        # Safety for --update-headers: never write back into the input folder.
-        for tp_path in "${subject_tp_paths[@]}"; do
-            if [[ "$(cd "$(dirname "$tp_path")" && pwd)" == "$(cd "$mri_dir" && pwd)" ]]; then
-                die "Refusing to run --update-headers with out-dir equal to input folder: $mri_dir"
-            fi
-        done
 
         local -a realign_cmd=(
             "$REALIGN_SCRIPT"
@@ -310,6 +322,16 @@ process_subjects() {
                 realign_subfolders[$tp_idx]=$(dirname "${subject_tp_paths[$tp_idx]}")"/mri"
             else
                 realign_subfolders[$tp_idx]=$(dirname "${subject_tp_paths[$tp_idx]}")
+            fi
+        done
+        # Safety for --update-headers: the realigned copy keeps the input's
+        # basename, so its destination must never be the input's own folder.
+        # (The Python side refuses this too; checking here is cheaper.)
+        for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
+            # Resolve via the target's parent so the check has no side effect.
+            local target="${realign_subfolders[$tp_idx]}"
+            if [[ "$(cd "$(dirname "${subject_tp_paths[$tp_idx]}")" && pwd)" == "$(cd "$(dirname "$target")" && pwd)/$(basename "$target")" ]]; then
+                die "Refusing to realign with --update-headers into the input's own folder: ${realign_subfolders[$tp_idx]}"
             fi
         done
         run_step "${REALIGN_SCRIPT}" --use-skullstrip --inverse-consistent --update-headers --inputs "${subject_tp_paths[@]}" --out-dir "./" --out-subfolders "${realign_subfolders[@]}" "${REALIGN_ARGS[@]+"${REALIGN_ARGS[@]}"}"
@@ -389,13 +411,12 @@ process_subjects() {
             ((i++))
         done
 
-        # Modulation closes the ageing model: each time point's tissue map is
-        # scaled by its longitudinal Jacobian and carried to MNI through a
-        # single normalisation shared by the whole series, so the only thing
-        # that differs between time points is the volume change itself.  This
-        # has to come after the loop because it needs every time point's
-        # segmentation and deformation field to exist.
-        if [[ "$LONG_MODEL" == "ageing" ]]; then
+        # Modulation closes the model: each time point's own tissue map is
+        # scaled by its longitudinal Jacobian (ageing) or left as is
+        # (plasticity), and carried to MNI through a single normalisation shared
+        # by the whole series.  This has to come after the loop because it
+        # needs every time point's segmentation and deformation field to exist.
+        if [[ "$LONG_MODEL" != "plasticity" ]]; then
             local -a modulate_dirs=()
             local -a modulate_names=()
             for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
@@ -415,7 +436,9 @@ process_subjects() {
             # log Jacobian beside the realigned volumes instead, so the two
             # directory lists are not the same.
             local -a models=("ageing")
-            [[ "$LONG_MODEL" == "both" ]] && models=("ageing" "plasticity")
+            if [[ "$LONG_MODEL" == "both" ]]; then
+                models=("ageing" "plasticity")
+            fi
             for model in "${models[@]}"; do
                 run_step "${MODULATE_SCRIPT}" \
                     --model "$model" \

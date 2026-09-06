@@ -146,7 +146,7 @@ Batch helper for longitudinal studies. Groups time-point scans by subject, runs 
 | model | what it does |
 |---|---|
 | `plasticity` (default) | Rigid realignment only. Assumes the anatomy itself is unchanged between scans; appropriate for short intervals. |
-| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average, then Jacobian modulation into MNI (`mwmwp1<name>`). Adds a few seconds per subject, and forces `--p` so the native segmentations exist. |
+| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average, then Jacobian modulation into MNI (`mwmwp1r<name>`). Adds a few seconds per subject, and forces `--p` so the native segmentations exist. |
 | `both` | Saves both models, as CAT12's "detect both models" option does: `mwmwp1r<name>` for ageing and `mwp1r<name>` for plasticity, using CAT12's own names. The `r` marks the realigned input, which keeps both distinct from T1Prep's cross-sectional `mwp1<name>` in the same folder. |
 
 ```bash
@@ -174,6 +174,11 @@ Batch helper for longitudinal studies. Groups time-point scans by subject, runs 
 **Input modes:**
 - **NIfTI files:** Treated as time points for a single subject
 - **Text files:** Each file is a time-point list; each line is a subject
+
+**Input layout:** the time points must sit in a plain folder. A BIDS `anat/`
+layout is not yet supported by this pipeline and is refused up front (the
+realigned copies would land on top of the inputs, and T1Prep would be handed a
+directory as `--long-data`).
 
 ### `realign_longitudinal.sh`
 
@@ -219,9 +224,10 @@ larger is stiffer), `--regularisation` (0.05; 0 disables the membrane prior),
 ### `modulate_longitudinal.sh`
 
 Wrapper around `t1prep.modulate_longitudinal`. Turns the deformations above into
-the modulated tissue maps a longitudinal VBM analysis is run on -- CAT12's
-ageing model, except the shared tissue map is the mean of the time points' own
-segmentations rather than a segmentation of the average image.
+the modulated tissue maps a longitudinal VBM analysis is run on, following
+CAT12's longitudinal models. The one deviation from CAT12 is that the subject
+average is not segmented; its warp to MNI is stood in for by the mean of the
+per-time-point `y_` fields.
 
 Each time point keeps its **own segmentation** and gets its longitudinal
 Jacobian applied on top, as CAT12's ageing model does -- so individual anatomy
@@ -239,28 +245,24 @@ they differ only by a smooth multiplier. Quieter, but a different estimator from
 CAT12's, and it suppresses most of the signal.
 
 ```bash
-# Let it resolve the filenames from T1Prep's naming table
+# Let it resolve the filenames from T1Prep's naming table.  --mri-dirs hold
+# T1Prep's outputs; --long-dirs hold the warp stage's fields, which the
+# pipeline writes beside the realigned volumes (it runs before T1Prep).
 ./scripts/modulate_longitudinal.sh \
-    --mri-dirs sub-01/ses-1/mri sub-01/ses-2/mri \
+    --mri-dirs  out/mri out/mri \
+    --long-dirs data/mri data/mri \
     --names tp1 tp2 \
-    --out-dir /path/to/output
+    --out-dir out/mri [--model plasticity] [--tissue-class WM]
 ```
 
-Output names come from T1Prep's own naming table with the modulation marker
-**doubled**, exactly as CAT12's ageing model writes them: `mwmwp1<name>.nii` in
-the legacy scheme, `<name>_space-..-modulated-modulated_label-GM_probseg.nii` in
-BIDS. The doubling is meaningful -- these maps are modulated twice, by the
-longitudinal Jacobian and then by the spatial normalisation -- and it also keeps
-them distinct from the cross-sectional `mwp1<name>.nii` T1Prep writes into the
-same folder by default.
+In BIDS naming the outputs carry `_desc-long`, with `-modulated` doubled for
+the ageing model.
 
-`--modulation nonlinear` divides the affine out to control for head size;
-`--tissue-source timepoint` keeps each time point's own segmentation, which
-reintroduces the segmentation differences the shared map removes.
+`--modulation nonlinear` divides the affine out to control for head size.
 
 Requires T1Prep to have run with `--p` and `warp_longitudinal.sh` with
-`--save-displacement`; `process_longitudinal.sh --long-model ageing` arranges
-both.
+`--save-displacement`; `process_longitudinal.sh --long-model ageing` or `both`
+arranges both.
 
 ---
 

@@ -30,34 +30,43 @@ it is a different estimator from CAT12's and it suppresses most of the signal:
 on the same ADNI pair it produced a tenth of CAT12's amplitude and no spatial
 agreement (r = -0.02, against r = 0.42 for the default).
 
-The output for time point ``i`` is, for every MNI voxel ``x``::
+Two models are offered, with CAT12's own output names.  For every MNI voxel
+``x``, with ``v = A_work^-1 y(x)`` the matching point in average space and
+``p_i`` time point ``i``'s own tissue map::
 
-    mwmwp_i(x) = pbar(v) * det J_phi_i(v) * det J_y(x),    v = A_work^-1 y(x)
+    ageing      mwmwp1r_i(x) = p_i(phi_i(v)) * det J_phi_i(v) * det J_y(x)
+    plasticity  mwp1r_i(x)   = p_i(v)                        * det J_y(x)
 
-Two Jacobians, hence the doubled ``mw`` in the output name -- the same
-convention CAT12's ageing model uses.
+Two Jacobians for ageing, hence the doubled ``mw``; one for plasticity.  The
+``r`` is CAT12's marker for the realigned input and keeps both distinct from
+T1Prep's cross-sectional ``mwp1<name>`` in the same folder.
 
-The modulation moves the volume change out of the shape and into the
-intensity, where a voxel-wise test can see it.  With a shared tissue map the
-integral reproduces that time point's own native tissue volume to the extent
-that the registration explains the between-scan difference -- measured within
-0.1 % on a synthetic series where it does.
+The modulation moves volume change out of the shape and into the intensity,
+where a voxel-wise test can see it, and it is volume preserving: the integral
+of each map is that time point's own native tissue volume.
 
-Caveat worth carrying into any analysis: because the tissue map is shared, this
-measures volume change *as located by the registration*.  It cannot represent a
-change the deformation model does not express, and the membrane prior in
-``warp_longitudinal`` shrinks the estimate, so the maps read as a spatial
-pattern rather than a calibrated absolute rate.
+Caveat worth carrying into any analysis: the membrane prior in
+``warp_longitudinal`` shrinks the longitudinal deformation, so the ageing
+model's Jacobian reads as a spatial pattern rather than a calibrated absolute
+rate.
 
 CLI usage
 ---------
-Run after T1Prep has processed every time point::
+Run after T1Prep has processed every time point.  Letting it resolve the
+filenames from T1Prep's naming table (``--long-dirs`` is where
+``warp_longitudinal`` wrote its fields, beside the realigned volumes)::
 
     python -m t1prep.modulate_longitudinal \\
-        --tissue tp1/mri/p1tp1.nii tp2/mri/p1tp2.nii \\
-        --displacement tp1/mri/tp1_desc-longDisplacement.nii.gz ... \\
-        --log-jacobian tp1/mri/tp1_desc-longLogJacobian.nii.gz ... \\
-        --deformation tp1/mri/y_tp1.nii tp2/mri/y_tp2.nii \\
+        --mri-dirs out/mri out/mri --long-dirs data/mri data/mri \\
+        --names tp1 tp2 --out-dir out/mri [--model plasticity]
+
+or with explicit paths::
+
+    python -m t1prep.modulate_longitudinal \\
+        --tissue p1tp1.nii p1tp2.nii \\
+        --displacement tp1_desc-longDisplacement.nii tp2_desc-longDisplacement.nii \\
+        --log-jacobian tp1_desc-longLogJacobian.nii tp2_desc-longLogJacobian.nii \\
+        --deformation y_tp1.nii y_tp2.nii \\
         --out-dir DIR
 
 References
@@ -306,7 +315,7 @@ def output_name(tissue_path: str, model: str = "ageing") -> str:
     """Build the output filename for a modulated longitudinal tissue map.
 
     The name comes from T1Prep's own naming table, with the modulation marker
-    **doubled** -- ``mwmwp1<name>.nii`` -- which is what CAT12's ageing model
+    **doubled** -- ``mwmwp1r<name>.nii`` -- which is what CAT12's ageing model
     writes.  The doubling is not decoration: these maps really are modulated
     twice, once by the longitudinal Jacobian and once by the spatial
     normalisation, and a single ``mw`` would both understate that and collide
@@ -578,11 +587,11 @@ def modulate_longitudinal(
     avg_vox = shared_y @ inv_work[:3, :3].T + inv_work[:3, 3]
     coords = avg_vox.reshape(-1, 3).T
 
-    def _on_mni(volume: np.ndarray, cval: float = 0.0) -> np.ndarray:
+    def _on_mni(volume: np.ndarray, mode: str = "constant", cval: float = 0.0) -> np.ndarray:
         """Sample a working-grid volume at the MNI grid's average-space points."""
-        return map_coordinates(
-            volume, coords, order=1, mode="nearest" if cval else "constant", cval=cval
-        ).reshape(reference_shape)
+        return map_coordinates(volume, coords, order=1, mode=mode, cval=cval).reshape(
+            reference_shape
+        )
 
     warped_on_mni = []
     for img, disp_img in zip(tissue_imgs, disp_imgs):
@@ -596,7 +605,7 @@ def modulate_longitudinal(
             continue
         # The displacement is smooth by construction (a 12 mm lattice), so
         # interpolating *it* onto the MNI grid costs nothing in detail.
-        step = np.stack([_on_mni(disp_mm[..., k], cval=1e-12) for k in range(3)], axis=-1)
+        step = np.stack([_on_mni(disp_mm[..., k], mode="nearest") for k in range(3)], axis=-1)
         warped_on_mni.append(_sample_world(img, shared_y + step))
     shared_on_mni = np.mean(np.stack(warped_on_mni, axis=0), axis=0)
 
@@ -619,7 +628,8 @@ def modulate_longitudinal(
             det_long = 1.0
         else:
             det_long = _on_mni(
-                np.exp(np.asarray(logjac_imgs[idx].dataobj, dtype=np.float64)), cval=1.0
+                np.exp(np.asarray(logjac_imgs[idx].dataobj, dtype=np.float64)),
+                mode="nearest",
             )
         out = (tissue * det_long * det_cross).astype(np.float32)
         modulated.append(out)
@@ -709,9 +719,9 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--out-dir",
         required=True,
         help=(
-            "Directory for outputs. Names follow T1Prep's table with the "
-            "modulation marker doubled, as CAT12's ageing model does: "
-            "mwmwp1<name>.nii, or the BIDS equivalent."
+            "Directory for outputs. Names are CAT12's own: mwmwp1r<name>.nii for "
+            "ageing, mwp1r<name>.nii for plasticity (BIDS: '_desc-long', with "
+            "'-modulated' doubled for ageing)."
         ),
     )
     p.add_argument(
@@ -725,8 +735,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default="ageing",
         help=(
             "'ageing' applies the longitudinal deformation and its Jacobian on top "
-            "of the shared normalisation (two modulations -> mwmwp1); 'plasticity' "
-            "applies only the shared normalisation (one -> mwp1)"
+            "of the shared normalisation (two modulations -> mwmwp1r<name>); "
+            "'plasticity' applies only the shared normalisation (one -> mwp1r<name>)"
         ),
     )
     p.add_argument(

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Longitudinal low-dimensional non-linear registration wrapper
+# Longitudinal Jacobian modulation wrapper
 # Ensures the virtual environment is activated before running t1prep.modulate_longitudinal
 
 set -e
@@ -40,42 +40,47 @@ print_usage() {
 Longitudinal Jacobian modulation wrapper
 
 Turns the deformations from warp_longitudinal.sh into the modulated tissue maps
-a longitudinal VBM analysis is run on -- CAT12's ageing model, except that the
-shared tissue map is the mean of the time points' own segmentations rather than
-a segmentation of the average image.
+a longitudinal VBM analysis is run on, following CAT12's longitudinal models.
 
-Each time point keeps its own segmentation and gets its longitudinal Jacobian
-applied on top, as CAT12's ageing model does, so individual anatomy stays
-visible.  What is shared is the spatial normalisation: the mean of the
-per-time-point 'y_' fields, standing in for the average image's warp to MNI.
+Each time point keeps its own segmentation, as CAT12 does, so individual
+anatomy stays visible.  What is shared is the spatial normalisation: the mean of
+the per-time-point 'y_' fields, standing in for the average image's warp to MNI
+(the average itself is not segmented here -- the one deviation from CAT12).
 
-'--tissue-source shared' instead reuses one tissue map for every time point, so
-they differ only by a smooth multiplier.  Much quieter, but not CAT12, and it
-suppresses most of the between-scan signal.
+Models (--model), with CAT12's own output names:
+    ageing      (default) longitudinal Jacobian, then spatial normalisation
+                -> mwmwp1r<name>.nii   (modulated twice)
+    plasticity  spatial normalisation only, anatomy assumed unchanged
+                -> mwp1r<name>.nii     (modulated once)
+The 'r' marks the realigned input, and keeps both distinct from T1Prep's
+cross-sectional 'mwp1<name>.nii' in the same folder.  In BIDS naming the
+outputs carry '_desc-long' instead, with '-modulated' doubled for ageing.
 
 Usage (letting it find the files):
     scripts/modulate_longitudinal.sh \
-        --mri-dirs sub-01/ses-1/mri sub-01/ses-2/mri \
+        --mri-dirs  out/mri out/mri \
+        --long-dirs data/mri data/mri \
         --names tp1 tp2 \
-        --out-dir /path/to/output
+        --out-dir out/mri [--model plasticity] [--tissue-class WM]
+
+    --mri-dirs  hold T1Prep's outputs (p1/p2 and y_ per time point)
+    --long-dirs hold warp_longitudinal.sh's displacement and log-Jacobian;
+                the pipeline runs that stage before T1Prep, so those sit
+                beside the realigned volumes, not in T1Prep's output folder
 
 Usage (explicit paths):
     scripts/modulate_longitudinal.sh \
         --tissue p1tp1.nii p1tp2.nii \
-        --displacement tp1_desc-longDisplacement.nii.gz tp2_...nii.gz \
-        --log-jacobian tp1_desc-longLogJacobian.nii.gz tp2_...nii.gz \
+        --displacement tp1_desc-longDisplacement.nii tp2_desc-longDisplacement.nii \
+        --log-jacobian tp1_desc-longLogJacobian.nii tp2_desc-longLogJacobian.nii \
         --deformation y_tp1.nii y_tp2.nii \
         --out-dir /path/to/output
 
-Writes one modulated map per time point on the MNI grid, named from T1Prep's
-own table with the modulation marker doubled, as CAT12's ageing model does:
-
-    mwmwp1<name>.nii                                          (legacy naming)
-    <name>_space-..-modulated-modulated_label-GM_probseg.nii  (BIDS)
-
-Doubled because these maps are modulated twice: by the longitudinal Jacobian,
-then by the spatial normalisation. It also keeps them distinct from the
-cross-sectional 'mwp1<name>.nii' T1Prep writes into the same folder.
+Other options:
+    --modulation nonlinear     divide the affine out (controls for head size)
+    --tissue-source shared     one tissue map for every time point, so the
+                               contrast carries only the Jacobian: quieter,
+                               but not CAT12, and it hides individual anatomy
 
 Requires:
     - T1Prep run with --p (native segmentations)
