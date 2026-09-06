@@ -155,13 +155,41 @@ class TestModulation(unittest.TestCase):
             self.assertAlmostEqual(got / expected, 1.0, places=2)
 
     def test_shared_tissue_matches_per_time_point_when_registration_is_right(self):
-        # With a deformation that genuinely relates the two time points, sharing
-        # the tissue map costs nothing -- it only differs once the segmentations
-        # disagree beyond what the deformation explains.
+        # On a synthetic series the deformation explains the whole difference,
+        # so the two modes agree.  On real data they do not, and the default is
+        # 'timepoint' because that is what CAT12 does -- see
+        # test_default_keeps_each_time_points_own_anatomy.
         shared = self._run(tissue_source="shared").native_volumes_mm3
         per_tp = self._run(tissue_source="timepoint").native_volumes_mm3
         for a, b in zip(shared, per_tp):
             self.assertAlmostEqual(a / b, 1.0, places=3)
+
+    def test_default_is_timepoint_not_shared(self):
+        # CAT12's ageing model keeps each time point's own segmentation and
+        # applies the longitudinal Jacobian on top; sharing one tissue map is a
+        # different estimator that leaves the time points differing only by a
+        # smooth multiplier.
+        import inspect
+
+        signature = inspect.signature(modulate_longitudinal)
+        self.assertEqual(signature.parameters["tissue_source"].default, "timepoint")
+
+    def test_default_keeps_each_time_points_own_anatomy(self):
+        # With a shared map the ratio between time points is exactly the
+        # Jacobian ratio -- smooth everywhere.  With per-time-point maps it also
+        # carries each segmentation's own structure, which is what makes
+        # individual anatomy visible.
+        shared = self._run(tissue_source="shared")
+        per_tp = self._run(tissue_source="timepoint")
+
+        def roughness(maps):
+            ratio = np.where(maps[0] > 0.2, maps[1] / np.maximum(maps[0], 1e-9), np.nan)
+            diffs = [np.abs(np.diff(ratio, axis=axis)) for axis in range(3)]
+            return float(np.nanmean([d[np.isfinite(d)].mean() for d in diffs]))
+
+        self.assertGreater(
+            roughness(per_tp.modulated), roughness(shared.modulated)
+        )
 
     def test_recovers_the_volume_ratio(self):
         out = self._run()

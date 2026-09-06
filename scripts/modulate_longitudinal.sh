@@ -44,9 +44,14 @@ a longitudinal VBM analysis is run on -- CAT12's ageing model, except that the
 shared tissue map is the mean of the time points' own segmentations rather than
 a segmentation of the average image.
 
-Two things are shared across the time points, as CAT12 shares them: one tissue
-map, and one spatial normalisation (the mean of the per-time-point 'y_' fields).
-Each time point then differs only by its longitudinal Jacobian.
+Each time point keeps its own segmentation and gets its longitudinal Jacobian
+applied on top, as CAT12's ageing model does, so individual anatomy stays
+visible.  What is shared is the spatial normalisation: the mean of the
+per-time-point 'y_' fields, standing in for the average image's warp to MNI.
+
+'--tissue-source shared' instead reuses one tissue map for every time point, so
+they differ only by a smooth multiplier.  Much quieter, but not CAT12, and it
+suppresses most of the between-scan signal.
 
 Usage (letting it find the files):
     scripts/modulate_longitudinal.sh \

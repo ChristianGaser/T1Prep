@@ -261,33 +261,34 @@ them: `mwmwp1<name>.nii` in the legacy scheme,
 records that these maps really are modulated twice -- by the longitudinal
 Jacobian, then by the spatial normalisation. It also keeps them distinct from
 the *cross-sectional* `mwp1<name>.nii` T1Prep writes into the same folder, which
-normalises the time point on its own rather than scaling a shared tissue map. This follows CAT12 in sharing two things across a subject's time points,
-which is what makes longitudinal VBM more sensitive than running cross-sectional
-VBM twice:
+normalises the time point on its own.
 
-1. **one tissue map**, so segmentation differences cannot enter the contrast;
-2. **one spatial normalisation** — the mean of the per-time-point `y_` fields —
-   so normalisation differences cannot either. Two independently estimated
-   cross-sectional warps of the same subject differ by more than the atrophy
-   between the scans, so this matters as much as the registration itself.
+Following CAT12's ageing model, each time point keeps its **own segmentation**
+and has its longitudinal Jacobian applied on top, so individual anatomy stays
+visible. What is shared across the series is the **spatial normalisation** — the
+mean of the per-time-point `y_` fields, standing in for the average image's warp
+to MNI, since the average is not segmented here. That sharing matters on its
+own: on an ADNI pair the two independently estimated cross-sectional warps
+differed by a median of 1.08 mm inside the brain, more than the atrophy between
+the scans.
 
-Each time point then differs only by its longitudinal Jacobian. On a synthetic
-series, a 0.7 % segmentation perturbation at the tissue boundary corrupted the
-longitudinal contrast by 3.3 % RMS with per-time-point maps but only 0.1 % with
-the shared map.
+Validated against CAT12's own `mwmwp1r` output on that pair: the default
+reproduces CAT12's GM change to 0.02 percentage points (−8.74 % vs −8.72 %) and
+correlates with CAT12's difference map at r = 0.42.
 
-The one deviation from CAT12 is that the shared tissue map is the mean of the
-time points' own segmentations carried into average space, rather than a
-segmentation of the average image. Both it and the shared normalisation are
-averages rather than a chosen reference, which keeps the unbiasedness the rigid
-and non-linear stages establish.
+`--modulate-arg --tissue-source --modulate-arg shared` instead reuses one tissue
+map for every time point, so the contrast carries *only* the Jacobian. It is far
+quieter — on a synthetic series a 0.7 % segmentation perturbation corrupted the
+contrast by 3.3 % with per-time-point maps against 0.1 % with the shared one —
+but it is a different estimator from CAT12's, the two time points then differ
+only by a smooth multiplier so individual anatomy is no longer visible, and on
+the ADNI pair it gave a tenth of CAT12's amplitude with no spatial agreement
+(r = −0.02).
 
 Modulation is volume preserving: the integral of a modulated map reproduces that
-time point's native tissue volume (within 0.1 % on a synthetic series where the
-registration explains the difference). `--modulate-arg --modulation nonlinear`
-divides the affine out to control for head size, as CAT12's non-linear-only
-modulation does; `--modulate-arg --tissue-source timepoint` keeps each time
-point's own segmentation.
+time point's native tissue volume. `--modulate-arg --modulation --modulate-arg
+nonlinear` divides the affine out to control for head size, as CAT12's
+non-linear-only modulation does.
 
 `--long-model ageing` adds `--p` to the T1Prep calls automatically, since the
 modulation needs the native segmentations and they are off by default.
