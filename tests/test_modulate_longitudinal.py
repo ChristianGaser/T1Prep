@@ -191,6 +191,22 @@ class TestModulation(unittest.TestCase):
             roughness(per_tp.modulated), roughness(shared.modulated)
         )
 
+    def test_plasticity_applies_only_the_normalisation(self):
+        # No longitudinal deformation, no longitudinal Jacobian: the two time
+        # points are carried to MNI by the shared normalisation alone.
+        ageing = self._run(model="ageing")
+        plasticity = self._run(model="plasticity")
+        self.assertFalse(
+            np.allclose(ageing.modulated[1], plasticity.modulated[1], atol=1e-6)
+        )
+        # tp0's own volume must still be preserved under either model.
+        for got in (ageing.native_volumes_mm3[0], plasticity.native_volumes_mm3[0]):
+            self.assertAlmostEqual(got / self.volumes[0], 1.0, places=2)
+
+    def test_rejects_an_unknown_model(self):
+        with self.assertRaises(ValueError):
+            self._run(model="sideways")
+
     def test_recovers_the_volume_ratio(self):
         out = self._run()
         got = out.native_volumes_mm3[1] / out.native_volumes_mm3[0]
@@ -338,26 +354,54 @@ class TestResolveInputs(unittest.TestCase):
 class TestOutputNaming(unittest.TestCase):
     """Output names come from T1Prep's naming table, not a suffix invented here."""
 
+    def test_plasticity_keeps_a_single_mw(self):
+        # That model applies only the spatial normalisation, so it is modulated
+        # once -- CAT12 writes it as mwp1r, against mwmwp1r for ageing.
+        self.assertEqual(output_name("mri/p1subj.nii", "plasticity"), "mwp1rsubj.nii")
+        bids = output_name("mri/sub-01_T1w_label-GM_probseg.nii.gz", "plasticity")
+        self.assertIn("-modulated_desc-long", bids)
+        self.assertNotIn("-modulated-modulated", bids)
+
     def test_legacy_names_double_the_mw_marker_like_cat12(self):
         # These maps are modulated twice -- longitudinal Jacobian, then spatial
         # normalisation -- which is what CAT12's ageing model records as mwmw.
-        self.assertEqual(output_name("mri/p1subj.nii"), "mwmwp1subj.nii")
-        self.assertEqual(output_name("mri/p2subj.nii.gz"), "mwmwp2subj.nii.gz")
-        self.assertEqual(output_name("mri/p3subj.nii"), "mwmwp3subj.nii")
+        # Including CAT12's 'r' for the realigned input it processes.
+        self.assertEqual(output_name("mri/p1subj.nii"), "mwmwp1rsubj.nii")
+        self.assertEqual(output_name("mri/p2subj.nii.gz"), "mwmwp2rsubj.nii.gz")
+        self.assertEqual(output_name("mri/p3subj.nii"), "mwmwp3rsubj.nii")
 
     def test_bids_names_double_the_modulated_marker(self):
         got = output_name("mri/sub-01_ses-1_T1w_label-GM_probseg.nii.gz")
         self.assertIn("-modulated-modulated", got)
         self.assertIn("label-GM_probseg", got)
-        self.assertNotIn("_long", got)
+        # BIDS has no 'r' prefix to borrow, so the longitudinal origin is an entity.
+        self.assertIn("_desc-long", got)
 
     def test_does_not_collide_with_the_cross_sectional_modulated_map(self):
-        # T1Prep writes a cross-sectional mwp1 into the same directory by
-        # default; overwriting it would destroy a file the user still needs.
-        self.assertNotEqual(output_name("mri/p1subj.nii"), "mwp1subj.nii")
-        bids = output_name("mri/sub-01_T1w_label-GM_probseg.nii.gz")
-        self.assertNotEqual(
-            bids, "sub-01_space-MNI152NLin2009cAsym-nonlinear-modulated_label-GM_probseg.nii.gz"
+        # T1Prep writes a cross-sectional mwp1<name> into the same directory by
+        # default.  Neither longitudinal model may take that name: overwriting
+        # it destroys a file the user still needs -- which is exactly what
+        # happened before the 'r' was adopted.
+        cross_sectional = "mwp1subj.nii"
+        for model in ("ageing", "plasticity"):
+            self.assertNotEqual(output_name("mri/p1subj.nii", model), cross_sectional)
+        bids_cross = (
+            "sub-01_space-MNI152NLin2009cAsym-nonlinear-modulated_label-GM_probseg.nii.gz"
+        )
+        for model in ("ageing", "plasticity"):
+            self.assertNotEqual(
+                output_name("mri/sub-01_T1w_label-GM_probseg.nii.gz", model), bids_cross
+            )
+
+    def test_legacy_names_match_cat12_exactly(self):
+        # CAT12 writes mwp1r<name> and mwmwp1r<name> for these two models.
+        self.assertEqual(
+            output_name("mri/p1ADNI_005_S_0221_00.nii", "plasticity"),
+            "mwp1rADNI_005_S_0221_00.nii",
+        )
+        self.assertEqual(
+            output_name("mri/p1ADNI_005_S_0221_00.nii", "ageing"),
+            "mwmwp1rADNI_005_S_0221_00.nii",
         )
 
     def test_falls_back_for_unrecognised_names(self):
@@ -431,11 +475,11 @@ class TestCli(unittest.TestCase):
             for idx in (1, 2):
                 # CAT12's doubled "modulated warped" name, from T1Prep's table.
                 self.assertTrue(
-                    (out_dir / f"mwmwp1_tp{idx}.nii.gz").is_file(),
+                    (out_dir / f"mwmwp1r_tp{idx}.nii.gz").is_file(),
                     sorted(q.name for q in out_dir.iterdir()),
                 )
             self.assertTrue((out_dir / "longitudinal_shared_tissue.nii.gz").is_file())
-            modulated = nib.load(str(out_dir / "mwmwp1_tp1.nii.gz"))
+            modulated = nib.load(str(out_dir / "mwmwp1r_tp1.nii.gz"))
             self.assertEqual(modulated.shape, _MNI_SHAPE)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)

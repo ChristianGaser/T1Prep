@@ -229,6 +229,12 @@ between-scan difference is modelled, following CAT12's naming:
   unchanged between scans, which is appropriate for short intervals.
 - `ageing`: rigid realignment, then one small low-dimensional diffeomorphic
   deformation per time point towards an unbiased subject average.
+- `both`: saves both models, as CAT12's "detect both models" option does —
+  `mwmwp1r<name>` from the ageing model and `mwp1r<name>` from the plasticity
+  one, using CAT12's own names. The `r` marks the realigned input CAT12
+  processes, and borrowing it keeps both distinct from T1Prep's cross-sectional
+  `mwp1<name>` in the same folder — which is a different map, normalised with
+  each time point's *own* warp rather than the shared one.
 
 The ageing model is a stationary velocity field stored on a coarse control
 lattice (12 mm by default) and integrated by scaling and squaring, re-centred

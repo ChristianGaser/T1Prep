@@ -302,7 +302,7 @@ def _parse_tissue_name(path: str):
     return None
 
 
-def output_name(tissue_path: str) -> str:
+def output_name(tissue_path: str, model: str = "ageing") -> str:
     """Build the output filename for a modulated longitudinal tissue map.
 
     The name comes from T1Prep's own naming table, with the modulation marker
@@ -317,10 +317,19 @@ def output_name(tissue_path: str) -> str:
 
     Args:
         tissue_path: The native tissue map this output was derived from.
+        model: ``"ageing"`` doubles the marker (two modulations);
+            ``"plasticity"`` leaves it single, since that model applies only the
+            spatial-normalisation Jacobian.
+
+    The legacy names follow CAT12 exactly, ``r`` and all: ``mwp1r<name>.nii``
+    for plasticity and ``mwmwp1r<name>.nii`` for ageing.  CAT12's ``r`` marks
+    the realigned input it processes, and borrowing it keeps these distinct
+    from T1Prep's own cross-sectional ``mwp1<name>.nii`` in the same folder.
 
     Returns:
-        A filename such as ``mwmwp1<name>.nii`` (legacy) or
-        ``<name>_space-..-modulated-modulated_label-GM_probseg.nii`` (BIDS).
+        A filename such as ``mwmwp1r<name>.nii`` (legacy) or
+        ``<name>_space-..-modulated-modulated_desc-long_label-GM_probseg.nii``
+        (BIDS).
         Falls back to ``<stem>_desc-longModulated<ext>`` for a tissue map whose
         name matches neither scheme.
     """
@@ -330,11 +339,24 @@ def output_name(tissue_path: str) -> str:
         return f"{stem}_desc-longModulated{ext}"
     use_bids, bname, tissue_class, ext = parsed
     space = get_filenames(use_bids, bname, "", "", "", ext).get("Warp_modulated_space", "")
-    if space:
+    if space and model == "ageing":
         # Legacy's whole token is the marker ("mw"); BIDS carries it as a
         # trailing "-modulated" inside a longer space name.
         space = space + "-modulated" if use_bids else space + space
-    name = get_filenames(use_bids, bname, "", "", space, ext).get(f"{tissue_class}_volume", "")
+    if use_bids:
+        # No 'r' prefix to borrow in BIDS, so the longitudinal origin is an
+        # entity instead -- matching this module's other outputs.
+        name = get_filenames(use_bids, bname, "", "_desc-long", space, ext).get(
+            f"{tissue_class}_volume", ""
+        )
+    else:
+        # CAT12 marks the realigned input with an 'r', so its longitudinal
+        # outputs read mwp1r<name> / mwmwp1r<name>.  Borrowing that keeps these
+        # distinct from T1Prep's own cross-sectional mwp1<name> in the same
+        # folder without inventing a suffix.
+        name = get_filenames(use_bids, f"r{bname}", "", "", space, ext).get(
+            f"{tissue_class}_volume", ""
+        )
     if not name:
         stem, raw_ext = _split_nifti_name(tissue_path)
         return f"{stem}_desc-longModulated{raw_ext}"
@@ -443,6 +465,7 @@ def modulate_longitudinal(
     log_jacobian_paths: Sequence[str],
     deformation_paths: Sequence[str],
     *,
+    model: str = "ageing",
     modulation: str = "full",
     tissue_source: str = "timepoint",
     verbose: bool = False,
@@ -459,6 +482,12 @@ def modulate_longitudinal(
             ``warp_longitudinal``.
         deformation_paths: SPM ``y_*`` fields, one per time point.  Their mean
             becomes the single normalisation shared by every time point.
+        model: ``"ageing"`` applies each time point's longitudinal deformation
+            and its Jacobian on top of the spatial normalisation -- two
+            modulations, hence ``mwmw``.  ``"plasticity"`` applies only the
+            shared normalisation, assuming the anatomy itself did not change
+            between scans; the deformation and its Jacobian are then unused and
+            the output keeps a single ``mw``.
         modulation: ``"full"`` modulates by the whole transform, as CAT12's
             default does; ``"nonlinear"`` divides the affine part out, which
             controls for overall head size.
@@ -492,6 +521,8 @@ def modulate_longitudinal(
     n_tp = len(tissue_paths)
     if n_tp < 2:
         raise ValueError("Longitudinal modulation needs at least two time points")
+    if model not in ("ageing", "plasticity"):
+        raise ValueError(f"--model must be 'ageing' or 'plasticity' (got: {model})")
     if modulation not in ("full", "nonlinear"):
         raise ValueError(f"--modulation must be 'full' or 'nonlinear' (got: {modulation})")
     if tissue_source not in ("shared", "timepoint"):
@@ -558,6 +589,11 @@ def modulate_longitudinal(
         disp_mm = np.asarray(disp_img.dataobj, dtype=np.float64)
         if disp_mm.ndim == 5:
             disp_mm = disp_mm[:, :, :, 0, :]
+        if model == "plasticity":
+            # No anatomical change is modelled, so the time point is carried to
+            # MNI by the shared normalisation alone.
+            warped_on_mni.append(_sample_world(img, shared_y))
+            continue
         # The displacement is smooth by construction (a 12 mm lattice), so
         # interpolating *it* onto the MNI grid costs nothing in detail.
         step = np.stack([_on_mni(disp_mm[..., k], cval=1e-12) for k in range(3)], axis=-1)
@@ -579,9 +615,12 @@ def modulate_longitudinal(
     modulated, volumes = [], []
     for idx in range(n_tp):
         tissue = shared_on_mni if tissue_source == "shared" else warped_on_mni[idx]
-        det_long = _on_mni(
-            np.exp(np.asarray(logjac_imgs[idx].dataobj, dtype=np.float64)), cval=1.0
-        )
+        if model == "plasticity":
+            det_long = 1.0
+        else:
+            det_long = _on_mni(
+                np.exp(np.asarray(logjac_imgs[idx].dataobj, dtype=np.float64)), cval=1.0
+            )
         out = (tissue * det_long * det_cross).astype(np.float32)
         modulated.append(out)
         volumes.append(float(out.sum()) * voxel_mm3)
@@ -681,6 +720,16 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Optional subfolder per time point, to avoid colliding basenames",
     )
     p.add_argument(
+        "--model",
+        choices=("ageing", "plasticity"),
+        default="ageing",
+        help=(
+            "'ageing' applies the longitudinal deformation and its Jacobian on top "
+            "of the shared normalisation (two modulations -> mwmwp1); 'plasticity' "
+            "applies only the shared normalisation (one -> mwp1)"
+        ),
+    )
+    p.add_argument(
         "--modulation",
         choices=("full", "nonlinear"),
         default="full",
@@ -750,6 +799,7 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
             args.displacement,
             args.log_jacobian,
             args.deformation,
+            model=str(args.model),
             modulation=str(args.modulation),
             tissue_source=str(args.tissue_source),
             verbose=bool(args.verbose),
@@ -764,7 +814,7 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
         os.makedirs(dest, exist_ok=True)
         nib.save(
             nib.Nifti1Image(outputs.modulated[idx], outputs.mni_affine),
-            os.path.join(dest, output_name(path)),
+            os.path.join(dest, output_name(path, str(args.model))),
         )
 
     if args.save_shared_tissue:

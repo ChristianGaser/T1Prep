@@ -146,7 +146,8 @@ Batch helper for longitudinal studies. Groups time-point scans by subject, runs 
 | model | what it does |
 |---|---|
 | `plasticity` (default) | Rigid realignment only. Assumes the anatomy itself is unchanged between scans; appropriate for short intervals. |
-| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average, then Jacobian modulation into MNI. Adds a few seconds per subject, and forces `--p` so the native segmentations exist. |
+| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average, then Jacobian modulation into MNI (`mwmwp1<name>`). Adds a few seconds per subject, and forces `--p` so the native segmentations exist. |
+| `both` | Saves both models, as CAT12's "detect both models" option does: `mwmwp1r<name>` for ageing and `mwp1r<name>` for plasticity, using CAT12's own names. The `r` marks the realigned input, which keeps both distinct from T1Prep's cross-sectional `mwp1<name>` in the same folder. |
 
 ```bash
 # Process time points for a single subject
@@ -228,6 +229,10 @@ stays visible. What is shared is the **spatial normalisation**: the mean of the
 per-time-point `y_` fields, standing in for the average image's warp to MNI.
 That matters on its own, since two independently estimated warps of the same
 subject differ by more than the atrophy between the scans.
+
+`--model plasticity` applies only the shared normalisation, writing
+`mwp1r<name>`; `--model ageing` (default) adds the longitudinal deformation and
+its Jacobian, writing `mwmwp1r<name>`. Both are CAT12's own names.
 
 `--tissue-source shared` instead reuses one tissue map for every time point, so
 they differ only by a smooth multiplier. Quieter, but a different estimator from
