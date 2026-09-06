@@ -47,7 +47,11 @@ CAT12 folder structures and the BIDS derivatives standard.
 - Implemented entirely in Python, eliminating the need for a Matlab license or platform-specific compiled binaries.
 - Newly developed pipeline to estimate cortical surface and thickness.
 - Skull-stripping, segmentation and non-linear spatial registration uses DeepMriPrep
-- Does not yet fully support longitudinal pipelines.
+- Longitudinal processing implements CAT12's `plasticity`, `ageing` and `both`
+  models and writes CAT12's own `mwp1r*` / `mwmwp1r*` outputs, but it is
+  experimental: the subject average is not segmented, there is no joint bias
+  correction, and it runs only from a source checkout (see
+  [scripts/README.md](scripts/README.md)).
 - Only T1 MRI data supported.
 
 ## Installation

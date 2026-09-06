@@ -13,7 +13,7 @@ and both keep their display settings in a right-click menu. Neither needs
 T1Prep output — they open any GIFTI surface or NIfTI volume.
 
 ```bash
-CAT_SurfView lh.central.gii            # no arguments prints the help
+CAT_SurfView lh.central.gii            # a surface (run without arguments for the help)
 CAT_VolView T1.nii.gz                  # three orthogonal slices
 CAT_VolView T1.nii.gz p1T1.nii.gz      # up to 6 volumes, one window each, linked
 ```
@@ -32,7 +32,12 @@ Back to the [README](../README.md).
 
 `CAT_SurfView` shows both hemispheres as a six-view montage — lateral and
 medial for each, dorsal in the middle — with an overlay on a shaded surface.
-The second hemisphere is found from the file name (`lh.`↔`rh.`,
+An overlay does not reference its surface, so the mesh is looked up from the
+overlay's name in either scheme — `lh.thickness.sub-01` → `lh.central.sub-01.gii`,
+or `sub-01_hemi-L_thickness.shape.gii` → `sub-01_hemi-L_midthickness.surf.gii`,
+following the same `Names.tsv` the pipeline wrote it with — then by any
+central/midthickness surface in the folder, then by value count against the
+templates. The second hemisphere is found from the file name (`lh.`↔`rh.`,
 `left`↔`right`, `_hemi-L_`↔`_hemi-R_`), or split off a combined
 `mesh.central.*` surface.
 
@@ -87,7 +92,7 @@ that peak on the surface, and **Save CSV…** writes the table for a paper.
 ### Colours
 
 Range, clip window, colormap, opacity, inversion and discrete levels live in the
-control panel (`Ctrl`/`Cmd+D`, or `p`). The defaults follow `cat_surf_results`:
+control panel (`Ctrl`/`Cmd+D`). The defaults follow `cat_surf_results`:
 
 - two-sided data is scaled symmetrically, so both tails get the same colours;
 - a −log10(p) map is rounded outwards to whole numbers;

@@ -219,6 +219,7 @@ New tuning flags in the Python realigner:
 - `--no-intensity-scale`: disable SPM-like global intensity scaling.
 - `--overlap-penalty-weight <FLOAT>`: penalize samples that fall outside the moving FOV.
 - `--sample-strategy {grid,gradient}`: choose deterministic grid or edge-biased gradient sampling.
+- `--grad-quantile <FLOAT>`: threshold for selecting high-gradient samples.
 
 ### Longitudinal models
 
@@ -256,18 +257,39 @@ processes: warping a time point onto the average would make its segmentation
 and surfaces describe the average anatomy rather than that time point's own.
 Pass `--warp-arg --apply` to also write the warped volumes.
 
+Run the step on its own with:
+
+```bash
+./scripts/warp_longitudinal.sh --help
+```
+
+At the 1.5 mm default working resolution this costs a few seconds per subject
+(about 4.5 s for two time points, 14 s for five, on CPU); `--resolution 1.0`
+raises that to roughly three minutes for a pair.
+
+The pipeline passes `--use-skullstrip`, so the deformations are estimated from
+brain-extracted copies and applied to the originals, as the rigid stage already
+does. It matters: on a real ADNI pair, estimating from full heads let scalp,
+skull and neck drive 44 % of the volume instead of 13 %, left a 4.3x larger
+residual, and moved the resulting log-Jacobian enough that the two estimates
+correlate only r = 0.87 inside the brain.
+
+One gap against SPM's serial longitudinal registration remains: it estimates a
+bias field jointly with the deformation, and this does not. A strong intensity
+non-uniformity difference between scans is therefore not modelled, and the
+robust intensity normalisation is all that stands against it.
+
 #### Jacobian modulation
 
-After every time point has been processed, `--long-model ageing` modulates each
-tissue map by its longitudinal Jacobian and carries it to MNI -- the map a
-longitudinal VBM analysis is run on. Names come from T1Prep's own naming table
-with the modulation marker **doubled**, exactly as CAT12's ageing model writes
-them: `mwmwp1<name>.nii` in the legacy scheme,
-`<name>_space-..-modulated-modulated_label-GM_probseg.nii` in BIDS. The doubling
-records that these maps really are modulated twice -- by the longitudinal
-Jacobian, then by the spatial normalisation. It also keeps them distinct from
-the *cross-sectional* `mwp1<name>.nii` T1Prep writes into the same folder, which
-normalises the time point on its own.
+After every time point has been processed, `--long-model ageing` (and `both`)
+modulates each tissue map by its longitudinal Jacobian and carries it to MNI --
+the map a longitudinal VBM analysis is run on. Names are CAT12's own:
+`mwmwp1r<name>.nii` for the ageing model and `mwp1r<name>.nii` for plasticity in
+the legacy scheme (in BIDS, `_desc-long` with `-modulated` doubled for ageing).
+The doubled marker records that the ageing maps really are modulated twice --
+by the longitudinal Jacobian, then by the spatial normalisation -- and the `r`
+is CAT12's marker for the realigned input, which keeps both distinct from the
+*cross-sectional* `mwp1<name>.nii` T1Prep writes into the same folder.
 
 Following CAT12's ageing model, each time point keeps its **own segmentation**
 and has its longitudinal Jacobian applied on top, so individual anatomy stays
@@ -296,37 +318,19 @@ time point's native tissue volume. `--modulate-arg --modulation --modulate-arg
 nonlinear` divides the affine out to control for head size, as CAT12's
 non-linear-only modulation does.
 
-`--long-model ageing` adds `--p` to the T1Prep calls automatically, since the
-modulation needs the native segmentations and they are off by default.
+`--long-model ageing` and `both` add `--p` to the T1Prep calls automatically,
+since the modulation needs the native segmentations and they are off by default.
+
+**Input layout.** The time points must sit in a plain folder. A BIDS `anat/`
+layout is not yet supported by the longitudinal pipeline and is refused up
+front: the realigned copies would land on top of the inputs, and T1Prep would be
+handed a directory as `--long-data`.
 
 Run the stage on its own with:
 
 ```bash
 ./scripts/modulate_longitudinal.sh --help
 ```
-
-Run the step on its own with:
-
-```bash
-./scripts/warp_longitudinal.sh --help
-```
-
-At the 1.5 mm default working resolution this costs a few seconds per subject
-(about 4.5 s for two time points, 14 s for five, on CPU); `--resolution 1.0`
-raises that to roughly three minutes for a pair.
-
-The pipeline passes `--use-skullstrip`, so the deformations are estimated from
-brain-extracted copies and applied to the originals, as the rigid stage already
-does. It matters: on a real ADNI pair, estimating from full heads let scalp,
-skull and neck drive 44 % of the volume instead of 13 %, left a 4.3x larger
-residual, and moved the resulting log-Jacobian enough that the two estimates
-correlate only r = 0.87 inside the brain.
-
-One gap against SPM's serial longitudinal registration remains: it estimates a
-bias field jointly with the deformation, and this does not. A strong intensity
-non-uniformity difference between scans is therefore not modelled, and the
-robust intensity normalisation is all that stands against it.
-- `--grad-quantile <FLOAT>`: threshold for selecting high-gradient samples.
 
 ## Input
 T1-weighted MRI images in NIfTI format (extension nii/nii.gz).
