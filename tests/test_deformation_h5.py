@@ -15,6 +15,13 @@ import torch.nn.functional as F
 
 h5py = pytest.importorskip("h5py")
 
+# Allow running tests without installing the package (repo checkout / editable dev)
+import sys as _sys
+from pathlib import Path as _Path
+_SRC = _Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in _sys.path:
+    _sys.path.insert(0, str(_SRC))
+
 from t1prep.segment import save_deformation_h5
 
 RAS2LPS = np.diag([-1.0, -1.0, 1.0])

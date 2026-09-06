@@ -2,6 +2,7 @@ import math
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 
@@ -168,6 +169,103 @@ class TestScalarsOnlyGifti(unittest.TestCase):
         self.assertFalse(is_overlay_file(str(template)))
 
 
+class TestBidsOverlayNames(unittest.TestCase):
+    """BIDS overlays resolve to the surface the pipeline wrote next to them.
+
+    T1Prep writes ``sub-01_hemi-L_thickness.shape.gii`` beside
+    ``sub-01_hemi-L_midthickness.surf.gii`` (``Names.tsv``).  The viewer used
+    to build ``sub-01_thickness.shape_hemi-L_space-MNI152NLin2009cAsym_desc-
+    midthickness.surf.gii`` instead -- ``Path.stem`` leaves ``thickness.shape``
+    in the base name, and that ``_desc-midthickness`` form was never written --
+    and its glob fallback looked for ``lh``/``rh``, which BIDS names lack.  So a
+    BIDS overlay could not be opened at all.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import nibabel as nib
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise unittest.SkipTest(f"nibabel unavailable: {exc}")
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.folder = Path(cls._tmp.name)
+        # A tiny but real GIFTI mesh, so content-based checks see a surface.
+        coords = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        for side in ("L", "R"):
+            img = nib.gifti.GiftiImage(darrays=[
+                nib.gifti.GiftiDataArray(coords, intent="NIFTI_INTENT_POINTSET"),
+                nib.gifti.GiftiDataArray(faces, intent="NIFTI_INTENT_TRIANGLE"),
+            ])
+            nib.save(img, str(cls.folder / f"sub-01_hemi-{side}_midthickness.surf.gii"))
+            for suffix in ("thickness.shape", "pbt.shape", "area.shape",
+                           "sulc.shape", "desc-cortex_mask.label"):
+                (cls.folder / f"sub-01_hemi-{side}_{suffix}.gii").write_bytes(b"")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_shape_and_label_overlays_map_to_midthickness(self):
+        mesh = self.folder / "sub-01_hemi-L_midthickness.surf.gii"
+        for name in ("sub-01_hemi-L_thickness.shape.gii",
+                     "sub-01_hemi-L_pbt.shape.gii",
+                     "sub-01_hemi-L_area.shape.gii",
+                     "sub-01_hemi-L_sulc.shape.gii",
+                     "sub-01_hemi-L_desc-cortex_mask.label.gii"):
+            got = Path(convert_filename_to_mesh(str(self.folder / name)))
+            self.assertEqual(got, mesh, name)
+
+    def test_right_hemisphere_maps_to_its_own_surface(self):
+        got = Path(convert_filename_to_mesh(str(self.folder / "sub-01_hemi-R_thickness.shape.gii")))
+        self.assertEqual(got, self.folder / "sub-01_hemi-R_midthickness.surf.gii")
+
+    def test_t1w_suffix_is_stripped_like_the_producer_does(self):
+        # substitute_pattern() drops a trailing _T1w from the base name.
+        from t1prep.gui.cat_surf_view import _bids_overlay_to_mesh
+        got = _bids_overlay_to_mesh(self.folder / "sub-01_T1w_hemi-L_thickness.shape.gii")
+        self.assertEqual(got, self.folder / "sub-01_hemi-L_midthickness.surf.gii")
+
+    def test_parse_args_hands_the_viewer_an_existing_mesh(self):
+        overlay = self.folder / "sub-01_hemi-L_thickness.shape.gii"
+        opts = parse_args([str(overlay)])
+        self.assertEqual(opts.overlay, str(overlay))
+        self.assertEqual(Path(opts.mesh_left), self.folder / "sub-01_hemi-L_midthickness.surf.gii")
+
+    def test_overlay_kind_from_current_and_older_bids_names(self):
+        from t1prep.gui.cat_surf_view import detect_overlay_kind
+        self.assertEqual(detect_overlay_kind("sub-01_hemi-L_thickness.shape.gii"), "thickness")
+        self.assertEqual(detect_overlay_kind("sub-01_hemi-L_pbt.shape.gii"), "pbt")
+        self.assertEqual(detect_overlay_kind("sub-01_hemi-L_desc-thickness.gii"), "thickness")
+        self.assertEqual(detect_overlay_kind("lh.thickness.subj"), "thickness")
+        self.assertEqual(detect_overlay_kind("lh.thickness"), "thickness")
+        self.assertIsNone(detect_overlay_kind("sub-01_hemi-L_sulc.shape.gii"))
+        self.assertIsNone(detect_overlay_kind("sub-01_hemi-L_midthickness.surf.gii"))
+
+    def test_shape_and_label_files_are_overlays_by_name(self):
+        # Empty files: nothing for the content checks to go on, so the name decides.
+        for name in ("sub-01_hemi-L_sulc.shape.gii", "sub-01_hemi-L_desc-cortex_mask.label.gii"):
+            self.assertTrue(is_overlay_file(str(self.folder / name)), name)
+        self.assertFalse(is_overlay_file(str(self.folder / "sub-01_hemi-L_midthickness.surf.gii")))
+
+    def test_freesurfer_names_still_resolve(self):
+        # The FreeSurfer/CAT12 path must not have been disturbed.
+        got = Path(convert_filename_to_mesh(str(self.folder / "lh.thickness.subj")))
+        self.assertEqual(got, self.folder / "lh.central.subj.gii")
+
+    def test_gui_glob_fallback_knows_bids_hemisphere_tokens(self):
+        # Simulate the Viewer's step-2 search without a window: a BIDS overlay
+        # whose derived name does NOT exist must still find the surface by glob.
+        from t1prep.gui.cat_surf_view import Viewer
+        # A different subject: the table-derived name does not exist here, so
+        # only the glob can find the surface that is present.
+        stray = self.folder / "sub-02_hemi-L_thickness.shape.gii"
+        stray.write_bytes(b"")
+        self.assertFalse((self.folder / "sub-02_hemi-L_midthickness.surf.gii").exists())
+        found = Viewer._find_mesh_for_overlay(SimpleNamespace(), str(stray))
+        self.assertEqual(found, self.folder / "sub-01_hemi-L_midthickness.surf.gii")
+
+
 class TestLogPThresholds(unittest.TestCase):
     """The p-value thresholds offered for -log10(p) overlays."""
 
@@ -279,6 +377,7 @@ class TestHemisphereLookup(unittest.TestCase):
     def test_counterpart_works_in_both_directions(self):
         from t1prep.gui.cat_surf_view import _hemi_counterpart
         pairs = (("lh.central.subj.gii", "rh.central.subj.gii"),
+                 ("sub-01_hemi-L_thickness.shape.gii", "sub-01_hemi-R_thickness.shape.gii"),
                  ("sub-01_hemi-L_desc-thickness.gii", "sub-01_hemi-R_desc-thickness.gii"),
                  ("left_hemisphere.gii", "right_hemisphere.gii"))
         for left, right in pairs:

@@ -9,6 +9,13 @@ the test does not depend on the interpolation it is checking.
 import numpy as np
 import pytest
 
+# Allow running tests without installing the package (repo checkout / editable dev)
+import sys as _sys
+from pathlib import Path as _Path
+_SRC = _Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in _sys.path:
+    _sys.path.insert(0, str(_SRC))
+
 from t1prep.fslr import project_unproject, rigid_align_sphere, spherical_barycentric
 
 

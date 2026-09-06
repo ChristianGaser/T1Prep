@@ -9,6 +9,13 @@ particular output is produced — which for the debug-only intensity maps meant 
 import numpy as np
 import pytest
 
+# Allow running tests without installing the package (repo checkout / editable dev)
+import sys as _sys
+from pathlib import Path as _Path
+_SRC = _Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in _sys.path:
+    _sys.path.insert(0, str(_SRC))
+
 from t1prep.utils import DATA_PATH_T1PREP, NameTable
 
 cat_surf = pytest.importorskip("cat_surf")

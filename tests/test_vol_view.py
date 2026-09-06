@@ -1946,10 +1946,13 @@ class TestAppLaunch(unittest.TestCase):
         from t1prep.gui.cat_vol_view import files_opened_by_finder
 
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        QtCore.QTimer.singleShot(0, lambda: app.postEvent(
-            app, QtGui.QFileOpenEvent(QtCore.QUrl.fromLocalFile("/tmp/a.nii.gz"))))
-        self.assertEqual(files_opened_by_finder(app, timeout_ms=1500),
-                         ["/tmp/a.nii.gz"])
+        # The router accepts only documents that exist: macOS also reports
+        # leftover command-line tokens as open-document events.
+        with tempfile.NamedTemporaryFile(suffix=".nii.gz") as doc:
+            QtCore.QTimer.singleShot(0, lambda: app.postEvent(
+                app, QtGui.QFileOpenEvent(QtCore.QUrl.fromLocalFile(doc.name))))
+            self.assertEqual(files_opened_by_finder(app, timeout_ms=1500),
+                             [doc.name])
 
     def test_no_files_when_none_arrive(self):
         try:
@@ -1979,9 +1982,10 @@ class TestAppLaunch(unittest.TestCase):
         opened = []
         router.set_handler(opened.extend)
         try:
-            app.sendEvent(app, QtGui.QFileOpenEvent(
-                QtCore.QUrl.fromLocalFile("/tmp/later.nii.gz")))
-            self.assertEqual(opened, ["/tmp/later.nii.gz"])
+            with tempfile.NamedTemporaryFile(suffix=".nii.gz") as doc:
+                app.sendEvent(app, QtGui.QFileOpenEvent(
+                    QtCore.QUrl.fromLocalFile(doc.name)))
+                self.assertEqual(opened, [doc.name])
         finally:
             router.set_handler(None)
 
@@ -1995,14 +1999,15 @@ class TestAppLaunch(unittest.TestCase):
 
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         router = finder_open_files(app)
-        app.sendEvent(app, QtGui.QFileOpenEvent(
-            QtCore.QUrl.fromLocalFile("/tmp/early.nii.gz")))
-        opened = []
-        router.set_handler(opened.extend)
-        try:
-            self.assertEqual(opened, ["/tmp/early.nii.gz"])
-        finally:
-            router.set_handler(None)
+        with tempfile.NamedTemporaryFile(suffix=".nii.gz") as doc:
+            app.sendEvent(app, QtGui.QFileOpenEvent(
+                QtCore.QUrl.fromLocalFile(doc.name)))
+            opened = []
+            router.set_handler(opened.extend)
+            try:
+                self.assertEqual(opened, [doc.name])
+            finally:
+                router.set_handler(None)
 
     def test_double_click_reuses_the_application(self):
         """The file dialog and the window must share one QApplication.
