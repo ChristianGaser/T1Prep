@@ -250,6 +250,54 @@ processes: warping a time point onto the average would make its segmentation
 and surfaces describe the average anatomy rather than that time point's own.
 Pass `--warp-arg --apply` to also write the warped volumes.
 
+#### Jacobian modulation
+
+After every time point has been processed, `--long-model ageing` modulates each
+tissue map by its longitudinal Jacobian and carries it to MNI -- the map a
+longitudinal VBM analysis is run on. Names come from T1Prep's own naming table
+with the modulation marker **doubled**, exactly as CAT12's ageing model writes
+them: `mwmwp1<name>.nii` in the legacy scheme,
+`<name>_space-..-modulated-modulated_label-GM_probseg.nii` in BIDS. The doubling
+records that these maps really are modulated twice -- by the longitudinal
+Jacobian, then by the spatial normalisation. It also keeps them distinct from
+the *cross-sectional* `mwp1<name>.nii` T1Prep writes into the same folder, which
+normalises the time point on its own rather than scaling a shared tissue map. This follows CAT12 in sharing two things across a subject's time points,
+which is what makes longitudinal VBM more sensitive than running cross-sectional
+VBM twice:
+
+1. **one tissue map**, so segmentation differences cannot enter the contrast;
+2. **one spatial normalisation** — the mean of the per-time-point `y_` fields —
+   so normalisation differences cannot either. Two independently estimated
+   cross-sectional warps of the same subject differ by more than the atrophy
+   between the scans, so this matters as much as the registration itself.
+
+Each time point then differs only by its longitudinal Jacobian. On a synthetic
+series, a 0.7 % segmentation perturbation at the tissue boundary corrupted the
+longitudinal contrast by 3.3 % RMS with per-time-point maps but only 0.1 % with
+the shared map.
+
+The one deviation from CAT12 is that the shared tissue map is the mean of the
+time points' own segmentations carried into average space, rather than a
+segmentation of the average image. Both it and the shared normalisation are
+averages rather than a chosen reference, which keeps the unbiasedness the rigid
+and non-linear stages establish.
+
+Modulation is volume preserving: the integral of a modulated map reproduces that
+time point's native tissue volume (within 0.1 % on a synthetic series where the
+registration explains the difference). `--modulate-arg --modulation nonlinear`
+divides the affine out to control for head size, as CAT12's non-linear-only
+modulation does; `--modulate-arg --tissue-source timepoint` keeps each time
+point's own segmentation.
+
+`--long-model ageing` adds `--p` to the T1Prep calls automatically, since the
+modulation needs the native segmentations and they are off by default.
+
+Run the stage on its own with:
+
+```bash
+./scripts/modulate_longitudinal.sh --help
+```
+
 Run the step on its own with:
 
 ```bash
@@ -259,6 +307,18 @@ Run the step on its own with:
 At the 1.5 mm default working resolution this costs a few seconds per subject
 (about 4.5 s for two time points, 14 s for five, on CPU); `--resolution 1.0`
 raises that to roughly three minutes for a pair.
+
+The pipeline passes `--use-skullstrip`, so the deformations are estimated from
+brain-extracted copies and applied to the originals, as the rigid stage already
+does. It matters: on a real ADNI pair, estimating from full heads let scalp,
+skull and neck drive 44 % of the volume instead of 13 %, left a 4.3x larger
+residual, and moved the resulting log-Jacobian enough that the two estimates
+correlate only r = 0.87 inside the brain.
+
+One gap against SPM's serial longitudinal registration remains: it estimates a
+bias field jointly with the deformation, and this does not. A strong intensity
+non-uniformity difference between scans is therefore not modelled, and the
+robust intensity normalisation is all that stands against it.
 - `--grad-quantile <FLOAT>`: threshold for selecting high-gradient samples.
 
 ## Input

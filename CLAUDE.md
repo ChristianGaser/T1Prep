@@ -55,6 +55,7 @@ python scripts/qa_calibrate.py /path/to/BWP/report
 # Longitudinal: rigid realignment, then the low-dimensional ageing deformation
 ./scripts/process_longitudinal.sh --long-model ageing tp1.nii.gz tp2.nii.gz
 ./scripts/warp_longitudinal.sh --inputs tp1.nii.gz tp2.nii.gz --out-dir DIR
+./scripts/modulate_longitudinal.sh --mri-dirs D1 D2 --names tp1 tp2 --out-dir DIR
 
 # Score the spherical registration against the Mindboggle-101 manual labels
 python evaluation/tools/eval_mindboggle.py project --mindboggle DIR... --t1prep DIR --work DIR
