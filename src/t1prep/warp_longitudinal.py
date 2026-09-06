@@ -717,6 +717,15 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--use-skullstrip",
+        action="store_true",
+        help=(
+            "Estimate the deformations from skull-stripped copies, applying them "
+            "to the originals. Without this the fit is driven by scalp, skull and "
+            "neck as much as by the brain."
+        ),
+    )
+    p.add_argument(
         "--save-displacement",
         action="store_true",
         help="Also write the 4-D RAS displacement field of exp(v) in mm",
@@ -764,8 +773,18 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
         )
 
     images = [nib.load(p) for p in args.inputs]
+
+    align_images = images
+    if args.use_skullstrip:
+        # Reuse the rigid stage's helper rather than a second copy of the lazy
+        # segment import; the deformation is estimated on the stripped copies
+        # and applied to the originals, exactly as the rigid stage does.
+        from .realign_longitudinal import _skullstrip_for_realign
+
+        align_images = _skullstrip_for_realign(images, verbose=bool(args.verbose))
+
     outputs = groupwise_svf(
-        images,
+        align_images,
         control_spacing=float(args.control_spacing),
         resolution=float(args.resolution) if args.resolution and args.resolution > 0 else None,
         scales=tuple(int(s) for s in args.scales),

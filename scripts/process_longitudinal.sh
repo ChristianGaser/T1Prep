@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 REALIGN_SCRIPT="$SCRIPT_DIR/realign_longitudinal.sh"
 WARP_SCRIPT="$SCRIPT_DIR/warp_longitudinal.sh"
+MODULATE_SCRIPT="$SCRIPT_DIR/modulate_longitudinal.sh"
 T1PREP_CMD="$SCRIPT_DIR/T1Prep"
 
 # We run with nounset, but utils.sh is shared with scripts that don't.
@@ -30,6 +31,7 @@ declare -a TIMEPOINT_ORDER=()
 declare -a TIMEPOINT_DATA=()
 declare -a REALIGN_ARGS=()
 declare -a WARP_ARGS=()
+declare -a MODULATE_ARGS=()
 declare -a SUBJECT_IDS=()
 declare -a INPUT_PATHS=()
 INPUT_MODE=""
@@ -65,7 +67,8 @@ Usage:
         [--out-dir /path/to/output-or-dataset-root] \
         [--long-model plasticity|ageing] \
         [--t1prep-arg "--flag"] \
-        [--realign-arg "--some-option"] [--warp-arg "--some-option"] [--dry-run] \
+        [--realign-arg "--opt"] [--warp-arg "--opt"] [--modulate-arg "--opt"] \
+        [--dry-run] \
         /path/to/tp1.nii.gz /path/to/tp2.nii.gz [...]
 
 Longitudinal models (CAT12 naming):
@@ -84,7 +87,10 @@ Notes:
     - If --t1prep-arg is omitted, only the realignment step is performed.
     - Time points are taken in the given order.
     - Additional arguments can be supplied via repeated --*-arg flags.
-    - --warp-arg is only used when --long-model ageing is selected.
+    - --warp-arg and --modulate-arg are only used with --long-model ageing.
+      They forward options to warp_longitudinal.sh and modulate_longitudinal.sh,
+      e.g. --modulate-arg "--modulation" --modulate-arg "nonlinear" to divide out
+      head size, or --warp-arg "--apply" to also write the warped volumes.
     - If --out-dir is omitted, the output folder is derived like scripts/T1Prep.
 USAGE
 }
@@ -107,6 +113,10 @@ parse_args() {
             --warp-arg)
                 shift || die "--warp-arg needs a value"
                 WARP_ARGS+=("$1")
+                ;;
+            --modulate-arg)
+                shift || die "--modulate-arg needs a value"
+                MODULATE_ARGS+=("$1")
                 ;;
             --long-model)
                 shift || die "--long-model requires a value"
@@ -198,6 +208,7 @@ validate_inputs() {
     [[ -x "$REALIGN_SCRIPT" ]] || die "Realignment script not executable: $REALIGN_SCRIPT"
     if [[ "$LONG_MODEL" == "ageing" ]]; then
         [[ -x "$WARP_SCRIPT" ]] || die "Warp script not executable: $WARP_SCRIPT"
+        [[ -x "$MODULATE_SCRIPT" ]] || die "Modulation script not executable: $MODULATE_SCRIPT"
     fi
 
     read_timepoint_to_array "${TIMEPOINT_DATA[0]}"
@@ -299,12 +310,13 @@ process_subjects() {
         # unbiased subject average, and keep its log Jacobian -- the per-voxel
         # log volume ratio that longitudinal VBM runs statistics on.
         #
-        # This only writes the deformations and their Jacobians alongside the
-        # realigned volumes.  It deliberately does not redirect what T1Prep is
-        # given below: warping a time point onto the average would make its
-        # segmentation and surfaces describe the average anatomy rather than
-        # that time point's own.  Pass --warp-arg --apply to also write the
-        # warped volumes.
+        # This writes the deformations and their Jacobians alongside the
+        # realigned volumes; the modulation stage after the T1Prep loop turns
+        # them into the maps a VBM analysis is run on.  It deliberately does not
+        # redirect what T1Prep is given below: warping a time point onto the
+        # average would make its segmentation and surfaces describe the average
+        # anatomy rather than that time point's own.  Pass --warp-arg --apply to
+        # also write the warped volumes.
         if [[ "$LONG_MODEL" == "ageing" ]]; then
             local -a realigned_paths=()
             for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
@@ -312,6 +324,7 @@ process_subjects() {
             done
             run_step "${WARP_SCRIPT}" --inputs "${realigned_paths[@]}" --out-dir "./" \
                 --out-subfolders "${realign_subfolders[@]}" --save-template \
+                --save-displacement --use-skullstrip \
                 "${WARP_ARGS[@]+"${WARP_ARGS[@]}"}"
         fi
 
@@ -338,6 +351,11 @@ process_subjects() {
             if [[ -n "${OUT_DIR}" ]]; then
                 t1prep_cmd+=(--out-dir "$OUT_DIR")
             fi
+            # save_p is off by default, but the modulation stage needs the
+            # native segmentation of every time point.
+            if [[ "$LONG_MODEL" == "ageing" ]] && [[ ! " ${T1PREP_ARGS[*]-} " == *" --p "* ]]; then
+                t1prep_cmd+=(--p)
+            fi
             if (( ${#T1PREP_ARGS[@]} )); then
                 t1prep_cmd+=("${T1PREP_ARGS[@]}")
             fi
@@ -360,6 +378,39 @@ process_subjects() {
             run_step "${t1prep_cmd[@]}"
             ((i++))
         done
+
+        # Modulation closes the ageing model: each time point's tissue map is
+        # scaled by its longitudinal Jacobian and carried to MNI through a
+        # single normalisation shared by the whole series, so the only thing
+        # that differs between time points is the volume change itself.  This
+        # has to come after the loop because it needs every time point's
+        # segmentation and deformation field to exist.
+        if [[ "$LONG_MODEL" == "ageing" ]]; then
+            local -a modulate_dirs=()
+            local -a modulate_names=()
+            for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
+                local tp_path="${subject_tp_paths[$tp_idx]}"
+                # Ask T1Prep's own helper where that time point's outputs went,
+                # rather than reimplementing the derivation here.
+                t1prep_output_folder_from_input "$tp_path" "${OUT_DIR:-}" "${T1PREP_VERSION}" "${USE_AMAP}"
+                if [[ "${use_subfolder}" -eq 0 ]]; then
+                    modulate_dirs+=("$outdir0")
+                else
+                    modulate_dirs+=("$outdir0/mri")
+                fi
+                modulate_names+=("$bname")
+            done
+            # The tissue maps and y_ fields are in T1Prep's output folders, but
+            # the warp stage ran before T1Prep and wrote its displacement and
+            # log Jacobian beside the realigned volumes instead, so the two
+            # directory lists are not the same.
+            run_step "${MODULATE_SCRIPT}" \
+                --mri-dirs "${modulate_dirs[@]}" \
+                --long-dirs "${realign_subfolders[@]}" \
+                --names "${modulate_names[@]}" \
+                --out-dir "./" --out-subfolders "${modulate_dirs[@]}" \
+                "${MODULATE_ARGS[@]+"${MODULATE_ARGS[@]}"}"
+        fi
     done
 }
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -204,6 +205,18 @@ def _split_nifti_name(path: str) -> Tuple[str, str]:
     if ext:
         return base, ext
     return base, ".nii"
+
+
+def _dest_dir(out_dir: str, subfolders: Optional[Sequence[str]], idx: int) -> str:
+    """Return the output directory for input ``idx``, creating it.
+
+    Only the ``--out-subfolders`` branch used to call ``makedirs``, so a plain
+    ``--out-dir`` that did not already exist failed at ``nib.save`` after the
+    whole registration had run.
+    """
+    dest = out_dir if subfolders is None else os.path.join(out_dir, subfolders[idx])
+    os.makedirs(dest, exist_ok=True)
+    return dest
 
 
 def _build_output_path(inp_path: str, out_dir: str, naming: str, suffix: str = "") -> str:
@@ -621,13 +634,30 @@ def _skullstrip_for_realign(
     dependencies unless requested.
     """
 
-    # Ensure local imports used by segment.py (e.g., `from utils import ...`) resolve
-    # regardless of how this module is executed (script vs package).
-    this_dir = str(Path(__file__).resolve().parent)
-    if this_dir not in os.sys.path:
-        os.sys.path.insert(0, this_dir)
-
-    from segment import CustomPreprocess, prepare_model_files, setup_device, skull_strip  # type: ignore
+    # ``segment`` uses package-relative imports (``from .report import ...``), so
+    # it has to be reached through the package.  Putting this directory on
+    # sys.path and importing a bare ``segment`` finds the same file with no
+    # parent package attached, and the first relative import inside it then
+    # fails with "attempted relative import with no known parent package".
+    if __package__:
+        from .segment import (
+            CustomPreprocess,
+            prepare_model_files,
+            setup_device,
+            skull_strip,
+        )
+    else:
+        # Run as a bare script, so there is no parent package to be relative to.
+        # Make ``src`` importable and go through the package name instead.
+        src_dir = str(Path(__file__).resolve().parent.parent)
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+        from t1prep.segment import (
+            CustomPreprocess,
+            prepare_model_files,
+            setup_device,
+            skull_strip,
+        )
 
     prepare_model_files()
     _, no_gpu = setup_device()
@@ -677,22 +707,29 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
     if save_resampled_inputs:
         out_vols = _resample_images_to_reference(imgs, outputs.transforms, ref_img)
         for idx, (inp, vol) in enumerate(zip(args.inputs, out_vols)):
-            dest_dir = args.out_dir
-            if args.out_subfolders is not None:
-                dest_dir = os.path.join(dest_dir, args.out_subfolders[idx])
-                os.makedirs(dest_dir, exist_ok=True)
+            dest_dir = _dest_dir(args.out_dir, args.out_subfolders, idx)
             out_path = _build_output_path(inp, dest_dir, args.output_naming, suffix="_desc-realigned")
             nib.save(nib.Nifti1Image(vol, ref_img.affine, ref_img.header), out_path)
 
     if args.update_headers:
         # Safety: never update headers in-place. Require the destination directory for each
         # input to differ from that input's folder.
+        # The loop that used to sit here computed both paths and then compared
+        # nothing, so the guarantee in the comment above was never enforced and
+        # a matching out-dir silently overwrote the inputs.
         base_out_abs = os.path.abspath(args.out_dir)
         for idx, path in enumerate(args.inputs):
             in_dir_abs = os.path.abspath(os.path.dirname(path))
             dest_dir_abs = base_out_abs
             if args.out_subfolders is not None:
                 dest_dir_abs = os.path.abspath(os.path.join(base_out_abs, args.out_subfolders[idx]))
+            if in_dir_abs == dest_dir_abs:
+                raise SystemExit(
+                    "--update-headers would overwrite the input "
+                    f"'{os.path.basename(path)}' in place: its folder and the "
+                    f"destination are both {in_dir_abs}. Choose a different "
+                    "--out-dir or pass --out-subfolders."
+                )
 
         template_zooms = None
         if args.force_template_zooms:
@@ -716,15 +753,13 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
                     pass
             # Save original data with modified header into out-dir, preserving the
             # original input filename (no 'r' prefix and no suffix).
-            dest_dir = args.out_dir
-            if args.out_subfolders is not None:
-                dest_dir = os.path.join(dest_dir, args.out_subfolders[idx])
-                os.makedirs(dest_dir, exist_ok=True)
+            dest_dir = _dest_dir(args.out_dir, args.out_subfolders, idx)
             out_path = os.path.join(dest_dir, os.path.basename(path))
             nib.save(nib.Nifti1Image(data, new_affine, header=header), out_path)
 
     if args.save_template:
         _, ext = _split_nifti_name(args.inputs[0])
+        os.makedirs(args.out_dir, exist_ok=True)
         nib.save(ref_img, os.path.join(args.out_dir, f"reference{ext}"))
 
     return 0

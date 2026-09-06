@@ -146,7 +146,7 @@ Batch helper for longitudinal studies. Groups time-point scans by subject, runs 
 | model | what it does |
 |---|---|
 | `plasticity` (default) | Rigid realignment only. Assumes the anatomy itself is unchanged between scans; appropriate for short intervals. |
-| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average. Adds a few seconds per subject. |
+| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average, then Jacobian modulation into MNI. Adds a few seconds per subject, and forces `--p` so the native segmentations exist. |
 
 ```bash
 # Process time points for a single subject
@@ -209,9 +209,51 @@ ratio against the subject average -- the map longitudinal VBM runs statistics
 on. `--save-displacement` adds the RAS displacement field in mm, and `--apply`
 writes the time point resampled onto the average.
 
-Key options: `--control-spacing` (12 mm; larger is stiffer),
-`--regularisation` (0.05; 0 disables the membrane prior),
+Key options: `--use-skullstrip` (estimate from brain-extracted copies, apply to
+the originals -- on a real ADNI pair this cut the residual 4.3x and shrank the
+driving mask from 44 % to 13 % of the volume), `--control-spacing` (12 mm;
+larger is stiffer), `--regularisation` (0.05; 0 disables the membrane prior),
 `--resolution` (1.5 mm working grid) and `--max-step-mm`.
+
+### `modulate_longitudinal.sh`
+
+Wrapper around `t1prep.modulate_longitudinal`. Turns the deformations above into
+the modulated tissue maps a longitudinal VBM analysis is run on -- CAT12's
+ageing model, except the shared tissue map is the mean of the time points' own
+segmentations rather than a segmentation of the average image.
+
+Two things are shared across a subject's time points, exactly as CAT12 shares
+them, and that sharing is what makes longitudinal VBM sensitive:
+
+1. **one tissue map**, so segmentation differences cannot enter the contrast;
+2. **one spatial normalisation** (the mean of the per-time-point `y_` fields),
+   so normalisation differences cannot either.
+
+Each time point then differs only by its longitudinal Jacobian.
+
+```bash
+# Let it resolve the filenames from T1Prep's naming table
+./scripts/modulate_longitudinal.sh \
+    --mri-dirs sub-01/ses-1/mri sub-01/ses-2/mri \
+    --names tp1 tp2 \
+    --out-dir /path/to/output
+```
+
+Output names come from T1Prep's own naming table with the modulation marker
+**doubled**, exactly as CAT12's ageing model writes them: `mwmwp1<name>.nii` in
+the legacy scheme, `<name>_space-..-modulated-modulated_label-GM_probseg.nii` in
+BIDS. The doubling is meaningful -- these maps are modulated twice, by the
+longitudinal Jacobian and then by the spatial normalisation -- and it also keeps
+them distinct from the cross-sectional `mwp1<name>.nii` T1Prep writes into the
+same folder by default.
+
+`--modulation nonlinear` divides the affine out to control for head size;
+`--tissue-source timepoint` keeps each time point's own segmentation, which
+reintroduces the segmentation differences the shared map removes.
+
+Requires T1Prep to have run with `--p` and `warp_longitudinal.sh` with
+`--save-displacement`; `process_longitudinal.sh --long-model ageing` arranges
+both.
 
 ---
 
