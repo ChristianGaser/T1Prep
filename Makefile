@@ -17,7 +17,7 @@
 #                            T1PREP_VERSION=$(VERSION) at `docker build` time)
 # ---------------------------------------------------------------------------
 PREV_VERSION := 0.6.3
-VERSION      := 0.7.0
+VERSION      := 0.7.1
 
 ZIPFILE = T1Prep_$(VERSION).zip
 
