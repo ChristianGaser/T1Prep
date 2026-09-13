@@ -41,6 +41,8 @@ atlas_surf="'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"
 # ------------------------------------------------------------------------------
 track=1               # Collect telemetry information for T1Prep
 use_amap=0            # Use AMAP instead of DeepMRIPrep for segmentation
+use_nogm_model=0      # Remove non-cortical GM with the DeepMRIPrep nogm model
+                      # instead of the atlas/geometry rule
 thickness_method=3    # Set the thickness method
 correct_folding=1     # Correct for cortical thickness by folding effects
 pre_fwhm=2            # Set the pre-smoothing FWHM size in CAT_VolMarchingCubes

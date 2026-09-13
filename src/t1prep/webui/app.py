@@ -252,6 +252,7 @@ def build_command(
     add_flag("--no-surf")
     add_flag("--no-seg")
     add_flag("--amap")
+    add_flag("--nogm-model")
     add_flag("--no-sphere-reg")
 
     # WebUI uses a positive checkbox (save_mwp=1) but the CLI option is inverted
@@ -447,6 +448,7 @@ def index():
         "no_surf": _to_int(defaults.get("estimate_surf", "1"), 1) == 0,
         "no_seg": _to_int(defaults.get("estimate_seg", "1"), 1) == 0,
         "amap": _to_int(defaults.get("use_amap", "0"), 0) == 1,
+        "nogm_model": _to_int(defaults.get("use_nogm_model", "0"), 0) == 1,
         "no_vessel": _to_int(defaults.get("vessel", "1"), 1) == 0,
         "no_sphere_reg": _to_int(defaults.get("estimate_spherereg", "1"), 1) == 0,
         "save_mwp": (

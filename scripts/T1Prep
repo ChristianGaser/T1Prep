@@ -128,6 +128,7 @@ parse_args()
   # Defaults for new skull-strip flags (may be absent in defaults file)
   skullstrip_only=${skullstrip_only:-0}
   skip_skullstrip=${skip_skullstrip:-0}
+  use_nogm_model=${use_nogm_model:-0}
 
   if [ $# -lt 1 ]; then
     logo
@@ -281,6 +282,9 @@ parse_args()
         ;;
       --amap)
         use_amap=1
+        ;;
+      --nogm-model)
+        use_nogm_model=1
         ;;
       --bids)
         use_bids_naming=1
@@ -711,6 +715,7 @@ process()
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=" --amap"
+      [ "${use_nogm_model}" -eq 1 ] && cmd+=" --nogm-model"
       [ "${save_mwp}" -eq 1 ] && cmd+=" --mwp"
       [ "${save_wp}" -eq 1 ] && cmd+=" --wp"
       [ "${save_rp}" -eq 1 ] && cmd+=" --rp"
@@ -1166,6 +1171,12 @@ ${BOLD}${GREEN}Expert Options:${NC}
 
   --amap                      
       Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.
+
+  --nogm-model
+      Remove non-cortical grey matter (ventricle rims, brain stem, periventricular
+      white matter) with the DeepMRIPrep nogm model instead of the default
+      atlas-and-geometry rule.  The model is roughly 8x slower and needs about
+      three times the memory for that step.
 
   --thickness-method <NUMBER> 
       Set the cortical thickness estimation method (default: $thickness_method):  

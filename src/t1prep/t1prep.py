@@ -140,6 +140,7 @@ def _build_segment_cmd(
     save_fmriprep: bool = False,
     save_h5: bool = False,
     use_amap: bool = False,
+    nogm_model: bool = False,
     use_bids: bool = False,
     gz: bool = False,
     verbose: bool = True,
@@ -166,6 +167,7 @@ def _build_segment_cmd(
             cmd.append(f)
 
     flag("--amap",            use_amap)
+    flag("--nogm-model",      nogm_model)
     flag("--mwp",             save_mwp)
     flag("--wp",              save_wp)
     flag("--rp",              save_rp)
@@ -291,6 +293,7 @@ def _process_single(
     p: bool = False,
     csf: bool = False,
     amap: bool = False,
+    nogm_model: bool = False,
     bids: bool = False,
     correct_folding: bool = True,
     fmriprep: bool = False,
@@ -381,6 +384,7 @@ def _process_single(
             save_fmriprep=fmriprep,
             save_h5=save_h5,
             use_amap=amap,
+            nogm_model=nogm_model,
             use_bids=bids,
             gz=gz,
             verbose=verbose,
@@ -547,6 +551,7 @@ def run_t1prep(
     # extra outputs
     lesions: bool = False,
     amap: bool = False,
+    nogm_model: bool = False,
     fmriprep: bool = False,
     save_h5: bool = False,
     # fast mode
@@ -632,6 +637,9 @@ def run_t1prep(
         Save WMH lesion maps.
     amap:
         Use AMAP instead of DeepMRIPrep for segmentation.
+    nogm_model:
+        Remove non-cortical grey matter with the DeepMRIPrep nogm model
+        instead of the default atlas-and-geometry rule in :mod:`t1prep.nogm`.
     fmriprep:
         Save fMRIPrep-compatible outputs (deformation fields, dseg, etc.).
     fast:
@@ -722,6 +730,7 @@ def run_t1prep(
             p=bool(p),
             csf=bool(csf),
             amap=bool(amap),
+            nogm_model=bool(nogm_model),
             bids=bool(bids),
             correct_folding=not no_correct_folding,
             fmriprep=bool(fmriprep),
@@ -834,6 +843,9 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="Skip pial and white matter surface estimation")
     g3.add_argument("--amap", action="store_true",
                     help="Use AMAP instead of DeepMRIPrep for segmentation")
+    g3.add_argument("--nogm-model", action="store_true",
+                    help="Remove non-cortical grey matter with the DeepMRIPrep "
+                         "nogm model instead of the atlas-and-geometry rule")
     g3.add_argument("--seed", type=int, default=0,
                     help="Random seed for reproducibility (default 0)")
     g3.add_argument("--long-data", metavar="PATH",
@@ -891,6 +903,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         hemisphere=args.hemisphere,
         lesions=args.lesions,
         amap=args.amap,
+        nogm_model=args.nogm_model,
         fmriprep=args.fmriprep,
         save_h5=args.save_h5,
         fast=args.fast,
