@@ -12,6 +12,8 @@ T1Prep/
 │       ├── __init__.py             # Package init, exports run_t1prep
 │       ├── t1prep.py               # Python API: run_t1prep() function
 │       ├── segment.py              # Segmentation logic
+│       ├── nogm.py                 # Conventional non-cortical GM removal (default;
+│       │                           # --nogm-model restores the DeepMRIPrep model)
 │       ├── _segment_utils.py       # Private segmentation helpers (internal use)
 │       ├── utils.py                # Shared utilities
 │       ├── metrics.py              # Dice/evaluation metrics + CLI

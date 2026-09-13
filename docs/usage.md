@@ -42,6 +42,32 @@ Longitudinal / advanced flags:
 
 Segmentation refinement:
 - `--no-vessel`: disable the blood-vessel correction.
+- `--nogm-model`: remove non-cortical grey matter with the DeepMRIPrep `nogm`
+  model instead of the default atlas-and-geometry rule.
+
+  This step fixes a partial-volume artefact: a voxel that is half white
+  matter and half CSF has grey-matter intensity, so the ventricle rims, the
+  brain stem and the periventricular white matter come out of an
+  intensity-driven segmentation labelled as grey matter. That grey matter is
+  deleted and split evenly between white matter and CSF. By default T1Prep
+  makes this decision from anatomy, following the strategy CAT12 uses in
+  `cat_vol_partvol.m`: a Neuromorphometrics admission region where cortical
+  grey matter cannot exist, and inside it a test for voxels whose
+  neighbourhood holds both white matter and CSF but little grey matter. The
+  DeepMRIPrep `nogm` model makes it with a UNet instead.
+
+  Measured on one 0.5 mm subject the model takes 43.8 s and 5.6 GB against
+  5.5 s and 2.0 GB for the default rule, and the two masks agree at Dice 0.74
+  (13.7 vs 12.3 cm3 corrected). The flag has no effect together with `--amap`,
+  which replaces the whole segmentation.
+
+  This step cannot move the surfaces. Reassigning grey matter evenly to white
+  matter and CSF leaves `p0 = csf + 2*gm + 3*wm` unchanged by construction, so
+  the label map that drives surface reconstruction and cortical thickness is
+  identical either way -- two full runs on the same subject produced
+  bit-identical native `p0`. What does change is `p1`/`p2`/`p3`, and with them
+  the modulated warped maps and the reported tissue volumes (0.05% on that
+  subject, with TIV unchanged).
 
 Deformation fields:
 - `--save-h5`: additionally save the T1w↔MNI152NLin2009cAsym deformations as
@@ -74,6 +100,9 @@ run_t1prep([
 ], out_dir="/results", atlas=["neuromorphometrics", "suit"], multi=-1,
    wp=True, p=True, csf=True, lesions=True, gz=True, stream_output=True,
    log_file="/results/T1Prep_run.log")
+
+# Use the DeepMRIPrep nogm model instead of the atlas-and-geometry rule
+run_t1prep("/data/T1/sub-01.nii.gz", nogm_model=True)
 ```
 
 ## Output Folder Structure and Naming Conventions
@@ -173,6 +202,13 @@ in native space.
   T1Prep --amap sTRIO*.nii
 ```
 Process all files matching the pattern `'sTRIO*.nii'` and enable AMAP segmentation.
+
+```bash
+  T1Prep --nogm-model sTRIO*.nii
+```
+Process all files matching the pattern `'sTRIO*.nii'`, removing non-cortical
+grey matter with the DeepMRIPrep `nogm` model instead of the default
+atlas-and-geometry rule.
   
 ```bash
   T1Prep --multi 8 --p --csf sTRIO*.nii
