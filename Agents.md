@@ -62,6 +62,7 @@ T1Prep/
 │   ├── CAT_SurfParameters_ui       # Curvature-based surface parameters
 │   ├── CAT_SurfResampleMulti_ui    # Surface resampling & smoothing
 │   ├── CAT_VolSmooth_ui            # Volumetric Gaussian smoothing
+│   ├── CAT_VolDiff                 # Volume differences (cat_stat_diff via CAT_VolCalc)
 │   ├── parallelize                 # Generic job parallelization engine
 │   ├── progress_bar_multi.sh       # Multi-job progress bars with ETA
 │   └── utils.sh                    # Shared bash utility functions
@@ -120,7 +121,7 @@ src/t1prep/data/* (templates, atlases)
        v uses
 cat_surf (Python package — C-extension bindings to CAT-Surface algorithms)
 
-scripts/CAT_Surf*_ui, scripts/CAT_VolSmooth_ui (post-processing helpers)
+scripts/CAT_Surf*_ui, scripts/CAT_VolSmooth_ui, scripts/CAT_VolDiff (post-processing helpers)
        |
        v call
 src/t1prep/bin/* (compiled CAT-Surface binaries, used only by helper scripts)

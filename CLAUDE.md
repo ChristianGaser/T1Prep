@@ -49,6 +49,9 @@ python -m compileall src
 # Tests
 pytest
 
+# Voxel-wise volume differences to the first image (cat_stat_diff via CAT_VolCalc)
+CAT_VolDiff [--rel] [--glob] tp1.nii.gz tp2.nii.gz
+
 # Recalibrate the QA rating bounds from a processed BrainWeb Phantom set
 python scripts/qa_calibrate.py /path/to/BWP/report
 

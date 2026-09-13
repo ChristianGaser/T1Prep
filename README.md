@@ -104,6 +104,7 @@ Installed alongside the pipeline, and usable on their own:
 | `CAT_VolView` | Volume viewer: three orthogonal slices, overlays, montages |
 | `t1prep-ui` | Web UI for the pipeline |
 | `CAT_SurfResampleMulti_ui`, `CAT_SurfParameters_ui`, `CAT_Surf2ROIMulti_ui` | Surface post-processing GUIs |
+| `CAT_VolDiff` | Voxel-wise volume differences (`diff_*` / `diffrel_*`) |
 
 ```bash
 CAT_SurfView lh.thickness.sub-01     # surface with an overlay

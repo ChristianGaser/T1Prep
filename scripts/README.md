@@ -445,6 +445,25 @@ Smooths volumetric NIfTI data with a Gaussian kernel. Wraps `CAT_VolSmooth`.
 ./scripts/CAT_VolSmooth_ui --fwhm 8 volume.nii.gz
 ```
 
+### `CAT_VolDiff`
+
+Voxel-wise difference of volumes, the volume counterpart of CAT12's
+`cat_stat_diff.m`. Wraps `CAT_VolCalc` (via `cat_surf.cli.vol_calc`). Within a
+subject the first image is the reference; every further image `j` gives
+`image_j - image_1`, written next to `image_j` as `diff_<name>`.
+
+```bash
+# One subject: tp2 - tp1 and tp3 - tp1 -> diff_tp2.nii, diff_tp3.nii
+./scripts/CAT_VolDiff tp1.nii tp2.nii tp3.nii
+
+# Several subjects (-s per subject), relative differences in percent
+# (200*(i2-i1)/(i1+i2) -> diffrel_<name>) after global mean normalisation
+./scripts/CAT_VolDiff --rel --glob -s s1_tp1.nii s1_tp2.nii -s s2_tp1.nii s2_tp2.nii
+```
+
+- Input: NIfTI volumes; the images of a subject must share one grid (no reslicing)
+- Output: float32 `diff_*` / `diffrel_*` volumes
+
 ### `CAT_GrepJson`
 
 Extracts specific fields from T1Prep JSON report files (generated during processing).

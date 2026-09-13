@@ -11,6 +11,7 @@ surface post-processing, and the two viewers (documented separately in
 | `CAT_SurfResampleMulti_ui` | Resample and smooth surface data |
 | `CAT_SurfParameters_ui` | Extract surface parameters |
 | `CAT_Surf2ROIMulti_ui` | Map surface values to atlas ROIs |
+| `CAT_VolDiff` | Voxel-wise differences between volumes |
 | `t1prep-make-apps` | macOS: build the viewer `.app` bundles |
 | `t1prep-download-models` | Fetch the model weights ahead of time |
 
@@ -135,3 +136,26 @@ Multi-atlas examples:
 CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'" lh.thickness.subject.gii
 CAT_Surf2ROIMulti_ui --annot "aparc_DK40.freesurfer,aparc_a2009s.freesurfer" lh.thickness.subject.gii
 ```
+
+### `CAT_VolDiff`
+
+Computes voxel-wise differences between volumes with `CAT_VolCalc`, following
+CAT12's `cat_stat_diff.m`. Within a subject the first image is the reference,
+and every further image `j` gives `image_j - image_1`, written next to
+`image_j` as `diff_<name>`.
+
+```bash
+CAT_VolDiff tp1.nii tp2.nii tp3.nii        # diff_tp2.nii, diff_tp3.nii
+CAT_VolDiff -s s1_tp1.nii s1_tp2.nii -s s2_tp1.nii s2_tp2.nii
+```
+
+Options:
+- `-s, --subject <FILES>` images of one subject (reference first); repeat per subject
+- `--rel` relative difference in percent, `200*(i2-i1)/(i1+i2)`, written as `diffrel_<name>`
+- `--glob` scale the images of a subject to their common global mean first
+  (as `spm_global` computes it), so a global intensity factor cancels out
+- `-q, --quiet` no progress output
+
+Input expectations:
+- The images of a subject must share one grid; nothing is resliced
+- Output is float32 with the header of the reference image
