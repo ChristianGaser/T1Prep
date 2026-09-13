@@ -100,6 +100,7 @@ script-files = [
     "T1Prep_defaults.txt",
     "scripts/CAT_GrepJson",
     "scripts/CAT_VolSmooth_ui",
+    "scripts/CAT_VolDiff",
     "scripts/CAT_Surf2ROIMulti_ui",
     "scripts/CAT_SurfParameters_ui",
     "scripts/CAT_SurfResampleMulti_ui",

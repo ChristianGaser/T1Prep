@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""Voxel-wise difference between volumes, computed with CAT_VolCalc.
+
+Volume counterpart of CAT12's ``cat_stat_diff.m``.  Within each subject the
+first image is the reference, and every further image j is compared with it::
+
+    image_j - image_1                            -> diff_<name of image_j>
+    200*(image_j - image_1)/(image_1 + image_j)  -> diffrel_<name of image_j>
+
+The second form (``--rel``) is the relative difference in percent of the
+pair's mean.  Each result is written as float32 next to image j.  With
+``--glob`` the images of a subject are first scaled to their common global
+mean, as ``spm_global`` computes it, so that a global intensity offset does
+not show up as a difference.
+
+Usage::
+
+    # one subject: tp2 - tp1 and tp3 - tp1
+    CAT_VolDiff tp1.nii tp2.nii tp3.nii
+
+    # several subjects, relative differences of globally normalised images
+    CAT_VolDiff --rel --glob -s subj1_tp1.nii subj1_tp2.nii \\
+                             -s subj2_tp1.nii subj2_tp2.nii
+
+All images of a subject must share one grid; nothing is resliced.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+import numpy as np
+
+# MATLAB's eps in the relative-difference formula of cat_stat_diff.m.
+# CAT_VolCalc has no eps constant, so it enters the formula as a literal.
+EPS = float(np.finfo(np.float64).eps)
+
+
+def global_mean(path):
+    """Return the global mean of a volume as ``spm_global`` computes it.
+
+    The mean over all finite voxels, divided by 8, is a threshold that drops
+    the background; the global is the mean of the finite voxels above it.
+
+    Parameters
+    ----------
+    path : str
+        NIfTI volume.
+
+    Returns
+    -------
+    float
+        Global mean, or NaN if no finite voxel lies above the threshold.
+    """
+    import nibabel as nib
+
+    data = nib.load(path).get_fdata(dtype=np.float64)
+    finite = data[np.isfinite(data)]
+    if finite.size == 0:
+        return float("nan")
+    above = finite[finite > finite.mean() / 8.0]
+    return float(above.mean()) if above.size else float("nan")
+
+
+def output_name(path, rel=False):
+    """Return the output path for image *path*: ``diff_`` or ``diffrel_``.
+
+    Parameters
+    ----------
+    path : str
+        The image the reference is subtracted from.
+    rel : bool
+        Name a relative difference.
+
+    Returns
+    -------
+    str
+        *path* with the prefix prepended to its file name.
+    """
+    prefix = "diffrel_" if rel else "diff_"
+    return os.path.join(os.path.dirname(path), prefix + os.path.basename(path))
+
+
+def diff_expression(rel=False, scale1=1.0, scale2=1.0):
+    """Return the CAT_VolCalc formula for image ``i2`` minus image ``i1``.
+
+    Parameters
+    ----------
+    rel : bool
+        Relative difference in percent, ``200*(i2-i1)/(i1+i2+eps)``.
+    scale1, scale2 : float
+        Global scaling factors applied to ``i1`` and ``i2``.
+
+    Returns
+    -------
+    str
+        The formula, with the scaling factors written in as literals.
+    """
+    i1 = "i1" if scale1 == 1.0 else f"({scale1!r}*i1)"
+    i2 = "i2" if scale2 == 1.0 else f"({scale2!r}*i2)"
+    if rel:
+        return f"200*({i2}-{i1})./({i1}+{i2}+{EPS!r})"
+    return f"{i2}-{i1}"
+
+
+def diff_subject(files, rel=False, glob=False, verbose=True):
+    """Write the difference of every image of a subject to its first image.
+
+    Parameters
+    ----------
+    files : sequence of str
+        Images of one subject; the first one is the reference.
+    rel : bool
+        Write relative differences (``diffrel_``) instead of absolute ones.
+    glob : bool
+        Scale the images to their common global mean first.
+    verbose : bool
+        Report each difference as it is computed.
+
+    Returns
+    -------
+    list of str
+        The files written, one per image after the first.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two images are given, a global mean is unusable, or
+        the images do not share a grid.
+    """
+    from cat_surf import cli
+
+    if not hasattr(cli, "vol_calc"):
+        raise ImportError(
+            "the installed cat-surf has no vol_calc binding for CAT_VolCalc; "
+            "update cat-surf"
+        )
+    if len(files) < 2:
+        raise ValueError(f"need at least two images, got {len(files)}")
+
+    scales = [1.0] * len(files)
+    if glob:
+        if verbose:
+            print("Calculating globals...")
+        globals_ = [global_mean(f) for f in files]
+        for f, g in zip(files, globals_):
+            if not np.isfinite(g) or g == 0.0:
+                raise ValueError(f"cannot normalise {f}: global mean is {g}")
+        common = float(np.mean(globals_))
+        scales = [common / g for g in globals_]
+
+    written = []
+    for j in range(1, len(files)):
+        out = output_name(files[j], rel)
+        if verbose:
+            print(
+                f"Calculate i2-i1: {os.path.basename(files[j])} - "
+                f"{os.path.basename(files[0])}"
+            )
+        expression = diff_expression(rel, scales[0], scales[j])
+        cli.vol_calc([files[0], files[j]], out, expression)
+        written.append(out)
+    return written
+
+
+def build_parser():
+    """Return the command-line parser."""
+    parser = argparse.ArgumentParser(
+        prog="CAT_VolDiff",
+        description=(
+            "Compute image_j - image_1 for every image j after the first with\n"
+            "CAT_VolCalc and write it next to image_j as diff_<name>\n"
+            "(or diffrel_<name> with --rel)."
+        ),
+        epilog=(
+            "examples:\n"
+            "  CAT_VolDiff tp1.nii tp2.nii tp3.nii\n"
+            "  CAT_VolDiff --rel --glob -s s1_tp1.nii s1_tp2.nii "
+            "-s s2_tp1.nii s2_tp2.nii"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "files",
+        nargs="*",
+        metavar="FILE",
+        help="images of one subject; the first one is the reference",
+    )
+    parser.add_argument(
+        "-s",
+        "--subject",
+        nargs="+",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="images of one subject, the first one being the reference; "
+        "repeat for further subjects (takes every file up to the next option)",
+    )
+    parser.add_argument(
+        "--rel",
+        action="store_true",
+        help="relative difference in percent, 200*(i2-i1)/(i1+i2)",
+    )
+    parser.add_argument(
+        "--glob",
+        action="store_true",
+        help="scale the images of a subject to their common global mean first",
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true", help="do not report progress"
+    )
+    return parser
+
+
+def main(argv=None):
+    """Run CAT_VolDiff on the command line *argv*; return the exit status."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    subjects = list(args.subject)
+    if args.files:
+        subjects.append(args.files)
+    if not subjects:
+        parser.print_help()
+        return 1
+
+    for files in subjects:
+        if len(files) < 2:
+            parser.error(f"a subject needs at least two images: {files}")
+        for f in files:
+            if not os.path.isfile(f):
+                parser.error(f"file not found: {f}")
+
+    try:
+        for files in subjects:
+            diff_subject(files, rel=args.rel, glob=args.glob,
+                         verbose=not args.quiet)
+    except (ImportError, OSError, ValueError, RuntimeError) as exc:
+        print(f"CAT_VolDiff: ERROR: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
