@@ -95,6 +95,10 @@ script-files = [
     "scripts/T1Prep_utils.sh",
     "scripts/parallelize",
     "scripts/progress_bar_multi.sh",
+    "scripts/process_longitudinal.sh",
+    "scripts/modulate_longitudinal.sh",
+    "scripts/realign_longitudinal.sh",
+    "scripts/warp_longitudinal.sh",
     # Defaults file the bash orchestrator reads; shipped next to the scripts so
     # installed mode (running from <venv>/bin) can find it.
     "T1Prep_defaults.txt",
