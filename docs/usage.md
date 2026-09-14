@@ -5,6 +5,7 @@ installation see [installation.md](installation.md); for the viewers and the
 other tools see [viewers.md](viewers.md) and [tools.md](tools.md).
 
 - [Usage](#usage)
+- [Command-line conventions](#command-line-conventions)
 - [Options](#options)
 - [Python API](#python-api)
 - [Output folder structure and naming](#output-folder-structure-and-naming-conventions)
@@ -25,10 +26,34 @@ T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
 (`T1Prep` resolves from the environment's `bin/` once it is on your `PATH`; from
 a source checkout without an install you can still run `./scripts/T1Prep`.)
 
+## Command-line conventions
+
+Every T1Prep tool — `T1Prep`, `PyCAT`, the viewers `CAT_VolView` and
+`CAT_SurfView`, `CAT_VolDiff`, the `CAT_*_ui` wrappers, `parallelize` and the
+longitudinal scripts — answers the same way:
+
+| You type | You get |
+|----------|---------|
+| nothing at all | the synopsis: the command line and an overview of the options |
+| `--help` | the full description of every option, with examples |
+| `--version` | the T1Prep version the tool belongs to |
+
+Options are spelled with two dashes throughout. The single-dash spellings some
+tools used before (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`)
+are still accepted so existing command lines and scripts keep working; they are
+no longer listed in the help.
+
+Two tools do a job rather than take a file, so calling them without an argument
+runs that job instead of printing the synopsis: `t1prep-ui` starts the web
+interface, and `t1prep-download-models` fetches the model weights. Both still
+answer `--help`.
+
 ## Options
-Simply call T1Prep to see available options
+Call T1Prep without an argument for the overview, and with `--help` for the
+full description of each option:
 ```bash
-T1Prep
+T1Prep            # synopsis
+T1Prep --help     # every option, in full
 ```
 
 Skull-stripping modes:

@@ -18,7 +18,7 @@ inside the environment and need no wrapper:
 
 ```bash
 CAT_SurfView mesh_file.gii
-CAT_SurfView mesh_file.gii -overlay overlay.gii
+CAT_SurfView mesh_file.gii --overlay overlay.gii
 CAT_VolView  T1.nii.gz
 ```
 

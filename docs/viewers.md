@@ -13,10 +13,17 @@ and both keep their display settings in a right-click menu. Neither needs
 T1Prep output — they open any GIFTI surface or NIfTI volume.
 
 ```bash
-CAT_SurfView lh.central.gii            # a surface (run without arguments for the help)
+CAT_SurfView lh.central.gii            # a surface
 CAT_VolView T1.nii.gz                  # three orthogonal slices
 CAT_VolView T1.nii.gz p1T1.nii.gz      # up to 6 volumes, one window each, linked
 ```
+
+Like every T1Prep tool, both print the synopsis when called without an
+argument, the full description with `--help`, and the release with
+`--version`; options are spelled with two dashes. `CAT_SurfView` also still
+accepts its former single-dash spellings (`-overlay`, `-range`, `-preset`, …),
+so older command lines keep working — see
+[usage.md](usage.md#command-line-conventions).
 
 - [Surface viewer](#surface-viewer)
 - [Volume viewer](#volume-viewer)
@@ -43,8 +50,8 @@ templates. The second hemisphere is found from the file name (`lh.`↔`rh.`,
 
 ```bash
 CAT_SurfView lh.thickness.sub-01                       # overlay; the mesh is found
-CAT_SurfView lh.central.gii -overlay lh.logP.gii -clip -1.3 1.3 -colorbar
-CAT_SurfView -output view.png lh.thickness.sub-01      # render a PNG and exit
+CAT_SurfView lh.central.gii --overlay lh.logP.gii --clip -1.3 1.3 --colorbar
+CAT_SurfView --output view.png lh.thickness.sub-01     # render a PNG and exit
 ```
 
 ### What a click tells you
@@ -100,7 +107,7 @@ control panel (`Ctrl`/`Cmd+D`). The defaults follow `cat_surf_results`:
   threshold, so the whole colormap is spent on the values that are shown;
 - changing the threshold moves the range with it.
 
-`-colorbar` labels a −log10(p) overlay with the p-values it stands for
+`--colorbar` labels a −log10(p) overlay with the p-values it stands for
 (0.05, 0.01, 0.001, …) rather than raw numbers.
 
 ---
@@ -195,8 +202,8 @@ CAT_VolView T1.nii.gz --montage --slices "25 30 40 80" --columns 4 \
     --screenshot figure.png
 
 # the surface equivalent
-CAT_SurfView lh.central.gii -overlay lh.logP.gii -clip -1.3 1.3 \
-    -colorbar -output figure_surface.png
+CAT_SurfView lh.central.gii --overlay lh.logP.gii --clip -1.3 1.3 \
+    --colorbar --output figure_surface.png
 ```
 
 `--slices` takes either a list of millimetre positions (`"25 30 40 80"`) or a
@@ -209,8 +216,8 @@ The overlay is coloured with `--range`, `--clip`, `--threshold P` (clips a
 `--discrete N`; the image underneath with `--range-bkg`. `--colorbar` labels a
 −log10(p) overlay with p-values, exactly as `cat_surf_results` does.
 
-`CAT_SurfView -output` and `CAT_VolView --screenshot` write a PNG and exit, so
-neither needs a display. Run `CAT_VolView --help` or `CAT_SurfView -help` for
+`CAT_SurfView --output` and `CAT_VolView --screenshot` write a PNG and exit, so
+neither needs a display. Run `CAT_VolView --help` or `CAT_SurfView --help` for
 the full list.
 
 ---

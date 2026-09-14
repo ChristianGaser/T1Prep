@@ -1,6 +1,6 @@
 # Scripts
 
-This directory contains the shell scripts behind the T1Prep command-line interface, environment helpers, processing utilities, and CAT surface/volume tools. All scripts automatically activate the project virtual environment (`env/`) when needed.
+This directory contains the shell scripts behind the T1Prep command-line interface, environment helpers, processing utilities, and CAT surface/volume tools. They resolve the Python environment themselves: in a source checkout they use the project virtual environment (`env/`) when it exists, and in a pip-installed tree they run in the environment pip installed into.
 
 > **Installed usage:** after `pip install` (or the bash bootstrapper), these
 > entry points are placed into the environment's `bin/` directory — put that on
@@ -11,8 +11,28 @@ This directory contains the shell scripts behind the T1Prep command-line interfa
 
 ---
 
+## Command-line conventions
+
+Every script here answers the same way, with `CAT_VolView` as the template:
+
+| You type | You get |
+|----------|---------|
+| nothing at all | the synopsis — the command line plus an overview of the options |
+| `--help` | the full description |
+| `--version` | the T1Prep release the script belongs to |
+
+Options are spelled with two dashes. Single-dash spellings some scripts used
+before (`parallelize -p`, `CAT_VolDiff -s`, `CAT_SurfView -overlay`, `-h`,
+`-v`) are still accepted so existing command lines keep working, but they are
+no longer listed. The shared implementation is `print_usage` / `print_version`
+in [`T1Prep_utils.sh`](#t1prep_utilssh) for the bash scripts and
+`src/t1prep/cli_help.py` for the Python ones.
+
+---
+
 ## Table of Contents
 
+- [Command-line conventions](#command-line-conventions)
 - [Main Pipeline](#main-pipeline)
 - [Environment & Installation](#environment--installation)
 - [Longitudinal Processing](#longitudinal-processing)
@@ -180,6 +200,16 @@ layout is not yet supported by this pipeline and is refused up front (the
 realigned copies would land on top of the inputs, and T1Prep would be handed a
 directory as `--long-data`).
 
+**Python discovery:** `process_longitudinal.sh` and the three wrappers below
+call the tools sitting next to them, so the whole family stays on one version.
+`T1Prep_utils.sh` resolves the layout and `activate_t1prep_env` picks the
+interpreter: in a source checkout `src/` goes first on `PYTHONPATH` and `env/`
+is activated *if it exists*, otherwise the interpreter T1Prep is installed into
+is used; in an installed tree the environment pip installed into is already the
+right one. The T1Prep step itself is the exception -- it needs the managed venv
+for its models and heavy dependencies, so a source checkout without `env/` is
+reported before the first subject is realigned (`T1Prep --install` creates it).
+
 ### `realign_longitudinal.sh`
 
 Wrapper around the Python module `t1prep.realign_longitudinal`. Performs inverse-consistent rigid realignment of longitudinal scans.
@@ -345,7 +375,7 @@ t1prep-make-apps -o ~/Desktop -p /path/to/env/bin -d
 **They also appear on their own:** the first interactive start of `CAT_SurfView` or
 `CAT_VolView` on macOS creates the bundles if none exist yet, so `pip install` plus one run
 is enough. `T1PREP_NO_APPS=1` switches that off, and batch runs (`--screenshot`,
-`-output`) never do it. There is no hook in `pip install` itself — wheels have no
+`--output`) never do it. There is no hook in `pip install` itself — wheels have no
 post-install step, and files placed outside the environment could not be removed by
 `pip uninstall`.
 
@@ -368,7 +398,7 @@ a gzip archive (`org.gnu.gnu-zip-archive`). `CAT_VolView` registers for that typ
 **Always open with the viewer.** Which app owns a type is a user setting. Either select a
 file in Finder, press ⌘I, pick the app under *Open with* and click *Change All…* (once for
 `.nii`, once for `.nii.gz`), or install [duti](https://github.com/moretension/duti)
-(`brew install duti`) and re-run the script with `-d`, which sets the defaults for you.
+(`brew install duti`) and re-run the script with `--set-default`, which sets the defaults for you.
 The apps also have to live where Launch Services looks — `/Applications` or
 `~/Applications`; the script registers them with `lsregister` either way.
 
@@ -401,7 +431,7 @@ Computes curvature-based surface parameters (curvature, fractal dimension, surfa
 
 - Automatically processes both hemispheres when given a `lh.*` file
 - Supports GIfTI (`.gii`) and OBJ (`.obj`) input formats
-- Output: text files or GIfTI (with `-gifti` flag)
+- Output: text files or GIfTI (with `--gifti` flag)
 
 ### `CAT_SurfResampleMulti_ui`
 
@@ -495,6 +525,8 @@ These scripts are used internally by the pipeline and typically not called direc
 ### `T1Prep_utils.sh`
 
 Shared bash utility functions sourced by most other scripts. Provides:
+- `print_usage` / `print_version` — The synopsis and the `--version` answer
+  every tool shares (see [Command-line conventions](#command-line-conventions))
 - `exit_if_empty` — Argument validation
 - `check_python_cmd` / `check_python_module` / `check_python_libraries` — Python environment checks
 - `check_files` — Input file validation
@@ -507,18 +539,19 @@ Generic job parallelization engine. Distributes a list of input files across mul
 
 ```bash
 # Used internally by T1Prep and CAT_ scripts
-./scripts/parallelize -p 4 -c "command_to_run" file1.nii file2.nii ...
+./scripts/parallelize --processes 4 --command "command_to_run" file1.nii file2.nii ...
 ```
 
 **Options:**
 | Flag | Description |
 |------|-------------|
-| `-p N` | Number of parallel jobs |
-| `-m N` | Memory limit per job (GB) |
-| `-l DIR` | Log directory |
-| `-d N` | Delay (seconds) between job starts |
-| `-c CMD` | Command template to execute per file |
-| `-b` | Run in background |
+| `--processes N` | Number of parallel jobs |
+| `--mem-limit N` | Memory limit per job (GB) |
+| `--logdir DIR` | Log directory |
+| `--delay N` | Delay (seconds) between job starts |
+| `--command CMD` | Command template to execute per file |
+| `--bg` | Run in background |
+| `--test` | Print the files that would be processed, without running |
 
 ### `progress_bar_multi.sh`
 

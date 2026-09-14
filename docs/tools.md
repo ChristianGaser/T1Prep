@@ -15,6 +15,12 @@ surface post-processing, and the two viewers (documented separately in
 | `t1prep-make-apps` | macOS: build the viewer `.app` bundles |
 | `t1prep-download-models` | Fetch the model weights ahead of time |
 
+Every one of them follows the same command-line convention as `T1Prep`: no
+argument prints the synopsis, `--help` the full description, `--version` the
+release, and options are spelled with two dashes. See
+[usage.md](usage.md#command-line-conventions) for the details, including the
+single-dash spellings that are still accepted.
+
 Back to the [README](../README.md).
 
 ---
@@ -100,10 +106,10 @@ CAT_SurfParameters_ui [options] lh.central.gii
 ```
 
 Common options:
-- `-gy`, `-mc`, `-gc`, `-cv`, `-si`, `-sh`, `-fi`, `-area`, `-fd`, `-sr`, `-sra`
-- `-depth`, `-sqrt-depth`, `-min-curv`, `-max-curv`, `-dp`
-- `-gifti` write GIfTI output
-- `-noclobber` do not overwrite existing files
+- `--gy`, `--mc`, `--gc`, `--cv`, `--si`, `--sh`, `--fi`, `--area`, `--fd`, `--sr`, `--sra`
+- `--depth`, `--sqrt-depth`, `--min-curv`, `--max-curv`, `--dp`
+- `--gifti` write GIfTI output
+- `--noclobber` do not overwrite existing files
 - `--jobs <N>` / `--no-parallel` parallel control
 
 Input expectations:
@@ -146,15 +152,15 @@ and every further image `j` gives `image_j - image_1`, written next to
 
 ```bash
 CAT_VolDiff tp1.nii tp2.nii tp3.nii        # diff_tp2.nii, diff_tp3.nii
-CAT_VolDiff -s s1_tp1.nii s1_tp2.nii -s s2_tp1.nii s2_tp2.nii
+CAT_VolDiff --subject s1_tp1.nii s1_tp2.nii --subject s2_tp1.nii s2_tp2.nii
 ```
 
 Options:
-- `-s, --subject <FILES>` images of one subject (reference first); repeat per subject
+- `--subject <FILES>` images of one subject (reference first); repeat per subject
 - `--rel` relative difference in percent, `200*(i2-i1)/(i1+i2)`, written as `diffrel_<name>`
 - `--glob` scale the images of a subject to their common global mean first
   (as `spm_global` computes it), so a global intensity factor cancels out
-- `-q, --quiet` no progress output
+- `--quiet` no progress output
 
 Input expectations:
 - The images of a subject must share one grid; nothing is resliced
