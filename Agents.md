@@ -11,6 +11,8 @@ T1Prep/
 │   └── t1prep/
 │       ├── __init__.py             # Package init, exports run_t1prep
 │       ├── t1prep.py               # Python API: run_t1prep() function
+│       ├── cli_help.py             # Shared CLI behaviour: synopsis, --help,
+│       │                           # --version, "--" options (see below)
 │       ├── segment.py              # Segmentation logic
 │       ├── nogm.py                 # Conventional non-cortical GM removal (default;
 │       │                           # --nogm-model restores the DeepMRIPrep model)
@@ -29,7 +31,7 @@ T1Prep/
 │       │   ├── cat_surf_view.py    # Surface viewer (CAT_SurfView)
 │       │   ├── make_apps.py        # macOS .app bundles (t1prep-make-apps)
 │       │   ├── cat_vol_view.py     # Orthogonal volume viewer (CAT_VolView),
-│       │   │                       # also embedded in CAT_SurfView's -volume window
+│       │   │                       # also embedded in CAT_SurfView's --volume window
 │       │   ├── controls.py         # Overlay control panel shared by both viewers
 │       │   ├── colormaps.py        # Colormaps and p-value colorbar labels
 │       │   └── viewer_common.py    # Event claiming, drop targets, help, screenshots
@@ -192,6 +194,42 @@ links.  Everything else lives in `docs/`, so a change usually belongs there.
   path for users who want the full source tree.  Keep both in sync.
 - **Requirements** (`README.md`): Must match `requirements.txt` / `pyproject.toml`
 
+## Command-Line Conventions
+
+Every tool T1Prep ships — the `T1Prep`/`PyCAT` orchestrator, the viewers, the
+`CAT_*_ui` wrappers, `CAT_VolDiff`, `parallelize`, the longitudinal scripts —
+answers the same way, with `CAT_VolView` as the template:
+
+| You type | You get |
+|----------|---------|
+| nothing at all | the synopsis — the command line plus an overview of the options — on stderr, exit 1 |
+| `--help` | the full description, exit 0 |
+| `--version` | `<tool> <T1PREP_VERSION>`, exit 0 |
+
+Options are spelled `--like-this`. The single-dash spellings that predate this
+(`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`, and `-h`/`-v`)
+remain valid so existing command lines and scripts keep working; they are
+simply no longer listed in the help. `t1prep-ui` and `t1prep-download-models`
+are the deliberate exception to the no-argument rule — called bare they do
+their job, because that job needs no input file.
+
+The behaviour lives in one place per language, so a new tool inherits it
+rather than re-implementing it:
+
+- **Python** — `src/t1prep/cli_help.py`. Build the parser with its
+  `ArgumentParser` instead of `argparse.ArgumentParser`, and call
+  `parser.exit_without_arguments(argv)` before `parse_args`. The class hides
+  every single-dash spelling from the synopsis and the option list, adds
+  `--version`, and makes a failed parse point at `--help`. Pass
+  `RawTextHelpFormatter` from the same module for help strings that are
+  hand-wrapped and already name their defaults.
+- **Bash** — `print_usage` and `print_version` in `scripts/T1Prep_utils.sh`.
+  Define a `usage()` that calls
+  `print_usage "<synopsis>" "<option line>" …` — an empty argument separates
+  groups — and keep the long text in `help()`. `parallelize` and
+  `progress_bar_multi.sh` carry local copies of both on purpose: they are
+  meant to run without sourcing `T1Prep_utils.sh`.
+
 ## Adding New CLI Options
 
 When adding a new CLI option, update these files in order:
@@ -202,6 +240,9 @@ When adding a new CLI option, update these files in order:
 4. `webui/templates/index.html` - Add UI element if applicable
 5. `T1Prep_defaults.txt` - Add default value if applicable
 6. `docs/usage.md` - Document the new option
+
+Give the option a `--` spelling, list it in `usage()` as well as `help()`, and
+keep any old single-dash spelling only as a hidden alias.
 
 ## Adding New Atlases
 

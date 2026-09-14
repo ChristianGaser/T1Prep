@@ -101,6 +101,34 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 | Docker configuration | `docs/installation.md`, `Dockerfile` |
 | Version number | `src/t1prep/__init__.py` is the single source of truth — `pyproject.toml` derives via `setuptools.dynamic`, `scripts/T1Prep_utils.sh` awks it, `Makefile` bumps it via `make release`. Also update README badges + git tag. |
 
+## Command-Line Conventions
+
+Every tool behaves the same way, with `CAT_VolView` as the template:
+
+| You type | You get |
+|----------|---------|
+| nothing at all | the synopsis — the command line plus an overview of the options — on stderr, exit 1 |
+| `--help` | the full description, exit 0 |
+| `--version` | `<tool> <T1PREP_VERSION>`, exit 0 |
+
+Options are spelled `--like-this`. Single-dash spellings that predate this
+(`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`, `-h`, `-v`) stay
+valid so existing command lines keep working, but they are hidden from the
+help. Two launchers are the deliberate exception to the no-argument rule:
+`t1prep-ui` and `t1prep-download-models` do their job instead of printing the
+synopsis.
+
+The behaviour lives in one place per language — reuse it, do not re-implement:
+
+- **Python** — `src/t1prep/cli_help.py`: use `ArgumentParser` from it instead
+  of `argparse.ArgumentParser`, and call `parser.exit_without_arguments(argv)`
+  before `parse_args`. It hides the single-dash spellings, adds `--version`,
+  and points a failed parse at `--help`.
+- **Bash** — `print_usage` and `print_version` in `scripts/T1Prep_utils.sh`:
+  define a `usage()` that calls `print_usage "<synopsis>" "<option line>" …`,
+  and leave the long text in `help()`. `parallelize` and
+  `progress_bar_multi.sh` keep local copies on purpose — they stay standalone.
+
 ## Adding New CLI Options (order matters)
 
 1. `scripts/T1Prep`
@@ -109,6 +137,9 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 4. `src/t1prep/webui/templates/index.html`
 5. `T1Prep_defaults.txt`
 6. `docs/usage.md`
+
+The option gets a `--` spelling, is listed in `usage()` as well as `help()`,
+and keeps any old single-dash spelling only as a hidden alias.
 
 ## Adding New Atlases
 
