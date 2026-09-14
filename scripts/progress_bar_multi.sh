@@ -250,8 +250,21 @@ multi_job_bar() {
 # Main logic
 # ----------------------------------------------------------------------
 main() {
+  # The same answers every T1Prep tool gives: '--help' the full description,
+  # no argument at all the synopsis
+  case "${n_jobs}" in
+    --help | -h | -help | --h)
+      help
+      exit 0
+      ;;
+    --version | -v | -V)
+      print_version
+      exit 0
+      ;;
+  esac
+
   if [ -z "$n_jobs" ]; then
-    help
+    usage
     exit 1
   fi
 
@@ -268,6 +281,43 @@ main() {
     # Multi-job mode
     multi_job_bar
   fi
+}
+
+# ----------------------------------------------------------------------
+# Synopsis
+# ----------------------------------------------------------------------
+# Shown when the script is called without an argument; '--help' spells the
+# positional arguments and the options out.
+
+# T1Prep_utils.sh exports T1PREP_VERSION when a T1Prep tool called us; on our
+# own we read it from the package, the same single source of truth.
+
+print_version() {
+  local version src_dir
+  version="${T1PREP_VERSION}"
+  if [ -z "${version}" ]; then
+    src_dir="$(dirname "$0")/../src/t1prep"
+    version="$(awk -F'"' '/^__version__[[:space:]]*=/ {print $2; exit}' \
+      "${src_dir}/__init__.py" 2>/dev/null)"
+  fi
+  echo "$(basename -- "$0") ${version:-unknown}"
+}
+
+usage() {
+  local prog
+  prog="$(basename -- "$0")"
+  {
+    echo "${BOLD:-}USAGE:${NC}"
+    echo "  ${prog} 1 \"\" <CURRENT> <TOTAL> [Label Width FailedFlag]"
+    echo "  ${prog} <n_jobs> <PROGRESS_DIR> [Width Label] [--multi]"
+    echo ""
+    echo "${BOLD:-}OPTIONS:${NC}"
+    echo "  --multi   Show one progress bar per job instead of the overall bar"
+    echo "  --help    Show the full description"
+    echo "  --version Show the version"
+    echo ""
+    echo "Run '${prog} --help' for the full description."
+  } >&2
 }
 
 # ----------------------------------------------------------------------

@@ -111,9 +111,9 @@ main()
     command_str=${command_str% }
 
     if [[ -n "$jobs" ]]; then
-      "${script_dir}/parallelize" -p "$jobs" -c "$command_str" "${FILES[@]}"
+      "${script_dir}/parallelize" --processes "$jobs" --command "$command_str" "${FILES[@]}"
     else
-      "${script_dir}/parallelize" -c "$command_str" "${FILES[@]}"
+      "${script_dir}/parallelize" --command "$command_str" "${FILES[@]}"
     fi
     exit $?
   fi
@@ -132,7 +132,7 @@ parse_args()
   local optname optarg
   
   if [ $# -lt 1 ]; then
-    help
+    usage
     exit 1
   fi
 
@@ -184,9 +184,13 @@ parse_args()
         fwhm=$optarg
         shift
         ;;
-      -h | --help | --h | -v | --version | -V)
+      --help | -h | -help | --h)
         help
-        exit 1
+        exit 0
+        ;;
+      --version | -v | -V)
+        print_version
+        exit 0
         ;;
       -*)
         echo "basename $0: ERROR: Unrecognized option \"$1\"" >&2
@@ -364,6 +368,26 @@ PYEOF
 
 
 # ----------------------------------------------------------------------
+# synopsis
+# ----------------------------------------------------------------------
+# The overview shown when the tool is called without an argument;
+# '--help' spells every option out.
+
+usage() {
+  print_usage "[options] <filename(s)>" \
+    "--out <DIR>           Output directory" \
+    "--no-parallel         Disable parallelization" \
+    "--jobs <N>            Number of parallel processes" \
+    "--areal               Resample with areal interpolation" \
+    "--ext <STR>           Output file extension" \
+    "--res <STR>           Output surface resolution (32k or 4k)" \
+    "--trg-sphere <FILE>   Target sphere for the left hemisphere" \
+    "--mask <FILE>         Target mask for the left hemisphere" \
+    "--fwhm <FLOAT>        Smoothing kernel FWHM in mm" \
+    "--help                Show the full description"
+}
+
+# ----------------------------------------------------------------------
 # help
 # ----------------------------------------------------------------------
 
@@ -382,13 +406,15 @@ write a single combined GIfTI per subject using CAT_SurfResampleMulti.
 ${BOLD}OPTIONS:${NC}
   --out <DIR>                  Output directory (default: same as input file dir)
   --no-parallel                Disable parallelization via ${script_dir}/parallelize
-  --jobs <N>                   Number of parallel processes (passed to parallelize -p)
+  --jobs <N>                   Number of parallel processes (passed to parallelize --processes)
+  --areal                      Resample with areal interpolation, as surface area needs
+                               (set automatically for an 'area' measure)
   --ext <STR>                  Output file extension (default: $ext)
   --res <STR>                  Output surface resolution (32k or 4k, default: $res)
   --trg-sphere <FILE>          Target sphere for the left hemisphere
   --mask <FILE>                Target mask for the left hemisphere
   --fwhm <FLOAT>               Smoothing FWHM applied inside CAT_SurfResampleMulti (default: $fwhm)
-  -h | --help                  Show this help and exit
+  --help                       Show this help and exit
 
 ${BOLD}INPUT NAMING EXPECTATIONS:${NC}
   lh.* case (supported now)

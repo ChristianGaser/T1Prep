@@ -132,7 +132,7 @@ parse_args()
 
   if [ $# -lt 1 ]; then
     logo
-    help
+    usage
     exit 1
   fi
 
@@ -317,9 +317,13 @@ parse_args()
         atlas_vol=""
         atlas_surf=""
         ;;
-      -h | --help | --h | -v | --version | -V)
+      --help | -h | -help | --h)
         help
-        exit 1
+        exit 0
+        ;;
+      --version | -v | -V)
+        print_version
+        exit 0
         ;;
       -*)
         echo "`basename $0`: ERROR: Unrecognized option \"$1\"" >&2
@@ -441,9 +445,9 @@ process()
     # If multi is defined and lower than available processes w.r.t. memory limit,
     # then use this lower value
     if [[ "$multi" -gt 0 && "$NUM_JOBS" -gt "$multi" ]]; then
-      arg_parallelize=( -p "${multi}" )
+      arg_parallelize=( --processes "${multi}" )
     else
-      arg_parallelize=( -p "${NUM_JOBS}" )
+      arg_parallelize=( --processes "${NUM_JOBS}" )
     fi
 
     # Call parallelize with filtered arguments and use memory limit per process
@@ -454,10 +458,10 @@ process()
     fi
     cmd=(
       "${script_dir}/parallelize"
-      -l "/tmp"
-      -d 5
+      --logdir "/tmp"
+      --delay 5
       ${arg_parallelize[@]}
-      -c "$(printf '%q ' "$0" "${filtered_args[@]}" "${args[@]}")"
+      --command "$(printf '%q ' "$0" "${filtered_args[@]}" "${args[@]}")"
       "${ARRAY[@]}"
     )
 
@@ -475,15 +479,15 @@ process()
     # Define number of processes, otherwise estimate it automatically 
     if ! [[ "${multi}" =~ ^-?[0-9]+$ ]]; then multi=-1; fi
     if [ "$multi" -gt 0 ]; then
-      arg_parallelize=( -p "${multi}" )
+      arg_parallelize=( --processes "${multi}" )
     else
-      arg_parallelize=( -p 0.5 )
+      arg_parallelize=( --processes 0.5 )
     fi
     cmd=(
       "${script_dir}/parallelize"
-      -l "/tmp"
+      --logdir "/tmp"
       ${arg_parallelize[@]}
-      -c "$(printf '%q ' "$0" "${filtered_args[@]}" --no-seg --multi -2)"
+      --command "$(printf '%q ' "$0" "${filtered_args[@]}" --no-seg --multi -2)"
       "${ARRAY[@]}"
     )
     
@@ -898,6 +902,33 @@ process()
 }
 
 # ----------------------------------------------------------------------
+# Synopsis
+# ----------------------------------------------------------------------
+# The overview shown when T1Prep is called without an argument.  It lists the
+# options by name only; '--help' spells every one of them out.
+
+usage() {
+
+  print_usage "[options] <filename(s)>" \
+    "${BOLD}General:${NC}  --defaults <FILE>  --install  --re-install  --python <FILE>" \
+    "          --multi <NUMBER>  --min-memory <NUMBER>  --seed <NUMBER>" \
+    "          --retry  --no-retry  --long-data <PATH>  --debug  --verbose" \
+    "" \
+    "${BOLD}Save:${NC}     --out-dir <DIR>  --bids  --gz  --no-overwrite <STRING>" \
+    "          --save-h5  --fmriprep  --no-track  --skullstrip-only" \
+    "          --no-skullstrip  --no-surf  --no-seg  --no-sphere-reg" \
+    "          --no-mwp  --no-atlas  --no-pial-white  --hemi  --wp  --rp" \
+    "          --p  --csf  --lesions  --atlas <LIST>  --atlas-surf <LIST>" \
+    "" \
+    "${BOLD}Expert:${NC}   --initial-surface <FILE>  --amap  --nogm-model" \
+    "          --thickness-method <NUMBER>  --no-correct-folding" \
+    "          --pre-fwhm <NUMBER>  --no-vessel  --median-filter <NUMBER>" \
+    "          --fast" \
+    "" \
+    "${BOLD}Other:${NC}    --help  --version"
+}
+
+# ----------------------------------------------------------------------
 # Help
 # ----------------------------------------------------------------------
 
@@ -1006,6 +1037,16 @@ ${BOLD}${GREEN}General Options:${NC}
   --debug
       Enable verbose output, retain all temporary files, and save additional
       debugging information for inspection.
+
+  --verbose
+      Print the command of every processing step as it is run.
+
+  --help
+      Show this description of every option. Called without any argument,
+      T1Prep prints the short synopsis instead.
+
+  --version
+      Print the T1Prep version and exit.
 
   --retry
       Retry failed processing steps once. By default, if segmentation or

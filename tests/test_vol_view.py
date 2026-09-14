@@ -33,6 +33,22 @@ except Exception as exc:  # pragma: no cover - depends on optional deps
     raise unittest.SkipTest(f"cat_vol_view unavailable: {exc}")
 
 
+class TestVtkCompatibility(unittest.TestCase):
+    """Names VTK has moved between modules must not break startup.
+
+    VTK 9.7 moved the cursor constants out of vtkRenderingCore into
+    vtkCommonCore, which made ``import cat_vol_view`` raise -- and, through the
+    viewer's script-mode import fallback, surfaced as a misleading
+    "No module named 'viewer_common'".
+    """
+
+    def test_the_crosshair_cursor_resolves_on_any_vtk(self):
+        from t1prep.gui import cat_vol_view
+
+        self.assertIsInstance(cat_vol_view.VTK_CURSOR_CROSSHAIR, int)
+        self.assertEqual(cat_vol_view.VTK_CURSOR_CROSSHAIR, 10)
+
+
 def _write_volume(path: Path, affine: np.ndarray, shape=(20, 24, 28)):
     """Write a volume whose voxel values encode their own file index."""
     data = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)

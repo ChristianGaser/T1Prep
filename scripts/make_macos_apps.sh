@@ -5,9 +5,10 @@
 # the `t1prep-make-apps` command; this wrapper only picks an interpreter that
 # can reach it.  Options are passed through:
 #
-#   -o <dir>   where to write the bundles
-#   -p <dir>   directory holding CAT_SurfView / CAT_VolView
-#   -d         also make them the default for the file types they declare
+#   --out-dir <dir>   where to write the bundles
+#   --bin-dir <dir>   directory holding CAT_SurfView / CAT_VolView
+#   --set-default     also make them the default for the file types they declare
+#   --help            the full description
 #
 set -euo pipefail
 
@@ -28,5 +29,5 @@ fi
 #    library, so this works even without the T1Prep dependencies installed
 echo "⚠ T1Prep is not installed; using $(command -v python3)." >&2
 echo "  The bundles will launch whichever CAT_SurfView / CAT_VolView is on PATH," >&2
-echo "  so make sure they are (or pass -p <bin-dir>)." >&2
+echo "  so make sure they are (or pass --bin-dir <dir>)." >&2
 exec python3 "$project_dir/src/t1prep/gui/make_apps.py" "$@"

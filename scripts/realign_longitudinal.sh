@@ -1,41 +1,27 @@
 #!/usr/bin/env bash
 # Longitudinal rigid realignment wrapper
-# Ensures the virtual environment is activated before running t1prep.realign_longitudinal
+# Resolves the Python environment, then runs t1prep.realign_longitudinal
+#
+# Environment resolution is shared with the rest of the bash family (see
+# scripts/dice.sh): T1Prep_utils.sh resolves the source-tree vs. installed
+# layout -- and, in installed mode, the interpreter that actually has t1prep --
+# then activate_t1prep_env() puts the checkout on PYTHONPATH and activates the
+# project-managed venv at <repo>/env when there is one.  The module form
+# "${python} -m t1prep.realign_longitudinal" is used so the
+# package-relative imports work in both layouts.
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ENV_DIR="$PROJECT_DIR/env"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-check_environment() {
-    if [[ "$VIRTUAL_ENV" == "$ENV_DIR" ]]; then
-        return 0
-    else
-        if [[ ! -d "$ENV_DIR" ]]; then
-            echo "❌ Error: Virtual environment not found: $ENV_DIR" >&2
-            exit 1
-        fi
-        # shellcheck disable=SC1090
-        source "$ENV_DIR/bin/activate"
-    fi
-}
+if [ ! -f "${script_dir}/T1Prep_utils.sh" ]; then
+    echo "ERROR: ${script_dir}/T1Prep_utils.sh not found - it must sit next to this script." >&2
+    exit 1
+fi
+# shellcheck source=scripts/T1Prep_utils.sh
+source "${script_dir}/T1Prep_utils.sh"
 
-activate_environment() {
-    if [[ ! -d "$ENV_DIR" ]]; then
-        echo "❌ Error: Virtual environment directory not found: $ENV_DIR" >&2
-        echo "   Please run: python3 -m venv env" >&2
-        exit 1
-    fi
-    if [[ ! -f "$ENV_DIR/bin/activate" ]]; then
-        echo "❌ Error: Activation script missing: $ENV_DIR/bin/activate" >&2
-        exit 1
-    fi
-    # shellcheck disable=SC1090
-    source "$ENV_DIR/bin/activate"
-}
-
-print_usage() {
+usage() {
     cat <<'USAGE'
 Longitudinal rigid realignment wrapper
 
@@ -49,24 +35,24 @@ Example (more robust sampling):
 
 Notes:
     - Wraps Python module: t1prep.realign_longitudinal
-    - Activates ./env before running so dependencies are available
+    - Runs in the project venv (<repo>/env) when present, otherwise in
+      the interpreter T1Prep is installed into
     - All positional/optional arguments are forwarded to the Python CLI
 USAGE
+    echo "Run '$(basename -- "$0") --help' for the full description."
 }
 
 main() {
+    # Called with nothing at all: the synopsis, as every T1Prep tool does;
+    # '--help' and '--version' are forwarded to the Python module
     if [[ $# -eq 0 ]]; then
-        print_usage
+        usage
         exit 1
     fi
 
-    if ! check_environment; then
-        activate_environment
-    fi
+    activate_t1prep_env
 
-    export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
-
-    python -m t1prep.realign_longitudinal "$@"
+    "${python}" -m t1prep.realign_longitudinal "$@"
 }
 
 main "$@"

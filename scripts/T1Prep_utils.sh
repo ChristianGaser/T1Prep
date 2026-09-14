@@ -205,6 +205,65 @@ function indent02() { sed 's/^/  /'; }
 function indent04() { sed 's/^/    /'; }
 
 # ----------------------------------------------------------------------
+# Unified command-line behaviour
+# ----------------------------------------------------------------------
+# Every T1Prep tool answers the same way, with CAT_VolView as the template:
+#
+#   * called without an argument it prints the synopsis -- the overview of the
+#     possible options -- and exits non-zero,
+#   * --help prints the full description,
+#   * only the "--" spelling of an option is advertised.
+#
+# Single-dash spellings the tools used before stay valid so existing command
+# lines keep working; they are simply no longer listed.
+#
+# Usage:
+#   print_usage "<argument part of the command line>" "<option line>" ...
+#
+# e.g.
+#   print_usage "[options] <filename(s)>" \
+#     "--fwhm <FLOAT>    Smoothing kernel FWHM in mm"
+#
+# The synopsis goes to stderr, as it does in the Python tools, because it is
+# printed in place of the work the user asked for.
+# ----------------------------------------------------------------------
+
+print_usage() {
+  local synopsis prog
+  synopsis="$1"
+  shift
+  prog="$(basename -- "$0")"
+
+  {
+    echo "${BOLD}USAGE:${NC}"
+    echo "  ${GREEN}${prog} ${synopsis}${NC}"
+    if [ $# -gt 0 ]; then
+      echo ""
+      echo "${BOLD}OPTIONS:${NC}"
+      local line
+      for line in "$@"; do
+        # A blank entry separates groups, and a blank line carries no indent
+        if [ -z "${line}" ]; then
+          echo ""
+        else
+          echo "  ${line}"
+        fi
+      done
+    fi
+    echo ""
+    echo "Run '${GREEN}${prog} --help${NC}' for the full description."
+  } >&2
+}
+
+# ----------------------------------------------------------------------
+# print the version, the answer to --version
+# ----------------------------------------------------------------------
+
+print_version() {
+  echo "$(basename -- "$0") ${T1PREP_VERSION}"
+}
+
+# ----------------------------------------------------------------------
 # check arguments
 # ----------------------------------------------------------------------
 
@@ -390,6 +449,46 @@ check_python_cmd()
     echo "${RED}Only Python version 3.9-3.12 is supported. Please use '--python' flag to define Python command and/or install Python${NC}" 2>&1
     exit 1
   fi
+}
+
+# ----------------------------------------------------------------------
+# Make the t1prep package importable for a "${python} -m t1prep.<module>" call
+# ----------------------------------------------------------------------
+# Installed mode: pip put the calling script in <venv>/bin next to the
+# interpreter that actually has t1prep, and the dual-mode block at the top of
+# this file already pointed ``python`` at it -- there is nothing to activate.
+#
+# Source-tree mode:
+#   * ${root_dir}/src is prepended to PYTHONPATH unconditionally.  PYTHONPATH
+#     is searched before site-packages, so the checkout wins over a
+#     pip-installed (possibly older) t1prep -- otherwise running a wrapper
+#     from a source tree can silently execute stale code from site-packages.
+#   * the project-managed venv at ${T1prep_env} is activated when it exists.
+#     A missing venv is *not* fatal: unlike the full T1Prep pipeline these
+#     wrappers only need the Python dependencies, so any interpreter providing
+#     them works -- including a system Python that T1Prep was pip installed
+#     into.  An explicit --python / $T1PREP_PYTHON always wins over the venv.
+#
+# Callers that parse --python themselves set ``python_explicit`` before
+# calling, exactly as scripts/dice.sh does.
+# ----------------------------------------------------------------------
+
+activate_t1prep_env()
+{
+  python="${python:-${T1PREP_PYTHON:-}}"
+  check_python_cmd
+
+  [ "${T1PREP_INSTALLED:-0}" -eq 1 ] && return 0
+
+  export PYTHONPATH="${root_dir}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
+  if [ -z "${python_explicit:-}" ] && [ -f "${T1prep_env}/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source "${T1prep_env}/bin/activate"
+    python="${T1prep_env}/bin/python"
+  fi
+
+  return 0
 }
 
 # ----------------------------------------------------------------------

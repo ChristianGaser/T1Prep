@@ -31,6 +31,13 @@ delay=0
 
 main ()
 {
+  # Called with nothing at all: the synopsis says what parallelize takes,
+  # '--help' then gives the full description
+  if [ $# -lt 1 ]; then
+    usage
+    exit 1
+  fi
+
   #get_no_of_cpus
   parse_args "${@}"
   check_files
@@ -90,9 +97,13 @@ parse_args () {
         --test* | -t*)
             TEST=1
             ;;
-        -h | --help | -v | --version | -V)
+        --help | -h | -help | --h)
             help
-            exit 1
+            exit 0
+            ;;
+        --version | -v | -V)
+            print_version
+            exit 0
             ;;
         -*)
             echo "`basename $0`: ERROR: Unrecognized option \"$1\"" >&2
@@ -134,8 +145,8 @@ exit_if_empty ()
 check_files ()
 {
   if [ -z "$COMMAND" ]; then
-    echo "${RED}$FUNCNAME ERROR - no command defined.${NC}"
-      help
+    echo "${RED}ERROR: No command given with --command!${NC}" >&2
+    usage
     exit 1
   fi
   
@@ -143,7 +154,7 @@ check_files ()
   
   if [ "$SIZE_OF_ARRAY" -eq 0 ]; then
       echo "${RED}ERROR: No files or parameters given!${NC}" >&2
-      help
+      usage
       exit 1
   fi
 }
@@ -477,6 +488,55 @@ do_parallelize ()
 }
 
 # ----------------------------------------------------------------------
+# synopsis
+# ----------------------------------------------------------------------
+# The overview shown when parallelize is called without an argument;
+# '--help' spells every option out.  The layout is the one print_usage in
+# T1Prep_utils.sh produces for the rest of the tools -- parallelize does not
+# source that file, so that it stays usable on its own.
+
+usage ()
+{
+  local prog
+  prog="$(basename -- "$0")"
+  {
+    echo "${BOLD}USAGE:${NC}"
+    echo "  ${GREEN}${prog} [options] --command <STRING> [filename|filepattern]${NC}"
+    echo ""
+    echo "${BOLD}OPTIONS:${NC}"
+    echo "  --command <STRING>    Command to be executed in parallel (required)"
+    echo "  --processes <NUMBER>  Number of parallel jobs, or a fraction of the cores"
+    echo "  --mem-limit <INT>     Memory limit for each process in GB"
+    echo "  --delay <NUMBER>      Delay in seconds between starting each job"
+    echo "  --bg                  Keep all processes in background"
+    echo "  --logdir <DIR>        Directory to save the log file"
+    echo "  --test                Print the files to be processed without running"
+    echo "  --help                Show the full description"
+    echo "  --version             Show the version"
+    echo ""
+    echo "Run '${GREEN}${prog} --help${NC}' for the full description."
+  } >&2
+}
+
+# ----------------------------------------------------------------------
+# version
+# ----------------------------------------------------------------------
+# T1Prep_utils.sh exports T1PREP_VERSION when a T1Prep tool called us; on our
+# own we read it from the package, the same single source of truth.
+
+print_version ()
+{
+  local version src_dir
+  version="${T1PREP_VERSION}"
+  if [ -z "${version}" ]; then
+    src_dir="$(dirname "$0")/../src/t1prep"
+    version="$(awk -F'"' '/^__version__[[:space:]]*=/ {print $2; exit}' \
+      "${src_dir}/__init__.py" 2>/dev/null)"
+  fi
+  echo "$(basename -- "$0") ${version:-unknown}"
+}
+
+# ----------------------------------------------------------------------
 # help
 # ----------------------------------------------------------------------
 
@@ -485,21 +545,21 @@ help ()
 cat <<__EOM__
 
 ${BOLD}USAGE:${NC}
-  $(basename "$0") [options] -c <STRING> [filename|filepattern]
+  $(basename "$0") [options] --command <STRING> [filename|filepattern]
 
 ${BOLD}OPTIONS:${NC}
-  -p, --processes <NUMBER> Specify the number of parallel jobs (default $NUM_JOBS).
+  --processes <NUMBER>     Specify the number of parallel jobs (default $NUM_JOBS).
                            If <NUMBER> is a floating-point value between 0 and 1,
                            it will be interpreted as a fraction of available CPU cores.
                            For example, 0.7 means 70% of CPU cores will be used.
-  -m, --mem-limit <INT>    Memory limit for each process in GB (default is ${MEM_LIMIT}GB).
-  -c, --command <STRING>   Command to be executed in parallel.
-  -d, --delay <NUMBER>     Specify a delay (in seconds) between starting each job. 
+  --mem-limit <INT>        Memory limit for each process in GB (default is ${MEM_LIMIT}GB).
+  --command <STRING>       Command to be executed in parallel.
+  --delay <NUMBER>         Specify a delay (in seconds) between starting each job. 
                            This helps to avoid simultaneous peak memory usage, which can 
                            lead to system overload or job failures (default: $delay).
-  -b, --bg                 Keep all processes in background.
-  -l, --logdir <DIR>       Directory to save the log file (default $LOGDIR).
-  -t, --test               Run in test mode: print the files to be processed without 
+  --bg                     Keep all processes in background.
+  --logdir <DIR>           Directory to save the log file (default $LOGDIR).
+  --test                   Run in test mode: print the files to be processed without 
                            executing the command.
 
 ${BOLD}DESCRIPTION:${NC}
@@ -511,22 +571,22 @@ ${BOLD}OUTPUT:${NC}
   'parallelize_${HOSTNAME}_\${time}.log', incorporating the current date and time.
 
 ${BOLD}EXAMPLES:${NC}
-  ${BLUE}parallelize -c "niismooth -v -fwhm 8" sTRIO*.nii${NC}
+  ${BLUE}parallelize --command "niismooth -v -fwhm 8" sTRIO*.nii${NC}
     Parallelizes the 'niismooth' command with an 8mm FWHM, applied to all files matching 
     'sTRIO*.nii', displaying verbose output.
 
-  ${BLUE}parallelize -c "gunzip" *.zip${NC}
+  ${BLUE}parallelize --command "gunzip" *.zip${NC}
     Parallelizes unzipping of all .zip files in the current directory.
 
-  ${BLUE}parallelize -m 20 -c "T1prep --no-surf" sTRIO*.nii${NC}
+  ${BLUE}parallelize --mem-limit 20 --command "T1prep --no-surf" sTRIO*.nii${NC}
     Parallelizes 'T1prep' without surface estimation, setting a 10GB RAM limit per process.
 
-  ${BLUE}parallelize -p 0.7 -c "gunzip" *.zip${NC}
+  ${BLUE}parallelize --processes 0.7 --command "gunzip" *.zip${NC}
     Parallelizes unzipping of all .zip files in the current directory by using 70% of the
     available processors.
 
   ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  ${T1prep_dir}/parallelize -p 8 -c "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
+  ${T1prep_dir}/parallelize --processes 8 --command "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
     1. Runs 'T1prep.sh' on all files matching the pattern 'sTRIO*.nii', skipping surface 
        creation and saving results in 'test_folder'.
     2. Parallelizes the processing using 8 processors for improved performance. The first 

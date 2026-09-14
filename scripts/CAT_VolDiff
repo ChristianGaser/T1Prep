@@ -19,8 +19,8 @@ Usage::
     CAT_VolDiff tp1.nii tp2.nii tp3.nii
 
     # several subjects, relative differences of globally normalised images
-    CAT_VolDiff --rel --glob -s subj1_tp1.nii subj1_tp2.nii \\
-                             -s subj2_tp1.nii subj2_tp2.nii
+    CAT_VolDiff --rel --glob --subject subj1_tp1.nii subj1_tp2.nii \\
+                             --subject subj2_tp1.nii subj2_tp2.nii
 
 All images of a subject must share one grid; nothing is resliced.
 """
@@ -31,6 +31,29 @@ import os
 import sys
 
 import numpy as np
+
+def _argument_parser():
+    """Return the :class:`ArgumentParser` shared by the T1Prep tools.
+
+    ``t1prep.cli_help`` is loaded straight from its file rather than as
+    ``t1prep.cli_help``, because importing the package runs its ``__init__``,
+    which pulls in torch — a second of startup this tool would pay just to
+    print its synopsis.
+    """
+    import importlib.util
+
+    spec = importlib.util.find_spec("t1prep")
+    if spec is not None and spec.origin:
+        path = os.path.join(os.path.dirname(spec.origin), "cli_help.py")
+        if os.path.isfile(path):
+            helper_spec = importlib.util.spec_from_file_location(
+                "_t1prep_cli_help", path
+            )
+            module = importlib.util.module_from_spec(helper_spec)
+            helper_spec.loader.exec_module(module)
+            return module.ArgumentParser
+    return argparse.ArgumentParser
+
 
 # MATLAB's eps in the relative-difference formula of cat_stat_diff.m.
 # CAT_VolCalc has no eps constant, so it enters the formula as a literal.
@@ -166,7 +189,7 @@ def diff_subject(files, rel=False, glob=False, verbose=True):
 
 def build_parser():
     """Return the command-line parser."""
-    parser = argparse.ArgumentParser(
+    parser = _argument_parser()(
         prog="CAT_VolDiff",
         description=(
             "Compute image_j - image_1 for every image j after the first with\n"
@@ -176,10 +199,9 @@ def build_parser():
         epilog=(
             "examples:\n"
             "  CAT_VolDiff tp1.nii tp2.nii tp3.nii\n"
-            "  CAT_VolDiff --rel --glob -s s1_tp1.nii s1_tp2.nii "
-            "-s s2_tp1.nii s2_tp2.nii"
+            "  CAT_VolDiff --rel --glob --subject s1_tp1.nii s1_tp2.nii "
+            "--subject s2_tp1.nii s2_tp2.nii"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "files",
@@ -188,8 +210,8 @@ def build_parser():
         help="images of one subject; the first one is the reference",
     )
     parser.add_argument(
-        "-s",
         "--subject",
+        "-s",
         nargs="+",
         action="append",
         default=[],
@@ -208,7 +230,7 @@ def build_parser():
         help="scale the images of a subject to their common global mean first",
     )
     parser.add_argument(
-        "-q", "--quiet", action="store_true", help="do not report progress"
+        "--quiet", "-q", action="store_true", help="do not report progress"
     )
     return parser
 
@@ -216,13 +238,17 @@ def build_parser():
 def main(argv=None):
     """Run CAT_VolDiff on the command line *argv*; return the exit status."""
     parser = build_parser()
+    argv = sys.argv[1:] if argv is None else list(argv)
+    # Called with nothing at all: the synopsis says what the tool takes,
+    # '--help' then gives the full description
+    parser.exit_without_arguments(argv)
     args = parser.parse_args(argv)
 
     subjects = list(args.subject)
     if args.files:
         subjects.append(args.files)
     if not subjects:
-        parser.print_help()
+        parser.print_synopsis()
         return 1
 
     for files in subjects:

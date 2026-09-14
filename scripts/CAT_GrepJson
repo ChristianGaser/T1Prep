@@ -40,7 +40,7 @@ parse_args()
   local optname optarg
   
   if [ $# -lt 1 ]; then
-    help
+    usage
     exit 1
   fi
 
@@ -60,9 +60,13 @@ parse_args()
         out_file=$optarg
         shift
         ;;
-      -h | --help | --h | -v | --version | -V)
+      --help | -h | -help | --h)
         help
-        exit 1
+        exit 0
+        ;;
+      --version | -v | -V)
+        print_version
+        exit 0
         ;;
       -*)
         echo "basename $0: ERROR: Unrecognized option \"$1\"" >&2
@@ -120,6 +124,19 @@ process()
   done
 }
 
+
+# ----------------------------------------------------------------------
+# synopsis
+# ----------------------------------------------------------------------
+# The overview shown when the tool is called without an argument;
+# '--help' spells every option out.
+
+usage() {
+  print_usage "[options] <filename(s)>" \
+    "--field <NAME>        Field to read from every JSON file" \
+    "--out <FILE>          Write the collected values to this file" \
+    "--help                Show the full description"
+}
 
 # ----------------------------------------------------------------------
 # help

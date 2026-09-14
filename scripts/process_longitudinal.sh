@@ -60,7 +60,27 @@ read_lines_to_array() {
     done <<< "$data"
 }
 
-print_usage() {
+usage() {
+    cat <<'USAGE'
+USAGE:
+  process_longitudinal.sh [options] <tp1.nii.gz> <tp2.nii.gz> [...]
+
+OPTIONS:
+  --out-dir <DIR>          Output folder, or the dataset root
+  --long-model <MODEL>     plasticity (default), ageing or both
+  --t1prep-arg <STRING>    Extra argument for T1Prep (repeatable)
+  --realign-arg <STRING>   Extra argument for realign_longitudinal.sh
+  --warp-arg <STRING>      Extra argument for warp_longitudinal.sh
+  --modulate-arg <STRING>  Extra argument for modulate_longitudinal.sh
+  --dry-run                Print the steps without running them
+  --debug                  Keep the intermediate files and be verbose
+  --help                   Show the full description
+  --version                Show the version
+USAGE
+    echo "Run '$(basename -- "$0") --help' for the full description."
+}
+
+help() {
     cat <<'USAGE'
 Batch longitudinal processing.
 
@@ -155,8 +175,12 @@ parse_args() {
             --debug)
                 DEBUG=1
                 ;;
-            -h|--help)
-                print_usage
+            --help|-h)
+                help
+                exit 0
+                ;;
+            --version|-v|-V)
+                print_version
                 exit 0
                 ;;
             --)
@@ -165,7 +189,7 @@ parse_args() {
                 ;;
             *)
                 if [[ "$1" == -* ]]; then
-                    print_usage
+                    usage
                     die "Unknown option: $1"
                 fi
                 break
@@ -255,6 +279,28 @@ run_step() {
             echo "$@"
         fi
         "$@"
+    fi
+}
+
+# The T1Prep step runs the orchestrator sitting next to this script, so the
+# whole family stays on one version.  In source-tree mode that orchestrator
+# needs the project-managed venv at <repo>/env and asks an interactive Y/N
+# question when it is missing -- which would stall a batch run *after* the
+# realignment has already cost minutes.  Check it up front instead.
+# (The realign/warp/modulate wrappers are lighter and fall back to whichever
+# interpreter has t1prep installed, so they are not affected.)
+check_t1prep_cmd() {
+    [[ -x "$T1PREP_CMD" ]] || die "T1Prep not found next to this script: $T1PREP_CMD"
+
+    if [[ "${T1PREP_INSTALLED:-0}" -ne 1 && ! -d "${T1prep_env:-}" ]]; then
+        echo "ERROR: the T1Prep step needs the project-managed Python environment," >&2
+        echo "       which does not exist: ${T1prep_env:-}" >&2
+        echo "" >&2
+        echo "Either create it once:" >&2
+        echo "    ${T1PREP_CMD} --install" >&2
+        echo "or run the pip-installed tools from <venv>/bin instead of this" >&2
+        echo "source checkout ('pip install T1Prep' ships this script there too)." >&2
+        exit 1
     fi
 }
 
@@ -453,12 +499,14 @@ process_subjects() {
 }
 
 main() {
+    # Called with nothing at all: the synopsis, as every T1Prep tool does
     if [[ $# -eq 0 ]]; then
-        print_usage
+        usage
         exit 1
     fi
     parse_args "$@"
     validate_inputs
+    check_t1prep_cmd
     process_subjects
 }
 

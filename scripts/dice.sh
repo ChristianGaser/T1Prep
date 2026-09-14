@@ -20,6 +20,24 @@
 # Resolve this script's directory robustly (works even if invoked via symlink)
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+synopsis() {
+    cat <<'USAGE'
+USAGE:
+  dice.sh --gt <GT.nii.gz> --pred <PRED.nii.gz> [options]
+
+OPTIONS:
+  --gt <FILE>          Ground-truth label or probability volume
+  --pred <FILE>        Predicted volume, compared against --gt
+  --soft               Soft Dice on the unrounded inputs
+  --no-resample        Compare voxel-to-voxel, ignoring the affines
+  --save-conf <FILE>   Write the confusion matrix to this CSV
+  --verbose            One line per label instead of the single summary line
+  --python <FILE>      Interpreter to run t1prep.dice with
+  --help               Show the full description
+USAGE
+    echo "Run '$(basename -- "$0") --help' for the full description."
+}
+
 usage() {
     cat <<'USAGE'
 Dice-based metric — wrapper
@@ -55,18 +73,19 @@ Notes:
 USAGE
 }
 
-# Show brief help if no args
-if [ $# -eq 0 ]; then
-    usage
-    exit 1
-fi
-
 # ----------------------------------------------------------------------
 # Honor an explicit interpreter before anything else, like T1Prep's main():
 # "--python <cmd>" / "--python=<cmd>" (or $T1PREP_PYTHON) wins over the
 # auto-detection in check_python_cmd.  The flag is consumed here because
 # t1prep.dice itself does not know it.
 # ----------------------------------------------------------------------
+# Called with nothing at all: the synopsis, as every T1Prep tool does;
+# '--help' gives the full description
+if [ $# -eq 0 ]; then
+    synopsis >&2
+    exit 1
+fi
+
 args=()
 _expect_python=0
 for _arg in "$@"; do
@@ -78,7 +97,7 @@ for _arg in "$@"; do
     case "${_arg}" in
         --python)   _expect_python=1 ;;
         --python=*) python="${_arg#--python=}" ;;
-        -h|--help)  usage; exit 0 ;;
+        --help|-h)  usage; exit 0 ;;
         *)          args+=("${_arg}") ;;
     esac
 done
@@ -96,34 +115,11 @@ fi
 # shellcheck source=scripts/T1Prep_utils.sh
 source "${script_dir}/T1Prep_utils.sh"
 
-check_python_cmd
-
-# ----------------------------------------------------------------------
-# Source-tree mode: make the checkout importable and, when available, use the
-# project-managed venv.
-#
-# ${root_dir}/src is prepended to PYTHONPATH unconditionally: PYTHONPATH is
-# searched before site-packages, so this guarantees the checkout wins over a
-# pip-installed (possibly older) t1prep — otherwise running scripts/dice.sh
-# from a source tree can silently execute stale code from site-packages.
-#
-# A missing venv is *not* fatal here.  Unlike the full T1Prep pipeline this
-# wrapper only needs numpy/nibabel/scipy, so any interpreter providing them
-# works — including a system Python that T1Prep was pip installed into.  An
-# explicit --python / $T1PREP_PYTHON always wins over the venv.
-#
-# Installed mode already runs inside the environment pip installed into, so
-# neither step applies.
-# ----------------------------------------------------------------------
-if [ "${T1PREP_INSTALLED:-0}" -ne 1 ]; then
-    export PYTHONPATH="${root_dir}/src${PYTHONPATH:+:${PYTHONPATH}}"
-
-    if [ -z "${python_explicit}" ] && [ -f "${T1prep_env}/bin/activate" ]; then
-        # shellcheck disable=SC1091
-        source "${T1prep_env}/bin/activate"
-        python="${T1prep_env}/bin/python"
-    fi
-fi
+# Validate/auto-detect the interpreter, put the checkout on PYTHONPATH and
+# activate the project-managed venv when there is one.  A missing venv is not
+# fatal: this wrapper only needs numpy/nibabel/scipy, so any interpreter
+# providing them works — see activate_t1prep_env() in T1Prep_utils.sh.
+activate_t1prep_env
 
 # Fail with an actionable message instead of a bare ImportError further down
 if ! missing="$("${python}" -c 'import importlib.util as u; print(" ".join(m for m in ("numpy", "nibabel", "scipy") if u.find_spec(m) is None))' 2>/dev/null)"; then
