@@ -24,6 +24,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+# Command-line behaviour shared by every T1Prep tool: no argument prints the
+# synopsis, --help the full description, and only "--" options are advertised.
+from .cli_help import ArgumentParser
+
 import nibabel as nib
 import numpy as np
 from nibabel.affines import voxel_sizes as _voxel_sizes
@@ -528,9 +532,9 @@ def rigid_realign_to_first(
 
 
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    p = ArgumentParser(
+        prog="realign_longitudinal.sh",
         description="Rigid realignment of a longitudinal series to the first input (SPM-like).",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--inputs", nargs="+", required=True, help="Input NIfTI images")
     p.add_argument("--out-dir", required=True, help="Directory for outputs")
@@ -616,6 +620,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
     )
     p.add_argument("--verbose", action="store_true", help="Print optimizer diagnostics")
+    # Called with nothing at all: the synopsis, as every T1Prep tool does
+    p.exit_without_arguments(sys.argv[1:] if argv is None else argv)
     return p.parse_args(argv)
 
 

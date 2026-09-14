@@ -20,6 +20,9 @@ from typing import Optional
 
 import numpy as np
 
+# Command-line behaviour shared by every T1Prep tool: no argument prints the
+# synopsis, --help the full description, and only "--" options are advertised.
+from .cli_help import ArgumentParser
 from .itk_transforms import save_affine_itk_txt
 
 __all__ = ["bbregister", "save_boldref_to_t1w_xfm", "main"]
@@ -121,7 +124,7 @@ def save_boldref_to_t1w_xfm(matrix: np.ndarray, out_path: str) -> None:
 
 
 def _parse_args(argv):
-    parser = argparse.ArgumentParser(
+    parser = ArgumentParser(
         prog="t1prep-bbreg",
         description="Boundary-based registration of a BOLD reference to T1Prep "
         "surfaces, written as the ITK transform fMRIPrep expects.",
@@ -142,8 +145,11 @@ def _parse_args(argv):
         default="auto",
         help="tissue contrast of the moving volume; BOLD is t2 (default: auto-detect)",
     )
-    parser.add_argument("-o", "--out", required=True, help="output ITK transform (.txt)")
+    parser.add_argument("--out", "-o", required=True, help="output ITK transform (.txt)")
     parser.add_argument("--verbose", action="store_true")
+    # Called with nothing at all: the synopsis says what the tool takes,
+    # '--help' then gives the full description
+    parser.exit_without_arguments(argv)
     return parser.parse_args(argv)
 
 

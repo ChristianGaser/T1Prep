@@ -79,8 +79,13 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sys
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
+
+# Command-line behaviour shared by every T1Prep tool: no argument prints the
+# synopsis, --help the full description, and only "--" options are advertised.
+from .cli_help import ArgumentParser
 
 import nibabel as nib
 import numpy as np
@@ -659,12 +664,12 @@ def modulate_longitudinal(
 
 
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    p = ArgumentParser(
+        prog="modulate_longitudinal.sh",
         description=(
             "Modulate longitudinal tissue maps by their Jacobian (CAT12's ageing "
             "model, without segmenting the average)."
         ),
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
         "--tissue",
@@ -762,6 +767,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Also write the shared tissue map in average space",
     )
     p.add_argument("--verbose", action="store_true", help="Print per-time-point volumes")
+    # Called with nothing at all: the synopsis, as every T1Prep tool does
+    p.exit_without_arguments(sys.argv[1:] if argv is None else argv)
     return p.parse_args(argv)
 
 

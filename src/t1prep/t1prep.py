@@ -30,6 +30,10 @@ import time
 from pathlib import Path
 from typing import List, Optional, Sequence, Union
 
+# Command-line behaviour shared by every T1Prep tool: no argument prints the
+# synopsis, --help the full description, and only "--" options are advertised.
+from .cli_help import ArgumentParser
+
 
 # ---------------------------------------------------------------------------
 # Atlas argument normalisation
@@ -749,15 +753,14 @@ def run_t1prep(
 # CLI entry point
 # ---------------------------------------------------------------------------
 
-def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="t1prep",
+def _build_parser() -> ArgumentParser:
+    p = ArgumentParser(
+        prog="t1prep-run",
         description=(
             "T1Prep – pure-Python single-subject pipeline.\n\n"
             "Preprocesses T1-weighted MRI data: skull-stripping, segmentation,\n"
             "cortical surface reconstruction, and atlas labelling."
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     # positional
@@ -870,6 +873,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entry point: ``python -m t1prep.t1prep`` or ``t1prep`` console script."""
     parser = _build_parser()
+    argv = sys.argv[1:] if argv is None else list(argv)
+    # Called with nothing at all: the synopsis says what the pipeline takes,
+    # '--help' then gives the full description
+    parser.exit_without_arguments(argv)
     args = parser.parse_args(argv)
 
     return run_t1prep(

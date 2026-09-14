@@ -46,7 +46,7 @@ Features:
     and each view shows only the hemisphere it stands for.
   • The mouse does not change the zoom (a right-click would otherwise leave the
     view zooming on every move, so a vertex could not be clicked); use '+'/'-',
-    the Zoom entries of the menu, or '-free-zoom' to allow it again.
+    the Zoom entries of the menu, or '--free-zoom' to allow it again.
   • Keyboard: u/d/l/r rotate (Shift=±1°, Ctrl=180°), b flip, o reset, m peak,
     g screenshot, h for the list, plus the standard VTK keys the viewer does
     not claim (w/s wireframe/shaded).
@@ -152,6 +152,16 @@ from vtkmodules.vtkCommonMath import vtkMatrix4x4
 from vtkmodules.vtkCommonTransforms import vtkTransform
 from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
 
+# Command-line behaviour shared by every T1Prep tool: no argument prints the
+# synopsis, --help the full description, and only "--" options are advertised.
+try:
+    from ..cli_help import ArgumentParser, RawTextHelpFormatter, add_hidden_aliases
+except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from cli_help import ArgumentParser, RawTextHelpFormatter, add_hidden_aliases
+
 # The volume window is shared with the standalone CAT_VolView tool.  It also
 # selects the QVTKRWIBase used below, so it is imported before the widget.
 try:
@@ -164,6 +174,8 @@ try:
         install_qt_message_filter, qt_application, running_as_app,
     )
 except ImportError:  # direct invocation as a script (no package context)
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
     from viewer_common import (
         ZOOM_EVENTS, ask_and_save_png, claim_event, dropped_files,
         droppable_url, note, show_shortcuts,
@@ -177,11 +189,15 @@ except ImportError:  # direct invocation as a script (no package context)
 try:
     from .make_apps import ensure_apps_exist
 except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
     from make_apps import ensure_apps_exist
 
 try:
     from .controls import ControlPanel, LOGP_THRESHOLDS
 except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
     from controls import ControlPanel, LOGP_THRESHOLDS
 
 # Qt interactor & backends
@@ -202,6 +218,8 @@ try:
         format_p_value_label, get_lookup_table, invert_lut, logp_colorbar_ticks,
     )
 except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
     from colormaps import (
         C1, C2, C3, JET, HOT, FIRE, BIPOLAR, GRAY,
         LOG10_P005, apply_discrete, build_overlay_lut, clipped_lut_indices,
@@ -1551,7 +1569,7 @@ class CustomInteractorStyle(vtkInteractorStyleTrackballCamera):
 
 
 # ---- Options & CLI ----
-#: Option sets selected with ``-preset``.  Keys are the command-line option
+#: Option sets selected with ``--preset``.  Keys are the command-line option
 #: names, so a preset is written the way it would be typed; options given
 #: explicitly on the command line keep precedence over the preset.
 #: (Not called "style": Qt claims -style for its widget style.)
@@ -1684,18 +1702,18 @@ def _build_parser() -> argparse.ArgumentParser:
     then mean — the defaults file, the presets and which positional is a
     mesh and which an overlay.
     """
-    p = argparse.ArgumentParser(
+    p = ArgumentParser(
         prog='CAT_SurfView',
         description='Render LH/RH cortical surfaces with optional overlays (CAT_SurfView).',
         epilog=(
             'Examples:\n'
             '  CAT_SurfView lh.central.subj.gii                 surface mesh\n'
             '  CAT_SurfView lh.thickness.subj                   overlay (mesh found automatically)\n'
-            '  CAT_SurfView lh.central.subj.gii -overlay lh.thickness.subj\n'
+            '  CAT_SurfView lh.central.subj.gii --overlay lh.thickness.subj\n'
             '  CAT_SurfView sub-*/lh.thickness.*                many overlays, ←/→ to step through\n'
-            '  CAT_SurfView -range 6 16 -clip -100 6 -colorbar stat/logP_*.gii\n'
-            '  CAT_SurfView -preset 1 lh.thickness.subj         predefined settings\n'
-            '  CAT_SurfView -output view.png lh.thickness.subj  write a PNG and exit\n'
+            '  CAT_SurfView --range 6 16 --clip -100 6 --colorbar stat/logP_*.gii\n'
+            '  CAT_SurfView --preset 1 lh.thickness.subj        predefined settings\n'
+            '  CAT_SurfView --output view.png lh.thickness.subj write a PNG and exit\n'
             '\n'
             'How the surface is determined:\n'
             '  An overlay does not reference its surface, so it is looked up in this order:\n'
@@ -1717,75 +1735,77 @@ def _build_parser() -> argparse.ArgumentParser:
             '  b flip dorsal views   w/s wireframe/shaded   g screenshot   h key help   q quit\n'
             '\n'
             'Batch use:\n'
-            '  -output renders the view, writes the PNG and exits, so the viewer can be\n'
+            '  --output renders the view, writes the PNG and exits, so the viewer can be\n'
             '  called in a loop.  With several overlays the first one is written.\n'
         ),
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=RawTextHelpFormatter,
     )
     # Accept one or more positional inputs. If more than one is given, treat all as overlays
     # and derive the mesh from the first overlay via naming rules.
-    # Every other option here is single-dash, and the docs say '-help';
-    # argparse would otherwise read that as '-h' with a stray 'elp'.
-    p.add_argument('-help', action='help', help=argparse.SUPPRESS)
+    # Every option is spelled '--name'; the single-dash spellings this viewer
+    # used before stay valid but are hidden from the help.  '-help' cannot be
+    # an alias of '--help' because argparse would read it as '-h' with a
+    # stray 'elp', so it is added as its own hidden action.
+    add_hidden_aliases(p, '-help')
     p.add_argument(
         'inputs', nargs='*',
         help='Mesh and/or overlay files. Several overlays can be stepped through with ←/→.'
     )
-    p.add_argument('-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
-    p.add_argument('-overlays', dest='overlays', nargs='+', help='Multiple overlay files for navigation')
-    p.add_argument('-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
-    p.add_argument('-volume','-vol','--nifti', dest='volume',
+    p.add_argument('--overlay','-overlay','-ov', dest='overlay', help='Overlay scalars (.gii, FreeSurfer morph, or text)')
+    p.add_argument('--overlays','-overlays', dest='overlays', nargs='+', help='Multiple overlay files for navigation')
+    p.add_argument('--bkg','-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
+    p.add_argument('--volume','-volume','-vol','--nifti', dest='volume',
                    help='3D NIfTI volume to show in a linked orthogonal slice window.\n'
                         'Clicking the surface moves the slices and vice versa.')
-    p.add_argument('-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0],
+    p.add_argument('--range','-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0],
                    help='Overlay value range (min max); omit for auto-scaling.\n'
                         'Given explicitly, it also overrides the thickness/pbt presets.')
-    p.add_argument('-range-bkg','-rb', dest='range_bkg', nargs=2, type=float, default=[0.0, -1.0],
+    p.add_argument('--range-bkg','-range-bkg','-rb', dest='range_bkg', nargs=2, type=float, default=[0.0, -1.0],
                    help='Background (curvature) value range (min max); omit for auto-scaling.')
-    p.add_argument('-clip','-cl', dest='clip', nargs=2, type=float, default=[0.0, -1.0],
+    p.add_argument('--clip','-clip','-cl', dest='clip', nargs=2, type=float, default=[0.0, -1.0],
                    help='Hide values between min and max (min max); min == max disables it.\n'
-                        'Bounds shared with -range are included, so "-range 6 16 -clip -100 6"\n'
+                        'Bounds shared with --range are included, so "--range 6 16 --clip -100 6"\n'
                         'hides everything up to 6.')
-    p.add_argument('-size','-sz', dest='size', nargs=2, type=int, default=list(DEFAULT_WINDOW_SIZE), help='Window size in pixels (width height)')
-    p.add_argument('-title', dest='title', help='Window/title string (overrides auto title)')
-    p.add_argument('-output','-save', dest='output',
+    p.add_argument('--size','-size','-sz', dest='size', nargs=2, type=int, default=list(DEFAULT_WINDOW_SIZE), help='Window size in pixels (width height)')
+    p.add_argument('--title','-title', dest='title', help='Window/title string (overrides auto title)')
+    p.add_argument('--output','-output','-save', dest='output',
                    help='Render to this PNG file and exit without user interaction (batch mode)')
-    p.add_argument('-fontsize','-fs', dest='fontsize', type=int, default=0, help='Title/font size (0 = auto)')
-    p.add_argument('-opacity','-op', dest='opacity', type=float, default=0.8, help='Overlay opacity')
-    p.add_argument('-stats', action='store_true', help='Deprecated: same as --title-mode stats when colorbar is shown')
-    p.add_argument('-title-mode', dest='title_mode', choices=['shape','stats','none'], default='shape',
+    p.add_argument('--fontsize','-fontsize','-fs', dest='fontsize', type=int, default=0, help='Title/font size (0 = auto)')
+    p.add_argument('--opacity','-opacity','-op', dest='opacity', type=float, default=0.8, help='Overlay opacity')
+    p.add_argument('--stats','-stats', action='store_true', help='Deprecated: same as --title-mode stats when colorbar is shown')
+    p.add_argument('--title-mode','-title-mode', dest='title_mode', choices=['shape','stats','none'], default='shape',
                    help='Colorbar title: shape (filename), stats, or none')
-    p.add_argument('-inverse', action='store_true', help='Invert the overlay colormap')
-    p.add_argument('-colorbar','-cb', dest='colorbar', action='store_true',
+    p.add_argument('--inverse','-inverse', action='store_true', help='Invert the overlay colormap')
+    p.add_argument('--colorbar','-colorbar','-cb', dest='colorbar', action='store_true',
                    help='Show the colorbar (only has an effect with an overlay)')
-    p.add_argument('-discrete','-dsc', dest='discrete', type=int, default=0,
+    p.add_argument('--discrete','-discrete','-dsc', dest='discrete', type=int, default=0,
                    help='Number of discrete color levels (0 = continuous)')
-    p.add_argument('-log', action='store_true',
+    p.add_argument('--log','-log', action='store_true',
                    help='Label the colorbar with p-values (-log10(p) overlay).\n'
                         'Applied automatically when the file name contains "log".')
-    p.add_argument('-white', action='store_true', help='Use a white background')
+    p.add_argument('--white','-white', action='store_true', help='Use a white background')
     # Control panel visibility (default: hidden)
-    p.add_argument('-panel', dest='panel', action='store_true', help='Start with the control panel shown')
-    p.add_argument('-no-panel', dest='panel', action='store_false', help='Start with the control panel hidden (default)')
+    p.add_argument('--panel','-panel', dest='panel', action='store_true', help='Start with the control panel shown')
+    p.add_argument('--no-panel','-no-panel', dest='panel', action='store_false', help='Start with the control panel hidden (default)')
     p.set_defaults(panel=False)
     # Colormap selection (default: jet)
-    p.add_argument('-fire', action='store_true', help='Use the fire colormap')
-    p.add_argument('-bipolar', action='store_true', help='Use the bipolar colormap')
-    p.add_argument('-c1', action='store_true', help='Use custom colormap 1')
-    p.add_argument('-c2', action='store_true', help='Use custom colormap 2')
-    p.add_argument('-c3', action='store_true', help='Use custom colormap 3')
-    p.add_argument('-preset', dest='preset', type=int, default=0, metavar='N',
+    p.add_argument('--fire','-fire', action='store_true', help='Use the fire colormap')
+    p.add_argument('--bipolar','-bipolar', action='store_true', help='Use the bipolar colormap')
+    p.add_argument('--c1','-c1', action='store_true', help='Use custom colormap 1')
+    p.add_argument('--c2','-c2', action='store_true', help='Use custom colormap 2')
+    p.add_argument('--c3','-c3', action='store_true', help='Use custom colormap 3')
+    p.add_argument('--preset','-preset', dest='preset', type=int, default=0, metavar='N',
                    help='Predefined settings:\n'
                         + '\n'.join(f'  {n} = {PRESET_HELP.get(n, "")}'
                                     for n in sorted(PRESETS))
                         + '\nOptions given explicitly take precedence.')
-    p.add_argument('-free-zoom', dest='free_zoom', action='store_true',
+    p.add_argument('--free-zoom','-free-zoom', dest='free_zoom', action='store_true',
                    help='Allow zooming with the mouse or trackpad (off by default, '
                         'because a right-click then keeps the view zooming)')
-    p.add_argument('-fix-scaling', dest='fix_scaling', action='store_true',
+    p.add_argument('--fix-scaling','-fix-scaling', dest='fix_scaling', action='store_true',
                    help='Keep the range of the first overlay for all following ones')
     # External defaults file for viewer settings (key=value lines)
-    p.add_argument('-defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
+    p.add_argument('--defaults','-defaults', dest='defaults', help='Path to a defaults file (key=value) to override built-in defaults')
     # Called without any argument: show the help instead of opening an empty window
     return p
 
@@ -1795,12 +1815,12 @@ def parse_args(argv: List[str]) -> Options:
 
     Positional arguments may be meshes or overlays in any order — what a file
     holds is decided by its name and, where that is not enough, its contents.
-    A defaults file and ``-preset`` fill in what was not given explicitly.
+    A defaults file and ``--preset`` fill in what was not given explicitly.
     """
     p = _build_parser()
-    if not argv:
-        p.print_help()
-        sys.exit(0)
+    # Called with nothing at all: the synopsis says what the viewer takes,
+    # '--help' then gives the full description
+    p.exit_without_arguments(argv)
     a = p.parse_args(argv)
 
     # Optionally load external defaults and apply only for values not explicitly provided on CLI
@@ -1827,7 +1847,7 @@ def parse_args(argv: List[str]) -> Options:
     if a.preset:
         preset = PRESETS.get(int(a.preset))
         if preset is None:
-            p.error(f"Unknown -preset {a.preset}; available: "
+            p.error(f"Unknown --preset {a.preset}; available: "
                     f"{', '.join(str(n) for n in sorted(PRESETS))}")
         preset = dict(preset)
         if any(getattr(a, flag, False) for flag in _COLORMAP_FLAGS):
@@ -1846,7 +1866,7 @@ def parse_args(argv: List[str]) -> Options:
 
     d = int(a.discrete)
     if d < 0 or d > 256:
-        p.error("Parameter -discrete/-dsc should be 0..256")
+        p.error("Parameter --discrete should be 0..256")
 
     # Derive mesh/overlay list from positional inputs (optional)
     pos_inputs: List[str] = list(a.inputs)
@@ -1910,9 +1930,9 @@ def parse_args(argv: List[str]) -> Options:
         # no positional inputs; mesh will be chosen later via GUI
         mesh_left_resolved = ''
 
-    # Priority for overlays: positional list > -overlays > -overlay
+    # Priority for overlays: positional list > --overlays > --overlay
     overlay_list_final: List[str] = overlays_from_pos or (a.overlays or [])
-    # Prefer an explicit list; else use single overlay from positional if detected; else -overlay flag
+    # Prefer an explicit list; else use single overlay from positional if detected; else --overlay flag
     overlay_single_final: Optional[str] = None
     if not overlay_list_final:
         overlay_single_final = (locals().get('overlay_single_from_pos')

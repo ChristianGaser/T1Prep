@@ -505,10 +505,13 @@ def compute_dice_nifti(
 def _parse_dice_args(argv=None):
     """Parse command-line arguments for Dice CLI."""
     import argparse
+    import sys
 
-    p = argparse.ArgumentParser(
+    from .cli_help import ArgumentParser
+
+    p = ArgumentParser(
+        prog="dice.sh",
         description="Compute Dice-based metrics for NIfTI label maps (2-3 classes).",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--gt", required=True, help="Ground truth NIfTI path")
     p.add_argument("--pred", required=True, help="Test/prediction NIfTI path")
@@ -541,6 +544,8 @@ def _parse_dice_args(argv=None):
         ),
     )
     p.add_argument("--save-conf", help="Optional path to save confusion matrix as CSV")
+    # Called with nothing at all: the synopsis, as every T1Prep tool does
+    p.exit_without_arguments(sys.argv[1:] if argv is None else argv)
     return p.parse_args(argv)
 
 

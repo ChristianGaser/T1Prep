@@ -39,6 +39,16 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+# Command-line behaviour shared by every T1Prep tool: --help gives the full
+# description, --version the release, and only "--" options are advertised.
+try:
+    from ..cli_help import ArgumentParser
+except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from cli_help import ArgumentParser
+
 #: Bundle identifier prefix; also used for the types the apps declare
 BUNDLE_PREFIX = "de.uni-jena.t1prep"
 
@@ -448,16 +458,19 @@ def ensure_apps_exist(quiet: bool = False) -> List[Path]:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI entry-point (``t1prep-make-apps``)."""
-    parser = argparse.ArgumentParser(
+    # Called without an argument this tool does its job -- building the
+    # bundles -- so it keeps that as the default action; the rest of the
+    # unified behaviour (--help, --version, "--" options) is as everywhere.
+    parser = ArgumentParser(
         prog="t1prep-make-apps",
         description="Create macOS application bundles for the T1Prep viewers.")
-    parser.add_argument("-o", "--out-dir", type=Path, default=None,
+    parser.add_argument("--out-dir", "-o", type=Path, default=None,
                         help="where to write them (default: /Applications, "
                              "or ~/Applications when that is not writable)")
-    parser.add_argument("-b", "-p", "--bin-dir", type=Path, default=None,
+    parser.add_argument("--bin-dir", "-b", "-p", type=Path, default=None,
                         help="directory holding CAT_SurfView and CAT_VolView "
                              "(default: the environment this runs in)")
-    parser.add_argument("-d", "--set-default", action="store_true",
+    parser.add_argument("--set-default", "-d", action="store_true",
                         help="also make them the default for the file types "
                              "they declare (needs duti)")
     args = parser.parse_args(argv)

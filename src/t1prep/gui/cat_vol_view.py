@@ -131,7 +131,6 @@ except Exception:  # pragma: no cover - optional
 
 from vtkmodules.vtkRenderingAnnotation import vtkScalarBarActor
 from vtkmodules.vtkRenderingCore import (
-    VTK_CURSOR_CROSSHAIR,
     vtkActor,
     vtkImageActor,
     vtkPolyDataMapper,
@@ -142,6 +141,18 @@ from vtkmodules.vtkRenderingCore import (
     vtkWindowToImageFilter,
 )
 import vtkmodules.vtkRenderingFreeType  # noqa: F401  (text rendering)
+
+# VTK 9.7 moved the cursor constants from vtkRenderingCore to vtkCommonCore.
+# The enum value itself has not changed, so a build that hides it in neither
+# place still gets a crosshair rather than an ImportError at startup.
+try:
+    from vtkmodules.vtkRenderingCore import VTK_CURSOR_CROSSHAIR  # VTK < 9.7
+except ImportError:
+    try:
+        from vtkmodules.vtkCommonCore import VTK_CURSOR_CROSSHAIR  # VTK >= 9.7
+    except ImportError:  # pragma: no cover - very old or very new VTK
+        VTK_CURSOR_CROSSHAIR = 10
+
 try:
     from vtkmodules.vtkImagingColor import (
         vtkImageMapToWindowLevelColors,
@@ -164,7 +175,19 @@ from vtkmodules.vtkImagingCore import (
 try:
     from .make_apps import ensure_apps_exist
 except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
     from make_apps import ensure_apps_exist
+
+# Command-line behaviour shared by every T1Prep tool: no argument prints the
+# synopsis, --help the full description, and only "--" options are advertised.
+try:
+    from ..cli_help import ArgumentParser
+except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from cli_help import ArgumentParser
 
 try:
     from .controls import ControlPanel, LOGP_THRESHOLDS
@@ -176,6 +199,8 @@ try:
         show_shortcuts,
     )
 except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
     from controls import ControlPanel, LOGP_THRESHOLDS
     from viewer_common import (           # noqa: F401 re-exported
         APP_BUNDLE_ENV, VOLUME_SUFFIXES, ZOOM_EVENTS,
@@ -192,6 +217,8 @@ try:
         format_p_value_label, logp_colorbar_ticks,
     )
 except ImportError:  # direct invocation as a script
+    if __package__:
+        raise  # a real failure inside the package, not a missing script path
     from colormaps import (
         JET, COLORMAP_NAMES, COLORMAP_ORDER, build_overlay_lut,
         format_p_value_label, logp_colorbar_ticks,
@@ -4066,14 +4093,13 @@ def _attach_minus_values(argv: Sequence[str]) -> List[str]:
 
 
 def _parse_args(argv: Optional[Sequence[str]] = None):
-    p = argparse.ArgumentParser(
+    p = ArgumentParser(
         prog="CAT_VolView",
         description=(
             "Orthogonal slice viewer (SPM12-like layout) with overlays, "
             "contours and surface outlines; every volume opens its own "
             "linked window (CAT_VolView)."
         ),
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
         "inputs", nargs="+",
@@ -4240,6 +4266,9 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
         help="Use the full intensity range instead of percentile scaling",
     )
     argv = list(sys.argv[1:]) if argv is None else list(argv)
+    # Called with nothing at all: say what the viewer takes rather than fail
+    # on the missing positional
+    p.exit_without_arguments(argv)
     # Unknown arguments are looked at first: a list of slices has to be one
     # argument, and unquoted its numbers end up here rather than in --slices
     args, extra = p.parse_known_args(_attach_minus_values(argv))

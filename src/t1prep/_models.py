@@ -263,11 +263,14 @@ def main() -> None:
     Downloads model weights to :data:`MODEL_DIR` if not already present.
     Pass ``--force`` to re-download even if models are present.
     """
-    import argparse
+    from .cli_help import ArgumentParser
 
-    parser = argparse.ArgumentParser(
+    # Called without an argument this tool does its job — downloading the
+    # weights — so it keeps that as the default action; the rest of the
+    # unified behaviour (--help, "--" options) is the same as everywhere.
+    parser = ArgumentParser(
+        prog="t1prep-download-models",
         description="Download T1Prep model weights from GitHub.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--force",

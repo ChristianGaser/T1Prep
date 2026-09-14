@@ -57,8 +57,13 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
+
+# Command-line behaviour shared by every T1Prep tool: no argument prints the
+# synopsis, --help the full description, and only "--" options are advertised.
+from .cli_help import ArgumentParser
 
 import nibabel as nib
 import numpy as np
@@ -641,12 +646,12 @@ def displacement_to_mm(disp_vox: np.ndarray, affine: np.ndarray) -> np.ndarray:
 
 
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    p = ArgumentParser(
+        prog="warp_longitudinal.sh",
         description=(
             "Low-dimensional groupwise diffeomorphic registration of a "
             "longitudinal series (CAT12-style ageing model)."
         ),
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
         "--inputs",
@@ -745,6 +750,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Write the unbiased subject average",
     )
     p.add_argument("--verbose", action="store_true", help="Print convergence diagnostics")
+    # Called with nothing at all: the synopsis, as every T1Prep tool does
+    p.exit_without_arguments(sys.argv[1:] if argv is None else argv)
     return p.parse_args(argv)
 
 

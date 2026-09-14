@@ -1001,29 +1001,55 @@ def open_chrome_app_mode(url: str, width: int = 1100, height: int = 900) -> bool
         return False
 
 
+def _build_parser():
+    """Return the command-line parser for ``t1prep-ui``."""
+    from ..cli_help import ArgumentParser
+
+    parser = ArgumentParser(
+        prog="t1prep-ui",
+        description="Serve the T1Prep web interface on the local machine.",
+        epilog=(
+            "examples:\n"
+            "  t1prep-ui\n"
+            "  t1prep-ui --port 5050\n"
+            "  t1prep-ui --port 5050 --no-browser"
+        ),
+    )
+    parser.add_argument(
+        "port_positional",
+        nargs="?",
+        type=int,
+        metavar="PORT",
+        help="port to serve on, for parity with the old T1Prep_ui wrapper; "
+        "--port is the spelling to prefer",
+    )
+    parser.add_argument(
+        "--port", type=int, default=5000, help="port to serve on"
+    )
+    parser.add_argument(
+        "--no-browser", action="store_true",
+        help="do not open a browser window once the server is up",
+    )
+    return parser
+
+
 def main(argv: Optional[list] = None) -> int:
     """Console-script entry point for ``t1prep-ui``.
 
     Accepts ``--port N`` (or a bare numeric positional port, for parity with the
-    old ``T1Prep_ui`` wrapper) and ``--no-browser``.
+    old ``T1Prep_ui`` wrapper) and ``--no-browser``.  Called without an
+    argument it starts the server on the default port — that is what the tool
+    is for — rather than printing the synopsis the file-consuming tools show.
     """
     import sys
 
     args = list(sys.argv[1:] if argv is None else argv)
+    opts = _build_parser().parse_args(args)
     ensure_dirs()
     host = "127.0.0.1"
-    port = 5000
-    for i, arg in enumerate(args):
-        if arg == "--port" and i + 1 < len(args):
-            try:
-                port = int(args[i + 1])
-            except ValueError:
-                print(f"Invalid port: {args[i + 1]}")
-                return 1
-        elif arg.isdigit():
-            port = int(arg)
+    port = opts.port_positional if opts.port_positional is not None else opts.port
     url = f"http://{host}:{port}"
-    open_browser = "--no-browser" not in args
+    open_browser = not opts.no_browser
     if open_browser:
         # Open Chrome in app mode after a short delay to allow server to start
         def delayed_open():
