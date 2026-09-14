@@ -1250,6 +1250,11 @@ def ventricle_fill(p0_data, atlas_data, regions, vx=0.5, reach_mm=5.0):
     far the fill can stray if the registration is off, and 5 mm is far too
     short to cross the corpus callosum into the interhemispheric fissure.
 
+    The hippocampus and amygdala are held out of the propagation region: the
+    temporal horn abuts the hippocampus without an intervening wall of white
+    matter, so they are the one place the front has to be stopped by name
+    rather than by tissue class.
+
     Parameters
     ----------
     p0_data : np.ndarray
@@ -1276,7 +1281,25 @@ def ventricle_fill(p0_data, atlas_data, regions, vx=0.5, reach_mm=5.0):
     # CSF, but on brains like this the segmentation calls parts of its
     # interior GM, so keying on CSF alone would stop at the first mislabelled
     # voxel.
-    return _octagon_dilation(seed, int(round(reach_mm / vx)), p0_data < 2.5)
+    region = p0_data < 2.5
+    # The archicortex is the exception, and it has to be named explicitly.
+    # "Not white matter" is a wall everywhere around the ventricular system
+    # except at the temporal horn, which touches the hippocampus directly
+    # with no white matter in between: a GM-permissive front seeded there
+    # does not stop at the ventricle wall but flows along the hippocampus and
+    # fills roughly a third of it with WM, on every subject, however good the
+    # registration.  The surface then follows that fill and PBT reports the
+    # medial temporal lobe as locally thin.  Barring only hippocampus and
+    # amygdala leaves the roof fix above untouched -- both are inferior
+    # structures, far from the roof of the ventricular body, so neither can
+    # block the front where it needs to reach.
+    keep_out = ["lHip", "rHip", "lAmy", "rAmy"]
+    region = region & ~binary_dilation(
+        np.isin(atlas_data, [regions[r] for r in keep_out]),
+        generate_binary_structure(3, 3),
+        2,
+    )
+    return _octagon_dilation(seed, int(round(reach_mm / vx)), region)
 
 
 def get_partition(p0_large, atlas):
@@ -1292,9 +1315,16 @@ def get_partition(p0_large, atlas):
     atlas_mask = binary_dilation(atlas_mask, bin_struct3, 3)
 
     p0_data = p0_large.get_fdata().copy()
+    # Cortical ribbon plus the two archicortical structures that border it.
+    # Every fill below is vetoed by this mask, so its margin has to be
+    # commensurate with how far those fills reach.  At 2 voxels (1 mm) it was
+    # not: the temporal horn seed touches the hippocampus, so on any brain
+    # whose warp is off by more than a millimetre there -- which is most of
+    # them, the medial temporal lobe being where nonlinear registration is
+    # worst -- the fill was free to grow straight through the structure.
     gm_regions = ["lCbrGM", "rCbrGM", "lAmy", "lHip", "rAmy", "rHip"]
     gm_mask = np.isin(atlas_data, [regions[r] for r in gm_regions])
-    gm_mask = binary_dilation(gm_mask, bin_struct3, 2)
+    gm_mask = binary_dilation(gm_mask, bin_struct3, 4)
 
     left_regions = [
         "lCbrWM",
@@ -1328,8 +1358,18 @@ def get_partition(p0_large, atlas):
     excl_regions = ["lCbeWM", "lCbeGM", "rCbeWM", "rCbeGM", "b3thVen", "b4thVen"]
     exclude = np.isin(atlas_data, [regions[r] for r in excl_regions])
     exclude = binary_dilation(exclude, bin_struct3, 1)
-    exclude = exclude | binary_dilation(
-        np.isin(atlas_data, regions["bBst"]), bin_struct3, 5
+    # The brainstem has to be cut away or the surface runs down into it, but
+    # the cut must not take the surrounding cortex along.  A blind 5-step
+    # 26-connected dilation did exactly that: the cube reaches 4.3 mm along
+    # its diagonals and the midbrain is wrapped by parahippocampal cortex at
+    # that distance, so ~1.4 cm^3 of ribbon and ~0.1 cm^3 of hippocampus were
+    # forced to CSF on every subject, registration error or not.  Because
+    # ``exclude`` is applied last it beat both the fill and the subject's own
+    # labels, and PBT then measured the truncated ribbon as locally thin.
+    # Growing through non-cortical tissue covers the same brainstem -- the
+    # seed is kept, only the front is barred from entering ``gm_mask``.
+    exclude = exclude | _octagon_dilation(
+        np.isin(atlas_data, regions["bBst"]), 5, ~gm_mask
     )
     exclude = exclude | ~atlas_mask
 
@@ -1348,13 +1388,28 @@ def get_partition(p0_large, atlas):
         "rAcc",
         "rLatVen",
         "rInfLatVen",
+        # Subcortical, directly against the hippocampus, and the only region
+        # in ``left_regions``/``right_regions`` that reached neither this list
+        # nor ``excl_regions``.  What covered it was incidental -- the
+        # thalamus fill from one side, the over-dilated brainstem from the
+        # other -- and between them they left ~39% of it at GM level, a
+        # 5 cm^3 slab of unfilled tissue against the medial temporal lobe for
+        # the white surface to wander into.
+        "lVenDC",
+        "rVenDC",
     ]
 
-    # Blind dilation of the atlas structures, vetoed by the dilated atlas
-    # cortical label so it cannot eat into the ribbon where the warp is off.
-    # This is what covers the deep grey nuclei.
+    # Geodesic growth of the atlas structures through non-cortical tissue,
+    # which is what covers the deep grey nuclei.  Subtracting ``gm_mask``
+    # after a blind dilation got this wrong twice over: the cube first reached
+    # 8.7 mm along its diagonals, far enough for the temporal horn seed to
+    # cross the entire hippocampus, and the subtraction then clipped the seeds
+    # themselves wherever the atlas cortex label overlapped them, leaving the
+    # lateral putamen unfilled.  Passing the veto as the propagation region
+    # fixes both: the seeds survive intact, and the front stops at the ribbon
+    # rather than being carved back out of it afterwards.
     wm_fill = np.isin(atlas_data, [regions[r] for r in wm_regions])
-    wm_fill = binary_dilation(wm_fill, bin_struct3, 10) & ~gm_mask
+    wm_fill = _octagon_dilation(wm_fill, 10, ~gm_mask)
 
     # The ventricles get a subject-driven fill on top.  The veto above is
     # exactly what used to block their roof: on a brain with enlarged
