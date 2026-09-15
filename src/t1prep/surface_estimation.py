@@ -333,6 +333,7 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
             barrier_gmtfactor=1.5,
             barrier_gmtpct=90.0,
             barrier_q=0.7,
+            barrier_ramp=0.25,
             oriented_filter=True,
             # Additive thickness correction in mm.  It compensates the
             # systematic border shift of the segmentation, so it depends on
