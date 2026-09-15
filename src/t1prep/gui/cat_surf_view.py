@@ -245,6 +245,13 @@ UNDERLAY_PLAIN_GREY = (0.33, 0.33, 0.33)
 #: shade_from_curvature(); this only says how much of it to show.
 UNDERLAY_GREYS = (0.30, 0.80)
 
+#: The part of the shading values the greys are spread over, as percentiles.
+#: Curvature computed on the mesh carries a few values a thousand times the
+#: folds' at nearly degenerate triangles, and a scale reaching all the way out
+#: to those leaves the whole brain one even grey; what lies outside saturates,
+#: the way it does in a display range.
+UNDERLAY_PERCENTILES = (2.0, 98.0)
+
 #: Surfaces the viewer offers to switch between, in the order they are shown.
 #: A subset of the tokens above: 'mc' and 'sqrtsulc' name scalar files rather
 #: than meshes, and sphere/pial/white add little next to these three.
@@ -2373,7 +2380,11 @@ class Viewer(QtWidgets.QMainWindow):
             actor = vtkActor()
             actor.SetMapper(mapper)
             actor.GetProperty().SetAmbient(ambient)
-            actor.GetProperty().SetDiffuse(0.7)
+            # The two together have to stay within one, or the light hands the
+            # mapper more than it can show: the shading actor sat at 1.5, which
+            # clipped two thirds of a curvature-shaded surface to pure white
+            # and took the folds with it.  The overlay actor was always at one.
+            actor.GetProperty().SetDiffuse(1.0 - ambient)
             self._actors.append(actor)
             return actor
 
@@ -3620,33 +3631,51 @@ class Viewer(QtWidgets.QMainWindow):
 
         The mapping of ``cat_surf_results.m``: a signed square root, which
         pulls in the long tails that otherwise make the surface all black and
-        white, then shifted and normalised into a light band.  Sulcal depth
-        has no negative side and is inverted, so its sulci go dark like the
-        curvature ones.
+        white, then normalised into a light band.  Sulcal depth has no negative
+        side and is inverted, so its sulci go dark like the curvature ones.
+
+        The square root alone is not enough for a curvature computed on the
+        mesh, as it is whenever no ``mc`` file sits next to the surface: a few
+        hundred nearly degenerate triangles reach a thousand times the
+        curvature of the folds — one of these surfaces peaks at 700000 against
+        folds of ±1 — and normalising to those spends the whole grey band on
+        them.  Every fold then falls inside a hundredth of a grey level, which
+        is what made surfaces come out an even bright grey with no sulci in
+        it, at a brightness that differed from subject to subject because the
+        largest spike did.  The band is therefore spread over
+        ``UNDERLAY_PERCENTILES`` of the values and the rest saturates.
 
         Args:
             values: One curvature or depth value per vertex.
             invert: Flip the greys (sulcal depth).
 
         Returns:
-            Grey levels between 0 and 1.
+            Grey levels inside :data:`UNDERLAY_GREYS`.
         """
         shaded = np.asarray(values, dtype=float).copy()
         negative = shaded < 0
         positive = shaded > 0
         shaded[negative] = -np.sqrt(-shaded[negative])
         shaded[positive] = np.sqrt(shaded[positive])
-        shaded -= shaded.min()
-        shaded += 0.5
-        peak = shaded.max()
-        if peak > 0:
-            shaded /= peak
+        low, high = UNDERLAY_GREYS
+        middle = np.full(shaded.shape, 0.5 * (low + high))
+        finite = shaded[np.isfinite(shaded)]
+        if finite.size == 0:
+            return middle
+        first, last = (float(bound) for bound in
+                       np.percentile(finite, UNDERLAY_PERCENTILES))
+        if last <= first:       # flat, or all of it inside the percentiles
+            first, last = float(finite.min()), float(finite.max())
+        if last <= first:       # one value: no relief to show
+            return middle
+        shaded = np.clip(np.where(np.isfinite(shaded), shaded, first), first, last)
+        shaded -= first
+        shaded /= last - first
         if invert:
             shaded = 1.0 - shaded
         # Matlab draws these greys as they are; here they go through a light
         # that adds its own contrast, so they are kept inside a band instead
         # of spanning black to white
-        low, high = UNDERLAY_GREYS
         return low + shaded * (high - low)
 
     def _folded_curvature(self) -> List[Optional["np.ndarray"]]:

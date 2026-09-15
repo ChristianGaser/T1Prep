@@ -1022,6 +1022,47 @@ class TestCurvatureShading(unittest.TestCase):
         shaded = Viewer.shade_from_curvature(np.zeros(10))
         self.assertTrue(np.all(np.isfinite(shaded)))
 
+    def test_a_few_spikes_do_not_flatten_the_relief(self):
+        """Curvature computed on a mesh peaks a thousandfold at bad triangles.
+
+        Scaled to those peaks, every fold fell inside a hundredth of a grey
+        level: surfaces came out an even, bright grey with no sulci in them.
+        """
+        rng = np.random.default_rng(3)
+        folds = rng.normal(0.0, 0.4, 20000)
+        shaded = Viewer.shade_from_curvature(
+            np.concatenate([folds, rng.normal(0.0, 1e5, 100)]))[:folds.size]
+        band = UNDERLAY_GREYS[1] - UNDERLAY_GREYS[0]
+        self.assertGreater(float(shaded.max() - shaded.min()), 0.8 * band)
+
+    def test_the_same_folds_are_shaded_the_same(self):
+        """The spikes differ from subject to subject; the brightness must not."""
+        rng = np.random.default_rng(4)
+        folds = rng.normal(0.0, 0.4, 20000)
+        mild = Viewer.shade_from_curvature(np.concatenate([folds, [6.0, -6.0]]))
+        wild = Viewer.shade_from_curvature(np.concatenate([folds, [7e5, -3e5]]))
+        self.assertAlmostEqual(float(np.median(mild)), float(np.median(wild)),
+                               places=2)
+        self.assertAlmostEqual(float(mild[:folds.size].std()),
+                               float(wild[:folds.size].std()), places=2)
+
+    def test_what_lies_outside_the_scale_saturates(self):
+        values = np.linspace(-1.0, 1.0, 1001)
+        shaded = Viewer.shade_from_curvature(values)
+        low, high = UNDERLAY_GREYS
+        self.assertAlmostEqual(float(shaded.min()), low, places=6)
+        self.assertAlmostEqual(float(shaded.max()), high, places=6)
+        # the ends saturate, not the folds in between
+        self.assertLess(float(np.mean(shaded == low)), 0.05)
+        self.assertGreater(float(np.mean(shaded == low)), 0.0)
+
+    def test_values_that_are_not_numbers_are_kept_out_of_the_scale(self):
+        shaded = Viewer.shade_from_curvature(
+            np.array([np.nan, -1.0, -0.5, 0.0, 0.5, 1.0, np.inf]))
+        self.assertTrue(np.all(np.isfinite(shaded)))
+        self.assertGreaterEqual(shaded.min(), UNDERLAY_GREYS[0] - 1e-9)
+        self.assertLessEqual(shaded.max(), UNDERLAY_GREYS[1] + 1e-9)
+
 
 class TestRangeFollowsThreshold(unittest.TestCase):
     """Changing the threshold moves the lower end of the range with it.

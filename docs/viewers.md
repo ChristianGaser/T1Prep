@@ -86,6 +86,14 @@ Two independent choices in the menu:
   shading always comes from the *folded* surface, so an inflated or flattened
   surface keeps its relief instead of turning blank.
 
+The greys are spread over the middle 96% of the shading values, so the sulci
+come out at the same brightness whatever surface is shown. Without an `mc` file
+next to it the curvature is computed from the mesh, and a few nearly degenerate
+triangles there reach a thousand times the curvature of the folds — scaled to
+those, a surface came out an even, bright grey with no sulcal pattern left in
+it, brighter or darker depending on the largest spike the mesh happened to
+carry.
+
 A flat patch is shown once per hemisphere, the two mirroring each other.
 
 ### Cluster table

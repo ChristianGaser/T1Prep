@@ -131,6 +131,21 @@ class TestUnderlayFollowsTheSurface(_ViewerTest):
         # its own curvature would be nearly flat; the folded one is not
         self.assertGreater(self.shading(view).std(), 0.02)
 
+    def test_the_light_shows_the_whole_band(self):
+        """Ambient and diffuse above one together clip the shading to white.
+
+        The shading actor sat at 1.5, which drove two thirds of a surface to
+        pure white and took the sulci with it.
+        """
+        view = self.viewer(self.MESH)
+        for actor in (view.actor_bkg_l, view.actor_bkg_r,
+                      view.actor_ov_l, view.actor_ov_r):
+            if actor is None:
+                continue
+            light = actor.GetProperty()
+            self.assertLessEqual(light.GetAmbient() + light.GetDiffuse(),
+                                 1.0 + 1e-6)
+
     def test_the_underlays_can_be_switched(self):
         view = self.viewer(self.MESH)
         for _label, token in view.available_underlays():
