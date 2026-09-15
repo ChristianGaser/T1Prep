@@ -458,7 +458,7 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
             pv, pf, wv, wf = cat_surf.surf_to_pial_white(
                 v, fcs, t, p(mri, "Hemi_volume"),
                 w1=0.05, w2=0.05, w3=0.05, sigma=0.2,
-                iterations=100, gradient_iterations=0,
+                iterations=100,
                 method=2, remove_intersect=True, verbose=verbose,
             )
             cat_surf.write_surface(p(surf, "Pial_surface"), pv, pf)
