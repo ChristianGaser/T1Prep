@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import logging
 import os
 import shutil
@@ -70,6 +71,7 @@ from .bids_derivatives import write_sidecar
 # Shared utilities (NameTable and ProgressBar live in utils to avoid duplication)
 # ---------------------------------------------------------------------------
 from .utils import NameTable, ProgressBar
+from .glued_sulci import glued_sulci
 from .vessels import suppress_vessels_for_surface
 
 
@@ -210,7 +212,7 @@ def surface_estimation(
     os.chdir(base_dir or ".")
     try:
         return _run(
-            log=log,
+            log=log, report_log=report_log,
             bname=bname, side=side,
             mri=mri_rel, surf=surf_rel,
             estimate_spherereg=estimate_spherereg,
@@ -236,7 +238,7 @@ def surface_estimation(
         os.chdir(cwd_prev)
 
 
-def _run(*, log, bname, side, mri, surf, estimate_spherereg,
+def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
          thickness_method, save_pial_white, pre_fwhm, median_filter,
          vessel, amap, correct_folding, debug, multi, nii_ext,
          names_tsv, bids_naming, surf_templates_dir, atlas_templates_dir,
@@ -356,6 +358,7 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
     # =====================================================================
     # 2) Marching cubes or copy of initial surface
     # =====================================================================
+    glued_sigma = None
     if init_surf:
         bar.step("Use initial surface")
         log.info("Use %s as initial surface", init_surf)
@@ -464,6 +467,19 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                 p(surf, "Mid_surface"),
                 p(surf, "Pial_surface"), p(surf, "WM_surface"),
             )
+
+        # Averaging replaces the central surface that step 3 had already
+        # cleaned, and the pial and white surfaces it averages are the most
+        # self-intersected of the pipeline, so the result needs its own pass.
+        # Topology preserving, so per-vertex data stays valid.  Note this
+        # addresses intersections only: it does not reduce glued sulci, which
+        # are contact without crossing (measured: it leaves a glued pial
+        # surface bit-for-bit unchanged).
+        with _run_step(log, "CAT_SurfFixSelfIntersect (post-average)",
+                       verbose=verbose):
+            v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
+            v, fcs = cat_surf.fix_self_intersect(v, fcs, verbose=verbose)
+            cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
 
     # =====================================================================
     # 6) Optional refined thickness via Tfs distance between pial and white
@@ -650,6 +666,36 @@ def _run(*, log, bname, side, mri, surf, estimate_spherereg,
                     sphere_file=p(surf, "Sphere_surface"),
                     verbose=verbose,
                 )
+
+    # =====================================================================
+    # Glued-sulcus QA
+    # =====================================================================
+    # Measured on the surface as shipped, so the number describes what the
+    # user actually gets.  Written to a per-hemisphere sidecar rather than
+    # straight into the report: t1prep.py runs the two hemispheres as
+    # concurrent subprocesses and both resolve the same ``Report_file``.
+    try:
+        with _run_step(log, "Glued-sulcus QA", verbose=verbose):
+            v_qa, f_qa = cat_surf.read_surface(p(surf, "Mid_surface"))
+            measure = glued_sulci(v_qa, f_qa)
+            report_dir = os.path.dirname(report_log) if report_log else surf
+            os.makedirs(report_dir, exist_ok=True)
+            sidecar = os.path.join(report_dir, f"{bname}_glued-{fshemi}.json")
+            with open(sidecar, "w") as fh:
+                json.dump({
+                    "hemi": fshemi,
+                    "report_file": f("Report_file"),
+                    "glued_vertices": measure["glued_vertices"],
+                    "glued_fraction": measure["glued_fraction"],
+                    "n_vertices": measure["n_vertices"],
+                    "area": measure["area"],
+                    "sulci_sigma_factor": glued_sigma,
+                }, fh, indent=2)
+            log.info("Glued sulci: %d of %d vertices (%.3f%%)",
+                     measure["glued_vertices"], measure["n_vertices"],
+                     100.0 * measure["glued_fraction"])
+    except Exception as exc:                      # QA must never fail the run
+        log.warning("Glued-sulcus QA skipped: %s", exc)
 
     # =====================================================================
     # Clean up

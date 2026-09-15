@@ -173,6 +173,30 @@ Output folder structure depends on the input dataset type:
 If '--bids' is set, the BIDS derivatives substructure will always be used
 inside &lt;DIR&gt;.
 
+## Quality measures
+
+The JSON report in `report/` carries a `qualitymeasures` block. Alongside the
+Euler numbers (`euler_lh`, `euler_rh`, `EC_abs`) it reports glued sulci:
+
+| Measure | Meaning |
+|---------|---------|
+| `glued_lh`, `glued_rh` | Percentage of central-surface vertices touching a facing patch of the same surface. Ideal 0; lower is better. |
+| `glued_lh_sigma`, `glued_rh_sigma` | Present only when the surface was re-extracted at a reduced `sulci_sigma_factor` (see below). |
+
+A glued (buried) sulcus is one whose two banks were never separated, so the
+surface touches itself. This is *contact*, not a self-intersection — the
+triangles need not cross — which is why it needs its own measure: surface
+area barely moves even when the defect count changes many-fold.
+
+Glued sulci originate upstream, in the distance map, so they are already
+present in the raw marching-cubes output. When the measure exceeds its
+threshold, `CAT_VolMarchingCubes` is re-run with a lower `sulci_sigma_factor`
+and the least-glued result is kept; the value used is recorded in the report.
+The parameter responds as a step rather than a slope (measured: glued
+vertices roughly triple between 0.60 and 0.75), and lowering it does not help
+every hemisphere, which is why the choice is made per hemisphere from the
+measurement rather than by changing the default.
+
 ## Naming behaviour
 * CAT12 style (default): Uses legacy folder and file names
   (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').

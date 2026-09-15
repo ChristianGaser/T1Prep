@@ -23,6 +23,8 @@ Multi-subject parallelisation is left to the caller (e.g. via
 from __future__ import annotations
 
 import argparse
+import glob
+import json
 import os
 import subprocess
 import sys
@@ -268,6 +270,63 @@ def _build_surface_cmd(
 # Single-subject pipeline
 # ---------------------------------------------------------------------------
 
+def _merge_glued_sulci_qa(report_dir: str, bname: str) -> None:
+    """Fold the per-hemisphere glued-sulcus sidecars into the report JSON.
+
+    ``surface_estimation`` runs the two hemispheres as concurrent subprocesses
+    that both resolve the same ``Report_file``, so each writes its own sidecar
+    and the merge happens here, once both have finished.  Purely additive: a
+    missing or unreadable sidecar leaves the report untouched.
+    """
+    sidecars = sorted(
+        glob.glob(os.path.join(report_dir, f"{bname}_glued-*.json"))
+    )
+    if not sidecars:
+        return
+    entries = {}
+    report_file = ""
+    for path in sidecars:
+        try:
+            with open(path) as fh:
+                data = json.load(fh)
+            entries[data["hemi"]] = data
+            report_file = data.get("report_file") or report_file
+        except (OSError, ValueError, KeyError):
+            continue
+    report_path = os.path.join(report_dir, report_file) if report_file else ""
+    if entries and report_path and os.path.exists(report_path):
+        try:
+            with open(report_path) as fh:
+                report = json.load(fh)
+            qa = report.setdefault("qualitymeasures", {})
+            for hemi, data in entries.items():
+                qa[f"glued_{hemi}"] = {
+                    "value": round(100.0 * data["glued_fraction"], 4),
+                    "desc": (
+                        "Percentage of central-surface vertices touching a "
+                        "facing patch of the same surface (glued/buried "
+                        "sulci; ideal = 0; lower is better)"
+                    ),
+                }
+                if data.get("sulci_sigma_factor") is not None:
+                    qa[f"glued_{hemi}_sigma"] = {
+                        "value": data["sulci_sigma_factor"],
+                        "desc": (
+                            "sulci_sigma_factor used by CAT_VolMarchingCubes "
+                            "for this hemisphere"
+                        ),
+                    }
+            with open(report_path, "w") as fh:
+                json.dump(report, fh, indent=2)
+        except (OSError, ValueError):
+            pass
+    for path in sidecars:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def _process_single(
     input_file: str,
     *,
@@ -494,6 +553,8 @@ def _process_single(
                 file=sys.stderr,
             )
             return 1
+
+        _merge_glued_sulci_qa(str(report_dir), bname)
 
     # ------------------------------------------------------------------ timing
     elapsed = time.perf_counter() - start
