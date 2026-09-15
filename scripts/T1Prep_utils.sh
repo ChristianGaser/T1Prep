@@ -519,7 +519,7 @@ logo() {
     if [ "$(basename -- "$0")" = "PyCAT" ]; then
         # Padded out to the banner width below, because this art's last row
         # holds only the descender of the "y".
-        BLOCK_COLOR="$YELLOW"    # colour for the █ glyphs
+        BLOCK_COLOR="$GREEN"    # colour for the █ glyphs
         banner_width=41
         art='
 ██████╗          ██████╗ █████╗ ████████╗
