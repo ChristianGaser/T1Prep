@@ -733,6 +733,98 @@ def run_amap_segmentation(
     return brain_large, p0_large
 
 
+def apply_sulcus_repair(
+    brain_large: nib.Nifti1Image,
+    p0_large: nib.Nifti1Image,
+    refine_pve: bool = False,
+    verbose: bool = False,
+    debug: bool = False,
+    mri_dir: str = "",
+    out_name: str = "",
+    ext: str = "nii",
+) -> nib.Nifti1Image:
+    """Repair glued sulci and broken gyral WM blades in the 0.5 mm label map.
+
+    In-process binding of ``CAT_VolSulcusRepair`` (``cat_surf.vol_sulcus_repair``).
+    Three classifier failures survive any amount of regularisation because they
+    are failures of *evidence* rather than of smoothness: the two banks of a
+    tight sulcus labelled as one thick GM band, a thin gyral WM blade
+    interrupted by a small missegmentation, and the residual partial-volume
+    error that accompanies the first.  The tool goes back to the bias-corrected
+    intensities and uses a Hessian sheetness filter as a shape prior to recover
+    what the classifier discarded, which is why it needs ``brain_large`` and
+    not the label map alone.
+
+    It belongs at the 0.5 mm working resolution: a tight sulcus is about one
+    voxel wide at 1 mm, so there is no gap left to carve once the label map has
+    been resampled to the native grid.
+
+    Args:
+        brain_large (nib.Nifti1Image): Bias-corrected T1 on the 0.5 mm affine
+            template grid, after ``apply_LAS`` and the blood-vessel correction.
+        p0_large (nib.Nifti1Image): PVE label map on the same grid, with
+            CSF = 1, GM = 2, WM = 3.
+        refine_pve (bool, optional): Also run the narrow-band PVE refit, the
+            most aggressive of the three steps.  Defaults to False, matching
+            the library default.
+        verbose (bool, optional): Report how much of the label map moved.
+        debug (bool, optional): Save the label difference alongside the other
+            debug volumes.
+        mri_dir, out_name, ext (str, optional): Only used to name that volume.
+
+    Returns:
+        nib.Nifti1Image: The repaired label map on ``p0_large``'s grid.
+    """
+    label = np.asarray(p0_large.get_fdata(), dtype=np.float32)
+    t1 = np.asarray(brain_large.get_fdata(), dtype=np.float32)
+
+    repaired = np.asarray(
+        cat_surf.vol_sulcus_repair(
+            t1,
+            label,
+            voxelsize=np.asarray(p0_large.header.get_zooms()[:3], dtype=np.float64),
+            refine_pve=refine_pve,
+            sheet_strength=30,
+            sheet_sigma_max=2.5,
+            csf_strength=1.0,
+            wm_strength=0.4,
+            csf_min_dist=1.7,
+            csf_min_wmdist=0.8,
+            wm_sulcus_guard=1.0,
+            sheet_skeleton=True,
+            verbose=bool(verbose and debug),
+        ),
+        dtype=np.float32,
+    )
+
+    # The repair only has business inside the brain; keep the background
+    # exactly as the segmentation left it, the way cleanup_vessels does, so the
+    # mask every later step assumes is untouched.
+    background = label <= 0
+    repaired[background] = label[background]
+
+    if verbose and debug:
+        delta = np.abs(repaired - label)
+        moved = delta > 1e-3
+        n_moved, n_brain = int(moved.sum()), int((label > 0).sum())
+        if n_moved:
+            print(
+                f"    sulcus repair  {n_moved:,} voxels changed "
+                f"({100.0 * n_moved / max(n_brain, 1):.2f}% of brain), "
+                f"mean |delta| {float(delta[moved].mean()):.3f}"
+            )
+        else:
+            print("    sulcus repair  no change (sheetness response too weak)")
+
+    if debug and mri_dir and out_name:
+        nib.save(
+            nib.Nifti1Image(repaired - label, p0_large.affine, p0_large.header),
+            f"{mri_dir}/{out_name}_sulcus_repair_large.{ext}",
+        )
+
+    return nib.Nifti1Image(repaired, p0_large.affine, p0_large.header)
+
+
 def final_cleanup(
     mri_dir: str,
     out_name: str,
