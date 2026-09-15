@@ -148,6 +148,19 @@ Surfaces given on the command line, dropped on a window, or opened from
 colour per surface (red, green, blue, …) so the hemispheres — or a central and a
 pial surface — can be told apart.
 
+Which colour went to which surface is printed on the command line, so an outline
+on the slices can be traced back to the file it came from:
+
+```
+$ CAT_VolView T1.nii.gz lh.central.T1.gii rh.central.T1.gii
+[cat_vol_view] Surface outlines on the slices:
+[cat_vol_view]   red    lh.central.T1.gii
+[cat_vol_view]   green  rh.central.T1.gii
+```
+
+A surface added later — dropped on a window, or opened from `CAT_SurfView` — is
+reported the same way when it appears.
+
 A surface that carries an overlay keeps the colours it has in the surface viewer:
 the per-vertex values are drawn through the same colour table, range and clip
 window, so a thickness or statistics map is read against the slices exactly as

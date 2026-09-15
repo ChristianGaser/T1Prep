@@ -2324,7 +2324,7 @@ class CatImageViewer:
 
     def add_surface(self, surface: "str | vtkPolyData",
                     color: Tuple[float, float, float],
-                    lut=None, scalar_range=None):
+                    lut=None, scalar_range=None, name: Optional[str] = None):
         """Draw a surface as an outline on the slices, in *color*.
 
         The surface has to be in the millimetre space of the image; only when
@@ -2340,6 +2340,8 @@ class CatImageViewer:
                 shows where the values are clipped or missing.
             scalar_range: Value range *lut* covers; the surface viewer keeps it
                 on the mapper rather than in the table.
+            name: What the surface is called when its colour is reported on the
+                command line; the file name otherwise.
         """
         if isinstance(surface, vtkPolyData):
             poly = surface
@@ -2393,6 +2395,9 @@ class CatImageViewer:
             'color': tuple(color),
             'lut': lut,
             'range': tuple(scalar_range) if scalar_range is not None else None,
+            'name': str(name) if name else (
+                str(surface) if isinstance(surface, (str, os.PathLike))
+                else f"surface {len(self.surfaces) + 1}"),
         })
         return self
 
@@ -3450,6 +3455,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
                 len(self.viewer.surfaces) % len(self.SURFACE_COLORS)])
             self.viewer._build_surface_contours()
             self.viewer._set_slices_from_index()
+            report_surface_colors(self.viewer.surfaces[-1:])
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self, "Surface", f"Cannot show {os.path.basename(path)}:\n{exc}")
@@ -4104,7 +4110,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     p.add_argument(
         "inputs", nargs="+",
         help=("Volumes (.nii(.gz), .mnc, .mha/.mhd, .nrrd, …) and up to three "
-              "surfaces (.gii, .vtk, .vtp, .obj, .stl) drawn as outlines. "
+              "surfaces (.gii, .vtk, .vtp, .obj, .stl) drawn as outlines, "
+              "each in a colour that is named on the command line. "
               "Every volume opens its own linked window."),
     )
     p.add_argument(
@@ -4335,6 +4342,69 @@ def is_logp_name(filename: Optional[str]) -> bool:
     return 'log' in os.path.basename(str(filename)).lower()
 
 
+#: Names of the colours the outlines are drawn in.  A colour only says which
+#: surface an outline belongs to once it has been named on the command line.
+COLOR_NAMES = {
+    (1.0, 0.0, 0.0): "red",
+    (0.0, 1.0, 0.0): "green",
+    (0.0, 0.6, 1.0): "blue",
+    (1.0, 0.0, 1.0): "magenta",
+    (0.0, 1.0, 1.0): "cyan",
+    (1.0, 0.55, 0.0): "orange",
+}
+
+
+def color_name(color) -> str:
+    """The name of an outline colour, its components for one that has none."""
+    try:
+        rgb = tuple(round(float(c), 3) for c in color)
+    except (TypeError, ValueError):
+        return str(color)
+    return COLOR_NAMES.get(rgb) or ",".join(f"{c:.2f}" for c in rgb)
+
+
+def _color_escape(color) -> str:
+    """The terminal colour for *color*, empty unless stdout is a terminal.
+
+    The 256-colour cube is what every terminal understands; 24-bit escapes are
+    passed through as text by some, which would make the report harder to read
+    rather than easier.
+    """
+    try:
+        if not sys.stdout.isatty():
+            return ""
+        r, g, b = (max(0, min(5, int(round(5 * float(c))))) for c in color)
+    except (TypeError, ValueError, AttributeError):
+        return ""
+    return f"\033[38;5;{16 + 36 * r + 6 * g + b}m"
+
+
+def report_surface_colors(surfaces: Sequence[dict], stream=None) -> None:
+    """Say on the command line which colour outlines which surface.
+
+    On the slices the outlines are told apart by colour alone, so the colour
+    has to be spelled out next to the surface it was handed to: otherwise a red
+    and a green line are the whole answer to which of two hemispheres — or of a
+    central and a pial surface — sits where.
+
+    Args:
+        surfaces: Entries of :attr:`CatImageViewer.surfaces`.
+        stream: Where the report goes; standard output otherwise.
+    """
+    entries = list(surfaces)
+    if not entries:
+        return
+    out = stream if stream is not None else sys.stdout
+    width = max(len(color_name(entry['color'])) for entry in entries)
+    print("[cat_vol_view] Surface outlines on the slices:", file=out)
+    for entry in entries:
+        escape = _color_escape(entry['color'])
+        reset = "\033[0m" if escape else ""
+        name = color_name(entry['color'])
+        print(f"[cat_vol_view]   {escape}{name:<{width}}{reset}  "
+              f"{entry.get('name', '')}", file=out)
+
+
 def _surface_display(surface, color) -> dict:
     """The :meth:`CatImageViewer.add_surface` arguments for one surface.
 
@@ -4347,7 +4417,8 @@ def _surface_display(surface, color) -> dict:
         return {'surface': surface['poly'],
                 'color': surface.get('color') or color,
                 'lut': surface.get('lut'),
-                'scalar_range': surface.get('range')}
+                'scalar_range': surface.get('range'),
+                'name': surface.get('name')}
     return {'surface': surface, 'color': color}
 
 
@@ -4544,6 +4615,9 @@ def _render_without_a_window(args, options: dict, volumes: Sequence[str],
         colors = VolumeViewerWindow.SURFACE_COLORS
         for s, surf in enumerate(surfaces):
             viewer.add_surface(surf, colors[s % len(colors)])
+        if i == 0:
+            # Every volume is drawn with the same surfaces in the same colours
+            report_surface_colors(viewer.surfaces)
         viewer.setup(window_title=os.path.basename(volume))
         if args.overlay:
             viewer.set_overlay(args.overlay)
@@ -4596,6 +4670,9 @@ def _open_windows(args, options: dict, volumes: Sequence[str],
         if args.atlas:
             window.set_atlas(args.atlas)
         windows.append(window)
+    if windows:
+        # The windows share the surfaces, so their colours are said once
+        report_surface_colors(windows[0].viewer.surfaces)
     link_windows(windows)
     for contour in (args.contour or ()):
         # After linking, so one call outlines it in every window

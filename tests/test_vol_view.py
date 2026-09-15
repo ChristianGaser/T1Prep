@@ -907,6 +907,86 @@ class TestSurfaceOutlines(unittest.TestCase):
                          {'surface': "lh.central.gii", 'color': (0.0, 0.6, 1.0)})
 
 
+class TestSurfaceColorReport(unittest.TestCase):
+    """The outlines are told apart by colour, so the colours are said out loud.
+
+    Which line on the slices belongs to which surface is otherwise a guess: the
+    report on the command line is the only place the two are put together.
+    """
+
+    def setUp(self):
+        from vtkmodules.vtkFiltersSources import vtkSphereSource
+        sphere = vtkSphereSource()
+        sphere.SetRadius(20.0)
+        sphere.Update()
+        self.poly = sphere.GetOutput()
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self.image = str(tmp / "image.nii.gz")
+        nib.save(nib.Nifti1Image(np.zeros((32, 32, 32), dtype=np.float32),
+                                 np.eye(4)), self.image)
+        self.viewer = CatImageViewer(percentile_range=None)
+        self.viewer.load_image(self.image)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _report(self, surfaces) -> str:
+        import io as _io
+        from contextlib import redirect_stdout
+        from t1prep.gui.cat_vol_view import report_surface_colors
+        out = _io.StringIO()
+        with redirect_stdout(out):
+            report_surface_colors(surfaces)
+        return out.getvalue()
+
+    def test_the_handed_out_colours_have_names(self):
+        from t1prep.gui.cat_vol_view import color_name
+        names = [color_name(c) for c in VolumeViewerWindow.SURFACE_COLORS]
+        self.assertEqual(names[:3], ["red", "green", "blue"])
+        self.assertEqual(len(set(names)), len(names))
+        # One that was never handed out is still readable
+        self.assertEqual(color_name((0.25, 0.5, 0.75)), "0.25,0.50,0.75")
+
+    def test_every_surface_is_listed_with_its_colour(self):
+        text = self._report([{'color': (1.0, 0.0, 0.0), 'name': "lh.central.gii"},
+                             {'color': (0.0, 1.0, 0.0), 'name': "rh.central.gii"}])
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 3)      # a heading and the two surfaces
+        self.assertIn("red", lines[1])
+        self.assertIn("lh.central.gii", lines[1])
+        self.assertIn("green", lines[2])
+        self.assertIn("rh.central.gii", lines[2])
+
+    def test_a_redirected_report_carries_no_escapes(self):
+        """Colour is an extra, not the message: a log or a pipe stays plain."""
+        text = self._report([{'color': (1.0, 0.0, 0.0), 'name': "lh.central.gii"}])
+        self.assertNotIn("\033", text)
+
+    def test_nothing_is_said_when_no_surface_is_shown(self):
+        self.assertEqual(self._report([]), "")
+
+    def test_a_surface_is_named_by_its_file(self):
+        from vtkmodules.vtkIOGeometry import vtkSTLWriter
+        path = str(Path(self._tmp.name) / "lh.central.stl")
+        writer = vtkSTLWriter()
+        writer.SetFileName(path)
+        writer.SetInputData(self.poly)
+        writer.Write()
+        self.viewer.add_surface(path, (1.0, 0.0, 0.0))
+        self.assertEqual(self.viewer.surfaces[0]['name'], path)
+        self.assertIn(path, self._report(self.viewer.surfaces))
+
+    def test_a_mesh_without_a_file_is_still_named(self):
+        """CAT_SurfView hands over meshes, not paths; its names come with them."""
+        from t1prep.gui.cat_vol_view import _surface_display
+        self.viewer.add_surface(**_surface_display(
+            {'poly': self.poly, 'name': "left hemisphere"}, (1.0, 0.0, 0.0)))
+        self.viewer.add_surface(self.poly, (0.0, 1.0, 0.0))
+        self.assertEqual([s['name'] for s in self.viewer.surfaces],
+                         ["left hemisphere", "surface 2"])
+
+
 class TestNeurologicalOrientation(unittest.TestCase):
     """Slices are shown "left is left" (neurological), not mirrored."""
 

@@ -171,7 +171,8 @@ try:
     )
     from .cat_vol_view import (
         VolumeViewerWindow, ask_for_files, finder_open_files,
-        install_qt_message_filter, qt_application, running_as_app,
+        install_qt_message_filter, qt_application, report_surface_colors,
+        running_as_app,
     )
 except ImportError:  # direct invocation as a script (no package context)
     if __package__:
@@ -182,7 +183,8 @@ except ImportError:  # direct invocation as a script (no package context)
     )
     from cat_vol_view import (
         VolumeViewerWindow, ask_for_files, finder_open_files,
-        install_qt_message_filter, qt_application, running_as_app,
+        install_qt_message_filter, qt_application, report_surface_colors,
+        running_as_app,
     )
 
 # The control panel is shared with the volume viewer
@@ -5197,6 +5199,7 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to open volume:\n{e}")
             return
+        report_surface_colors(win.viewer.surfaces)
         # keep a reference to prevent garbage collection
         if not hasattr(self, '_volume_windows'):
             self._volume_windows = []
@@ -5230,11 +5233,11 @@ class Viewer(QtWidgets.QMainWindow):
         switching the surface afterwards does not redraw the outlines.
         """
         out: List[dict] = []
-        hemis = ((self.poly_l, getattr(self, '_y_shift_l', 0.0),
+        hemis = (('left hemisphere', self.poly_l, getattr(self, '_y_shift_l', 0.0),
                   getattr(self, 'scal_l', None), getattr(self, 'lut_overlay_l', None)),
-                 (self.poly_r, getattr(self, '_y_shift_r', 0.0),
+                 ('right hemisphere', self.poly_r, getattr(self, '_y_shift_r', 0.0),
                   getattr(self, 'scal_r', None), getattr(self, 'lut_overlay_r', None)))
-        for poly, y_shift, scalars, lut in hemis:
+        for name, poly, y_shift, scalars, lut in hemis:
             if poly is None or poly.GetNumberOfPoints() == 0:
                 continue
             try:
@@ -5244,7 +5247,7 @@ class Viewer(QtWidgets.QMainWindow):
                 filt.SetInputData(poly)
                 filt.SetTransform(transform)
                 filt.Update()
-                entry = {'poly': filt.GetOutput()}
+                entry = {'poly': filt.GetOutput(), 'name': name}
                 if scalars is not None and lut is not None:
                     entry['lut'] = lut
                     entry['range'] = tuple(self.overlay_range)
