@@ -363,6 +363,90 @@ class TestInteractionGuards(_ViewerTest):
         self.assertNotAlmostEqual(camera.GetDistance(), before, places=3)
 
 
+class TestVolumeMappedOntoSurfaces(_ViewerTest):
+    """A volume opened on bare surfaces shows its intensities on each of them."""
+
+    SHIFT = 5.0
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import nibabel as nib
+        try:
+            import cat_surf  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("cat_surf not installed")
+        tmp = Path(cls._tmp.name)
+        template = nib.load(cls.MESH)
+        points = template.darrays[0].data
+        faces = template.darrays[1].data
+        cls.x = points[:, 0].astype(float)
+        # two surfaces of one "subject", the second a few mm to the side
+        cls.central = str(tmp / "lh.central.sub-01.gii")
+        cls.pial = str(tmp / "lh.pial.sub-01.gii")
+        for path, shift in ((cls.central, 0.0), (cls.pial, cls.SHIFT)):
+            nib.save(nib.gifti.GiftiImage(darrays=[
+                nib.gifti.GiftiDataArray((points + [shift, 0, 0]).astype(np.float32),
+                                         intent="NIFTI_INTENT_POINTSET"),
+                nib.gifti.GiftiDataArray(faces, intent="NIFTI_INTENT_TRIANGLE"),
+            ]), path)
+        # the value of every voxel is its x coordinate in mm
+        size, spacing = 111, 2.0
+        origin = -0.5 * spacing * (size - 1)
+        affine = np.diag([spacing, spacing, spacing, 1.0])
+        affine[:3, 3] = origin
+        ramp = (origin + spacing * np.arange(size)).astype(np.float32)
+        data = np.broadcast_to(ramp[:, None, None], (size, size, size)).copy()
+        cls.volume = str(tmp / "ramp.nii.gz")
+        nib.save(nib.Nifti1Image(data, affine), cls.volume)
+
+    def values(self, view):
+        return vtk_to_numpy(view.scal_l).astype(float)
+
+    def test_each_surface_gets_its_own_values(self):
+        view = self.viewer(self.central, self.pial, "--volume", self.volume)
+        self.assertEqual(len(view.overlay_list), 2)
+        self.assertTrue(view.is_mapped(view.opts.overlay))
+        np.testing.assert_allclose(self.values(view), self.x, atol=1e-3)
+        view._next_overlay()
+        self.settle()
+        self.assertTrue(sv._same_file(view.opts.mesh_left, self.pial))
+        np.testing.assert_allclose(self.values(view), self.x + self.SHIFT, atol=1e-3)
+        self.assertIn("(2/2)", view.windowTitle())
+
+    def test_both_are_coloured_on_one_scale(self):
+        view = self.viewer(self.central, self.pial, "--volume", self.volume)
+        common = sv.default_overlay_range(
+            np.concatenate([self.x, self.x + self.SHIFT]))
+        alone = sv.default_overlay_range(self.x + self.SHIFT)
+        self.assertNotAlmostEqual(common[1], alone[1], places=1)
+        np.testing.assert_allclose(view.overlay_range, common, atol=1e-3)
+        view._next_overlay()
+        self.settle()
+        np.testing.assert_allclose(view.overlay_range, common, atol=1e-3)
+        # and the panel shows the same numbers
+        self.assertAlmostEqual(view.ctrl.range_min.value(), common[0], places=3)
+        self.assertAlmostEqual(view.ctrl.range_max.value(), common[1], places=3)
+
+    def test_an_overlay_is_not_replaced(self):
+        view = self.viewer(self.MESH, "--overlay", self.one_sided,
+                           "--volume", self.volume)
+        self.assertEqual(view.overlay_list, [self.one_sided])
+        self.assertFalse(view._mapped)
+
+    def test_changing_the_sampling_maps_again_in_place(self):
+        view = self.viewer(self.central, self.pial, "--volume", self.volume)
+        view._next_overlay()
+        self.settle()
+        view.set_sampling("band")
+        self.settle()
+        self.assertEqual(view.current_overlay_index, 1)
+        self.assertTrue(sv._same_file(view.opts.mesh_left, self.pial))
+        self.assertIn("±0.5 mm", view.opts.overlay)
+        # the ramp runs across the surface, so the band reads the same values
+        np.testing.assert_allclose(self.values(view), self.x + self.SHIFT, atol=0.6)
+
+
 class TestScreenshots(_ViewerTest):
     """The rendered image is what everything above is for."""
 

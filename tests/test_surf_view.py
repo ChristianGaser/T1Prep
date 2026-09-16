@@ -1308,6 +1308,183 @@ class TestPlainUnderlay(unittest.TestCase):
         self.assertLess(UNDERLAY_PLAIN_GREY[0], UNDERLAY_GREYS[1])
 
 
+def _ramp_volume(axis=0, spacing=2.0, size=101):
+    """A volume whose value is the mm coordinate along *axis*, centred on 0.
+
+    Linear interpolation reproduces such a ramp exactly, so a surface read
+    from it has to give back its own coordinates.
+    """
+    origin = -0.5 * spacing * (size - 1)
+    affine = np.diag([spacing, spacing, spacing, 1.0])
+    affine[:3, 3] = origin
+    ramp = (origin + spacing * np.arange(size)).astype(np.float32)
+    shape = [1, 1, 1]
+    shape[axis] = size
+    data = np.broadcast_to(ramp.reshape(shape), (size, size, size)).copy()
+    return data, affine
+
+
+class TestVolumeToSurface(unittest.TestCase):
+    """Intensities of a volume where a surface passes through it."""
+
+    def setUp(self):
+        try:
+            import cat_surf  # noqa: F401
+        except ImportError:
+            self.skipTest("cat_surf not installed")
+        from t1prep.gui.cat_surf_view import map_volume_to_surface
+        self.map = map_volume_to_surface
+        self.sheet = _grid_mesh(rows=6, columns=6, spacing=3.0)
+        # lift the sheet off the origin, so a value of 0 means something
+        points = self.sheet.GetPoints()
+        for index in range(points.GetNumberOfPoints()):
+            x, y, _z = points.GetPoint(index)
+            points.SetPoint(index, x - 7.0, y + 4.0, 12.0)
+
+    def coordinates(self, axis):
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        return vtk_to_numpy(self.sheet.GetPoints().GetData())[:, axis]
+
+    def test_the_crossing_gives_the_value_at_each_vertex(self):
+        for axis in range(3):
+            values = self.map(_ramp_volume(axis), self.sheet)
+            np.testing.assert_allclose(values, self.coordinates(axis), atol=1e-4)
+
+    def test_the_band_takes_the_largest_value_along_the_normal(self):
+        """±0.5 mm across the sheet: the ramp along z peaks 0.5 mm off it."""
+        values = self.map(_ramp_volume(2), self.sheet, sampling="band")
+        np.testing.assert_allclose(values, 12.5, atol=1e-4)
+        # along the sheet nothing changes with the normal
+        values = self.map(_ramp_volume(0), self.sheet, sampling="band")
+        np.testing.assert_allclose(values, self.coordinates(0), atol=1e-4)
+
+    def test_a_path_gives_the_same_as_the_loaded_volume(self):
+        import nibabel as nib
+        from t1prep.gui.cat_surf_view import load_volume_for_mapping
+        data, affine = _ramp_volume(1)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "ramp.nii.gz")
+            nib.save(nib.Nifti1Image(data, affine), path)
+            loaded = load_volume_for_mapping(path)
+            np.testing.assert_allclose(self.map(loaded, self.sheet),
+                                       self.map(path, self.sheet), atol=1e-6)
+
+    def test_nan_in_the_volume_reads_zero(self):
+        """As in an overlay file: NaN would otherwise colour nothing sensible."""
+        data, affine = _ramp_volume(0)
+        data[:] = np.nan
+        values = self.map((data, affine), self.sheet)
+        np.testing.assert_array_equal(values, 0.0)
+
+    def test_only_triangles_are_accepted(self):
+        from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkPolyData
+        from t1prep.gui.cat_surf_view import surface_arrays
+        quad = vtkPolyData()
+        quad.SetPoints(self.sheet.GetPoints())
+        cells = vtkCellArray()
+        cells.InsertNextCell(4)
+        for vertex in (0, 1, 7, 6):
+            cells.InsertCellPoint(vertex)
+        quad.SetPolys(cells)
+        with self.assertRaises(ValueError):
+            surface_arrays(quad)
+
+
+class TestVolumeOnUnfoldedSurfaces(unittest.TestCase):
+    """An inflated surface is read where its folded sibling lies."""
+
+    def setUp(self):
+        try:
+            import cat_surf  # noqa: F401
+        except ImportError:
+            self.skipTest("cat_surf not installed")
+        import nibabel as nib
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        points = np.array([[1., 2, 3], [9, 2, 3], [1, 9, 3], [9, 9, 5]],
+                          dtype=np.float32)
+        faces = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.int32)
+        for name, shift in (("lh.central.sub-01.gii", 0.0),
+                            ("lh.inflated.sub-01.gii", 20.0)):
+            nib.save(nib.gifti.GiftiImage(darrays=[
+                nib.gifti.GiftiDataArray(points + shift,
+                                         intent="NIFTI_INTENT_POINTSET"),
+                nib.gifti.GiftiDataArray(faces, intent="NIFTI_INTENT_TRIANGLE"),
+            ]), str(self.tmp / name))
+        self.x = points[:, 0]
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_the_central_positions_are_used(self):
+        from t1prep.gui.cat_surf_view import map_volume_to_mesh
+        left, right = map_volume_to_mesh(
+            _ramp_volume(0), str(self.tmp / "lh.inflated.sub-01.gii"))
+        self.assertIsNone(right)
+        np.testing.assert_allclose(left, self.x, atol=1e-4)
+
+    def test_without_the_central_one_the_surface_itself_is_read(self):
+        from t1prep.gui.cat_surf_view import map_volume_to_mesh
+        (self.tmp / "lh.central.sub-01.gii").unlink()
+        left, _right = map_volume_to_mesh(
+            _ramp_volume(0), str(self.tmp / "lh.inflated.sub-01.gii"))
+        np.testing.assert_allclose(left, self.x + 20.0, atol=1e-4)
+
+
+class TestWhatAVolumeIsMappedOnto(unittest.TestCase):
+    """Only a bare surface gets intensities, and each given surface once."""
+
+    class _Stub:
+        _meshes_to_map = Viewer._meshes_to_map
+        can_map_volume = Viewer.can_map_volume
+        is_mapped = Viewer.is_mapped
+
+        def __init__(self, current, meshes=(), overlays=(), overlay=None, mapped=()):
+            self.opts = SimpleNamespace(mesh_left=current, overlay=overlay)
+            self.mesh_list = list(meshes)
+            self.overlay_list = list(overlays)
+            self._mapped = {name: (None, None) for name in mapped}
+            self.poly_l = object()
+
+    def test_every_given_surface_once_per_hemisphere_pair(self):
+        meshes = ["/s/lh.central.x.gii", "/s/rh.central.x.gii",
+                  "/s/lh.pial.x.gii", "/s/rh.pial.x.gii", "/s/lh.pial.x.gii"]
+        stub = self._Stub(meshes[0], meshes)
+        self.assertEqual(stub._meshes_to_map(),
+                         ["/s/lh.central.x.gii", "/s/lh.pial.x.gii"])
+
+    def test_a_surface_opened_later_is_mapped_on_its_own(self):
+        stub = self._Stub("/s/lh.inflated.x.gii",
+                          ["/s/lh.central.x.gii", "/s/lh.pial.x.gii"])
+        self.assertEqual(stub._meshes_to_map(), ["/s/lh.inflated.x.gii"])
+        # unless it replaced mapped ones: they are mapped again
+        stub._mapped = {"v.nii on lh.central.x.gii": (None, None)}
+        self.assertEqual(len(stub._meshes_to_map()), 2)
+
+    def test_only_a_surface_without_values(self):
+        self.assertTrue(self._Stub("/s/lh.central.x.gii").can_map_volume())
+        self.assertFalse(self._Stub("/s/lh.central.x.gii",
+                                    overlay="/s/lh.thickness.x").can_map_volume())
+        # a file overlay that failed to load is still in the list
+        self.assertFalse(self._Stub("/s/lh.central.x.gii",
+                                    overlays=["/s/lh.thickness.x"]).can_map_volume())
+        stub = self._Stub("/s/lh.central.x.gii", overlay="old", overlays=["old"])
+        stub.poly_l = None
+        self.assertFalse(stub.can_map_volume())
+
+    def test_intensities_of_an_earlier_volume_are_replaced(self):
+        stub = self._Stub("/s/lh.central.x.gii", overlays=["a", "b"],
+                          overlay="a", mapped=["a", "b"])
+        self.assertTrue(stub.can_map_volume())
+
+    def test_the_sampling_option(self):
+        self.assertEqual(parse_args(["/s/lh.central.x.gii"]).sampling, "crossing")
+        self.assertEqual(parse_args(["/s/lh.central.x.gii", "--sampling", "band"]
+                                    ).sampling, "band")
+        with self.assertRaises(SystemExit):
+            parse_args(["/s/lh.central.x.gii", "--sampling", "median"])
+
+
 class TestFinderOpenEventsSurface(unittest.TestCase):
     """The surface viewer gets the same re-sent files and must ignore them."""
 

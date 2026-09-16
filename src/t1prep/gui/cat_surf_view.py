@@ -19,6 +19,10 @@ Features:
     surface in both directions: clicking the surface moves the slices, clicking
     a slice marks the closest surface point.  Right-click for the zoom levels.
     It is the same viewer as the standalone CAT_VolView tool (cat_vol_view.py).
+    A surface without an overlay also shows the intensities of that volume
+    where the surface passes through it (CAT_Vol2Surf -start 0 -end 0 -steps 1),
+    each surface given on the command line its own map, stepped through with
+    ←/→ like overlays and coloured on one common scale.
   • Clicking a vertex reports it in the status bar: hemisphere, vertex number,
     mm position, overlay value (as a p-value for -log10(p) maps) and — with an
     atlas selected from the right-click menu — the region it belongs to.  The
@@ -110,7 +114,7 @@ if _headless:
 # --- Qt setup (PySide6 only) ---
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QShortcut, QPainter, QColor, QPen, QBrush, QSurfaceFormat
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut, QPainter, QColor, QPen, QBrush, QSurfaceFormat
 
 # Qt compatibility shims
 ORIENT_H = Qt.Orientation.Horizontal
@@ -1230,6 +1234,135 @@ def read_mesh_pair(mesh_path: str) -> Tuple[vtkPolyData, Optional[vtkPolyData]]:
     return poly, None
 
 
+def _same_file(first, second) -> bool:
+    """Whether two paths name the same file; False when either is missing."""
+    if not first or not second:
+        return False
+    try:
+        return os.path.realpath(str(first)) == os.path.realpath(str(second))
+    except OSError:
+        return str(first) == str(second)
+
+
+def sibling_file(path, token: str) -> Optional[Path]:
+    """``lh.<token>.<rest>`` next to the surface *path*, if it exists.
+
+    CAT12 names every file of a subject after the same pattern and only the
+    type token differs (``lh.central.sub-01.gii``, ``lh.mc.sub-01``), so
+    swapping that token finds the others.  Names without one return None.
+    """
+    path = Path(path)
+    parts = path.name.split('.')
+    for index, part in enumerate(parts):
+        if part not in MESH_TYPE_TOKENS:
+            continue
+        candidate = list(parts)
+        candidate[index] = token
+        sibling = path.with_name('.'.join(candidate))
+        return sibling if sibling.exists() else None
+    return None
+
+
+# ---- Mapping a volume onto a surface ----
+#: Surfaces that no longer lie where the brain is: a volume is read on the
+#: folded surface they were made from, which has the same vertices
+UNFOLDED_SURFACES = ('inflated', 'sphere', 'patch')
+
+#: How a volume is read along the surface normal, as the CAT_Vol2Surf
+#: arguments (menu label, -start, -end, -steps).  Both keep its default
+#: mapping function, the value of largest magnitude, which for the single
+#: sample at the crossing is simply that sample; 'band' is CAT_Vol2Surf
+#: with no arguments at all.
+VOL2SURF_SAMPLING = {
+    'crossing': ("At the crossing", 0.0, 0.0, 1),
+    'band': ("Largest in ±0.5 mm (7 steps)", -0.5, 0.5, 7),
+}
+
+
+def surface_arrays(poly: vtkPolyData) -> Tuple["np.ndarray", "np.ndarray"]:
+    """Vertices and triangles of *poly*, as the arrays cat_surf works on.
+
+    Raises:
+        ValueError: when the surface holds anything but triangles.
+    """
+    points = vtk_to_numpy(poly.GetPoints().GetData()).astype(np.float64)
+    cells = poly.GetPolys()
+    offsets = vtk_to_numpy(cells.GetOffsetsArray())
+    if offsets.size < 2 or np.any(np.diff(offsets) != 3):
+        raise ValueError("the surface is not made of triangles")
+    faces = vtk_to_numpy(cells.GetConnectivityArray()).astype(np.int64)
+    return points, faces.reshape(-1, 3)
+
+
+def load_volume_for_mapping(path: str) -> Tuple["np.ndarray", "np.ndarray"]:
+    """A NIfTI volume as the ``(array, affine)`` pair cat_surf samples.
+
+    Read once, so that several surfaces and both hemispheres do not read the
+    file again each.  The header scaling is applied, so the values are the
+    intensities the volume window shows.
+    """
+    import nibabel as nib
+    image = nib.load(str(path))
+    data = image.get_fdata(dtype=np.float32)
+    if data.ndim < 3:
+        raise ValueError(f"{Path(path).name} is not a 3D volume")
+    return data, image.affine
+
+
+def map_volume_to_surface(volume, poly: vtkPolyData,
+                          sampling: str = 'crossing') -> "np.ndarray":
+    """The intensity of *volume* at every vertex of *poly*.
+
+    What ``CAT_Vol2Surf -start S -end E -steps N`` writes for the
+    :data:`VOL2SURF_SAMPLING` entry *sampling*.  'crossing' takes a single
+    sample where the surface passes through the volume and none along the
+    normal, so the value belongs to this surface and not to its neighbours;
+    'band' takes the largest of seven over ±0.5 mm.  It is computed
+    in-process by the CAT-Surface binding the pipeline uses for its own
+    ``intensity_*`` maps, which gives the same values without a temporary
+    file.
+
+    Args:
+        volume: NIfTI path, or what :func:`load_volume_for_mapping` returns.
+        poly: The surface, in the millimetre space of the volume.
+        sampling: A key of :data:`VOL2SURF_SAMPLING`.
+
+    Returns:
+        One value per vertex, with NaN turned into 0 as for overlay files.
+    """
+    import cat_surf
+    _label, start, end, steps = VOL2SURF_SAMPLING[sampling]
+    vertices, faces = surface_arrays(poly)
+    values, _grid = cat_surf.vol2surf(
+        volume, vertices, faces,
+        grid_start=start, grid_end=end, grid_steps=steps, map_func="maxabs")
+    return np.nan_to_num(np.asarray(values, dtype=np.float64).ravel(), nan=0.0)
+
+
+def map_volume_to_mesh(volume, mesh_path: str, sampling: str = 'crossing'
+                       ) -> Tuple["np.ndarray", Optional["np.ndarray"]]:
+    """Intensities of *volume* on the surface *mesh_path*, as (left, right).
+
+    The pair follows :func:`read_mesh_pair`, so the values fit the surfaces
+    the viewer shows for that file.  An inflated, spherical or flattened
+    surface is read at the position of its folded (central) sibling: where it
+    is drawn has nothing to do with the brain.
+    """
+    shown = read_mesh_pair(mesh_path)
+    source = shown
+    if any(part in UNFOLDED_SURFACES for part in Path(mesh_path).name.split('.')):
+        central = sibling_file(mesh_path, 'central')
+        if central is not None:
+            folded = read_mesh_pair(str(central))
+            if all((a is None) == (b is None) and
+                   (a is None or a.GetNumberOfPoints() == b.GetNumberOfPoints())
+                   for a, b in zip(folded, shown)):
+                source = folded
+    return tuple(None if poly is None
+                 else map_volume_to_surface(volume, poly, sampling)
+                 for poly in source)
+
+
 # ---- I/O helpers ----
 def _nib_load_gifti(filename: str):
     """Load a ``.gii`` file with nibabel, repairing a stale external-file
@@ -1609,7 +1742,7 @@ class Options:
     overlay: Optional[str] = None
     overlays: List[str] = None  # Multiple overlays
     overlay_bkg: Optional[str] = None
-    volume: Optional[str] = None  # 3D NIfTI image path to show in orthoview
+    volume: Optional[str] = None  # 3D NIfTI shown in orthoview, mapped onto a bare surface
     range: Tuple[float, float] = (0.0, -1.0)
     range_bkg: Tuple[float, float] = (0.0, -1.0)
     clip: Tuple[float, float] = (0.0, -1.0)
@@ -1629,6 +1762,7 @@ class Options:
     colormap: int = JET
     fix_scaling: bool = False  # Fix scaling across overlays
     free_zoom: bool = False    # Let the mouse change the zoom
+    sampling: str = 'crossing'  # How a volume is mapped; see VOL2SURF_SAMPLING
 
 
 # ---- reading a defaults file ----
@@ -1723,6 +1857,8 @@ def _build_parser() -> argparse.ArgumentParser:
             '  CAT_SurfView --range 6 16 --clip -100 6 --colorbar stat/logP_*.gii\n'
             '  CAT_SurfView --preset 1 lh.thickness.subj        predefined settings\n'
             '  CAT_SurfView --output view.png lh.thickness.subj write a PNG and exit\n'
+            '  CAT_SurfView lh.pial.subj.gii lh.white.subj.gii --volume mri/msubj.nii\n'
+            '                                                   T1 intensities on each surface\n'
             '\n'
             'How the surface is determined:\n'
             '  An overlay does not reference its surface, so it is looked up in this order:\n'
@@ -1765,7 +1901,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--bkg','-bkg', dest='overlay_bkg', help='Background scalars for curvature shading (.gii or text)')
     p.add_argument('--volume','-volume','-vol','--nifti', dest='volume',
                    help='3D NIfTI volume to show in a linked orthogonal slice window.\n'
-                        'Clicking the surface moves the slices and vice versa.')
+                        'Clicking the surface moves the slices and vice versa.\n'
+                        'Without an overlay, the intensities where each surface passes\n'
+                        'through the volume are shown on it (one map per surface).')
+    p.add_argument('--sampling', dest='sampling', choices=sorted(VOL2SURF_SAMPLING),
+                   default='crossing',
+                   help='How --volume is read onto a surface (CAT_Vol2Surf -maxabs):\n'
+                        '  crossing = only where the surface passes through it\n'
+                        '             (-start 0 -end 0 -steps 1; default)\n'
+                        '  band     = largest value from -0.5 to 0.5 mm along the normal\n'
+                        '             (-start -0.5 -end 0.5 -steps 7, the CAT_Vol2Surf defaults)')
     p.add_argument('--range','-range','-r', dest='range', nargs=2, type=float, default=[0.0, -1.0],
                    help='Overlay value range (min max); omit for auto-scaling.\n'
                         'Given explicitly, it also overrides the thickness/pbt presets.')
@@ -1991,6 +2136,7 @@ def parse_args(argv: List[str]) -> Options:
         colormap=cm,
         fix_scaling=bool(a.fix_scaling),
         free_zoom=bool(getattr(a, 'free_zoom', False)),
+        sampling=a.sampling,
     )
 
 # ---- Control Panel ----
@@ -2030,6 +2176,10 @@ class Viewer(QtWidgets.QMainWindow):
         # Prevents ambiguous directory-based mesh resolution from "sticking" to the
         # most recently used mesh when toggling between multiple overlays.
         self._overlay_mesh_cache: dict[str, str] = {}
+        #: Intensities of a volume on each surface, as (left, right) values
+        #: under the overlay name they are listed with; see map_volume
+        self._mapped: dict = {}
+        self.mapped_volume: Optional[str] = None
         self._y_shift_l: float = 0.0
         self._y_shift_r: float = 0.0
         self._hist_win = None  # histogram window reference
@@ -2742,17 +2892,9 @@ class Viewer(QtWidgets.QMainWindow):
 
     def _already_shown(self, path: str) -> bool:
         """Whether *path* is the surface, the atlas or an overlay on screen."""
-        def same(other) -> bool:
-            if not other:
-                return False
-            try:
-                return os.path.realpath(str(other)) == os.path.realpath(str(path))
-            except OSError:
-                return str(other) == str(path)
-
-        return (same(self.opts.mesh_left) or same(self.atlas_path)
-                or any(same(overlay) for overlay in (self.overlay_list or []))
-                or same(self.opts.overlay))
+        return any(_same_file(path, shown) for shown in (
+            self.opts.mesh_left, self.atlas_path, self.opts.overlay,
+            *(self.overlay_list or [])))
 
     def open_paths(self, paths: List[str]):
         """Show *paths*: a mesh replaces the surface, an .annot becomes the atlas.
@@ -2776,16 +2918,25 @@ class Viewer(QtWidgets.QMainWindow):
         if annots:
             self.set_atlas(annots[0])
         if overlays:
-            self.overlay_list = list(overlays)
-            self.current_overlay_index = 0
+            self._set_overlay_list(overlays)
+
+    def _set_overlay_list(self, paths: List[str], index: int = 0):
+        """Make *paths* the overlays ←/→ steps through, and show one of them."""
+        self.overlay_list = list(paths)
+        self.current_overlay_index = index
+        with self._batch_render():
+            # Filling the combo would load every entry it selects on the way
+            combo = self.ctrl.overlay_combo
+            combo.blockSignals(True)
             try:
-                self.ctrl.overlay_combo.clear()
+                combo.clear()
                 for path in self.overlay_list:
-                    self.ctrl.overlay_combo.addItem(path)
-                self.ctrl.overlay_combo.setCurrentIndex(0)
-            except Exception:
-                pass
-            self._set_overlay_from_path(overlays[0])
+                    combo.addItem(path)
+                combo.setCurrentIndex(index)
+            finally:
+                combo.blockSignals(False)
+            self._set_overlay_from_path(self.overlay_list[index])
+            self._update_overlay_info()
 
     def _fit_camera(self):
         """Frame the whole scene, keeping the direction it is viewed from.
@@ -3306,6 +3457,15 @@ class Viewer(QtWidgets.QMainWindow):
         act_open_vol = QAction("Open NIfTI…", self)
         act_open_vol.triggered.connect(self._open_volume_dialog)
         vol_menu.addAction(act_open_vol)
+        # How the volume is read onto a surface without an overlay
+        sampling_menu = vol_menu.addMenu("Sampling on the surface")
+        sampling_group = QActionGroup(self)
+        for key, (label, *_grid) in VOL2SURF_SAMPLING.items():
+            action = sampling_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(key == self.opts.sampling)
+            sampling_group.addAction(action)
+            action.triggered.connect(lambda _c=False, k=key: self.set_sampling(k))
 
         # Add a single QShortcut on the main window (Ctrl+D -> mapped to Cmd+D on macOS)
         try:
@@ -3543,22 +3703,41 @@ class Viewer(QtWidgets.QMainWindow):
         if hasattr(self, 'ctrl'):
             try:
                 self.ctrl.set_overlay_bounds(*self.overlay_range)
-                for widget, value in ((self.ctrl.range_min, self.overlay_range[0]),
-                                      (self.ctrl.range_max, self.overlay_range[1])):
-                    widget.blockSignals(True)
-                    widget.setValue(float(value))
-                    widget.blockSignals(False)
-                self.ctrl._spin_to_slider('overlay', 'min', float(self.overlay_range[0]))
-                self.ctrl._spin_to_slider('overlay', 'max', float(self.overlay_range[1]))
+                self._show_overlay_range()
             except Exception:
                 pass
 
+    def _show_overlay_range(self):
+        """Put ``overlay_range`` into the spin boxes and sliders of the panel.
+
+        Quietly: each box reports a change on its own, and the first of the
+        two was taken together with the other's old value — the maximum of
+        the previous overlay — which the new overlay then kept as its range.
+        """
+        if not hasattr(self, 'ctrl') or not self.overlay_range[1] > self.overlay_range[0]:
+            return
+        for widget, value in ((self.ctrl.range_min, self.overlay_range[0]),
+                              (self.ctrl.range_max, self.overlay_range[1])):
+            widget.blockSignals(True)
+            widget.setValue(float(value))
+            widget.blockSignals(False)
+        self.ctrl._spin_to_slider('overlay', 'min', float(self.overlay_range[0]))
+        self.ctrl._spin_to_slider('overlay', 'max', float(self.overlay_range[1]))
+
     def _auto_overlay_range(self) -> Optional[Tuple[float, float]]:
-        """The default range for the overlay now loaded, both hemispheres."""
-        values = []
-        for scalars in (self.scal_l, self.scal_r):
-            if scalars is not None:
-                values.append(vtk_to_numpy(scalars).astype(float))
+        """The default range for the overlay now loaded, both hemispheres.
+
+        Intensities of one volume are scaled over every surface they were
+        mapped onto, or the pial and the white surface would come out in the
+        same colours whatever they read.
+        """
+        if self.is_mapped(self.opts.overlay):
+            values = [part for pair in self._mapped.values()
+                      for part in pair if part is not None]
+        else:
+            values = [vtk_to_numpy(scalars).astype(float)
+                      for scalars in (self.scal_l, self.scal_r)
+                      if scalars is not None]
         if not values:
             return None
         clip = tuple(self.opts.clip or (0.0, -1.0))
@@ -3579,16 +3758,7 @@ class Viewer(QtWidgets.QMainWindow):
         current = self.opts.mesh_left
         if not current or not token:
             return None
-        path = Path(current)
-        parts = path.name.split('.')
-        for index, part in enumerate(parts):
-            if part not in MESH_TYPE_TOKENS:
-                continue
-            candidate = list(parts)
-            candidate[index] = token
-            sibling = path.with_name('.'.join(candidate))
-            return sibling if sibling.exists() else None
-        return None
+        return sibling_file(current, token)
 
     def available_underlays(self) -> List[Tuple[str, Optional[str]]]:
         """The shading options that can actually be shown.
@@ -4216,8 +4386,10 @@ class Viewer(QtWidgets.QMainWindow):
         self._render()
 
     def _pick_overlay(self):
-        start_dir = (self.ctrl.overlay_combo.currentText().strip()
-                     or str(Path(self.opts.mesh_left).parent))
+        start_dir = self.ctrl.overlay_combo.currentText().strip()
+        # Intensities mapped from a volume are listed under a name, not a file
+        if not start_dir or not Path(start_dir).exists():
+            start_dir = str(Path(self.opts.mesh_left or '.').parent)
         dlg = QtWidgets.QFileDialog(self, "Choose overlay(s)", start_dir)
         dlg.setFileMode(QtWidgets.QFileDialog.ExistingFiles)
         if dlg.exec():
@@ -4225,21 +4397,7 @@ class Viewer(QtWidgets.QMainWindow):
             if not paths:
                 return
             # If the user picked an SPM overlay, auto-discover siblings
-            paths = self._expand_spm_overlays(paths)
-            # Update overlay list with selected files
-            self.overlay_list = list(paths)
-            self.current_overlay_index = 0
-            # Populate combo with all and select the first
-            try:
-                self.ctrl.overlay_combo.clear()
-                for p in self.overlay_list:
-                    self.ctrl.overlay_combo.addItem(p)
-                self.ctrl.overlay_combo.setCurrentIndex(0)
-            except Exception:
-                pass
-            # Load the first selection immediately
-            first = self.overlay_list[0]
-            self._set_overlay_from_path(first)
+            self._set_overlay_list(self._expand_spm_overlays(paths))
 
     def _expand_spm_overlays(self, paths: List[str]) -> List[str]:
         """If any selected path is an SPM analysis overlay, expand the list
@@ -4366,9 +4524,7 @@ class Viewer(QtWidgets.QMainWindow):
             self._load_overlay(overlay)
             self._update_overlay_info()
             # Update control panel with current overlay range
-            if hasattr(self, 'ctrl'):
-                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
-                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+            self._show_overlay_range()
             # Restore camera state
             self._apply_camera_state()
 
@@ -4755,7 +4911,10 @@ class Viewer(QtWidgets.QMainWindow):
 
     def _uses_logp_scale(self) -> bool:
         """True when the current overlay should be labelled with p-values."""
-        return bool(getattr(self.opts, 'log', False)) or is_logp_overlay(self.opts.overlay)
+        # A mapped volume is named after its files, which say nothing about p
+        return bool(getattr(self.opts, 'log', False)) or (
+            not self.is_mapped(self.opts.overlay)
+            and is_logp_overlay(self.opts.overlay))
 
     def _apply_logp_labels(self, sb: vtkScalarBarActor, lut_cb: vtkLookupTable):
         """Label the colorbar with p-values for -log10(p) overlays.
@@ -4954,37 +5113,12 @@ class Viewer(QtWidgets.QMainWindow):
         # Capture camera before modifying actors/ranges
         self._capture_camera_state()
         self.opts.overlay = overlay_path
+        mapped = self.is_mapped(overlay_path)
         try:
-            ov_path = Path(overlay_path)
-            scal_l = read_scalars(str(ov_path))
-            scal_r = None
-            n_scal = scal_l.GetNumberOfTuples() if scal_l is not None else 0
-
-            # An overlay file does not say which surface it belongs to, so
-            # make sure the displayed mesh has room for exactly these values.
-            self._ensure_mesh_for_scalars(ov_path, n_scal)
-
-            # Prefer the overlay of the other hemisphere sitting next to the
-            # selected file — an rh.* file finds its lh.* partner just as well
-            other_path = _hemi_counterpart(ov_path)
-            if other_path is not None and other_path.exists() and self.poly_r is not None:
-                scal_l, scal_r = order_by_hemisphere(
-                    ov_path, scal_l, read_scalars(str(other_path)))
-            # Or: a single overlay holds LH and RH values back to back
-            elif self.poly_r is not None and scal_l is not None and n_scal == (
-                self.poly_l.GetNumberOfPoints() + self.poly_r.GetNumberOfPoints()
-            ):
-                scal_l, scal_r = _split_scalars(
-                    scal_l,
-                    self.poly_l.GetNumberOfPoints(),
-                    self.poly_r.GetNumberOfPoints(),
-                )
-            elif (hemisphere_of(ov_path) == 'rh' and self.poly_r is not None
-                  and scal_l is not None
-                  and n_scal == self.poly_r.GetNumberOfPoints()):
-                # A right-hemisphere overlay without its left partner: show it
-                # on the right surface rather than on the left one
-                scal_l, scal_r = None, scal_l
+            if mapped:
+                scal_l, scal_r = self._mapped_scalars(overlay_path)
+            else:
+                scal_l, scal_r = self._read_overlay_scalars(Path(overlay_path))
         except Exception as e:
             # If loading fails, clear the overlay and disable controls
             print(f"Failed to load overlay: {e}")
@@ -4999,7 +5133,7 @@ class Viewer(QtWidgets.QMainWindow):
         if scal_l is not None: self.poly_l.GetPointData().SetScalars(scal_l)
         if scal_r is not None and self.poly_r is not None: self.poly_r.GetPointData().SetScalars(scal_r)
         # Predefined ranges for recognized overlays (thickness, pbt)
-        kind = detect_overlay_kind(overlay_path)
+        kind = None if mapped else detect_overlay_kind(overlay_path)
         if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
             # Apply requested defaults: overlay 0.5..5; clip 0..0; bkg -1..1,
             # but never override values the user gave on the command line.
@@ -5050,9 +5184,7 @@ class Viewer(QtWidgets.QMainWindow):
         if hasattr(self, 'ctrl'):
             self.ctrl.set_overlay_controls_enabled(True)
             # Update spin boxes to current overlay range
-            if self.overlay_range[1] > self.overlay_range[0]:
-                self.ctrl.range_min.setValue(float(self.overlay_range[0]))
-                self.ctrl.range_max.setValue(float(self.overlay_range[1]))
+            self._show_overlay_range()
             # If we applied predefined defaults, reflect them in the UI
             if kind in ('thickness', 'pbt') and not self.opts.fix_scaling:
                 if not getattr(self, '_user_set_clip', False):
@@ -5080,6 +5212,169 @@ class Viewer(QtWidgets.QMainWindow):
         # Restore camera and render
         self._apply_camera_state()
         self._render()
+
+    def _read_overlay_scalars(self, ov_path: Path):
+        """The values of an overlay file as (left, right), on a mesh they fit."""
+        scal_l = read_scalars(str(ov_path))
+        scal_r = None
+        n_scal = scal_l.GetNumberOfTuples() if scal_l is not None else 0
+
+        # An overlay file does not say which surface it belongs to, so
+        # make sure the displayed mesh has room for exactly these values.
+        self._ensure_mesh_for_scalars(ov_path, n_scal)
+
+        # Prefer the overlay of the other hemisphere sitting next to the
+        # selected file — an rh.* file finds its lh.* partner just as well
+        other_path = _hemi_counterpart(ov_path)
+        if other_path is not None and other_path.exists() and self.poly_r is not None:
+            scal_l, scal_r = order_by_hemisphere(
+                ov_path, scal_l, read_scalars(str(other_path)))
+        # Or: a single overlay holds LH and RH values back to back
+        elif self.poly_r is not None and scal_l is not None and n_scal == (
+            self.poly_l.GetNumberOfPoints() + self.poly_r.GetNumberOfPoints()
+        ):
+            scal_l, scal_r = _split_scalars(
+                scal_l,
+                self.poly_l.GetNumberOfPoints(),
+                self.poly_r.GetNumberOfPoints(),
+            )
+        elif (hemisphere_of(ov_path) == 'rh' and self.poly_r is not None
+              and scal_l is not None
+              and n_scal == self.poly_r.GetNumberOfPoints()):
+            # A right-hemisphere overlay without its left partner: show it
+            # on the right surface rather than on the left one
+            scal_l, scal_r = None, scal_l
+        return scal_l, scal_r
+
+    # ---------- intensities of a volume on the surface ----------
+    def is_mapped(self, overlay: Optional[str]) -> bool:
+        """Whether *overlay* names intensities mapped from a volume."""
+        return bool(overlay) and overlay in self._mapped
+
+    def can_map_volume(self) -> bool:
+        """Whether a volume opened now is also mapped onto the surface.
+
+        Only a bare surface is: values that are already on it — an overlay,
+        or a surface file carrying its own — are not replaced.  Intensities of
+        a volume opened before are.
+        """
+        if self.poly_l is None:
+            return False
+        shown = list(self.overlay_list or [])
+        if self.opts.overlay:
+            shown.append(self.opts.overlay)
+        return all(self.is_mapped(overlay) for overlay in shown)
+
+    def _meshes_to_map(self) -> List[str]:
+        """The surfaces a volume is mapped onto: every one given, or the one shown.
+
+        ``lh.`` and ``rh.`` of the same surface are one pair on the screen, so
+        a wildcard that caught both is mapped once.  A surface opened in
+        between (dropped, or picked from the menu) is not in the list and is
+        mapped on its own, unless it replaced one that was mapped already.
+        """
+        current = self.opts.mesh_left
+        listed = [mesh for mesh in (self.mesh_list or []) if mesh]
+        if not (listed and (self._mapped or any(
+                _same_file(current, mesh) for mesh in listed))):
+            return [current] if current else []
+        meshes: List[str] = []
+        for mesh in listed:
+            other = _hemi_counterpart(Path(mesh))
+            if any(_same_file(mesh, m) or _same_file(other, m) for m in meshes):
+                continue
+            meshes.append(mesh)
+        return meshes
+
+    def map_volume(self, volume_path: str) -> List[str]:
+        """Show the intensities of *volume_path* where each surface meets it.
+
+        Every surface given on the command line gets its own values, read at
+        its own vertices the way ``opts.sampling`` says, and they become the
+        overlays ←/→ steps through — each with its surface, as overlays of
+        several subjects are.  They replace what a volume mapped before had
+        left there; mapping the same volume again stays on the surface shown.
+
+        Returns:
+            The names the new overlays are listed under; empty when nothing
+            could be mapped.
+        """
+        meshes = self._meshes_to_map()
+        if not meshes:
+            return []
+        sampling = self.opts.sampling
+        name = Path(volume_path).name
+        try:
+            volume = load_volume_for_mapping(volume_path)
+        except Exception as exc:
+            self._warn("Volume", f"Cannot read {name}:\n{exc}")
+            return []
+        mapped: dict = {}
+        for mesh in meshes:
+            try:
+                values = map_volume_to_mesh(volume, mesh, sampling)
+            except Exception as exc:
+                self._warn("Volume", f"Cannot map {name} onto "
+                                     f"{Path(mesh).name}:\n{exc}")
+                continue
+            # The name is what the title and the colorbar show, so it says
+            # how the values were read unless it was at the crossing
+            base = label = f"{name} on {Path(mesh).name}" + (
+                "" if sampling == 'crossing' else " (±0.5 mm)")
+            count = 2
+            while label in mapped:          # the same file name in two folders
+                label = f"{base} ({count})"
+                count += 1
+            mapped[label] = (mesh, values)
+        if not mapped:
+            return []
+        index = 0
+        if (_same_file(volume_path, self.mapped_volume)
+                and self.is_mapped(self.opts.overlay)):
+            index = min(self.current_overlay_index, len(mapped) - 1)
+        self._mapped = {label: values for label, (_mesh, values) in mapped.items()}
+        self.mapped_volume = volume_path
+        for label, (mesh, _values) in mapped.items():
+            self._remember_mesh_for_overlay(Path(label), str(Path(mesh).resolve()))
+        # A volume mapped under the name already on screen still has to show
+        self.opts.overlay = None
+        self._set_overlay_list(list(mapped), index)
+        return list(mapped)
+
+    def set_sampling(self, sampling: str):
+        """Read volumes as *sampling* says, and the one mapped now again."""
+        if sampling not in VOL2SURF_SAMPLING or sampling == self.opts.sampling:
+            return
+        self.opts.sampling = sampling
+        if self.mapped_volume and self.can_map_volume():
+            self.map_volume(self.mapped_volume)
+
+    def _mapped_scalars(self, overlay: str):
+        """The mapped values of *overlay*, as (left, right) arrays.
+
+        They were read on the surface _maybe_switch_mesh_for_overlay has
+        just put up, so they fit it; anything else is an error rather than
+        colours on the wrong vertices.
+        """
+        arrays = []
+        for values, poly in zip(self._mapped[overlay], (self.poly_l, self.poly_r)):
+            if values is None or poly is None:
+                arrays.append(None)
+                continue
+            if len(values) != poly.GetNumberOfPoints():
+                raise RuntimeError(
+                    f"{overlay} has {len(values)} values, the surface "
+                    f"{poly.GetNumberOfPoints()} vertices")
+            arrays.append(numpy_to_vtk(
+                np.ascontiguousarray(values, dtype=np.float64), deep=True))
+        return tuple(arrays)
+
+    def _warn(self, title: str, text: str):
+        """Report a problem: in a dialog, or on stderr when rendering a PNG."""
+        if getattr(self.opts, 'output', None):
+            print(f"{title}: {text}", file=sys.stderr)
+        else:
+            QtWidgets.QMessageBox.warning(self, title, text)
 
     def _toggle_histogram(self, checked: bool):
         """Show/hide histogram window for current overlay scalars."""
@@ -5221,6 +5516,14 @@ class Viewer(QtWidgets.QMainWindow):
             self._open_volume(path)
 
     def _open_volume(self, volume_path: str):
+        """Show *volume_path* in a linked slice window.
+
+        A bare surface also gets the intensities it passes through (see
+        map_volume) — first, so the outlines on the slices carry the same
+        colours as the surface.
+        """
+        if self.can_map_volume():
+            self.map_volume(volume_path)
         try:
             win = VolumeViewerWindow(volume_path, parent=self,
                                      on_position_changed=self._on_volume_pick,

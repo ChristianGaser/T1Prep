@@ -96,6 +96,47 @@ carry.
 
 A flat patch is shown once per hemisphere, the two mirroring each other.
 
+### Volume intensities on the surface
+
+`--volume` (or **Volume › Open NIfTI…**) opens a volume in a linked slice window.
+If the surface has no overlay, the volume's intensities where the surface
+passes through it are also mapped onto the surface. This is a quick check of
+where a pial or white surface was placed:
+
+```bash
+CAT_SurfView surf/?h.pial.sub-01.gii surf/?h.central.sub-01.gii \
+             surf/?h.white.sub-01.gii --volume mri/msub-01.nii
+```
+
+- **One map per surface.** Every surface on the command line is mapped at its
+  own vertices, and `←`/`→` steps through the maps, switching the surface with
+  them. An `lh.`/`rh.` pair counts as one surface. The maps are named
+  `<volume> on <surface>` in the title, the colorbar and the overlay list.
+- **One colour scale.** All maps share a range, so the pial surface comes out
+  darker than the white one instead of in the same colours.
+- **Sampling.** `--sampling` (or **Volume › Sampling on the surface**) sets how
+  the volume is read. Both choices use `CAT_Vol2Surf`'s default mapping
+  function, the value of largest magnitude:
+
+  | `--sampling` | Reads | `CAT_Vol2Surf` arguments |
+  |--------------|-------|--------------------------|
+  | `crossing` (default) | the one value where the surface crosses the volume | `-start 0 -end 0 -steps 1` |
+  | `band` | the largest of 7 values from −0.5 to 0.5 mm along the normal | `-start -0.5 -end 0.5 -steps 7` (its defaults) |
+
+  Changing the menu entry maps the volume again and keeps the current surface
+  on screen.
+- **Unfolded surfaces.** An inflated, spherical or flattened surface is read at
+  the position of its `central` sibling, since its own vertices are no longer
+  inside the brain.
+- **Existing overlays win.** An overlay (including a CAT12 `mesh.*` file that
+  carries its own values) is never replaced. A new volume replaces the maps of
+  the previous one.
+
+The values are computed in memory by the CAT-Surface bindings, the same ones
+the pipeline uses for its `intensity_*` maps, so no temporary file is written.
+On a T1Prep output they match `lh.intensity_pial`, `lh.intensity_mid` and
+`lh.intensity_white` exactly.
+
 ### Cluster table
 
 For a thresholded map, **Clusters…** lists every suprathreshold region with its
