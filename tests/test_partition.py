@@ -87,32 +87,57 @@ def _phantom(with_brainstem=True):
     return lab, p0, reg
 
 
-def _nifti(data):
+def _nifti(data, dtype=np.float32):
     affine = np.diag([VX, VX, VX, 1.0])
-    img = nib.Nifti1Image(data.astype(np.float32), affine)
+    img = nib.Nifti1Image(data.astype(dtype), affine)
     img.header.set_zooms((VX, VX, VX))
     return img
 
 
-def _partition(shift_voxels=0, with_brainstem=True):
+#: IBSR -> Neuromorphometrics, for the labels the guard looks at.  Any
+#: Neuromorphometrics id from 100 up is a cortical parcel.
+_TO_NMM = {
+    "lCbrGM": 101, "rCbrGM": 100,
+    "lHip": 48, "rHip": 47,
+    "lAmy": 32, "rAmy": 31,
+    "lCbrWM": 45, "rCbrWM": 44,
+    "lLatVen": 52, "rLatVen": 51,
+}
+
+
+def _guard_atlas(lab, reg):
+    """The Neuromorphometrics labelling of an IBSR phantom."""
+    nmm = np.zeros(lab.shape, np.uint8)
+    for abbr, nid in _TO_NMM.items():
+        nmm[lab == reg[abbr]] = nid
+    return nmm
+
+
+def _partition(shift_voxels=0, with_brainstem=True, guard=True):
     """Run ``get_partition``, optionally displacing the atlas from the subject.
 
     A non-zero ``shift_voxels`` mimics nonlinear registration error, which is
-    what turns an over-reaching fill from harmless into destructive.
+    what turns an over-reaching fill from harmless into destructive.  Both
+    atlases move together, as they do when one warp places them.
     """
     lab, p0, reg = _phantom(with_brainstem)
     atlas = lab if not shift_voxels else np.roll(lab, shift_voxels, axis=1)
-    lh, rh = get_partition(_nifti(p0), _nifti(atlas))
-    return np.maximum(lh, rh), lab, reg
+    return _run(p0, atlas, _guard_atlas(atlas, reg) if guard else None), lab, reg
+
+
+def _run(p0, atlas, nmm=None):
+    guard = None if nmm is None else _nifti(nmm, np.uint8)
+    lh, rh = get_partition(_nifti(p0), _nifti(atlas), guard)
+    return np.maximum(lh, rh)
 
 
 def _mask(lab, reg, *abbrs):
     return np.isin(lab, [reg[a] for a in abbrs])
 
 
-@pytest.fixture(scope="module")
-def aligned():
-    return _partition()
+@pytest.fixture(scope="module", params=[True, False], ids=["guard", "noguard"])
+def aligned(request):
+    return (*_partition(guard=request.param), request.param)
 
 
 def test_hippocampus_is_not_filled_with_wm(aligned):
@@ -123,7 +148,7 @@ def test_hippocampus_is_not_filled_with_wm(aligned):
     the fill used to flow out of the temporal horn and bury a third of the
     hippocampus in WM on every subject, however good the registration.
     """
-    seg, lab, reg = aligned
+    seg, lab, reg, guard = aligned
     hip = _mask(lab, reg, "lHip", "rHip")
     blob = (seg[hip] > 2.5)
     assert not blob.any(), (
@@ -144,8 +169,8 @@ def test_brainstem_cut_spares_cortex_and_hippocampus(aligned):
     that is a separate mechanism -- differencing cancels it out and leaves
     only what the brainstem exclusion is responsible for.
     """
-    seg, lab, reg = aligned
-    reference, _, _ = _partition(with_brainstem=False)
+    seg, lab, reg, guard = aligned
+    reference, _, _ = _partition(with_brainstem=False, guard=guard)
     spared = _mask(lab, reg, "lCbrGM", "rCbrGM", "lHip", "rHip")
     cut_by_brainstem = (seg < 1.5) & ~(reference < 1.5) & spared
     assert not cut_by_brainstem.any(), (
@@ -155,7 +180,7 @@ def test_brainstem_cut_spares_cortex_and_hippocampus(aligned):
 
 def test_cortex_is_never_relabelled_as_wm(aligned):
     """No fill may push the GM/WM boundary out into the ribbon."""
-    seg, lab, reg = aligned
+    seg, lab, reg, guard = aligned
     ctx = _mask(lab, reg, "lCbrGM", "rCbrGM")
     pushed = (seg[ctx] > 2.5)
     assert not pushed.any(), (
@@ -176,7 +201,7 @@ def test_subcortical_structures_never_read_as_grey_matter(aligned):
     list, so whether it passed came down to a neighbouring fill happening to
     swallow it.
     """
-    seg, lab, reg = aligned
+    seg, lab, reg, guard = aligned
     left_at_gm = {}
     for abbr in ("lThaPro", "rThaPro", "lVenDC", "rVenDC"):
         values = seg[_mask(lab, reg, abbr)]
@@ -186,17 +211,97 @@ def test_subcortical_structures_never_read_as_grey_matter(aligned):
     assert not left_at_gm, f"left at GM level: {left_at_gm}"
 
 
+@pytest.mark.parametrize("guard", [True, False], ids=["guard", "noguard"])
 @pytest.mark.parametrize("shift_voxels", [4, 6])
-def test_hippocampus_survives_misregistration(shift_voxels):
+def test_hippocampus_survives_misregistration(shift_voxels, guard):
     """A few millimetres of atlas error must not flood the hippocampus.
 
     The medial temporal lobe is where nonlinear registration is worst, so the
     fills have to degrade gracefully rather than cross the structure.
     """
-    seg, lab, reg = _partition(shift_voxels)
+    seg, lab, reg = _partition(shift_voxels, guard=guard)
     hip = _mask(lab, reg, "lHip", "rHip")
     blob = (seg[hip] > 2.5).mean()
     assert blob < 0.25, (
         f"{blob:.1%} of the hippocampus came out as white matter at "
         f"{shift_voxels * VX:.1f} mm of atlas error"
     )
+
+
+def _cortex_filled(seg, lab, reg):
+    return int((seg[_mask(lab, reg, "lCbrGM", "rCbrGM")] > 2.5).sum())
+
+
+def test_ventricle_fill_stops_at_cortex_behind_thin_white_matter():
+    """The ventricle fill must not cross a partial-volume gap into cortex.
+
+    Behind the atrium and under the frontal horns the white matter between
+    ventricle and sulcus is thinner than the blur, so "not white matter" has
+    a hole in it.  The fill used to run through and bury the lingual gyrus,
+    precuneus and subcallosal area along a straight 5 mm edge.  Here a
+    grey-matter-valued channel links the roof of the left ventricle to the
+    superior ribbon, and the IBSR cortex label -- which the ventricle fill
+    ignores on purpose -- offers no protection.
+    """
+    lab, p0, reg = _phantom()
+    # 4 voxels wide and 8 long: from the ventricle roof (z = 52) up to the
+    # ribbon (z = 60), within the 10-step reach of the fill.
+    p0[18:24, 54:58, 52:60] = 2.0
+
+    unguarded = _run(p0, lab)
+    assert _cortex_filled(unguarded, lab, reg), (
+        "phantom no longer exercises the leak: nothing filled without guard"
+    )
+    guarded = _run(p0, lab, _guard_atlas(lab, reg))
+    assert not _cortex_filled(guarded, lab, reg), (
+        f"{_cortex_filled(guarded, lab, reg)} cortex voxels filled through "
+        "the gap"
+    )
+
+
+def test_seed_overlapping_hippocampus_is_not_filled():
+    """An atlas seed lying on the hippocampus must not be filled.
+
+    The IBSR thalamus and ventral DC reach into the hippocampal tail and head
+    of real subjects, where Neuromorphometrics still calls the tissue
+    hippocampus.  The seeds used to survive every veto, so that overlap was
+    filled wholesale.
+    """
+    lab, p0, reg = _phantom()
+    nmm = _guard_atlas(lab, reg)
+    hip = _mask(lab, reg, "lHip", "rHip")
+    atlas = lab.copy()
+    for pre in ("l", "r"):
+        tail = (lab == reg[pre + "Hip"]).copy()
+        tail[:, 56:, :] = False
+        atlas[tail] = reg[pre + "ThaPro"]
+
+    unguarded = _run(p0, atlas)
+    assert (unguarded[hip] > 2.5).any(), (
+        "phantom no longer exercises the leak: seed not filled without guard"
+    )
+    guarded = _run(p0, atlas, nmm)
+    blob = int((guarded[hip] > 2.5).sum())
+    assert not blob, f"{blob} hippocampus voxels filled from the thalamus seed"
+
+
+def test_guard_lets_the_ventricle_fill_absorb_partial_volume():
+    """Thin grey-matter films at the ventricle wall must still be filled.
+
+    The ventricle roof on real data is lined by a partial-volume film that
+    reads as grey matter, and misregistration puts cortical parcels over it.
+    If the guard held that film, the white surface would dip under the
+    corpus callosum -- the roof problem ``ventricle_fill`` exists to solve.
+    """
+    lab, p0, reg = _phantom()
+    roof = np.zeros(lab.shape, bool)
+    for pre in ("l", "r"):
+        roof |= np.roll(lab == reg[pre + "LatVen"], 2, axis=2)
+    roof &= p0 > 2.5
+    p0[roof] = 2.0
+    nmm = _guard_atlas(lab, reg)
+    nmm[roof] = 101
+
+    seg = _run(p0, lab, nmm)
+    left = int((seg[roof] < 2.5).sum())
+    assert not left, f"{left} of {roof.sum()} roof film voxels left unfilled"

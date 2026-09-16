@@ -1231,7 +1231,84 @@ def _octagon_dilation(mask, iterations, mask_region=None):
     return out
 
 
-def ventricle_fill(p0_data, atlas_data, regions, vx=0.5, reach_mm=5.0):
+#: Neuromorphometrics structures whose grey matter no fill may enter, however
+#: thin it is.  The hippocampal tail and the medial hippocampal head sit
+#: directly under the IBSR thalamus and ventral-DC labels, which are fill
+#: seeds, so without this the seeds alone turned ~1% of the hippocampus into
+#: white matter.
+GUARD_MTL_REGIONS = (
+    "Left Hippocampus",
+    "Right Hippocampus",
+    "Left Amygdala",
+    "Right Amygdala",
+)
+
+#: Neuromorphometrics numbers its cortical parcels from 100 upwards; every
+#: label below that is subcortical, ventricular, white matter or cerebellar.
+NMM_FIRST_CORTICAL_ID = 100
+
+
+def cortex_guard(p0_data, guard_atlas):
+    """Grey matter that the white-matter fills of ``get_partition`` must spare.
+
+    The fills are driven by the warped IBSR atlas, whose only notion of cortex
+    is a label that misregistration moves around.  Dilating that label enough
+    to absorb the error protects periventricular tissue as well: at 0.5 mm the
+    partial-volume band along the ventricle wall is several voxels thick, reads
+    as grey matter, and lies within 2 mm of the atlas cortex.  Guarding it left
+    ~2 cm^3 of that band unfilled, ~0.4 cm^3 of it inside the ventricles, and
+    raised the handle count of the white-matter volume by 70-100%.
+
+    So the guard is built from the subject's tissue instead and only *located*
+    by the atlas, a second one drawn on cortical grey matter
+    (Neuromorphometrics):
+
+    - **cortex**: grey matter that survives a one-voxel opening, inside a
+      cortical parcel.  The opening keeps the ribbon (>= ~1.5 mm thick) and
+      drops partial-volume films, which is what lets the ventricle fill still
+      absorb the wall and the choroid plexus.  No margin is added around the
+      parcels: every margin tried (1 mm, and 2 or 4 mm along thick grey
+      matter) left 10-30 times more tissue unfilled outside the parcels than
+      it protected inside them, some of it inside the ventricles.
+    - **medial temporal lobe**: all grey matter in hippocampus and amygdala.
+      No thickness test here -- the tail of the hippocampus is thin, and it is
+      exactly where the atlas seeds overlap it.
+
+    Against the unguarded fills, the cortical grey matter turned into white
+    matter drops from 541 to 1 mm^3 (HR075) and from 694 to 1 mm^3 (IXI199),
+    and hippocampus and amygdala are no longer touched at all.  On atrophic
+    brains (613 -> 397 and 791 -> 201 mm^3) what is left is mostly the
+    enlarged occipital and temporal horns, filled correctly under parcels the
+    warp has shifted onto them.
+
+    Parameters
+    ----------
+    p0_data : np.ndarray
+        PVE label map (0 = background, 1 = CSF, 2 = GM, 3 = WM).
+    guard_atlas : nib.Nifti1Image
+        Neuromorphometrics label volume resampled onto the same grid.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean array, ``True`` on grey matter that must not be filled.
+    """
+    # Matched on the stored integer labels: ``get_regions_mask`` would go
+    # through ``get_fdata`` and a ~380 MB float64 copy on the working grid.
+    labels = np.asanyarray(guard_atlas.dataobj)
+    rois = pd.read_csv(_resolve_template_file("Neuromorphometrics", ".csv"), sep=";")
+    mtl_ids = rois.ROIid[rois.ROIname.isin(GUARD_MTL_REGIONS)].tolist()
+
+    gm = (p0_data >= 1.5) & (p0_data < 2.5)
+    thick_gm = binary_opening(gm, generate_binary_structure(3, 1), 1)
+    cortex = thick_gm & (labels >= NMM_FIRST_CORTICAL_ID)
+    mtl = gm & np.isin(labels, mtl_ids)
+    return cortex | mtl
+
+
+def ventricle_fill(
+    p0_data, atlas_data, regions, vx=0.5, reach_mm=5.0, guard=None
+):
     """Grow the atlas ventricle labels through the subject's own ventricle.
 
     The fill that makes the hemisphere maps usable for surface extraction has
@@ -1269,6 +1346,9 @@ def ventricle_fill(p0_data, atlas_data, regions, vx=0.5, reach_mm=5.0):
         Geodesic budget for the growth.  Raising it past ~7 mm lets the front
         reach the callosal sulcus and the medial cortex, so it is deliberately
         tight.
+    guard : np.ndarray, optional
+        Grey matter the front may neither start in nor cross, from
+        :func:`cortex_guard`.
 
     Returns
     -------
@@ -1299,11 +1379,46 @@ def ventricle_fill(p0_data, atlas_data, regions, vx=0.5, reach_mm=5.0):
         generate_binary_structure(3, 3),
         2,
     )
+    # "Not white matter" is no wall at all where the white matter between the
+    # ventricle and a sulcus is thinner than the partial-volume blur: behind
+    # the atrium (calcar avis, collateral trigone) and under the frontal horns
+    # the front used to cross it and fill the lingual gyrus, precuneus,
+    # fusiform and subcallosal cortex along a straight 5 mm edge, 0.5-0.8 cm^3
+    # per subject.  The guard stops it at the ribbon while still letting it
+    # through the thin partial-volume films the fill exists to absorb.
+    if guard is not None:
+        region &= ~guard
+    # Seeds outside the region would be kept by the dilation regardless, and
+    # the atlas ventricle is wide enough to lie on cortex and hippocampus.
+    seed &= region
     return _octagon_dilation(seed, int(round(reach_mm / vx)), region)
 
 
-def get_partition(p0_large, atlas):
-    """Partition a segmentation into left and right hemispheres."""
+def get_partition(p0_large, atlas, guard_atlas=None):
+    """Partition a segmentation into left and right hemispheres.
+
+    The deep grey nuclei and the ventricles are filled with white matter so
+    that the white surface passes over them, and everything outside the
+    hemisphere (cerebellum, brainstem, the other side) is set to CSF.
+
+    Parameters
+    ----------
+    p0_large : nib.Nifti1Image
+        PVE label map on the working grid.
+    atlas : nib.Nifti1Image
+        IBSR label volume resampled onto the same grid; drives the partition
+        and seeds the fills.
+    guard_atlas : nib.Nifti1Image, optional
+        Neuromorphometrics label volume on the same grid.  When given, no fill
+        may write white matter into cortical or medial temporal grey matter
+        (see :func:`cortex_guard`).  Without it the fills are bounded by the
+        IBSR cortex label alone, which misregistration defeats.
+
+    Returns
+    -------
+    tuple of np.ndarray
+        ``(lh, rh)`` label maps in ``[1, 3]``.
+    """
     rois = pd.read_csv(_resolve_template_file("IBSR", ".csv"), sep=";")[
         ["ROIid", "ROIabbr"]
     ]
@@ -1409,15 +1524,31 @@ def get_partition(p0_large, atlas):
     # fixes both: the seeds survive intact, and the front stops at the ribbon
     # rather than being carved back out of it afterwards.
     wm_fill = np.isin(atlas_data, [regions[r] for r in wm_regions])
-    wm_fill = _octagon_dilation(wm_fill, 10, ~gm_mask)
+    fill_region = ~gm_mask
+
+    # The subject-level guard is the one veto the seeds do not survive.  It
+    # can afford to: it holds only thick cortical grey matter and the
+    # archicortex, never a deep nucleus, so it does not reopen the putamen
+    # problem above -- but the IBSR thalamus and ventral DC do extend into
+    # the hippocampal tail and head, and keeping those seeds intact is what
+    # filled them.
+    guard = None
+    if guard_atlas is not None:
+        guard = cortex_guard(p0_data, guard_atlas)
+        wm_fill &= ~guard
+        fill_region &= ~guard
+    wm_fill = _octagon_dilation(wm_fill, 10, fill_region)
 
     # The ventricles get a subject-driven fill on top.  The veto above is
     # exactly what used to block their roof: on a brain with enlarged
     # ventricles the warp puts the atlas cortical label over the roof, so the
     # one place the blind dilation still had to reach was the one place it was
-    # forbidden from.
+    # forbidden from.  The guard does not reintroduce that block: the roof
+    # band is CSF and partial volume, neither of which it contains.
     vx = float(np.mean(p0_large.header.get_zooms()[:3])) or 0.5
-    wm_fill = wm_fill | ventricle_fill(p0_data, atlas_data, regions, vx=vx)
+    wm_fill = wm_fill | ventricle_fill(
+        p0_data, atlas_data, regions, vx=vx, guard=guard
+    )
 
     lh = np.copy(p0_data)
     lh[lh < 1] = 1

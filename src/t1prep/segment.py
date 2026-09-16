@@ -1630,8 +1630,21 @@ def save_results(
                 device,
                 is_label_atlas=True,
             )
+            # Locates the cortex the fills in ``get_partition`` must spare;
+            # IBSR has no cortical parcellation to do that with.
+            guard_atlas = get_atlas(
+                t1,
+                affine,
+                p0_large.header,
+                p0_large.affine,
+                "Neuromorphometrics",
+                warp_yx,
+                device,
+                is_label_atlas=True,
+            )
 
-            lh, rh = get_partition(p0_large, atlas)
+            lh, rh = get_partition(p0_large, atlas, guard_atlas)
+            del guard_atlas
             
             if save_fmriprep:
                 # Get the ribbon mask using lh and rh and masking GM
