@@ -2891,10 +2891,15 @@ class Viewer(QtWidgets.QMainWindow):
         self.open_paths(paths)
 
     def _already_shown(self, path: str) -> bool:
-        """Whether *path* is the surface, the atlas or an overlay on screen."""
+        """Whether *path* is the atlas, or a surface or overlay ←/→ steps through.
+
+        Every surface given counts, not only the one on screen: macOS sends
+        each of them again, and the second one used to replace the first —
+        under the intensities mapped for the first, which then fit nothing.
+        """
         return any(_same_file(path, shown) for shown in (
             self.opts.mesh_left, self.atlas_path, self.opts.overlay,
-            *(self.overlay_list or [])))
+            *(self.overlay_list or []), *(self.mesh_list or [])))
 
     def open_paths(self, paths: List[str]):
         """Show *paths*: a mesh replaces the surface, an .annot becomes the atlas.

@@ -428,6 +428,17 @@ class TestVolumeMappedOntoSurfaces(_ViewerTest):
         self.assertAlmostEqual(view.ctrl.range_min.value(), common[0], places=3)
         self.assertAlmostEqual(view.ctrl.range_max.value(), common[1], places=3)
 
+    def test_the_open_events_for_the_command_line_change_nothing(self):
+        view = self.viewer(self.central, self.pial, "--volume", self.volume)
+        shown = view.opts.overlay
+        # macOS sends one for every surface given, after the window is up
+        view.open_paths([self.central])
+        view.open_paths([self.pial])
+        self.settle()
+        self.assertTrue(sv._same_file(view.opts.mesh_left, self.central))
+        self.assertEqual(view.opts.overlay, shown)
+        np.testing.assert_allclose(self.values(view), self.x, atol=1e-3)
+
     def test_an_overlay_is_not_replaced(self):
         view = self.viewer(self.MESH, "--overlay", self.one_sided,
                            "--volume", self.volume)

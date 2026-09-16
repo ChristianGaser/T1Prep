@@ -1495,12 +1495,14 @@ class TestFinderOpenEventsSurface(unittest.TestCase):
             mesh_left = None
             overlay = None
 
-        def __init__(self, mesh=None, overlay=None, atlas=None, overlays=()):
+        def __init__(self, mesh=None, overlay=None, atlas=None, overlays=(),
+                     meshes=()):
             self.opts = self._Opts()
             self.opts.mesh_left = mesh
             self.opts.overlay = overlay
             self.atlas_path = atlas
             self.overlay_list = list(overlays)
+            self.mesh_list = list(meshes)
 
     def test_the_displayed_surface_is_recognised(self):
         stub = self._Stub(mesh="/data/lh.central.gii")
@@ -1514,6 +1516,12 @@ class TestFinderOpenEventsSurface(unittest.TestCase):
         self.assertTrue(stub._already_shown("/data/lh.aparc.annot"))
         self.assertTrue(stub._already_shown("/data/lh.thickness"))
         self.assertFalse(stub._already_shown("/data/lh.other"))
+
+    def test_every_surface_given_counts_not_only_the_one_on_screen(self):
+        stub = self._Stub(mesh="/a/lh.pial.gii",
+                          meshes=["/a/lh.pial.gii", "/b/lh.pial.gii"])
+        self.assertTrue(stub._already_shown("/b/lh.pial.gii"))
+        self.assertFalse(stub._already_shown("/c/lh.pial.gii"))
 
     def test_nothing_displayed_yet(self):
         self.assertFalse(self._Stub()._already_shown("/data/lh.central.gii"))
