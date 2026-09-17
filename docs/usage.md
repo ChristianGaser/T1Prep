@@ -176,12 +176,17 @@ inside &lt;DIR&gt;.
 ## Quality measures
 
 The JSON report in `report/` carries a `qualitymeasures` block. Alongside the
-Euler numbers (`euler_lh`, `euler_rh`, `EC_abs`) it reports glued sulci:
+Euler numbers (`euler_lh`, `euler_rh`, `EC_abs`) it reports glued sulci, the
+shape of the thickness distribution and the reference of the sulcal barrier:
 
 | Measure | Meaning |
 |---------|---------|
 | `glued_lh`, `glued_rh` | Percentage of central-surface vertices touching a facing patch of the same surface. Ideal 0; lower is better. |
 | `glued_lh_sigma`, `glued_rh_sigma` | Present only when the surface was re-extracted at a reduced `sulci_sigma_factor` (see below). |
+| `thickness_skew_lh`, `thickness_skew_rh` | Skewness of the final thickness over vertices >= 1 mm. Higher means a longer upper tail. |
+| `thickness_skew_asym` | Left minus right of the above. |
+| `thickness_high_lh`, `thickness_high_rh` | Percentage of vertices thicker than 1.6x the median thickness of the hemisphere. |
+| `barrier_ref_lh`, `barrier_ref_rh`, `barrier_ref_shared` | Reference thickness (mm) the sulcal-barrier gate of PBT is derived from, per hemisphere and their mean, which gates both. |
 
 A glued (buried) sulcus is one whose two banks were never separated, so the
 surface touches itself. This is *contact*, not a self-intersection — the
@@ -196,6 +201,30 @@ The parameter responds as a step rather than a slope (measured: glued
 vertices roughly triple between 0.60 and 0.75), and lowering it does not help
 every hemisphere, which is why the choice is made per hemisphere from the
 measurement rather than by changing the default.
+
+### Thickness distribution
+
+Residual overestimation of thickness -- a glued sulcus the barrier did not
+open, a thick patch in the insula -- stretches the upper tail of the thickness
+histogram. Plain skewness does not show it: the medial wall and other
+near-zero values dominate the lower tail, and over all vertices the skewness
+was negative on every one of 38 test hemispheres. Leaving out the values below
+1 mm turns it into an upper-tail measure that follows independent signs of
+fused sulci even after controlling for the median thickness.
+
+Read it with its limits in mind:
+
+* It is a flag, not a threshold. On the test hemispheres it ranged from -0.36
+  to 0.77 (median 0.22), and thick or young cortex reads higher.
+* It catches clearly implausible values: +2.5 mm on 1% of the vertices moves
+  it by about two between-subject standard deviations. +1.5 mm on 2% stays
+  inside the normal spread.
+* Overestimation spread over the whole hemisphere shifts the histogram rather
+  than its tail and goes unnoticed; so does anything below 1% of the surface.
+  It does not say where the values are.
+* The two hemispheres of a subject agree closely (rank correlation 0.95; mean
+  |lh - rh| 0.08, largest 0.19), so `thickness_skew_asym` is the most
+  sensitive entry. Use `thickness_high_*` alongside it.
 
 ## Naming behaviour
 * CAT12 style (default): Uses legacy folder and file names
