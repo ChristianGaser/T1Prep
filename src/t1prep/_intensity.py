@@ -74,18 +74,127 @@ def piecewise_linear_scaling(input_img, label_img):
     return Ym / 3
 
 
-def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy=False):
-    """Apply bias field correction to a brain image."""
-    subdivide = True
-    bcl = True
+#: Subsampling step of the bias-field fits.  The field is smooth, so it is
+#: estimated on every fifth voxel and evaluated on the full grid.
+_FIT_SUBSAMPLE = 5
+
+
+def _fit_log_field(full, data_sub, mask_sub, spacing, steps, stopthr, center):
+    """Fit a smooth log-intensity field with nxbc's N3-style iteration.
+
+    Each step sharpens the log-intensity histogram of the voxels in
+    ``mask_sub`` (Wiener deconvolution of a Gaussian blur), fits a B-spline
+    to the difference between the current and the sharpened values, and
+    removes that spline.  The spline control points are accumulated over
+    four levels; a level is left once the field update falls below
+    ``stopthr`` (coefficient of variation of the multiplicative update), and
+    the knot spacing is halved between levels.
+
+    Parameters
+    ----------
+    full : np.ndarray
+        Full-resolution volume; only its grid is used, to evaluate the result.
+    data_sub : np.ndarray
+        ``full`` subsampled by ``_FIT_SUBSAMPLE``.
+    mask_sub : np.ndarray
+        Boolean mask on the subsampled grid; the voxels the field is fitted on.
+    spacing : float
+        Initial knot spacing, in units of the normalised grid.
+    steps : int
+        Maximum number of iterations per level.
+    stopthr : float
+        Convergence threshold that moves the fit on to the next level.
+    center : bool
+        Remove the mean of each update before fitting it, so the field does
+        not absorb a global intensity offset.
+
+    Returns
+    -------
+    np.ndarray
+        The fitted log field on the grid of ``full``.
+    """
     Z = 0.01
     Nbins = 256
     maxlevel = 4
     fwhm = 0.2
-    subsamp = 5
-    stopthr = 5e-4
 
-    dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
+    dataSubVoxSize = 1 / (np.array(data_sub.shape) - 1)
+    dataVoxSize = dataSubVoxSize / _FIT_SUBSAMPLE
+
+    datalog = data_sub.astype(np.float32)
+    datalog[mask_sub] = np.log(datalog[mask_sub])
+    datalog[np.logical_not(mask_sub) | ~np.isfinite(datalog)] = 0
+    datalogmaskedcur = np.copy(datalog[mask_sub])
+    fit_data = np.zeros_like(datalog)
+
+    levels = [lvl for lvl in range(maxlevel) for _ in range(steps)]
+    levelfwhm = fwhm * np.ones(maxlevel)
+
+    splsm3d = SplineSmooth3DUnregularized(
+        datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=mask_sub
+    )
+    predictor = SplineSmooth3D(
+        full, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False
+    )
+    nextlevel = 0
+    controlField = None
+
+    for N in range(len(levels)):
+        if levels[N] < nextlevel:
+            continue
+        hist, histvaledge, histval, histbinwidth = distrib_kde(
+            datalogmaskedcur, Nbins, kernfn=kernelfntri, binCentreLimits=True
+        )
+        thisFWHM = levelfwhm[levels[N]]
+        thisSD = thisFWHM / math.sqrt(8 * math.log(2))
+        mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
+        histfilt = wiener_filter_withpad(hist, mfilt, mfiltmid, Z)
+        histfiltclip = np.clip(histfilt, 0, None)
+        uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval, mfilt, hist)
+        datalogmaskedupd = map_Eu_v(histval, uest, datalogmaskedcur)
+        update = datalogmaskedcur - datalogmaskedupd
+        if center:
+            update = update - np.mean(update)
+        fit_data[mask_sub] = update
+        splsm3d.fit(fit_data, reportingLevel=0)
+        field_masked = splsm3d.predict()[mask_sub]
+        bcratio = np.exp(field_masked)
+        conv = bcratio.std() / bcratio.mean()
+        datalogmaskedcur = datalogmaskedcur - field_masked
+        if controlField is None:
+            controlField = splsm3d.P.copy()
+        else:
+            controlField += splsm3d.P
+        if conv < stopthr:
+            nextlevel = levels[N] + 1
+        # Halve the knot spacing when moving on to the next level.
+        if (N + 1) < len(levels) and (
+            nextlevel > levels[N] or levels[N + 1] != levels[N]
+        ):
+            splsm3d.P = controlField
+            splsm3d = splsm3d.promote()
+            predictor = predictor.promote()
+            controlField = splsm3d.P
+
+    splsm3d.P = controlField
+    predictor.P = splsm3d.P
+    return predictor.predict()
+
+
+def _subsample(vol):
+    """Every ``_FIT_SUBSAMPLE``-th voxel along each axis."""
+    step = _FIT_SUBSAMPLE
+    return vol[::step, ::step, ::step]
+
+
+def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy=False):
+    """Apply bias field correction to a brain image.
+
+    With ``seg`` the field is fitted on its white matter and the corrected
+    image is mapped piecewise-linearly onto the label scale; without it, on a
+    white-matter-like mask estimated from low-gradient bright voxels.
+    ``get_discrepancy`` is unused.
+    """
     brain0 = brain.get_fdata().copy()
 
     if seg is not None:
@@ -115,89 +224,17 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
 
         mask = find_largest_cluster(mask)
 
-    if subsamp:
-        offset = 0
-        dataSub = brain0[offset::subsamp, offset::subsamp, offset::subsamp]
-        wm_mask = mask[offset::subsamp, offset::subsamp, offset::subsamp]
-        dataSubVoxSize = dataVoxSize * subsamp
-    else:
-        dataSub = brain0
-        wm_mask = mask
-        
-    dataSubVoxSize = 1 / (np.array(dataSub.shape) - 1)
-    dataVoxSize = dataSubVoxSize / subsamp
-
-    datalog = dataSub.astype(np.float32)
-    
-    datalog[wm_mask] = np.log(datalog[wm_mask])
-    if seg is None and np.sum(np.size(datalog[wm_mask])) < 100:
+    wm_mask = _subsample(mask)
+    if seg is None and np.count_nonzero(wm_mask) < 100:
         print("Warning: Stopped initial bias field correction since estimated WM mask is too small.")
         return brain
-        
-    datalog[np.logical_not(wm_mask) | ~np.isfinite(datalog)] = 0
-    datalogmasked = datalog[wm_mask]
-    fit_data = np.zeros_like(datalog)
-    datalogmaskedcur = np.copy(datalogmasked)
 
-    levels = [lvl for lvl in range(maxlevel) for _ in range(steps)]
-    levelfwhm = (
-        fwhm / (np.arange(maxlevel) + 1) if not subdivide else fwhm * np.ones(maxlevel)
+    log_bias = _fit_log_field(
+        brain0, _subsample(brain0), wm_mask, spacing, steps,
+        stopthr=5e-4, center=True,
     )
 
-    splsm3d = SplineSmooth3DUnregularized(
-        datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=wm_mask
-    )
-    predictor = SplineSmooth3D(
-        brain0, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False
-    )
-    datalogcur = np.copy(datalog)
-    nextlevel = 0
-    controlField = None
-    chosenkernelfn = kernelfntri
-
-    for N in range(len(levels)):
-        if levels[N] < nextlevel:
-            continue
-        hist, histvaledge, histval, histbinwidth = distrib_kde(
-            datalogmaskedcur, Nbins, kernfn=chosenkernelfn, binCentreLimits=bcl
-        )
-        thisFWHM = levelfwhm[levels[N]]
-        thisSD = thisFWHM / math.sqrt(8 * math.log(2))
-        mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
-        histfilt = wiener_filter_withpad(hist, mfilt, mfiltmid, Z)
-        histfiltclip = np.clip(histfilt, 0, None)
-        uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval, mfilt, hist)
-        datalogmaskedupd = map_Eu_v(histval, uest, datalogmaskedcur)
-        logbc = datalogmaskedcur - datalogmaskedupd
-        logbc = logbc - np.mean(logbc)
-        fit_data[wm_mask] = logbc
-        splsm3d.fit(fit_data, reportingLevel=0)
-        log_bias_field = splsm3d.predict()
-        log_bias_masked = log_bias_field[wm_mask]
-        bcratio = np.exp(log_bias_masked)
-        conv = bcratio.std() / bcratio.mean()
-        datalogmaskedcur = datalogmaskedcur - log_bias_masked
-        if controlField is None:
-            controlField = splsm3d.P.copy()
-        else:
-            controlField += splsm3d.P
-        datalogcur[wm_mask] = datalogmaskedcur
-        if conv < stopthr:
-            nextlevel = levels[N] + 1
-        if (
-            subdivide
-            and (N + 1) < len(levels)
-            and (nextlevel > levels[N] or levels[N + 1] != levels[N])
-        ):
-            splsm3d.P = controlField
-            splsm3d = splsm3d.promote()
-            predictor = predictor.promote()
-            controlField = splsm3d.P
-
-    splsm3d.P = controlField
-    predictor.P = splsm3d.P
-
-    bias0 = np.exp(predictor.predict())
+    bias0 = np.exp(log_bias)
     tissue_idx = bias0 != 0
     brain0[tissue_idx] /= bias0[tissue_idx]
     if seg is not None:
@@ -349,20 +386,19 @@ def fit_intensity_field(
     brain, seg, limit=None, steps=1000, spacing=1.0, stopthr=5e-4, use_prctile=3,
     exclude=None
 ):
-    """Estimate a smooth bias-like intensity field."""
+    """Estimate a smooth bias-like intensity field.
+
+    The field is fitted on the voxels whose label lies in ``(limit[0],
+    limit[1]]``, minus ``exclude``, and optionally trimmed to the 5-95th
+    intensity percentile (``use_prctile``: 1 = lower, 2 = upper, 3 = both).
+    It is returned on the image grid, scaled so that its median over the
+    fitted voxels matches the image's.
+    """
     if limit is None:
         limit = [2.75, 3]
     if not (isinstance(limit, (list, tuple)) and len(limit) == 2):
         raise ValueError("limit must be a 2-element list or tuple")
 
-    subdivide = True
-    Z = 0.01
-    Nbins = 256
-    maxlevel = 4
-    fwhm = 0.2
-    subsamp = 5
-
-    dataVoxSize = nib.as_closest_canonical(brain).header.get_zooms()[:3]
     brain0 = brain.get_fdata().copy()
     seg0 = seg.get_fdata().copy()
     mask = (seg0 > limit[0]) & (seg0 <= limit[1])
@@ -374,17 +410,8 @@ def fit_intensity_field(
         if guarded.sum() >= max(1000, 0.05 * mask.sum()):
             mask = guarded
 
-    if subsamp:
-        offset = 0
-        dataSub = brain0[offset::subsamp, offset::subsamp, offset::subsamp]
-        maskSub = mask[offset::subsamp, offset::subsamp, offset::subsamp]
-        dataSubVoxSize = dataVoxSize * subsamp
-    else:
-        dataSub = brain0
-        maskSub = mask
-
-    dataSubVoxSize = 1 / (np.array(dataSub.shape) - 1)
-    dataVoxSize = dataSubVoxSize / subsamp
+    dataSub = _subsample(brain0)
+    maskSub = _subsample(mask)
 
     if use_prctile == 3:
         p5, p95 = np.percentile(dataSub[maskSub], [5, 95])
@@ -396,74 +423,14 @@ def fit_intensity_field(
         p5 = np.percentile(dataSub[maskSub], 5)
         maskSub = maskSub & (dataSub > p5)
 
-    datalog = dataSub.astype(np.float32)
-    if np.any(datalog[maskSub] <= 0):
+    if np.any(dataSub[maskSub].astype(np.float32) <= 0):
         raise ValueError(
             "Non-positive values found in the masked data. Adjust mask or preprocess the image."
         )
-    datalog[maskSub] = np.log(datalog[maskSub])
-    datalog[np.logical_not(maskSub) | ~np.isfinite(datalog)] = 0
-    datalogmasked = datalog[maskSub]
-    fit_data = np.zeros_like(datalog)
-    datalogmaskedcur = np.copy(datalogmasked)
 
-    levels = [lvl for lvl in range(maxlevel) for _ in range(steps)]
-    levelfwhm = (
-        fwhm / (np.arange(maxlevel) + 1) if not subdivide else fwhm * np.ones(maxlevel)
-    )
-
-    splsm3d = SplineSmooth3DUnregularized(
-        datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=maskSub
-    )
-    predictor = SplineSmooth3D(
-        brain0, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False
-    )
-
-    datalogcur = np.copy(datalog)
-    nextlevel = 0
-    controlField = None
-    chosenkernelfn = kernelfntri
-
-    for N in range(len(levels)):
-        if levels[N] < nextlevel:
-            continue
-        hist, histvaledge, histval, histbinwidth = distrib_kde(
-            datalogmaskedcur, Nbins, kernfn=chosenkernelfn, binCentreLimits=True
-        )
-        thisFWHM = levelfwhm[levels[N]]
-        thisSD = thisFWHM / np.sqrt(8 * np.log(2))
-        mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
-        histfilt = wiener_filter_withpad(hist, mfilt, mfiltmid, Z)
-        histfiltclip = np.clip(histfilt, 0, None)
-        uest, u1, conv1, conv2 = Eu_v(histfiltclip, histval, mfilt, hist)
-        datalogmaskedupd = map_Eu_v(histval, uest, datalogmaskedcur)
-        diff = datalogmaskedcur - datalogmaskedupd
-        fit_data[maskSub] = diff
-        splsm3d.fit(fit_data, reportingLevel=0)
-        diff_field = splsm3d.predict()
-        diff_masked = diff_field[maskSub]
-        bcratio = np.exp(diff_masked)
-        conv = bcratio.std() / bcratio.mean()
-        datalogmaskedcur = datalogmaskedcur - diff_masked
-        if controlField is None:
-            controlField = splsm3d.P.copy()
-        else:
-            controlField += splsm3d.P
-        if conv < stopthr:
-            nextlevel = levels[N] + 1
-        if (
-            subdivide
-            and (N + 1) < len(levels)
-            and (nextlevel > levels[N] or levels[N + 1] != levels[N])
-        ):
-            splsm3d.P = controlField
-            splsm3d = splsm3d.promote()
-            predictor = predictor.promote()
-            controlField = splsm3d.P
-
-    splsm3d.P = controlField
-    predictor.P = splsm3d.P
-    field = np.exp(predictor.predict())
+    field = np.exp(_fit_log_field(
+        brain0, dataSub, maskSub, spacing, steps, stopthr=stopthr, center=False,
+    ))
     mean_raw = np.median(brain0[mask])
     mean_field = np.median(field[mask])
     field = field * (mean_raw / mean_field)
