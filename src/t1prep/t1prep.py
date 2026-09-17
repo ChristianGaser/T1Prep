@@ -327,6 +327,66 @@ def _merge_glued_sulci_qa(report_dir: str, bname: str) -> None:
             pass
 
 
+def _merge_barrier_reference_qa(report_dir: str, bname: str) -> None:
+    """Fold the per-hemisphere sulcal-barrier references into the report JSON.
+
+    ``surface_estimation`` publishes the reference thickness its barrier gate
+    was derived from in ``{bname}_barrier-ref-{hemi}.json``, so that the two
+    concurrent hemisphere processes can gate with their mean.  Reported per
+    hemisphere and shared: the reference follows cortical thickness, and a
+    hemisphere far from its partner points at fused sulci.  Purely additive,
+    like the glued-sulcus merge.
+    """
+    sidecars = sorted(
+        glob.glob(os.path.join(report_dir, f"{bname}_barrier-ref-*.json"))
+    )
+    if not sidecars:
+        return
+    refs = {}
+    report_file = ""
+    for path in sidecars:
+        try:
+            with open(path) as fh:
+                data = json.load(fh)
+            if data.get("reference"):
+                refs[data["hemi"]] = float(data["reference"])
+            report_file = data.get("report_file") or report_file
+        except (OSError, ValueError, KeyError):
+            continue
+    report_path = os.path.join(report_dir, report_file) if report_file else ""
+    if refs and report_path and os.path.exists(report_path):
+        try:
+            with open(report_path) as fh:
+                report = json.load(fh)
+            qa = report.setdefault("qualitymeasures", {})
+            for hemi, ref in refs.items():
+                qa[f"barrier_ref_{hemi}"] = {
+                    "value": round(ref, 4),
+                    "desc": (
+                        "Reference thickness in mm the sulcal-barrier gate of "
+                        "this hemisphere is derived from (trimmed mean of "
+                        "dist_WM + dist_CSF in the cortical band)"
+                    ),
+                }
+            if len(refs) == 2:
+                qa["barrier_ref_shared"] = {
+                    "value": round(sum(refs.values()) / 2.0, 4),
+                    "desc": (
+                        "Mean of both hemisphere references; the barrier gate "
+                        "of both hemispheres is 1.5x this value"
+                    ),
+                }
+            with open(report_path, "w") as fh:
+                json.dump(report, fh, indent=2)
+        except (OSError, ValueError):
+            pass
+    for path in sidecars:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def _process_single(
     input_file: str,
     *,
@@ -555,6 +615,7 @@ def _process_single(
             return 1
 
         _merge_glued_sulci_qa(str(report_dir), bname)
+        _merge_barrier_reference_qa(str(report_dir), bname)
 
     # ------------------------------------------------------------------ timing
     elapsed = time.perf_counter() - start
