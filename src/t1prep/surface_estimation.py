@@ -72,6 +72,7 @@ from .bids_derivatives import write_sidecar
 # ---------------------------------------------------------------------------
 from .utils import NameTable, ProgressBar
 from .glued_sulci import glued_sulci
+from .thickness_qa import HIGH_FACTOR, thickness_shape
 from .vessels import suppress_vessels_for_surface
 
 
@@ -188,7 +189,7 @@ def _pbt_kwargs(*, median_filter: int, amap: int, verbose: bool) -> dict:
         median_subsample=2,
         range_val=0.45,
         sulcal_barrier=True,
-        barrier_gmtfactor=1.5,
+        barrier_gmtfactor=1.3,
         barrier_gmtpct=90.0,
         barrier_q=0.7,
         barrier_ramp=0.5,
@@ -203,108 +204,37 @@ def _pbt_kwargs(*, median_filter: int, amap: int, verbose: bool) -> dict:
     )
 
 
-def _write_json_atomic(path: str, data: dict) -> None:
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as fh:
-        json.dump(data, fh, indent=2)
-    os.replace(tmp, path)
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except (PermissionError, OSError):
-        return True
-    return True
-
-
-def _read_barrier_reference(path: str, source: str):
-    """Reference published for *source*: a float, ``"pending"`` while a live
-    process is still computing it, or ``None``."""
-    try:
-        with open(path) as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    try:
-        if (data.get("source") != os.path.abspath(source) or
-                data.get("source_mtime") != os.path.getmtime(source)):
-            return None
-    except OSError:
-        return None
-    if data.get("reference"):
-        return float(data["reference"])
-    pid = data.get("pid")
-    if pid and pid != os.getpid() and _pid_alive(int(pid)):
-        return "pending"
-    return None
-
-
-def _shared_barrier_reference(*, log, own_vol, own_zooms, own_src: str,
-                              other_src: str, own_file: str, other_file: str,
-                              fshemi: str, report_file: str, vessel: int,
-                              pbt_kw: dict, timeout: float = 180.0):
-    """Mean sulcal-barrier reference of both hemispheres, in mm, or ``None``.
+def _barrier_references(*, own_vol, own_zooms, other_src: str, vessel: int,
+                        pbt_kw: dict):
+    """Sulcal-barrier references of this and the other hemisphere, in mm.
 
     The barrier gate is a multiple of a reference thickness estimated from the
-    label map.  Estimated per hemisphere it differs by up to 10% between the
-    two, mostly because they contain different amounts of fused sulci, and the
-    hemisphere with more fusion then gets both a looser gate and more
-    correction.  Gating both with the mean makes the corrected thickness more
-    symmetric (mean |lh-rh| 0.120 -> 0.095 mm on the five most asymmetric of
-    19 test subjects).
+    label map.  Estimated per hemisphere it differs by up to 9% between the
+    two, mostly because they contain different amounts of fused sulci, so the
+    hemisphere with more fusion would be gated by a looser criterion.  Gating
+    both with the mean of the two references applies the same criterion to
+    both; at a factor of 1.3 that reduced the mean |lh - rh| of the band
+    thickness from 0.080 to 0.069 mm on 19 test subjects (at most 0.04 mm),
+    leaving the mean thickness unchanged.
 
-    Both hemispheres run as concurrent processes, so each publishes its own
-    reference in ``own_file`` -- with a pending marker while it is computed --
-    and waits for the other one's, computing it itself when that process is
-    not running.  The estimate is deterministic, so either way both arrive at
-    the same mean.
+    The two hemispheres run as concurrent processes, so each simply estimates
+    both references itself (about 20 s for the other one).  The estimate is
+    deterministic, which makes both processes arrive at the same mean.
+
+    Returns ``(own, other)``, with ``other`` ``None`` when the other label map
+    does not exist, or ``None`` when the installed cat-surf cannot estimate a
+    reference.
     """
     if not hasattr(cat_surf, "vol_pbt_barrier_reference"):
-        log.info("Shared barrier reference needs cat-surf with "
-                 "vol_pbt_barrier_reference; gating per hemisphere")
         return None
-
-    meta = {
-        "hemi": fshemi,
-        "report_file": report_file,
-        "source": os.path.abspath(own_src),
-        "source_mtime": os.path.getmtime(own_src),
-        "pid": os.getpid(),
-        "reference": None,
-    }
-    try:
-        _write_json_atomic(own_file, meta)
-    except OSError:
-        pass
     own = cat_surf.vol_pbt_barrier_reference(own_vol, voxelsize=own_zooms,
                                              **pbt_kw)
-    meta["reference"] = own
-    try:
-        _write_json_atomic(own_file, meta)
-    except OSError:
-        pass
-
     if not os.path.exists(other_src):
-        log.info("Barrier reference %.3f mm (no contralateral hemisphere)", own)
-        return None
-
-    deadline = time.monotonic() + timeout
-    other = _read_barrier_reference(other_file, other_src)
-    while other == "pending" and time.monotonic() < deadline:
-        time.sleep(1.0)
-        other = _read_barrier_reference(other_file, other_src)
-    if not isinstance(other, float):
-        _, other_vol, other_zooms = _pbt_input(other_src, vessel)
-        other = cat_surf.vol_pbt_barrier_reference(
-            other_vol, voxelsize=other_zooms, **pbt_kw)
-
-    shared = 0.5 * (own + other)
-    log.info("Barrier reference %.3f mm, contralateral %.3f mm -> shared "
-             "%.3f mm", own, other, shared)
-    return shared
+        return own, None
+    _, other_vol, other_zooms = _pbt_input(other_src, vessel)
+    other = cat_surf.vol_pbt_barrier_reference(other_vol,
+                                               voxelsize=other_zooms, **pbt_kw)
+    return own, other
 
 
 # ===========================================================================
@@ -469,29 +399,33 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
         img, vol, zooms = _pbt_input(hemi_vol, vessel)
 
     # Both hemispheres are gated by the same reference thickness.
+    barrier_refs = {}
     if shared_barrier_ref:
         other_hemi = (("R" if side == "left" else "L") if bids_naming
                       else ("rh" if fshemi == "lh" else "lh"))
-        other_fshemi = "rh" if fshemi == "lh" else "lh"
         other_vol = os.path.join(mri, names.substitute(
             "Hemi_volume", name_columns, bname=bname, hemi=other_hemi,
             nii_ext=nii_ext))
-        report_dir = os.path.dirname(report_log) if report_log else surf
         try:
-            os.makedirs(report_dir, exist_ok=True)
             with _run_step(log, "Shared sulcal-barrier reference",
                            verbose=verbose):
-                shared_ref = _shared_barrier_reference(
-                    log=log, own_vol=vol, own_zooms=zooms, own_src=hemi_vol,
-                    other_src=other_vol,
-                    own_file=os.path.join(
-                        report_dir, f"{bname}_barrier-ref-{fshemi}.json"),
-                    other_file=os.path.join(
-                        report_dir, f"{bname}_barrier-ref-{other_fshemi}.json"),
-                    fshemi=fshemi, report_file=f("Report_file"),
-                    vessel=vessel, pbt_kw=pbt_kw)
-            if shared_ref:
-                pbt_kw["barrier_gmtref"] = shared_ref
+                refs = _barrier_references(own_vol=vol, own_zooms=zooms,
+                                           other_src=other_vol, vessel=vessel,
+                                           pbt_kw=pbt_kw)
+            if refs is None:
+                log.info("Shared barrier reference needs cat-surf with "
+                         "vol_pbt_barrier_reference; gating per hemisphere")
+            elif refs[1] is None:
+                barrier_refs = {"barrier_reference": refs[0]}
+                log.info("Barrier reference %.3f mm (no contralateral "
+                         "hemisphere)", refs[0])
+            else:
+                shared = 0.5 * (refs[0] + refs[1])
+                pbt_kw["barrier_gmtref"] = shared
+                barrier_refs = {"barrier_reference": refs[0],
+                                "barrier_reference_shared": shared}
+                log.info("Barrier reference %.3f mm, contralateral %.3f mm "
+                         "-> shared %.3f mm", refs[0], refs[1], shared)
         except Exception as exc:   # never fail the run over the shared gate
             log.warning("Shared barrier reference skipped: %s", exc)
 
@@ -826,34 +760,62 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
                 )
 
     # =====================================================================
-    # Glued-sulcus QA
+    # Surface QA: glued sulci and the shape of the thickness distribution
     # =====================================================================
-    # Measured on the surface as shipped, so the number describes what the
-    # user actually gets.  Written to a per-hemisphere sidecar rather than
-    # straight into the report: t1prep.py runs the two hemispheres as
-    # concurrent subprocesses and both resolve the same ``Report_file``.
+    # Measured on the surface and thickness as shipped, so the numbers
+    # describe what the user actually gets.  Written to a per-hemisphere
+    # sidecar rather than straight into the report: t1prep.py runs the two
+    # hemispheres as concurrent subprocesses and both resolve the same
+    # ``Report_file``.  Each measure is optional, and QA must never fail the
+    # run.
+    qa_record = {
+        "hemi": fshemi,
+        "report_file": f("Report_file"),
+        "sulci_sigma_factor": glued_sigma,
+    }
+    qa_base = len(qa_record)
+    qa_record.update(barrier_refs)
     try:
         with _run_step(log, "Glued-sulcus QA", verbose=verbose):
             v_qa, f_qa = cat_surf.read_surface(p(surf, "Mid_surface"))
             measure = glued_sulci(v_qa, f_qa)
+            qa_record.update({
+                "glued_vertices": measure["glued_vertices"],
+                "glued_fraction": measure["glued_fraction"],
+                "n_vertices": measure["n_vertices"],
+                "area": measure["area"],
+            })
+            log.info("Glued sulci: %d of %d vertices (%.3f%%)",
+                     measure["glued_vertices"], measure["n_vertices"],
+                     100.0 * measure["glued_fraction"])
+    except Exception as exc:
+        log.warning("Glued-sulcus QA skipped: %s", exc)
+
+    try:
+        with _run_step(log, "Thickness distribution QA", verbose=verbose):
+            shape = thickness_shape(cat_surf.read_values(p(surf, "GMT_shape")))
+            qa_record.update({
+                "thickness_median": shape["median"],
+                "thickness_upper_skewness": shape["upper_skewness"],
+                "thickness_high_fraction": shape["high_fraction"],
+            })
+            if shape["upper_skewness"] is not None:
+                log.info("Thickness: median %.3f mm, upper skewness %.3f, "
+                         "%.2f%% above %.1fx median",
+                         shape["median"], shape["upper_skewness"],
+                         100.0 * shape["high_fraction"], HIGH_FACTOR)
+    except Exception as exc:
+        log.warning("Thickness distribution QA skipped: %s", exc)
+
+    if len(qa_record) > qa_base:
+        try:
             report_dir = os.path.dirname(report_log) if report_log else surf
             os.makedirs(report_dir, exist_ok=True)
             sidecar = os.path.join(report_dir, f"{bname}_glued-{fshemi}.json")
             with open(sidecar, "w") as fh:
-                json.dump({
-                    "hemi": fshemi,
-                    "report_file": f("Report_file"),
-                    "glued_vertices": measure["glued_vertices"],
-                    "glued_fraction": measure["glued_fraction"],
-                    "n_vertices": measure["n_vertices"],
-                    "area": measure["area"],
-                    "sulci_sigma_factor": glued_sigma,
-                }, fh, indent=2)
-            log.info("Glued sulci: %d of %d vertices (%.3f%%)",
-                     measure["glued_vertices"], measure["n_vertices"],
-                     100.0 * measure["glued_fraction"])
-    except Exception as exc:                      # QA must never fail the run
-        log.warning("Glued-sulcus QA skipped: %s", exc)
+                json.dump(qa_record, fh, indent=2)
+        except OSError as exc:
+            log.warning("Surface QA sidecar not written: %s", exc)
 
     # =====================================================================
     # Clean up
