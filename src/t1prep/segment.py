@@ -1256,7 +1256,8 @@ def _report_euler_numbers(report_path: str, lh: np.ndarray, rh: np.ndarray) -> N
         "value": EC_abs,
         "desc": (
             "Absolute Euler number for both hemispheres "
-            "(absolute difference to ideal Euler number of 2; ideal = 0;larger values indicate more topological defects)"
+            "(absolute difference to ideal Euler number of 2; ideal = 0; "
+            "larger values indicate more topological defects)"
         ),
     }
     with open(report_path, "w") as f:
@@ -1397,15 +1398,9 @@ def save_results(
     """
     names = _output_names(opts)
 
-    # Get affine segmentations
+    # Get affine segmentations: saved as rp*, and the input of the warp
     p1_affine = p2_affine = p3_affine = None
-    if (
-        opts.save_hemilabel
-        or opts.save_mwp
-        or opts.save_wp
-        or opts.save_rp
-        or opts.atlas_list is not None
-    ):
+    if opts.save_rp or opts.needs_warp:
         p1_affine = _to_template_space(p1_large, warp_template)
         p2_affine = _to_template_space(p2_large, warp_template)
         if opts.save_csf and opts.save_rp:

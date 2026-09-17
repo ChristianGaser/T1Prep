@@ -397,21 +397,25 @@ def get_partition(p0_large, atlas, guard_atlas=None):
 
 
 def compute_euler_number(vol, threshold=2.5):
-    """Compute the Euler number of a 3D volume at a given threshold.
+    """Euler number of the surface enclosing a thresholded 3D volume.
 
-    Thresholds the volume at the given level (default 2.5, the GM/WM
-    boundary) and computes the Euler characteristic of the resulting
-    binary cubical cell complex using the formula:
+    Uses the surface convention of FreeSurfer and CAT12: a topologically
+    perfect hemisphere (one connected component, no handles, no cavities)
+    has Euler number 2.  Each handle lowers it by 2; each further connected
+    component or enclosed cavity raises it by 2, so the two kinds of defect
+    can cancel.
+
+    The surface is not built.  The volume is thresholded at the given level
+    (default 2.5, the GM/WM boundary), and the Euler characteristic of the
+    resulting binary cubical cell complex is
 
         chi = V - E + F - C
 
     where V = foreground voxels, E = foreground edges (6-connected
     adjacent pairs), F = foreground faces (2x2 blocks), and C =
-    foreground cubes (2x2x2 blocks).
-
-    For a topologically perfect hemisphere (single connected component,
-    no handles), chi = 1.  Each topological defect (handle/tunnel)
-    decreases chi by 1.
+    foreground cubes (2x2x2 blocks).  That is the characteristic of the
+    solid, which is 1 for a ball; the surface bounding a solid has twice
+    its Euler characteristic, so ``2 * chi`` is returned.
 
     Parameters
     ----------
@@ -423,7 +427,7 @@ def compute_euler_number(vol, threshold=2.5):
     Returns
     -------
     int
-        Euler characteristic of the binary volume.
+        Euler number of the enclosing surface (``2 * chi``).
     """
     b = vol >= threshold
 
@@ -456,4 +460,4 @@ def compute_euler_number(vol, threshold=2.5):
         & b[:-1, 1:, 1:] & b[1:, 1:, 1:]
     ))
 
-    return V - E + F - C
+    return 2 * (V - E + F - C)

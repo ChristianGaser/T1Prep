@@ -25,7 +25,7 @@ if str(_SRC) not in _sys.path:
     _sys.path.insert(0, str(_SRC))
 
 from t1prep._atlas import resolve_template_file
-from t1prep._partition import get_partition
+from t1prep._partition import compute_euler_number, get_partition
 
 SHAPE = (72, 96, 72)
 VX = 0.5
@@ -306,3 +306,48 @@ def test_guard_lets_the_ventricle_fill_absorb_partial_volume():
     seg = _run(p0, lab, nmm)
     left = int((seg[roof] < 2.5).sum())
     assert not left, f"{left} of {roof.sum()} roof film voxels left unfilled"
+
+
+# ---------------------------------------------------------------------------
+# Euler number (surface convention)
+# ---------------------------------------------------------------------------
+
+
+def _grid(n=41):
+    z, y, x = np.mgrid[:n, :n, :n] - n // 2
+    return x, y, z
+
+
+def _ball(radius, shift=0):
+    x, y, z = _grid()
+    return (x - shift) ** 2 + y ** 2 + z ** 2 < radius ** 2
+
+
+def _torus(big=10, small=4, shift=0):
+    x, y, z = _grid()
+    r = np.sqrt((x - shift) ** 2 + y ** 2)
+    return (r - big) ** 2 + z ** 2 < small ** 2
+
+
+@pytest.mark.parametrize(
+    "shape, expected",
+    [
+        (lambda: _ball(12), 2),                               # sphere
+        (lambda: _torus(), 0),                                # one handle
+        (lambda: _torus(big=5, small=2, shift=-10)
+         | _torus(big=5, small=2, shift=10), 0),              # two rings,
+                                                              # 6 voxels apart
+        (lambda: _ball(12) & ~_ball(5), 4),                   # enclosed cavity
+        (lambda: _ball(6, shift=-10) | _ball(6, shift=10), 4),  # two components
+    ],
+    ids=["ball", "torus", "two-tori", "cavity", "two-balls"],
+)
+def test_euler_number_uses_the_surface_convention(shape, expected):
+    vol = np.where(shape(), 3.0, 1.0)
+    assert compute_euler_number(vol, threshold=2.5) == expected
+
+
+def test_euler_number_of_a_double_torus():
+    # Two rings that overlap in the middle make one genus-2 solid.
+    double = _torus(big=8, small=3, shift=-8) | _torus(big=8, small=3, shift=8)
+    assert compute_euler_number(np.where(double, 3.0, 1.0)) == -2

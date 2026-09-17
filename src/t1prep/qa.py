@@ -79,7 +79,11 @@ _RATING_BOUNDS: dict[str, tuple[float, float]] = {
     "contrastr": (1.0 / 3.0, 0.0),   # cat_stat_marks default: CM=[1/3 0]
     "res_RMS":   (0.50, 3.00),       # cat_stat_marks default
     "res_ECR":   (0.0081, 0.0481),   # effective resolution of 0.5 .. 3.0 mm
-    "EC_abs":    (21.1904, 128.6649),
+    # Not calibrated by qa_calibrate.py and not used for a mark yet.  These
+    # are the bounds of the former solid-volume convention (ideal 1),
+    # doubled for the surface convention (ideal 2); per report the exact
+    # conversion is 2 * old +- 4, depending on the sign of each chi - 1.
+    "EC_abs":    (42.3808, 257.3298),
 }
 
 

@@ -181,6 +181,8 @@ shape of the thickness distribution and the reference of the sulcal barrier:
 
 | Measure | Meaning |
 |---------|---------|
+| `euler_lh`, `euler_rh` | Euler number of the surface enclosing the white matter of each hemisphere label (FreeSurfer/CAT12 convention). Ideal 2; each handle lowers it by 2, each extra component or enclosed cavity raises it by 2. Reports written before September 2026 used the solid-volume convention (ideal 1), i.e. half these values. |
+| `EC_abs` | `abs(euler_lh - 2) + abs(euler_rh - 2)`. Ideal 0; larger means more topological defects. |
 | `glued_lh`, `glued_rh` | Percentage of central-surface vertices touching a facing patch of the same surface. Ideal 0; lower is better. |
 | `glued_lh_sigma`, `glued_rh_sigma` | Present only when the surface was re-extracted at a reduced `sulci_sigma_factor` (see below). |
 | `thickness_skew_lh`, `thickness_skew_rh` | Skewness of the final thickness over vertices >= 1 mm. Higher means a longer upper tail. |
