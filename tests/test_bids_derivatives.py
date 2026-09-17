@@ -19,7 +19,7 @@ from t1prep.bids_derivatives import (
     write_sidecar,
 )
 from t1prep.bbreg import save_boldref_to_t1w_xfm
-from t1prep.itk_transforms import load_affine_itk_txt, save_affine_itk_txt
+from t1prep.transforms import load_affine_itk_txt, save_affine_itk_txt
 
 
 # ---------------------------------------------------------------------------

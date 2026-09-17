@@ -1,4 +1,4 @@
-"""Tests for :mod:`t1prep._segment_utils`."""
+"""Tests for :mod:`t1prep._intensity`."""
 
 import numpy as np
 import pytest
@@ -11,7 +11,7 @@ _SRC = _Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in _sys.path:
     _sys.path.insert(0, str(_SRC))
 
-from t1prep._segment_utils import scale_intensity
+from t1prep._intensity import scale_intensity
 
 
 def _reference(x, low=0.5, high=99.5):

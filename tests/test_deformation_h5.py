@@ -1,4 +1,4 @@
-"""Tests for the ANTs/ITK composite writer in :mod:`t1prep.segment`.
+"""Tests for the ANTs/ITK composite writer in :mod:`t1prep.transforms`.
 
 The oracle for the point mapping is ``torch``'s own ``grid_sample`` /
 ``affine_grid``, because that is the convention deepmriprep's ``warp_xy`` /
@@ -22,7 +22,7 @@ _SRC = _Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in _sys.path:
     _sys.path.insert(0, str(_SRC))
 
-from t1prep.segment import save_deformation_h5
+from t1prep.transforms import save_deformation_h5
 
 RAS2LPS = np.diag([-1.0, -1.0, 1.0])
 

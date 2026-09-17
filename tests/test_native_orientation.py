@@ -66,9 +66,9 @@ def test_stamping_the_affine_directly_corrupts_the_image(volume, axcodes):
 def test_label_and_image_agree_after_canonicalising(volume, axcodes):
     """Both operands must be canonicalised before they can be paired.
 
-    Mirrors the pairing in ``save_results``: the label is stored in the native
-    orientation, the input may be stored in another, and the bias fit reads
-    them as plain arrays.
+    Mirrors the pairing in ``_save_native_outputs``: the label is stored in the
+    native orientation, the input may be stored in another, and the bias fit
+    reads them as plain arrays.
     """
     affine = _affine(tuple(axcodes), SHAPE)
     label = np.zeros(SHAPE, dtype=np.float32)

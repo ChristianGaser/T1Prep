@@ -23,7 +23,7 @@ import numpy as np
 # Command-line behaviour shared by every T1Prep tool: no argument prints the
 # synopsis, --help the full description, and only "--" options are advertised.
 from .cli_help import ArgumentParser
-from .itk_transforms import save_affine_itk_txt
+from .transforms import save_affine_itk_txt
 
 __all__ = ["bbregister", "save_boldref_to_t1w_xfm", "main"]
 

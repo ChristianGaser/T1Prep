@@ -16,7 +16,6 @@ optionally atlas names:
 import os
 import sys
 import warnings
-import platform
 
 # Suppress urllib3/LibreSSL warning before any transitive imports trigger it
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
@@ -31,15 +30,15 @@ import cat_surf
 import torch
 import argparse
 import warnings
-import math
 import shutil
 import fill_voids
 import json
 import random
 import time
 import subprocess
-import tempfile
 import sentry_sdk
+from dataclasses import dataclass
+from typing import NamedTuple, Optional
 import nibabel as nib
 import torch.nn.functional as F
 import numpy as np
@@ -61,9 +60,12 @@ from .qa import estimate_qa
 from scipy.ndimage import (
     binary_closing,
     generate_binary_structure,
-    map_coordinates,
 )
-from .itk_transforms import save_affine_itk_txt
+from .transforms import (
+    save_affine_itk_txt,
+    save_deformation_h5,
+    save_deformation_spm,
+)
 from .bids_derivatives import (
     write_dataset_description,
     write_sidecar,
@@ -77,33 +79,24 @@ from .utils import (
     get_filenames,
     get_volume_native_space,
     progress_bar,
-    DATA_PATH_T1PREP,
     TEMPLATE_PATH_T1PREP,
 )
-from ._segment_utils import (
-    scale_intensity,
-    correct_bias_field,
-    unsmooth_kernel,
-    get_atlas,
-    get_partition,
-    compute_euler_number,
-    cleanup_vessels,
-    correct_label_map,
+from ._atlas import get_atlas
+from ._intensity import (
     apply_LAS,
-    handle_lesions,
-    normalize_to_sum1,
+    correct_bias_field,
+    correct_label_map,
+    scale_intensity,
 )
+from ._lesions import handle_lesions
+from ._partition import compute_euler_number, get_partition
+from ._segment_utils import normalize_to_sum1
 from .vessels import (
     apply_blood_vessel_correction,
     blood_vessel_prior,
     protected_regions,
 )
-from ._models import (
-    MODEL_DIR,
-    MODEL_FILES,
-    all_models_present,
-    prepare_model_files,
-)
+from ._models import prepare_model_files
 from ._conv_chunk import chunked_conv3d
 from .nogm import run_segment_nogm_conventional
 from ._device import (
@@ -751,502 +744,142 @@ def final_cleanup(
         remove_file(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
 
 
-#: Reference grid the displacement fields are written on: the grid of
-#: ``tpl-MNI152NLin2009cAsym_res-01``, which is what ANTs uses for the warp
-#: it stores in fMRIPrep's ``*_mode-image_xfm.h5``.  T1Prep's own warp lives on
-#: the smaller 1.5 mm ``Template_4_GS`` grid; resampling it onto the full MNI
-#: field of view matters because ITK returns a *zero* displacement for points
-#: outside a displacement field's buffer, which would tear the transform at the
-#: template edge when fMRIPrep normalises whole-head BOLD data.
-MNI152NLIN2009CASYM_SHAPE = (193, 229, 193)
-MNI152NLIN2009CASYM_AFFINE = np.array(
-    [
-        [1.0, 0.0, 0.0, -96.0],
-        [0.0, 1.0, 0.0, -132.0],
-        [0.0, 0.0, 1.0, -78.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ]
-)
+@dataclass(frozen=True)
+class OutputOptions:
+    """Where the volume pipeline writes to, and which optional outputs it saves."""
 
-#: RAS (NIfTI) to LPS (ITK/ANTs) axis flip.
-_RAS2LPS = np.diag([-1.0, -1.0, 1.0])
+    t1_name: str
+    mri_dir: str
+    label_dir: str
+    report_dir: str
+    out_name: str
+    ext: str
+    use_bids: bool
+    save_p: bool
+    save_rp: bool
+    save_wp: bool
+    save_mwp: bool
+    save_hemilabel: bool
+    save_lesions: bool
+    save_csf: bool
+    save_fmriprep: bool
+    save_h5: bool
+    atlas_list: Optional[tuple]
 
-
-def _normalized_grid_to_ras(img: nib.Nifti1Image) -> np.ndarray:
-    """Map ``torch`` sampling-grid coordinates of ``img`` to RAS millimetres.
-
-    deepmriprep expresses every spatial mapping as a :func:`torch.nn.functional.
-    grid_sample` grid: coordinates are normalised to ``[-1, 1]`` with
-    ``align_corners=True``, and the last axis is ordered ``(x, y, z)`` where
-    ``x`` indexes the *fastest* tensor dimension.  Because ``nifti_to_tensor``
-    feeds the RAS-canonical array to torch unpermuted, that ``x`` is array axis
-    2 and ``z`` is array axis 0 — the reverse of the NIfTI axis order.
-
-    Args:
-        img: Image defining the grid (only its shape and affine are used).
-
-    Returns:
-        A 4×4 matrix mapping homogeneous ``(x, y, z)`` grid coordinates to RAS
-        millimetres.
-    """
-    img = nib.as_closest_canonical(img)
-    n0, n1, n2 = img.shape[:3]
-    grid_to_voxel = np.array(
-        [
-            [0.0, 0.0, (n0 - 1) / 2, (n0 - 1) / 2],
-            [0.0, (n1 - 1) / 2, 0.0, (n1 - 1) / 2],
-            [(n2 - 1) / 2, 0.0, 0.0, (n2 - 1) / 2],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    return img.affine @ grid_to_voxel
-
-
-def _warp_to_displacement(warp_nii: nib.Nifti1Image):
-    """Convert a deepmriprep sampling grid into an RAS displacement field.
-
-    ``warp_xy`` / ``warp_yx`` hold *absolute* normalised sampling coordinates,
-    not displacements.  ITK wants a displacement in millimetres, so subtract
-    each voxel's own position after converting the grid to RAS.
-
-    Args:
-        warp_nii: ``warp_xy`` or ``warp_yx`` as returned by ``run_warp_register``.
-
-    Returns:
-        Tuple ``(displacement, img)`` where ``displacement`` has shape
-        ``(x, y, z, 3)`` in RAS millimetres and ``img`` is the RAS-canonical
-        warp image defining its grid.
-    """
-    img = nib.as_closest_canonical(warp_nii)
-    grid = np.asarray(img.dataobj, dtype=np.float64)
-    if grid.ndim == 5:
-        grid = grid[:, :, :, 0, :]
-
-    grid_to_ras = _normalized_grid_to_ras(img)
-    target = grid @ grid_to_ras[:3, :3].T + grid_to_ras[:3, 3]
-
-    index = np.indices(grid.shape[:3], dtype=np.float64)
-    source = np.einsum("ij,jxyz->xyzi", img.affine[:3, :3], index) + img.affine[:3, 3]
-    return target - source, img
-
-
-def save_deformation_spm(
-    warp_nii: nib.Nifti1Image,
-    affine_norm: np.ndarray,
-    native_img: nib.Nifti1Image,
-    out_path: str,
-) -> None:
-    """Save the T1w-to-MNI mapping as an SPM12-compatible deformation field.
-
-    ``warp_xy`` on its own is only the non-linear half of the registration, in
-    normalised ``[-1, 1]`` sampling coordinates, stored 4-D.  SPM needs all
-    three of those things different:
-
-    * the **linear stage composed in** -- without it the field lands on the
-      wrong anatomy and roughly half the brain falls outside the native image;
-    * **millimetres** in the native image's world space, not normalised
-      coordinates;
-    * a **5-D** ``[X, Y, Z, 1, 3]`` array.  ``spm_deformations:get_def`` reads
-      ``Nii.dat(:,:,:,1,:)`` and then indexes ``d(4)`` and ``d(5)``; given a 4-D
-      field that read collapses to 3-D and SPM fails with "Index exceeds the
-      number of array elements. Index must not exceed 3."
-
-    The grid stays the warp's own -- MNI space -- because SPM's
-    ``Normalise: Write`` derives its default output bounding box from the
-    deformation's geometry, and the values are the native millimetres each of
-    those output voxels pulls from.
-
-    Args:
-        warp_nii: ``warp_xy`` as returned by ``run_warp_register``.
-        affine_norm: The 4x4 normalised affine from ``run_affine_register``,
-            mapping template-space grid coordinates to native ones.
-        native_img: Image defining the native grid (``mask``).
-        out_path: Output ``.nii`` path.
-    """
-    img = nib.as_closest_canonical(warp_nii)
-    grid = np.asarray(img.dataobj, dtype=np.float64)
-    if grid.ndim == 5:
-        grid = grid[:, :, :, 0, :]
-
-    affine_norm = np.asarray(
-        affine_norm.values if hasattr(affine_norm, "values") else affine_norm,
-        dtype=np.float64,
-    )
-    # grid holds template-normalised sampling coordinates; affine_norm carries
-    # those to native-normalised ones and the native grid-to-RAS matrix to
-    # millimetres.  The warp's own grid-to-RAS cancels out of the composition
-    # that save_deformation_h5 uses, which is why it does not appear here.
-    to_mm = _normalized_grid_to_ras(nib.as_closest_canonical(native_img)) @ affine_norm
-    mm = grid @ to_mm[:3, :3].T + to_mm[:3, 3]
-
-    out = np.ascontiguousarray(mm[:, :, :, None, :], dtype=np.float32)
-    nib.save(nib.Nifti1Image(out, img.affine), out_path)
-
-
-def _resample_displacement(
-    displacement: np.ndarray,
-    warp_img: nib.Nifti1Image,
-    out_shape,
-    out_affine: np.ndarray,
-    pre_displacement=None,
-    post_displacement=None,
-) -> np.ndarray:
-    """Interpolate an RAS displacement field onto another grid.
-
-    Extrapolates by edge replication rather than with zeros, so the field stays
-    continuous where the output grid reaches past T1Prep's template.
-
-    Args:
-        displacement: ``(x, y, z, 3)`` RAS displacement on ``warp_img``'s grid.
-        warp_img: RAS-canonical image defining ``displacement``'s grid.
-        out_shape: Target grid shape.
-        out_affine: Target grid RAS affine.
-        pre_displacement: RAS displacement field applied to each output point
-            *before* T1Prep's warp is looked up.  Used to retarget the
-            composite at another template by stepping through the fixed
-            template-to-template warp first.
-        post_displacement: RAS displacement field applied to the mapped point
-            *after* T1Prep's warp, for the opposite direction.
-
-    Returns:
-        The displacement resampled to ``(*out_shape, 3)``.
-    """
-    ras_to_warp = np.linalg.inv(warp_img.affine)
-    out = np.empty((*out_shape, 3), dtype=np.float32)
-
-    def sample(field_img, ras):
-        """Look an RAS displacement field up at RAS points."""
-        field = nib.as_closest_canonical(field_img)
-        data = np.asarray(field.dataobj, dtype=np.float64)
-        if data.ndim == 5:
-            data = data[:, :, :, 0, :]
-        inverse = np.linalg.inv(field.affine)
-        vox = np.einsum("ij,jxyz->ixyz", inverse[:3, :3], ras) + inverse[:3, 3, None, None, None]
-        return np.stack(
-            [map_coordinates(data[..., c], vox, order=1, mode="nearest") for c in range(3)]
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> "OutputOptions":
+        """Collect the output settings from :func:`parse_arguments`."""
+        # Get atlas list (currently restricted to ROI estimation)
+        atlas = tuple(x.strip(" '") for x in args.atlas.split(","))
+        # Build atlas_list. Set atlas_list to None, if empty
+        atlas_list = (
+            tuple(f"{a}_volumes" for a in atlas)
+            if any(atlas) and atlas != ("",)
+            else None
+        )
+        out_name = os.path.basename(
+            os.path.basename(args.input).replace(".nii", "")
+        ).replace(".gz", "")
+        return cls(
+            t1_name=args.input,
+            mri_dir=args.mri_dir,
+            label_dir=args.label_dir,
+            report_dir=args.report_dir,
+            out_name=out_name,
+            ext="nii.gz" if args.gz else "nii",
+            use_bids=args.bids,
+            save_p=args.p,
+            save_rp=args.rp,
+            save_wp=args.wp,
+            save_mwp=args.mwp,
+            save_hemilabel=args.surf,
+            save_lesions=args.lesions,
+            save_csf=args.csf,
+            save_fmriprep=args.save_fmriprep,
+            save_h5=args.save_h5,
+            atlas_list=atlas_list,
         )
 
-    # One slab at a time: the coordinate arrays for the full 193x229x193 grid
-    # would be several hundred megabytes on their own.
-    for i in range(out_shape[0]):
-        index = np.indices((1, *out_shape[1:]), dtype=np.float64)
-        index[0] += i
-        ras = np.einsum("ij,jxyz->ixyz", out_affine[:3, :3], index) + out_affine[:3, 3, None, None, None]
-        if pre_displacement is None and post_displacement is None:
-            # Same result as the general path below, but without forming
-            # (ras + d) - ras, whose cancellation perturbs the stored float32
-            # by ~1e-6 mm.  Keeps the single-template output bit-exact.
-            vox = np.einsum("ij,jxyz->ixyz", ras_to_warp[:3, :3], ras) + ras_to_warp[:3, 3, None, None, None]
-            for c in range(3):
-                out[i, ..., c] = map_coordinates(
-                    displacement[..., c], vox, order=1, mode="nearest"
-                )[0]
-            continue
-
-        source = ras
-        if pre_displacement is not None:
-            # Step into the space T1Prep's warp is defined on before looking
-            # it up, so the stored displacement spans both hops.
-            source = ras + sample(pre_displacement, ras)
-        vox = np.einsum("ij,jxyz->ixyz", ras_to_warp[:3, :3], source) + ras_to_warp[:3, 3, None, None, None]
-        target = source + np.stack(
-            [map_coordinates(displacement[..., c], vox, order=1, mode="nearest") for c in range(3)]
+    @property
+    def needs_warp(self) -> bool:
+        """Whether any requested output needs the non-linear registration."""
+        return (
+            self.save_hemilabel
+            or self.save_mwp
+            or self.save_wp
+            or self.save_fmriprep
+            or self.atlas_list is not None
         )
-        if post_displacement is not None:
-            target = target + sample(post_displacement, target)
-        out[i] = np.moveaxis(target - ras, 0, -1)[0]
-    return out
 
 
-def _itk_affine(affine_ras: np.ndarray):
-    """Build the ITK datasets for an ``AffineTransform_float_3_3``.
+class _OutputNames(NamedTuple):
+    """``get_filenames`` tables for each space and hemisphere."""
 
-    Args:
-        affine_ras: 4×4 affine in RAS millimetres.
-
-    Returns:
-        Tuple ``(transform_type, fixed_parameters, parameters)``.
-    """
-    matrix = _RAS2LPS @ affine_ras[:3, :3] @ _RAS2LPS
-    translation = _RAS2LPS @ affine_ras[:3, 3]
-    return (
-        "AffineTransform_float_3_3",
-        np.zeros(3),  # centre of rotation
-        np.concatenate([matrix.ravel(order="C"), translation]),
-    )
+    native: dict
+    affine: dict
+    warped: dict
+    warped_modulated: dict
+    left: dict
+    right: dict
 
 
-def _itk_displacement_field(displacement: np.ndarray, affine: np.ndarray):
-    """Build the ITK datasets for a ``DisplacementFieldTransform_float_3_3``.
-
-    Args:
-        displacement: ``(x, y, z, 3)`` RAS displacement field.
-        affine: RAS affine of the field's grid.
-
-    Returns:
-        Tuple ``(transform_type, fixed_parameters, parameters)``.
-    """
-    spacing = np.sqrt((affine[:3, :3] ** 2).sum(axis=0))
-    direction = (_RAS2LPS @ affine[:3, :3]) / spacing
-    origin = _RAS2LPS @ affine[:3, 3]
-    fixed = np.concatenate(
-        [
-            np.array(displacement.shape[:3], dtype=np.float64),
-            origin,
-            spacing,
-            direction.ravel(order="C"),
-        ]
-    )
-    # ITK buffers vector images component-fastest, then x, then y, then z.
-    # ``ravel`` already copies, so flip x and y to LPS on its result rather than
-    # on a second full-size copy of the field.
-    parameters = np.moveaxis(displacement, -1, 0).ravel(order="F")
-    parameters[0::3] *= -1.0
-    parameters[1::3] *= -1.0
-    return "DisplacementFieldTransform_float_3_3", fixed, parameters
-
-
-def _write_itk_composite(out_path: str, transforms) -> None:
-    """Write an ITK ``CompositeTransform`` HDF5 file.
-
-    Mirrors the layout ITK 5.x writes from ANTs: variable-length ASCII
-    type strings, ``float64`` fixed parameters, gzip-compressed ``float32``
-    parameters, and a group ``0`` that carries only the composite's type.
-
-    Args:
-        out_path: Destination ``.h5`` path.
-        transforms: ``(type, fixed_parameters, parameters)`` tuples in ITK queue
-            order.  ITK applies the queue back to front, so the transform that
-            acts *first* is written last.
-
-    Raises:
-        ImportError: If ``h5py`` is not installed.
-    """
-    try:
-        import h5py
-    except ImportError as exc:
-        raise ImportError(
-            "h5py is required to save deformation fields as HDF5. "
-            "Install it with: pip install h5py"
-        ) from exc
-
-    string_dtype = h5py.string_dtype(encoding="ascii")
-
-    def write_string(parent, name, value):
-        dataset = parent.create_dataset(name, (1,), dtype=string_dtype)
-        dataset[0] = value
-
-    with h5py.File(out_path, "w") as hf:
-        write_string(hf, "HDFVersion", h5py.version.hdf5_version)
-        # Declares the format generation, not a library T1Prep links against;
-        # ITK and nitransforms record it but do not check it on read.
-        write_string(hf, "ITKVersion", "5.4.0")
-        write_string(hf, "OSName", platform.system())
-        write_string(hf, "OSVersion", platform.release())
-        group = hf.create_group("TransformGroup")
-        write_string(group.create_group("0"), "TransformType",
-                     "CompositeTransform_float_3_3")
-        for i, (transform_type, fixed, parameters) in enumerate(transforms, start=1):
-            sub = group.create_group(str(i))
-            write_string(sub, "TransformType", transform_type)
-            sub.create_dataset(
-                "TransformFixedParameters", data=np.asarray(fixed, dtype=np.float64)
-            )
-            parameters = np.asarray(parameters, dtype=np.float32)
-            sub.create_dataset(
-                "TransformParameters",
-                data=parameters,
-                chunks=(min(parameters.size, 1048576),),
-                compression="gzip",
-                compression_opts=5,
-            )
-
-
-def save_deformation_h5(
-    warp_nii: nib.Nifti1Image,
-    affine_norm: np.ndarray,
-    native_img: nib.Nifti1Image,
-    out_path: str,
-    inverse: bool = False,
-    ref_shape=MNI152NLIN2009CASYM_SHAPE,
-    ref_affine: np.ndarray = MNI152NLIN2009CASYM_AFFINE,
-    template_displacement=None,
-) -> None:
-    """Save T1Prep's registration as an ANTs/ITK-compatible composite HDF5 file.
-
-    T1Prep splits the T1w-to-MNI mapping the same way ANTs does — a linear stage
-    followed by a non-linear one — but expresses both as ``torch`` sampling
-    grids in normalised ``[-1, 1]`` coordinates rather than as millimetre
-    displacements.  This writes the pair out as the two-element ITK
-    ``CompositeTransform`` that ``antsApplyTransforms`` and fMRIPrep consume.
-
-    Following ITK, the stored transforms map points from the *output* image's
-    space back to the *input* image's space, which is the opposite of the
-    direction the BIDS ``from-``/``to-`` filename entities name.  So the default
-    (``inverse=False``) writes the ``from-T1w_to-MNI152NLin2009cAsym`` file — the
-    one that resamples T1w *images* into MNI — from ``warp_xy``, whose point
-    mapping runs MNI to T1w.
-
-    Args:
-        warp_nii: ``warp_xy`` when ``inverse`` is False, ``warp_yx`` otherwise.
-        affine_norm: The 4×4 normalised affine from ``run_affine_register``
-            (deepmriprep's ``affine``), mapping template-space grid coordinates
-            to native ones.
-        native_img: Image defining the native grid, i.e. the one T1Prep writes
-            its native-space outputs on (``mask``).
-        out_path: Output file path (should end with ``.h5``).
-        inverse: Write the ``from-MNI152NLin2009cAsym_to-T1w`` composite.
-        ref_shape: Grid shape for the stored displacement field.
-        ref_affine: RAS affine of the grid for the stored displacement field.
-        template_displacement: A fixed template-to-template RAS displacement
-            field, to retarget the composite at a second template.  It is
-            applied before T1Prep's warp in the forward direction and after it
-            in the inverse one, so the same field serves both -- pass the one
-            whose direction matches ``inverse``.
-    """
-    affine_norm = np.asarray(
-        affine_norm.values if hasattr(affine_norm, "values") else affine_norm,
-        dtype=np.float64,
-    )
-    displacement, warp_img = _warp_to_displacement(warp_nii)
-
-    # The linear stage in millimetres.  The intermediate space it maps from is
-    # the warp template's physical space, which is also what the field above
-    # maps into, so the two compose exactly.
-    affine_ras = (
-        _normalized_grid_to_ras(native_img)
-        @ affine_norm
-        @ np.linalg.inv(_normalized_grid_to_ras(warp_img))
-    )
-
-    field = _itk_displacement_field(
-        _resample_displacement(
-            displacement,
-            warp_img,
-            ref_shape,
-            ref_affine,
-            pre_displacement=None if inverse else template_displacement,
-            post_displacement=template_displacement if inverse else None,
-        ),
-        np.asarray(ref_affine, dtype=np.float64),
-    )
-    if inverse:
-        # Points run native -> linear -> non-linear, so the affine is applied
-        # first and therefore written last.
-        _write_itk_composite(out_path, [field, _itk_affine(np.linalg.inv(affine_ras))])
+def _output_names(opts: OutputOptions) -> _OutputNames:
+    """Look up the output file names for every space the pipeline writes in."""
+    use_bids, out_name, ext = opts.use_bids, opts.out_name, opts.ext
+    native = get_filenames(use_bids, out_name, "", "", "", ext)
+    space_affine = native.get("Affine_space", "")
+    if use_bids:
+        affine = get_filenames(use_bids, out_name, "", "", space_affine, ext)
     else:
-        _write_itk_composite(out_path, [_itk_affine(affine_ras), field])
+        affine = get_filenames(use_bids, out_name, "", "_affine", space_affine, ext)
+    return _OutputNames(
+        native=native,
+        affine=affine,
+        warped=get_filenames(
+            use_bids, out_name, "", "", native.get("Warp_space", ""), ext
+        ),
+        warped_modulated=get_filenames(
+            use_bids, out_name, "", "", native.get("Warp_modulated_space", ""), ext
+        ),
+        left=get_filenames(use_bids, out_name, "left", "", "", ext),
+        right=get_filenames(use_bids, out_name, "right", "", "", ext),
+    )
 
 
-def save_results(
-    prep: CustomPreprocess,
+def _to_template_space(img: nib.Nifti1Image, warp_template: nib.Nifti1Image):
+    """Downsample a working-grid map by 3 onto the warp template grid."""
+    data = F.interpolate(
+        nifti_to_tensor(img)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
+    )[0, 0]
+    return reoriented_nifti(data, warp_template.affine, warp_template.header)
+
+
+def _save_native_outputs(
+    opts: OutputOptions,
+    names: _OutputNames,
     t1: nib.Nifti1Image,
-    affine,
     p0_large: nib.Nifti1Image,
     p1_large: nib.Nifti1Image,
     p2_large: nib.Nifti1Image,
     p3_large: nib.Nifti1Image,
-    wmh_large: nib.Nifti1Image,
-    discrepancy_large: nib.Nifti1Image,
-    mask: nib.Nifti1Image,
+    wmh_large,
+    discrepancy_large,
     brain_large: nib.Nifti1Image,
+    mask: nib.Nifti1Image,
     grid_native,
-    grid_target_res,
-    warp_template: nib.Nifti1Image,
-    wj_affine: pd.Series,
-    save_p: bool,
-    save_rp: bool,
-    save_wp: bool,
-    save_mwp: bool,
-    save_hemilabel: bool,
-    save_lesions: bool,
-    save_csf: bool,
-    save_fmriprep: bool,
-    save_h5: bool,
-    verbose: bool,
-    count: int,
-    end_count: int,
-    mri_dir: str,
-    label_dir: str,
-    report_dir: str,
-    out_name: str,
-    ext: str,
-    use_bids: bool,
-    device,
-    affine_resamp,
-    header_resamp,
-    atlas_list,
-    t1_raw=None,
-    t1_name=None,
 ) -> None:
-    """Save segmentation and atlas results to disk."""
+    """Write the label, the bias-corrected T1w and the tissue maps in native space."""
+    mri_dir = opts.mri_dir
+    native = names.native
 
-    # Get filenames for different spaces and sides w.r.t. BIDS flag
-    code_vars = get_filenames(use_bids, out_name, "", "", "", ext)
-    space_affine = code_vars.get("Affine_space", "")
-    space_warp = code_vars.get("Warp_space", "")
-    space_warp_modulated = code_vars.get("Warp_modulated_space", "")
-
-    if use_bids:
-        code_vars_affine = get_filenames(use_bids, out_name, "", "", space_affine, ext)
-    else:
-        code_vars_affine = get_filenames(
-            use_bids, out_name, "", "_affine", space_affine, ext
+    def save(img, name, **kwargs):
+        resample_and_save_nifti(
+            img, grid_native, mask.affine, mask.header, f"{mri_dir}/{name}", **kwargs
         )
-    code_vars_warped_modulated = get_filenames(
-        use_bids, out_name, "", "", space_warp_modulated, ext
-    )
-    code_vars_warped = get_filenames(use_bids, out_name, "", "", space_warp, ext)
-    code_vars_left = get_filenames(use_bids, out_name, "left", "", "", ext)
-    code_vars_right = get_filenames(use_bids, out_name, "right", "", "", ext)
 
-    # Get affine segmentations
-    if save_hemilabel or save_mwp or save_wp or save_rp or (atlas_list is not None):
-        p1_affine = F.interpolate(
-            nifti_to_tensor(p1_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
-        )[0, 0]
-        p1_affine = reoriented_nifti(
-            p1_affine, warp_template.affine, warp_template.header
-        )
-        p2_affine = F.interpolate(
-            nifti_to_tensor(p2_large)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
-        )[0, 0]
-        p2_affine = reoriented_nifti(
-            p2_affine, warp_template.affine, warp_template.header
-        )
-        if save_csf and save_rp:
-            p3_affine = F.interpolate(
-                nifti_to_tensor(p3_large)[None, None],
-                scale_factor=1 / 3,
-                **INTERP_KWARGS,
-            )[0, 0]
-            p3_affine = reoriented_nifti(
-                p3_affine, warp_template.affine, warp_template.header
-            )
-    else:
-        p1_affine = p2_affine = p3_affine = None
-
-    # Save affine registered data
-    if save_rp:
-        gm_name = code_vars_affine.get("GM_volume", "")
-        wm_name = code_vars_affine.get("WM_volume", "")
-        nib.save(p1_affine, f"{mri_dir}/{gm_name}")
-        nib.save(p2_affine, f"{mri_dir}/{wm_name}")
-        if save_csf:
-            csf_name = code_vars_affine.get("CSF_volume", "")
-            nib.save(p3_affine, f"{mri_dir}/{csf_name}")
-
-    # Save data in native space
-    label_name = code_vars.get("Label_volume", "")
-    mT1_name = code_vars.get("mT1_volume", "")
-    resample_and_save_nifti(
-        p0_large,
-        grid_native,
-        mask.affine,
-        mask.header,
-        f"{mri_dir}/{label_name}",
-        clip=[0, 4],
-    )
+    label_name = native.get("Label_volume", "")
+    mT1_name = native.get("mT1_volume", "")
+    save(p0_large, label_name, clip=[0, 4])
     # ``desc-preproc_T1w`` keeps the skull under --fmriprep, matching what
     # fMRIPrep means by the name and what it coregisters BOLD against.  The
     # bias field is refitted on the whole head from the native label; the
@@ -1254,7 +887,7 @@ def save_results(
     # come out on the same scale as the skull-stripped image (WM at 1), and
     # scalp and skull are extrapolated rather than zeroed.
     full_head = None
-    if save_fmriprep:
+    if opts.save_fmriprep:
         # Both images have to be in the same array order before the bias fit
         # can pair a voxel with its label, and the result has to go back into
         # the orientation the other native outputs are stored in -- which is
@@ -1283,79 +916,45 @@ def save_results(
                 "writing a skull-stripped desc-preproc_T1w instead."
             )
     if full_head is None:
-        resample_and_save_nifti(
-            brain_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{mri_dir}/{mT1_name}"
-        )
-    if save_fmriprep:
+        save(brain_large, mT1_name)
+    if opts.save_fmriprep:
         # The skull-stripped, bias-corrected brain that used to be written as
         # desc-preproc_T1w is still useful, so keep it under its own name.
-        resample_and_save_nifti(
-            brain_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{mri_dir}/{code_vars.get('skullstripped_volume', '')}",
-        )
+        save(brain_large, native.get("skullstripped_volume", ""))
 
-    # Save remaining data in native space
-    if save_p:
-        gm_name = code_vars.get("GM_volume", "")
-        wm_name = code_vars.get("WM_volume", "")
-        resample_and_save_nifti(
-            p1_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{mri_dir}/{gm_name}",
-            clip=[0, 1],
-        )
-        resample_and_save_nifti(
-            p2_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{mri_dir}/{wm_name}",
-            clip=[0, 1],
-        )
-        if save_csf:
-            csf_name = code_vars.get("CSF_volume", "")
-            resample_and_save_nifti(
-                p3_large,
-                grid_native,
-                mask.affine,
-                mask.header,
-                f"{mri_dir}/{csf_name}",
-                clip=[0, 1],
-            )
+    if opts.save_p:
+        save(p1_large, native.get("GM_volume", ""), clip=[0, 1])
+        save(p2_large, native.get("WM_volume", ""), clip=[0, 1])
+        if opts.save_csf:
+            save(p3_large, native.get("CSF_volume", ""), clip=[0, 1])
 
-    # Save lesion and discrepancy maps
-    if save_lesions and wmh_large is not None:
-        wmh_name = code_vars.get("WMH_volume", "")
-        resample_and_save_nifti(
-            wmh_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{mri_dir}/{wmh_name}",
-        )
-        discrepance_name = code_vars.get("Discrepance_volume", "")
-        resample_and_save_nifti(
-            discrepancy_large,
-            grid_native,
-            mask.affine,
-            mask.header,
-            f"{mri_dir}/{discrepance_name}",
-        )
+    if opts.save_lesions and wmh_large is not None:
+        save(wmh_large, native.get("WMH_volume", ""))
+        save(discrepancy_large, native.get("Discrepance_volume", ""))
+
+
+def _write_volume_report(
+    opts: OutputOptions,
+    names: _OutputNames,
+    t1: nib.Nifti1Image,
+    t1_raw,
+    p0_large: nib.Nifti1Image,
+    p1_large: nib.Nifti1Image,
+    p2_large: nib.Nifti1Image,
+    p3_large: nib.Nifti1Image,
+    wmh_large,
+    brain_large: nib.Nifti1Image,
+    grid_native,
+    wj_affine: pd.Series,
+) -> None:
+    """Write tissue volumes, mean intensities and image quality to the report."""
+    with_lesions = opts.save_lesions and wmh_large is not None
 
     # Estimate raw volumes
     vol_gm = get_volume_native_space(p1_large, wj_affine[0])  # GM    (p1)
     vol_wm = get_volume_native_space(p2_large, wj_affine[0])  # WM    (p2)
     vol_csf = get_volume_native_space(p3_large, wj_affine[0])  # CSF   (p3)
-    if save_lesions and wmh_large is not None:
+    if with_lesions:
         vol_wmh = get_volume_native_space(wmh_large, wj_affine[0])  # WMHs  (lesions)
     else:
         vol_wmh = 0
@@ -1431,7 +1030,7 @@ def save_results(
         },
     }
 
-    if save_lesions and wmh_large is not None:
+    if with_lesions:
         summary |= {
             "vol_WMH": {
                 "value": vol_wmh,
@@ -1445,298 +1044,420 @@ def save_results(
 
     # Write to JSON file
     summary |= qa_result
-    report_name = code_vars.get("Report_file", "")
-    with open(f"{report_dir}/{report_name}", "w") as f:
+    report_name = names.native.get("Report_file", "")
+    with open(f"{opts.report_dir}/{report_name}", "w") as f:
         json.dump(summary, f, indent=2)
 
-    # Save non-linear registered data
-    if save_hemilabel or save_mwp or save_wp or save_fmriprep or (atlas_list is not None):
-        if verbose:
-            count = shell_progress(count, end_count, 
-                "Warping                      ")
-        # The warp model's 32-channel layer at the template grid would ask for
-        # an 8 GB im2col buffer in one allocation on CPU, which is the peak of
-        # the whole run.  Slab it: same result, roughly a quarter of the memory.
-        with chunked_conv3d():
-            output_reg = prep.run_warp_register(
-                p0_large, p1_affine, p2_affine, wj_affine
-            )
-        release_cache(device)
-        warp_yx = output_reg["warp_yx"]
-        warp_xy = output_reg["warp_xy"]
-        warp_mse = output_reg["warp_mse"]
 
-        if atlas_list is not None:
-            output_atlas = prep.run_atlas_register(
-                t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
-            )
+def _save_atlas_rois(
+    prep: CustomPreprocess,
+    opts: OutputOptions,
+    names: _OutputNames,
+    t1: nib.Nifti1Image,
+    affine,
+    warp_yx: nib.Nifti1Image,
+    p1_large: nib.Nifti1Image,
+    p2_large: nib.Nifti1Image,
+    p3_large: nib.Nifti1Image,
+    wj_affine: pd.Series,
+) -> None:
+    """Write the regional tissue volumes of all requested atlases to one JSON file."""
+    output_atlas = prep.run_atlas_register(
+        t1, affine, warp_yx, p1_large, p2_large, p3_large, opts.atlas_list, wj_affine
+    )
 
-            # Convert each DataFrame to a list of dicts:
-            atlas_json = {
-                key.removesuffix("_volumes"): df.to_dict(orient="records")
-                for key, df in output_atlas.items()
-            }
+    # Convert each DataFrame to a list of dicts:
+    atlas_json = {
+        key.removesuffix("_volumes"): df.to_dict(orient="records")
+        for key, df in output_atlas.items()
+    }
 
-            # Write to a single JSON file:
-            atlas_name = code_vars.get("Atlas_ROI", "")
-            with open(f"{label_dir}/{atlas_name}", "w") as f:
-                json.dump(atlas_json, f, indent=2)
-
-        if save_mwp:
-            gm_name = code_vars_warped_modulated.get("GM_volume", "")
-            wm_name = code_vars_warped_modulated.get("WM_volume", "")
-            mwp1 = output_reg["mwp1"]
-            mwp2 = output_reg["mwp2"]
-            nib.save(mwp1, f"{mri_dir}/{gm_name}")
-            nib.save(mwp2, f"{mri_dir}/{wm_name}")
-            if save_csf:
-                csf_name = code_vars_warped_modulated.get("CSF_volume", "")
-                # mwp3 = output_reg["mwp3"]
-                # nib.save(mwp3, f"{mri_dir}/{csf_name}")
-
-        if save_wp:
-            gm_name = code_vars_warped.get("GM_volume", "")
-            wm_name = code_vars_warped.get("WM_volume", "")
-            wp1 = output_reg["wp1"]
-            wp2 = output_reg["wp2"]
-            nib.save(wp1, f"{mri_dir}/{gm_name}")
-            nib.save(wp2, f"{mri_dir}/{wm_name}")
-            if save_csf:
-                csf_name = code_vars_warped.get("CSF_volume", "")
-                # wp3 = output_reg["wp3"]
-                # nib.save(wp3, f"{mri_dir}/{csf_name}")
+    # Write to a single JSON file:
+    atlas_name = names.native.get("Atlas_ROI", "")
+    with open(f"{opts.label_dir}/{atlas_name}", "w") as f:
+        json.dump(atlas_json, f, indent=2)
 
 
-        if save_fmriprep or save_h5:
-            # save deformation as fMRIPrep-compatible h5-file.  ``Def_h5_volume``
-            # is the T1w-to-MNI direction (CAT12's ``y_``) and is built from
-            # warp_xy, which maps template points back onto the subject;
-            # ``invDef_h5_volume`` is the opposite direction, from warp_yx.
-            def_h5_name = code_vars.get("Def_h5_volume", "")
+def _save_warped_maps(opts: OutputOptions, names: _OutputNames, output_reg) -> None:
+    """Write the warped (wp) and modulated warped (mwp) GM and WM maps.
+
+    ``run_warp_register`` returns no warped CSF map, so ``--csf`` adds nothing
+    here.
+    """
+    if opts.save_mwp:
+        nib.save(
+            output_reg["mwp1"],
+            f"{opts.mri_dir}/{names.warped_modulated.get('GM_volume', '')}",
+        )
+        nib.save(
+            output_reg["mwp2"],
+            f"{opts.mri_dir}/{names.warped_modulated.get('WM_volume', '')}",
+        )
+    if opts.save_wp:
+        nib.save(
+            output_reg["wp1"], f"{opts.mri_dir}/{names.warped.get('GM_volume', '')}"
+        )
+        nib.save(
+            output_reg["wp2"], f"{opts.mri_dir}/{names.warped.get('WM_volume', '')}"
+        )
+
+
+def _save_deformations(
+    opts: OutputOptions,
+    names: _OutputNames,
+    warp_xy: nib.Nifti1Image,
+    warp_yx: nib.Nifti1Image,
+    affine,
+    mask: nib.Nifti1Image,
+) -> None:
+    """Write the T1w<->MNI deformations: ITK composites and/or the SPM y_ field."""
+    mri_dir = opts.mri_dir
+    native = names.native
+
+    if opts.save_fmriprep or opts.save_h5:
+        # save deformation as fMRIPrep-compatible h5-file.  ``Def_h5_volume``
+        # is the T1w-to-MNI direction (CAT12's ``y_``) and is built from
+        # warp_xy, which maps template points back onto the subject;
+        # ``invDef_h5_volume`` is the opposite direction, from warp_yx.
+        def_h5_name = native.get("Def_h5_volume", "")
+        save_deformation_h5(warp_xy, affine, mask, f"{mri_dir}/{def_h5_name}")
+        invdef_h5_name = native.get("invDef_h5_volume", "")
+        save_deformation_h5(
+            warp_yx, affine, mask, f"{mri_dir}/{invdef_h5_name}", inverse=True
+        )
+
+        # The same pair retargeted at MNI152NLin6Asym, which fMRIPrep adds
+        # to its normalisation targets for --cifti-output and would
+        # otherwise spend a full ANTs registration computing.  The fixed
+        # 2009cAsym<->6Asym warp is composed into the stored field, so
+        # these stay two-element composites like the pair above.
+        for code, disp_name, is_inverse in (
+            ("Def6_h5_volume",
+             "tpl-MNI152NLin6Asym_to-MNI152NLin2009cAsym_desc-disp_xfm.nii.gz", False),
+            ("invDef6_h5_volume",
+             "tpl-MNI152NLin2009cAsym_to-MNI152NLin6Asym_desc-disp_xfm.nii.gz", True),
+        ):
+            disp_path = os.path.join(TEMPLATE_PATH_T1PREP, disp_name)
+            if not os.path.exists(disp_path):
+                print(f"Warning: {disp_name} not found; skipping MNI152NLin6Asym transform.")
+                continue
             save_deformation_h5(
-                warp_xy, affine, mask, f"{mri_dir}/{def_h5_name}"
-            )
-            invdef_h5_name = code_vars.get("invDef_h5_volume", "")
-            save_deformation_h5(
-                warp_yx, affine, mask, f"{mri_dir}/{invdef_h5_name}", inverse=True
-            )
-
-            # The same pair retargeted at MNI152NLin6Asym, which fMRIPrep adds
-            # to its normalisation targets for --cifti-output and would
-            # otherwise spend a full ANTs registration computing.  The fixed
-            # 2009cAsym<->6Asym warp is composed into the stored field, so
-            # these stay two-element composites like the pair above.
-            for code, disp_name, is_inverse in (
-                ("Def6_h5_volume",
-                 "tpl-MNI152NLin6Asym_to-MNI152NLin2009cAsym_desc-disp_xfm.nii.gz", False),
-                ("invDef6_h5_volume",
-                 "tpl-MNI152NLin2009cAsym_to-MNI152NLin6Asym_desc-disp_xfm.nii.gz", True),
-            ):
-                disp_path = os.path.join(TEMPLATE_PATH_T1PREP, disp_name)
-                if not os.path.exists(disp_path):
-                    print(f"Warning: {disp_name} not found; skipping MNI152NLin6Asym transform.")
-                    continue
-                save_deformation_h5(
-                    warp_yx if is_inverse else warp_xy,
-                    affine,
-                    mask,
-                    f"{mri_dir}/{code_vars.get(code, '')}",
-                    inverse=is_inverse,
-                    template_displacement=nib.load(disp_path),
-                )
-
-        if save_fmriprep:
-            # T1w <-> fsnative.  T1Prep reconstructs its surfaces directly on
-            # the preprocessed T1w grid and has no separate FreeSurfer
-            # conformed space, so both directions are the identity.  (This is
-            # not the MNI affine: that one lives in the composites above, and
-            # is a normalised grid transform rather than a millimetre one.)
-            affine_txt_name = code_vars.get("Affine_txt_volume", "")
-            save_affine_itk_txt(np.eye(4), f"{mri_dir}/{affine_txt_name}")
-            invaffine_txt_name = code_vars.get("invAffine_txt_volume", "")
-            save_affine_itk_txt(np.eye(4), f"{mri_dir}/{invaffine_txt_name}")
-
-            # Save dseg in native space and reorder tissue class intensities
-            dseg_value = np.round(p0_large.get_fdata().copy())
-            ind_CSF = dseg_value == 1
-            ind_GM  = dseg_value == 2
-            ind_WM  = dseg_value == 3
-            dseg_value[ind_CSF] = 3
-            dseg_value[ind_GM]  = 1
-            dseg_value[ind_WM]  = 2
-            dseg_large = nib.Nifti1Image(dseg_value, p0_large.affine, p0_large.header)
-            dseg_name = code_vars.get("dseg_volume", "")
-            resample_and_save_nifti(
-                dseg_large,
-                grid_native,
-                mask.affine,
-                mask.header,
-                f"{mri_dir}/{dseg_name}",
-                clip=[0, 4],
-            )
-
-            # simply use the clipped dseg image as mask image
-            mask_name = code_vars.get("mask_volume", "")
-            resample_and_save_nifti(
-                dseg_large,
-                grid_native,
-                mask.affine,
-                mask.header,
-                f"{mri_dir}/{mask_name}",
-                clip=[0, 1],
-            )
-
-            # BIDS bookkeeping.  PyBIDS ignores a derivatives tree without a
-            # dataset description, and the specification requires ``Type`` on
-            # every mask, so without these fMRIPrep cannot see any of the
-            # files above and recomputes them.
-            raw_sources = [os.path.abspath(t1_name)] if t1_name else None
-            write_dataset_description(mri_dir)
-            write_sidecar(
-                f"{mri_dir}/{mask_name}", Type="Brain", RawSources=raw_sources
-            )
-            write_sidecar(
-                f"{mri_dir}/{code_vars.get('mT1_volume', '')}",
-                SkullStripped=False,
-                RawSources=raw_sources,
-            )
-            write_sidecar(
-                f"{mri_dir}/{code_vars.get('skullstripped_volume', '')}",
-                SkullStripped=True,
-                RawSources=raw_sources,
-            )
-
-        # save deformation as nifti-file
-        if not save_fmriprep:
-            def_name = code_vars.get("Def_volume", "")
-            save_deformation_spm(
-                warp_xy, affine, mask, f"{mri_dir}/{def_name}"
-            )
-            invdef_name = code_vars.get("invDef_volume", "")
-            # nib.save(warp_yx, f"{mri_dir}/{invdef_name}")
-
-        # Save hemispheric partition for surface estimation
-        if save_hemilabel or save_fmriprep:
-            if verbose:
-                count = shell_progress(count, end_count, 
-                    "Atlas creation               ")
-            atlas = get_atlas(
-                t1,
+                warp_yx if is_inverse else warp_xy,
                 affine,
-                p0_large.header,
-                p0_large.affine,
-                "IBSR",
-                warp_yx,
-                device,
-                is_label_atlas=True,
-            )
-            # Locates the cortex the fills in ``get_partition`` must spare;
-            # IBSR has no cortical parcellation to do that with.
-            guard_atlas = get_atlas(
-                t1,
-                affine,
-                p0_large.header,
-                p0_large.affine,
-                "Neuromorphometrics",
-                warp_yx,
-                device,
-                is_label_atlas=True,
+                mask,
+                f"{mri_dir}/{native.get(code, '')}",
+                inverse=is_inverse,
+                template_displacement=nib.load(disp_path),
             )
 
-            lh, rh = get_partition(p0_large, atlas, guard_atlas)
-            del guard_atlas
-            
-            if save_fmriprep:
-                # Get the ribbon mask using lh and rh and masking GM
-                ribbon_value = lh + rh
-                ribbon_value = (ribbon_value > 2.5) & (ribbon_value < 3.5)
-                ribbon_large = nib.Nifti1Image(ribbon_value, p0_large.affine, p0_large.header)
-                ribbon_name = code_vars.get("ribbon_volume", "")
-                resample_and_save_nifti(
-                    ribbon_large,
-                    grid_native,
-                    mask.affine,
-                    mask.header,
-                    f"{mri_dir}/{ribbon_name}",
-                    round=True,
-                )
-                write_sidecar(f"{mri_dir}/{ribbon_name}", Type="ROI")
+    # save deformation as nifti-file
+    if not opts.save_fmriprep:
+        def_name = native.get("Def_volume", "")
+        save_deformation_spm(warp_xy, affine, mask, f"{mri_dir}/{def_name}")
 
-            # Compute Euler numbers at GM/WM boundary for QA
-            euler_lh = compute_euler_number(lh, threshold=2.5)
-            euler_rh = compute_euler_number(rh, threshold=2.5)
-            EC_abs = abs(euler_lh - 2) + abs(euler_rh - 2)
 
-            # Append to existing JSON report
-            report_name = code_vars.get("Report_file", "")
-            report_path = f"{report_dir}/{report_name}"
-            if os.path.exists(report_path):
-                with open(report_path, "r") as f:
-                    report_data = json.load(f)
-            else:
-                report_data = {}
-            qa = report_data.setdefault("qualitymeasures", {})
-            qa["euler_lh"] = {
-                "value": euler_lh,
-                "desc": (
-                    "Euler number of left hemisphere "
-                    "(ideal = 2; values closer to 2 indicate less topological defects)"
-                ),
-            }
-            qa["euler_rh"] = {
-                "value": euler_rh,
-                "desc": (
-                    "Euler number of right hemisphere "
-                    "(ideal = 2; values closer to 2 indicate less topological defects)"
-                ),
-            }
-            qa["EC_abs"] = {
-                "value": EC_abs,
-                "desc": (
-                    "Absolute Euler number for both hemispheres "
-                    "(absolute difference to ideal Euler number of 2; ideal = 0;larger values indicate more topological defects)"
-                ),
-            }
-            with open(report_path, "w") as f:
-                json.dump(report_data, f, indent=2)
+def _save_fmriprep_extras(
+    opts: OutputOptions,
+    names: _OutputNames,
+    p0_large: nib.Nifti1Image,
+    mask: nib.Nifti1Image,
+    grid_native,
+) -> None:
+    """Write the fMRIPrep-only outputs: fsnative transforms, dseg, mask, sidecars."""
+    mri_dir = opts.mri_dir
+    native = names.native
 
-            if verbose:
-                count = shell_progress(count, end_count, 
-                    "Resampling                   ")
+    # T1w <-> fsnative.  T1Prep reconstructs its surfaces directly on
+    # the preprocessed T1w grid and has no separate FreeSurfer
+    # conformed space, so both directions are the identity.  (This is
+    # not the MNI affine: that one lives in the composites above, and
+    # is a normalised grid transform rather than a millimetre one.)
+    affine_txt_name = native.get("Affine_txt_volume", "")
+    save_affine_itk_txt(np.eye(4), f"{mri_dir}/{affine_txt_name}")
+    invaffine_txt_name = native.get("invAffine_txt_volume", "")
+    save_affine_itk_txt(np.eye(4), f"{mri_dir}/{invaffine_txt_name}")
 
-            hemileft_name = code_vars_left.get("Hemi_volume", "")
-            hemiright_name = code_vars_right.get("Hemi_volume", "")
+    # Save dseg in native space and reorder tissue class intensities
+    dseg_value = np.round(p0_large.get_fdata().copy())
+    ind_CSF = dseg_value == 1
+    ind_GM = dseg_value == 2
+    ind_WM = dseg_value == 3
+    dseg_value[ind_CSF] = 3
+    dseg_value[ind_GM] = 1
+    dseg_value[ind_WM] = 2
+    dseg_large = nib.Nifti1Image(dseg_value, p0_large.affine, p0_large.header)
+    dseg_name = native.get("dseg_volume", "")
+    resample_and_save_nifti(
+        dseg_large,
+        grid_native,
+        mask.affine,
+        mask.header,
+        f"{mri_dir}/{dseg_name}",
+        clip=[0, 4],
+    )
 
-            # The hemisphere labels go onto a 0.5 mm grid from a 0.5 mm source,
-            # so this is a pure reslice at matched resolution -- the case where
-            # the trilinear kernel blurs most.  Surface extraction thresholds
-            # these maps at the GM/WM level, and trilinear displaces that
-            # boundary by ~61 um (median, against a quintic reference) against
-            # ~17 um for the B-spline.  ``clip_overshoot`` removes the ringing
-            # the spline introduces at the sharp label edges, keeping the values
-            # inside the [1, 3] range ``get_partition`` produces.
-            resample_and_save_nifti(
-                nib.Nifti1Image(lh, p0_large.affine, p0_large.header),
-                grid_target_res,
-                affine_resamp,
-                header_resamp,
-                f"{mri_dir}/{hemileft_name}",
-                True,
-                True,
-                bspline=True,
-                clip_overshoot=True,
+    # simply use the clipped dseg image as mask image
+    mask_name = native.get("mask_volume", "")
+    resample_and_save_nifti(
+        dseg_large,
+        grid_native,
+        mask.affine,
+        mask.header,
+        f"{mri_dir}/{mask_name}",
+        clip=[0, 1],
+    )
+
+    # BIDS bookkeeping.  PyBIDS ignores a derivatives tree without a
+    # dataset description, and the specification requires ``Type`` on
+    # every mask, so without these fMRIPrep cannot see any of the
+    # files above and recomputes them.
+    raw_sources = [os.path.abspath(opts.t1_name)] if opts.t1_name else None
+    write_dataset_description(mri_dir)
+    write_sidecar(f"{mri_dir}/{mask_name}", Type="Brain", RawSources=raw_sources)
+    write_sidecar(
+        f"{mri_dir}/{native.get('mT1_volume', '')}",
+        SkullStripped=False,
+        RawSources=raw_sources,
+    )
+    write_sidecar(
+        f"{mri_dir}/{native.get('skullstripped_volume', '')}",
+        SkullStripped=True,
+        RawSources=raw_sources,
+    )
+
+
+def _report_euler_numbers(report_path: str, lh: np.ndarray, rh: np.ndarray) -> None:
+    """Add the hemispheres' Euler numbers at the GM/WM boundary to the report."""
+    euler_lh = compute_euler_number(lh, threshold=2.5)
+    euler_rh = compute_euler_number(rh, threshold=2.5)
+    EC_abs = abs(euler_lh - 2) + abs(euler_rh - 2)
+
+    if os.path.exists(report_path):
+        with open(report_path, "r") as f:
+            report_data = json.load(f)
+    else:
+        report_data = {}
+    qa = report_data.setdefault("qualitymeasures", {})
+    qa["euler_lh"] = {
+        "value": euler_lh,
+        "desc": (
+            "Euler number of left hemisphere "
+            "(ideal = 2; values closer to 2 indicate less topological defects)"
+        ),
+    }
+    qa["euler_rh"] = {
+        "value": euler_rh,
+        "desc": (
+            "Euler number of right hemisphere "
+            "(ideal = 2; values closer to 2 indicate less topological defects)"
+        ),
+    }
+    qa["EC_abs"] = {
+        "value": EC_abs,
+        "desc": (
+            "Absolute Euler number for both hemispheres "
+            "(absolute difference to ideal Euler number of 2; ideal = 0; "
+            "larger values indicate more topological defects)"
+        ),
+    }
+    with open(report_path, "w") as f:
+        json.dump(report_data, f, indent=2)
+
+
+def _save_hemispheres(
+    opts: OutputOptions,
+    names: _OutputNames,
+    t1: nib.Nifti1Image,
+    affine,
+    p0_large: nib.Nifti1Image,
+    warp_yx: nib.Nifti1Image,
+    mask: nib.Nifti1Image,
+    grid_native,
+    grid_target_res,
+    affine_resamp,
+    header_resamp,
+    device,
+    verbose: bool,
+    count: int,
+    end_count: int,
+) -> None:
+    """Write the hemisphere label maps that surface extraction starts from.
+
+    Also writes the fMRIPrep ribbon mask and adds the hemispheres' Euler
+    numbers to the report.
+    """
+    mri_dir = opts.mri_dir
+
+    if verbose:
+        count = shell_progress(count, end_count,
+            "Atlas creation               ")
+    atlas = get_atlas(
+        t1,
+        affine,
+        p0_large.header,
+        p0_large.affine,
+        "IBSR",
+        warp_yx,
+        device,
+        is_label_atlas=True,
+    )
+    # Locates the cortex the fills in ``get_partition`` must spare;
+    # IBSR has no cortical parcellation to do that with.
+    guard_atlas = get_atlas(
+        t1,
+        affine,
+        p0_large.header,
+        p0_large.affine,
+        "Neuromorphometrics",
+        warp_yx,
+        device,
+        is_label_atlas=True,
+    )
+
+    lh, rh = get_partition(p0_large, atlas, guard_atlas)
+    del guard_atlas
+
+    if opts.save_fmriprep:
+        # Get the ribbon mask using lh and rh and masking GM
+        ribbon_value = lh + rh
+        ribbon_value = (ribbon_value > 2.5) & (ribbon_value < 3.5)
+        ribbon_large = nib.Nifti1Image(ribbon_value, p0_large.affine, p0_large.header)
+        ribbon_name = names.native.get("ribbon_volume", "")
+        resample_and_save_nifti(
+            ribbon_large,
+            grid_native,
+            mask.affine,
+            mask.header,
+            f"{mri_dir}/{ribbon_name}",
+            round=True,
+        )
+        write_sidecar(f"{mri_dir}/{ribbon_name}", Type="ROI")
+
+    report_name = names.native.get("Report_file", "")
+    _report_euler_numbers(f"{opts.report_dir}/{report_name}", lh, rh)
+
+    if verbose:
+        count = shell_progress(count, end_count,
+            "Resampling                   ")
+
+    # The hemisphere labels go onto a 0.5 mm grid from a 0.5 mm source,
+    # so this is a pure reslice at matched resolution -- the case where
+    # the trilinear kernel blurs most.  Surface extraction thresholds
+    # these maps at the GM/WM level, and trilinear displaces that
+    # boundary by ~61 um (median, against a quintic reference) against
+    # ~17 um for the B-spline.  ``clip_overshoot`` removes the ringing
+    # the spline introduces at the sharp label edges, keeping the values
+    # inside the [1, 3] range ``get_partition`` produces.
+    for hemi, side_names in ((lh, names.left), (rh, names.right)):
+        resample_and_save_nifti(
+            nib.Nifti1Image(hemi, p0_large.affine, p0_large.header),
+            grid_target_res,
+            affine_resamp,
+            header_resamp,
+            f"{mri_dir}/{side_names.get('Hemi_volume', '')}",
+            True,
+            True,
+            bspline=True,
+            clip_overshoot=True,
+        )
+
+
+def save_results(
+    prep: CustomPreprocess,
+    opts: OutputOptions,
+    *,
+    t1: nib.Nifti1Image,
+    t1_raw,
+    affine,
+    p0_large: nib.Nifti1Image,
+    p1_large: nib.Nifti1Image,
+    p2_large: nib.Nifti1Image,
+    p3_large: nib.Nifti1Image,
+    wmh_large,
+    discrepancy_large,
+    brain_large: nib.Nifti1Image,
+    mask: nib.Nifti1Image,
+    grid_native,
+    grid_target_res,
+    affine_resamp,
+    header_resamp,
+    warp_template: nib.Nifti1Image,
+    wj_affine: pd.Series,
+    device,
+    verbose: bool,
+    count: int,
+    end_count: int,
+) -> None:
+    """Save segmentation and atlas results to disk.
+
+    Writes the affine-registered tissue maps, the native-space outputs and the
+    volume/QA report.  If any requested output needs the non-linear
+    registration (``opts.needs_warp``), it then runs the warp and writes the
+    atlas ROI volumes, the warped maps, the deformation fields, the fMRIPrep
+    extras and the hemisphere label maps.
+    """
+    names = _output_names(opts)
+
+    # Get affine segmentations: saved as rp*, and the input of the warp
+    p1_affine = p2_affine = p3_affine = None
+    if opts.save_rp or opts.needs_warp:
+        p1_affine = _to_template_space(p1_large, warp_template)
+        p2_affine = _to_template_space(p2_large, warp_template)
+        if opts.save_csf and opts.save_rp:
+            p3_affine = _to_template_space(p3_large, warp_template)
+
+    # Save affine registered data
+    if opts.save_rp:
+        nib.save(p1_affine, f"{opts.mri_dir}/{names.affine.get('GM_volume', '')}")
+        nib.save(p2_affine, f"{opts.mri_dir}/{names.affine.get('WM_volume', '')}")
+        if opts.save_csf:
+            nib.save(
+                p3_affine, f"{opts.mri_dir}/{names.affine.get('CSF_volume', '')}"
             )
-            resample_and_save_nifti(
-                nib.Nifti1Image(rh, p0_large.affine, p0_large.header),
-                grid_target_res,
-                affine_resamp,
-                header_resamp,
-                f"{mri_dir}/{hemiright_name}",
-                True,
-                True,
-                bspline=True,
-                clip_overshoot=True,
-            )
+
+    _save_native_outputs(
+        opts, names, t1, p0_large, p1_large, p2_large, p3_large,
+        wmh_large, discrepancy_large, brain_large, mask, grid_native,
+    )
+    _write_volume_report(
+        opts, names, t1, t1_raw, p0_large, p1_large, p2_large, p3_large,
+        wmh_large, brain_large, grid_native, wj_affine,
+    )
+
+    if not opts.needs_warp:
+        return
+
+    if verbose:
+        count = shell_progress(count, end_count,
+            "Warping                      ")
+    # The warp model's 32-channel layer at the template grid would ask for
+    # an 8 GB im2col buffer in one allocation on CPU, which is the peak of
+    # the whole run.  Slab it: same result, roughly a quarter of the memory.
+    with chunked_conv3d():
+        output_reg = prep.run_warp_register(
+            p0_large, p1_affine, p2_affine, wj_affine
+        )
+    release_cache(device)
+    warp_yx = output_reg["warp_yx"]
+    warp_xy = output_reg["warp_xy"]
+
+    if opts.atlas_list is not None:
+        _save_atlas_rois(
+            prep, opts, names, t1, affine, warp_yx,
+            p1_large, p2_large, p3_large, wj_affine,
+        )
+    _save_warped_maps(opts, names, output_reg)
+    _save_deformations(opts, names, warp_xy, warp_yx, affine, mask)
+    if opts.save_fmriprep:
+        _save_fmriprep_extras(opts, names, p0_large, mask, grid_native)
+
+    # Save hemispheric partition for surface estimation
+    if opts.save_hemilabel or opts.save_fmriprep:
+        _save_hemispheres(
+            opts, names, t1, affine, p0_large, warp_yx, mask, grid_native,
+            grid_target_res, affine_resamp, header_resamp, device,
+            verbose, count, end_count,
+        )
 
 
 def run_segment():
@@ -1750,34 +1471,19 @@ def run_segment():
     torch.cuda.manual_seed_all(args.seed)
     torch.use_deterministic_algorithms(True)
 
-    # Input/output parameters
-    t1_name = args.input
-    mri_dir = args.mri_dir
-    report_dir = args.report_dir
-    label_dir = args.label_dir
-    atlas = args.atlas
+    # Output locations and the optional outputs to write
+    opts = OutputOptions.from_args(args)
+    t1_name = opts.t1_name
+    mri_dir, out_name, ext = opts.mri_dir, opts.out_name, opts.ext
 
     # Processing options
     use_amap = args.amap
     use_nogm_model = args.nogm_model
-    use_bids = args.bids
     vessel = args.vessel
     verbose = args.verbose
     debug = args.debug
     skullstrip_only = args.skullstrip_only
     skip_skullstrip = args.skip_skullstrip
-
-    # Save options
-    save_mwp = args.mwp
-    save_wp = args.wp
-    save_rp = args.rp
-    save_p = args.p
-    save_csf = args.csf
-    save_gz = args.gz
-    save_lesions = args.lesions
-    save_hemilabel = args.surf
-    save_fmriprep = args.save_fmriprep
-    save_h5 = args.save_h5
 
     # Check for GPU support
     device, no_gpu = setup_device()
@@ -1793,23 +1499,6 @@ def run_segment():
     target_res = np.array([0.5] * 3)  # Target resolution for resampling
     count = 1
     end_count = args.count
-
-    if save_gz:
-        ext = "nii.gz"
-    else:
-        ext = "nii"
-
-    # Get atlas list (currently restricted to ROI estimation)
-    atlas = tuple(x.strip(" '") for x in atlas.split(","))
-    # Build atlas_list. Set atlas_list to None, if empty
-    atlas_list = (
-        tuple(f"{a}_volumes" for a in atlas) if any(atlas) and atlas != ("",) else None
-    )
-
-    # Prepare filenames and load input MRI data
-    out_name = os.path.basename(os.path.basename(t1_name).replace(".nii", "")).replace(
-        ".gz", ""
-    )
 
     # Track running time
     start = time.perf_counter()
@@ -1832,7 +1521,7 @@ def run_segment():
         brain, mask, count = skull_strip(prep, t1, verbose, count, end_count)
 
     if skullstrip_only:
-        save_skullstrip_only_outputs(brain, use_bids, mri_dir, out_name, ext)
+        save_skullstrip_only_outputs(brain, opts.use_bids, mri_dir, out_name, ext)
         return
 
     # Step 2: Initial bias-correction that is benefitial for strong signal
@@ -1843,8 +1532,6 @@ def run_segment():
     affine, brain_large, mask_large, affine_loss, count = affine_register(
         prep, brain, mask, verbose, count, end_count
     )
-
-    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
 
     # Ensure that minimum of brain is not negative (which can happen after B-spline interpolation)
     brain_value = brain_large.get_fdata().copy()
@@ -2005,10 +1692,7 @@ def run_segment():
         p2_large = output_nogm["p2_large"]
         p3_large = output_nogm["p3_large"]
 
-        gmv = output_nogm["gmv"]
-        tiv = output_nogm["tiv"]
-
-    if use_amap or save_lesions:
+    if use_amap or opts.save_lesions:
         (
             p1_large,
             p2_large,
@@ -2025,11 +1709,7 @@ def run_segment():
             p1_large,
             p2_large,
             p3_large,
-            mri_dir,
-            out_name,
-            ext,
             use_amap,
-            debug,
             device,
         )
     else:
@@ -2037,45 +1717,20 @@ def run_segment():
 
     wj_affine = pd.Series([wj_affine])
 
-    # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) 
-    # to refine segmentation
-    # not sure how good this correction still is since we have a much better one
-    if (vessel > 0) and False: 
-        # Same protection mask the pre-AMAP correction used; the grid has not
-        # changed, so it is only rebuilt if something upstream resampled.
-        excl_regions = protect
-        if excl_regions is None or excl_regions.shape != p0_large.shape:
-            excl_regions = protected_regions(
-                p0_large.affine, p0_large.shape, device
-            )
-
-        p0_value_original = p0_large.get_fdata().copy()
-        p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
-            p1_large, p2_large, p3_large, mri_dir, out_name, ext, 
-            debug, excl_regions)
-    else:
-        # ``cleanup_vessels`` above is the only producer of the pre-cleanup
-        # copy the debug output below diffs against; keep the name defined so
-        # the disabled branch does not turn --debug into a NameError.
-        p0_value_original = None
-        gm = p1_large.get_fdata()
-        wm = p2_large.get_fdata()
-        csf = p3_large.get_fdata()
-        gm, wm, csf = normalize_to_sum1(gm, wm, csf)
-        tmp = csf + 2 * gm + 3 * wm
-        p0_large = nib.Nifti1Image(tmp, p0_large.affine, p0_large.header)
+    # Rebuild the label from the (possibly lesion-corrected) tissue maps.
+    gm, wm, csf = normalize_to_sum1(
+        p1_large.get_fdata(), p2_large.get_fdata(), p3_large.get_fdata()
+    )
+    p0_large = nib.Nifti1Image(
+        csf + 2 * gm + 3 * wm, p0_large.affine, p0_large.header
+    )
 
     # We have to apply the initial mask again to the label
     p0_value = p0_large.get_fdata().copy()
     p0_value[mask_large_value == 0] = 0
     p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
-    if debug and (vessel > 0) and p0_value_original is not None:
-        p0_value = p0_value_original - p0_value
-        nib.save(nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header), 
-            f"{mri_dir}/{out_name}_vessels_large.{ext}")
-        
-    if use_amap or save_lesions:
+    if use_amap or opts.save_lesions:
         p0_value = p0_large.get_fdata().copy()
         np.clip(p0_value, 0, 3, out=p0_value)
         p0_value[ind_wmh] += wmh_value[ind_wmh]
@@ -2094,57 +1749,41 @@ def run_segment():
 
     save_results(
         prep,
-        t1,
-        affine,
-        p0_large,
-        p1_large,
-        p2_large,
-        p3_large,
-        wmh_large,
-        discrepancy_large,
-        mask,
-        brain_large,
-        grid_native,
-        grid_target_res,
-        warp_template,
-        wj_affine,
-        save_p,
-        save_rp,
-        save_wp,
-        save_mwp,
-        save_hemilabel,
-        save_lesions,
-        save_csf,
-        save_fmriprep,
-        save_h5,
-        verbose,
-        count,
-        end_count,
-        mri_dir,
-        label_dir,
-        report_dir,
-        out_name,
-        ext,
-        use_bids,
-        device,
-        affine_resamp,
-        header_resamp,
-        atlas_list,
-        t1_raw,
-        t1_name,
+        opts,
+        t1=t1,
+        t1_raw=t1_raw,
+        affine=affine,
+        p0_large=p0_large,
+        p1_large=p1_large,
+        p2_large=p2_large,
+        p3_large=p3_large,
+        wmh_large=wmh_large,
+        discrepancy_large=discrepancy_large,
+        brain_large=brain_large,
+        mask=mask,
+        grid_native=grid_native,
+        grid_target_res=grid_target_res,
+        affine_resamp=affine_resamp,
+        header_resamp=header_resamp,
+        warp_template=warp_template,
+        wj_affine=wj_affine,
+        device=device,
+        verbose=verbose,
+        count=count,
+        end_count=end_count,
     )
 
-    final_cleanup(mri_dir, out_name, ext, use_amap, save_lesions, debug)
+    final_cleanup(mri_dir, out_name, ext, use_amap, opts.save_lesions, debug)
 
     # Write to log file
     end = time.perf_counter()
     text = f"Execution time of volume pipeline: {end - start:.1f}s.\n"
-    code_vars = get_filenames(use_bids, out_name, "", "", "", ext)
+    code_vars = get_filenames(opts.use_bids, out_name, "", "", "", ext)
     log_name = code_vars.get("Log_file", "")
-    with open(f"{report_dir}/{log_name}", "a") as f:
+    with open(f"{opts.report_dir}/{log_name}", "a") as f:
         f.write(text)
 
-    write_t1prep_report(report_dir, out_name, use_bids, t1_name)
+    write_t1prep_report(opts.report_dir, out_name, opts.use_bids, t1_name)
 
 
 if __name__ == "__main__":
