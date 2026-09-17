@@ -99,10 +99,10 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
-from ._segment_utils import (
-    _resample_to,
-    _resolve_template_file,
+from ._atlas import (
     get_regions_mask,
+    resample_to,
+    resolve_template_file,
 )
 
 __all__ = [
@@ -447,21 +447,21 @@ def blood_vessel_prior(target_affine, target_shape, device="cpu"):
     np.ndarray
         Float32 prior on the target grid, in ``[0, 2]``.
     """
-    bv = _resample_to(
-        nib.load(_resolve_template_file("cat_bloodvessels", ".nii.gz")),
+    bv = resample_to(
+        nib.load(resolve_template_file("cat_bloodvessels", ".nii.gz")),
         target_affine,
         target_shape,
         device=device,
     )
-    wm = _resample_to(
-        nib.load(_resolve_template_file("Template_4_GS", ".nii.gz")),
+    wm = resample_to(
+        nib.load(resolve_template_file("Template_4_GS", ".nii.gz")),
         target_affine,
         target_shape,
         device=device,
         channel=1,
     )
-    csf = _resample_to(
-        nib.load(_resolve_template_file("csf_TPM", ".nii.gz")),
+    csf = resample_to(
+        nib.load(resolve_template_file("csf_TPM", ".nii.gz")),
         target_affine,
         target_shape,
         device=device,
@@ -497,8 +497,8 @@ def protected_regions(target_affine, target_shape, device="cpu"):
     """
     target_shape = tuple(int(v) for v in np.asarray(target_shape)[:3])
     target_affine = np.asarray(target_affine, dtype=float)
-    labels = _resample_to(
-        nib.load(_resolve_template_file("Neuromorphometrics", ".nii.gz")),
+    labels = resample_to(
+        nib.load(resolve_template_file("Neuromorphometrics", ".nii.gz")),
         target_affine,
         target_shape,
         device=device,
@@ -530,7 +530,7 @@ def cat_divergence(vol, vx, res=WORK_RES, floor=1.0 / 3.0, device="cpu"):
 
     Thin bright structures -- vessels, meninges -- have a strongly negative
     divergence while the interior of a tissue does not.  Unlike
-    ``_segment_utils._divergence``, which normalises the gradient (CAT12's
+    ``_intensity._divergence``, which normalises the gradient (CAT12's
     ``norm=1`` branch), this reproduces the default branch that
     ``cat_vol_partvol.m`` actually uses: the plain gradient of ``max(1/3, Ym)``,
     computed on a reduced grid with unit voxel spacing and divided once by the

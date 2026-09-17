@@ -113,10 +113,10 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
-from ._segment_utils import (
-    _resample_to,
-    _resolve_template_file,
+from ._atlas import (
     get_regions_mask,
+    resample_to,
+    resolve_template_file,
 )
 
 __all__ = [
@@ -248,8 +248,8 @@ def noncortical_gm_regions(target_affine, target_shape, device="cpu"):
     """
     target_shape = tuple(int(v) for v in np.asarray(target_shape)[:3])
     target_affine = np.asarray(target_affine, dtype=float)
-    labels = _resample_to(
-        nib.load(_resolve_template_file("Neuromorphometrics", ".nii.gz")),
+    labels = resample_to(
+        nib.load(resolve_template_file("Neuromorphometrics", ".nii.gz")),
         target_affine,
         target_shape,
         device=device,

@@ -244,15 +244,15 @@ class ProtectionTests(unittest.TestCase):
 
     def test_protected_regions_covers_the_cerebellum(self):
         """Built on the real template grid, where the atlas is meaningful."""
-        from t1prep._segment_utils import _resolve_template_file
+        from t1prep._atlas import resolve_template_file
 
         template = nib.as_closest_canonical(
-            nib.load(_resolve_template_file("Template_05mm_bet", ".nii.gz"))
+            nib.load(resolve_template_file("Template_05mm_bet", ".nii.gz"))
         )
         mask = vessels.protected_regions(template.affine, template.shape)
         labels = np.round(
-            vessels._resample_to(
-                nib.load(_resolve_template_file("Neuromorphometrics", ".nii.gz")),
+            vessels.resample_to(
+                nib.load(resolve_template_file("Neuromorphometrics", ".nii.gz")),
                 template.affine,
                 template.shape,
                 nearest=True,

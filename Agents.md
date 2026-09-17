@@ -16,7 +16,11 @@ T1Prep/
 │       ├── segment.py              # Segmentation logic
 │       ├── nogm.py                 # Conventional non-cortical GM removal (default;
 │       │                           # --nogm-model restores the DeepMRIPrep model)
-│       ├── _segment_utils.py       # Private segmentation helpers (internal use)
+│       ├── _atlas.py               # Template lookup, atlas resampling, region masks
+│       ├── _intensity.py           # Bias-field fits, global intensity norm, LAS
+│       ├── _lesions.py             # WMH detection and tissue-map correction
+│       ├── _partition.py           # Hemisphere partition + Euler number
+│       ├── _segment_utils.py       # Small shared segmentation helpers
 │       ├── utils.py                # Shared utilities
 │       ├── metrics.py              # Dice/evaluation metrics + CLI
 │       ├── dice.py                 # CLI wrapper for metrics (python -m t1prep.dice)

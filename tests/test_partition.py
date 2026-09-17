@@ -1,4 +1,4 @@
-"""Tests for the hemisphere partitioning in :mod:`t1prep._segment_utils`.
+"""Tests for the hemisphere partitioning in :mod:`t1prep._partition`.
 
 ``get_partition`` turns the PVE label map into the two ``?h.seg.*`` volumes
 that PBT measures cortical thickness on, so anything it writes into the
@@ -24,14 +24,15 @@ _SRC = _Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in _sys.path:
     _sys.path.insert(0, str(_SRC))
 
-from t1prep._segment_utils import get_partition, _resolve_template_file
+from t1prep._atlas import resolve_template_file
+from t1prep._partition import get_partition
 
 SHAPE = (72, 96, 72)
 VX = 0.5
 
 
 def _table():
-    return pd.read_csv(_resolve_template_file("IBSR", ".csv"), sep=";")
+    return pd.read_csv(resolve_template_file("IBSR", ".csv"), sep=";")
 
 
 def _phantom(with_brainstem=True):

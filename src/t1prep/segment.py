@@ -77,17 +77,16 @@ from .utils import (
     progress_bar,
     TEMPLATE_PATH_T1PREP,
 )
-from ._segment_utils import (
-    scale_intensity,
-    correct_bias_field,
-    get_atlas,
-    get_partition,
-    compute_euler_number,
-    correct_label_map,
+from ._atlas import get_atlas
+from ._intensity import (
     apply_LAS,
-    handle_lesions,
-    normalize_to_sum1,
+    correct_bias_field,
+    correct_label_map,
+    scale_intensity,
 )
+from ._lesions import handle_lesions
+from ._partition import compute_euler_number, get_partition
+from ._segment_utils import normalize_to_sum1
 from .vessels import (
     apply_blood_vessel_correction,
     blood_vessel_prior,
