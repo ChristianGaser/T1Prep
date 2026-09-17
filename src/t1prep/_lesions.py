@@ -25,20 +25,25 @@ def handle_lesions(
     p1_large: nib.Nifti1Image,
     p2_large: nib.Nifti1Image,
     p3_large: nib.Nifti1Image,
-    mri_dir: str,
-    out_name: str,
-    ext: str,
     use_amap: bool,
-    debug: bool,
     device: torch.device,
 ) -> tuple[
+    nib.Nifti1Image,
     nib.Nifti1Image,
     nib.Nifti1Image,
     nib.Nifti1Image,
     np.ndarray,
     np.ndarray,
 ]:
-    """Detect lesions and correct tissue probability maps."""
+    """Detect lesions and correct tissue probability maps.
+
+    Returns
+    -------
+    tuple
+        ``(p1_large, p2_large, p3_large, discrepancy, wmh_value, ind_wmh)``:
+        the (with AMAP: corrected) GM, WM and CSF maps, the label discrepancy
+        map, the lesion signal, and the boolean lesion mask.
+    """
 
     p0_value = p0_large_orig.get_fdata().copy()
     wm = p0_value >= 2.5

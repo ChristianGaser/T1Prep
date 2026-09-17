@@ -1714,11 +1714,7 @@ def run_segment():
             p1_large,
             p2_large,
             p3_large,
-            mri_dir,
-            out_name,
-            ext,
             use_amap,
-            debug,
             device,
         )
     else:
