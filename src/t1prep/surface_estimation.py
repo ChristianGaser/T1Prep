@@ -189,7 +189,7 @@ def _pbt_kwargs(*, median_filter: int, amap: int, verbose: bool) -> dict:
         median_subsample=2,
         range_val=0.45,
         sulcal_barrier=True,
-        barrier_gmtfactor=1.3,
+        barrier_gmtfactor=1.2,
         barrier_gmtpct=90.0,
         barrier_q=0.7,
         barrier_ramp=0.5,
