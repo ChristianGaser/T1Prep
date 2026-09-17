@@ -161,6 +161,24 @@ def _run_step(log: logging.Logger, description: str, verbose: bool = False):
 # PBT input and the shared sulcal-barrier reference
 # ===========================================================================
 
+def _fix_self_intersect(vertices, faces, reference=None, verbose=False):
+    """Repair self-intersections, retreating stubborn defects to *reference*.
+
+    Local smoothing cannot separate two sheets that a deformation drove
+    through each other -- the two sides of a thin gyral blade -- so those
+    defects move part of the way back to the surface the deformation started
+    from.  Falls back to the plain repair with a cat-surf that has no
+    ``reference``.
+    """
+    if reference is None:
+        return cat_surf.fix_self_intersect(vertices, faces, verbose=verbose)
+    try:
+        return cat_surf.fix_self_intersect(vertices, faces, verbose=verbose,
+                                           reference=reference)
+    except TypeError:
+        return cat_surf.fix_self_intersect(vertices, faces, verbose=verbose)
+
+
 def _pbt_input(hemi_vol: str, vessel: int):
     """Load a hemisphere label map the way PBT receives it.
 
@@ -497,6 +515,7 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
     bar.step("Refine central surface")
     with _run_step(log, "CAT_SurfDeform", verbose=verbose):
         v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
+        before_deform = v
         v, fcs = cat_surf.surf_deform(
             v, fcs, p(mri, "PPM_volume"),
             w1=0.1, w2=0.1, w3=1.0, sigma=0.2,
@@ -509,7 +528,8 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
     # the central surface is unchanged and later per-vertex data stays valid.
     with _run_step(log, "CAT_SurfFixSelfIntersect", verbose=verbose):
         v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
-        v, fcs = cat_surf.fix_self_intersect(v, fcs, verbose=verbose)
+        v, fcs = _fix_self_intersect(v, fcs, reference=before_deform,
+                                     verbose=verbose)
         cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
 
     # =====================================================================
@@ -555,6 +575,7 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
             cat_surf.write_surface(p(surf, "Pial_surface"), pv, pf)
             cat_surf.write_surface(p(surf, "WM_surface"), wv, wf)
         with _run_step(log, "CAT_SurfAverage (pial+white -> central)", verbose=verbose):
+            before_average = cat_surf.read_surface(p(surf, "Mid_surface"))[0]
             cs_cli.surf_average(
                 p(surf, "Mid_surface"),
                 p(surf, "Pial_surface"), p(surf, "WM_surface"),
@@ -570,7 +591,8 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
         with _run_step(log, "CAT_SurfFixSelfIntersect (post-average)",
                        verbose=verbose):
             v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
-            v, fcs = cat_surf.fix_self_intersect(v, fcs, verbose=verbose)
+            v, fcs = _fix_self_intersect(v, fcs, reference=before_average,
+                                         verbose=verbose)
             cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
 
     # =====================================================================
