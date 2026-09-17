@@ -31,14 +31,12 @@ import cat_surf
 import torch
 import argparse
 import warnings
-import math
 import shutil
 import fill_voids
 import json
 import random
 import time
 import subprocess
-import tempfile
 import sentry_sdk
 import nibabel as nib
 import torch.nn.functional as F
@@ -77,17 +75,14 @@ from .utils import (
     get_filenames,
     get_volume_native_space,
     progress_bar,
-    DATA_PATH_T1PREP,
     TEMPLATE_PATH_T1PREP,
 )
 from ._segment_utils import (
     scale_intensity,
     correct_bias_field,
-    unsmooth_kernel,
     get_atlas,
     get_partition,
     compute_euler_number,
-    cleanup_vessels,
     correct_label_map,
     apply_LAS,
     handle_lesions,
@@ -98,12 +93,7 @@ from .vessels import (
     blood_vessel_prior,
     protected_regions,
 )
-from ._models import (
-    MODEL_DIR,
-    MODEL_FILES,
-    all_models_present,
-    prepare_model_files,
-)
+from ._models import prepare_model_files
 from ._conv_chunk import chunked_conv3d
 from .nogm import run_segment_nogm_conventional
 from ._device import (
@@ -1464,7 +1454,6 @@ def save_results(
         release_cache(device)
         warp_yx = output_reg["warp_yx"]
         warp_xy = output_reg["warp_xy"]
-        warp_mse = output_reg["warp_mse"]
 
         if atlas_list is not None:
             output_atlas = prep.run_atlas_register(
@@ -1612,8 +1601,6 @@ def save_results(
             save_deformation_spm(
                 warp_xy, affine, mask, f"{mri_dir}/{def_name}"
             )
-            invdef_name = code_vars.get("invDef_volume", "")
-            # nib.save(warp_yx, f"{mri_dir}/{invdef_name}")
 
         # Save hemispheric partition for surface estimation
         if save_hemilabel or save_fmriprep:
@@ -1844,8 +1831,6 @@ def run_segment():
         prep, brain, mask, verbose, count, end_count
     )
 
-    inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
-
     # Ensure that minimum of brain is not negative (which can happen after B-spline interpolation)
     brain_value = brain_large.get_fdata().copy()
     mask_value = binary_closing(brain_value > 0.0, generate_binary_structure(3, 3), 7)
@@ -2005,9 +1990,6 @@ def run_segment():
         p2_large = output_nogm["p2_large"]
         p3_large = output_nogm["p3_large"]
 
-        gmv = output_nogm["gmv"]
-        tiv = output_nogm["tiv"]
-
     if use_amap or save_lesions:
         (
             p1_large,
@@ -2037,44 +2019,19 @@ def run_segment():
 
     wj_affine = pd.Series([wj_affine])
 
-    # Cleanup (e.g. remove vessels outside cerebellum, but are surrounded by CSF) 
-    # to refine segmentation
-    # not sure how good this correction still is since we have a much better one
-    if (vessel > 0) and False: 
-        # Same protection mask the pre-AMAP correction used; the grid has not
-        # changed, so it is only rebuilt if something upstream resampled.
-        excl_regions = protect
-        if excl_regions is None or excl_regions.shape != p0_large.shape:
-            excl_regions = protected_regions(
-                p0_large.affine, p0_large.shape, device
-            )
-
-        p0_value_original = p0_large.get_fdata().copy()
-        p0_large, p1_large, p2_large, p3_large = cleanup_vessels(
-            p1_large, p2_large, p3_large, mri_dir, out_name, ext, 
-            debug, excl_regions)
-    else:
-        # ``cleanup_vessels`` above is the only producer of the pre-cleanup
-        # copy the debug output below diffs against; keep the name defined so
-        # the disabled branch does not turn --debug into a NameError.
-        p0_value_original = None
-        gm = p1_large.get_fdata()
-        wm = p2_large.get_fdata()
-        csf = p3_large.get_fdata()
-        gm, wm, csf = normalize_to_sum1(gm, wm, csf)
-        tmp = csf + 2 * gm + 3 * wm
-        p0_large = nib.Nifti1Image(tmp, p0_large.affine, p0_large.header)
+    # Rebuild the label from the (possibly lesion-corrected) tissue maps.
+    gm, wm, csf = normalize_to_sum1(
+        p1_large.get_fdata(), p2_large.get_fdata(), p3_large.get_fdata()
+    )
+    p0_large = nib.Nifti1Image(
+        csf + 2 * gm + 3 * wm, p0_large.affine, p0_large.header
+    )
 
     # We have to apply the initial mask again to the label
     p0_value = p0_large.get_fdata().copy()
     p0_value[mask_large_value == 0] = 0
     p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
-    if debug and (vessel > 0) and p0_value_original is not None:
-        p0_value = p0_value_original - p0_value
-        nib.save(nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header), 
-            f"{mri_dir}/{out_name}_vessels_large.{ext}")
-        
     if use_amap or save_lesions:
         p0_value = p0_large.get_fdata().copy()
         np.clip(p0_value, 0, 3, out=p0_value)

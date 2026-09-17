@@ -1,42 +1,37 @@
 import math
-import torch
 import os
-import cat_surf
-import numpy as np
-import nibabel as nib
-import torch.nn.functional as F
-import pandas as pd
-import numpy as np
 
+import nibabel as nib
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+from deepmriprep.atlas import AtlasRegistration, shape_from_to
+from deepmriprep.utils import nifti_to_tensor
+from nxbc.filter import (
+    Eu_v,
+    distrib_kde,
+    kernelfntri,
+    map_Eu_v,
+    symGaussFilt,
+    wiener_filter_withpad,
+)
 from scipy.ndimage import (
-    binary_opening,
-    binary_dilation,
     binary_closing,
+    binary_dilation,
     binary_erosion,
-    convolve,
-    distance_transform_edt,
+    binary_opening,
     generate_binary_structure,
-    gaussian_laplace,
-    grey_opening,
     median_filter,
 )
-from .utils import (
-    DATA_PATH_T1PREP,
-    TEMPLATE_PATH_T1PREP, 
-    find_largest_cluster, 
-    remove_file,
-)
+from scipy.ndimage import label as label_image
 from SplineSmooth3D.SplineSmooth3D import (
-    SplineSmooth3D, 
+    SplineSmooth3D,
     SplineSmooth3DUnregularized,
 )
-from scipy.ndimage import label as label_image
-from nxbc.filter import *
+from typing import Union
 
-from torchreg.utils import smooth_kernel
-from deepmriprep.utils import DEVICE, nifti_to_tensor
-from deepmriprep.atlas import shape_from_to, AtlasRegistration
-from typing import Union, Tuple
+from .utils import TEMPLATE_PATH_T1PREP, find_largest_cluster
 
 
 def _resolve_template_file(name: str, ext: str) -> str:
@@ -180,98 +175,6 @@ def normalize_to_sum1(
         wrap_nifti(norm3, nifti3),
     )
 
-
-def cleanup_vessels(
-    gm0: nib.Nifti1Image,
-    wm0: nib.Nifti1Image,
-    csf0: nib.Nifti1Image,
-    mri_dir: str,
-    out_name: str,
-    ext: str,
-    debug:bool,
-    cerebellum=None,
-):
-    """Blood vessel correction for PVE-based tissue probability maps.
-
-    Detects and corrects blood vessel misclassifications using the PVE
-    label map approach from ``blood_vessel_correction_pve_float``
-    (CAT_Vol.c).  Optional a cerebellum mask can refine the detection.
-
-    Parameters
-    ----------
-    gm0, wm0, csf0 : nib.Nifti1Image
-        GM, WM, CSF probability maps (values in [0, 1]).
-    strength : float, optional
-        Correction strength (default 1).  Higher values increase the
-        opening radii and lower the vessel-detection threshold.
-    cerebellum : np.ndarray or None, optional
-        Binary cerebellum mask in the same space.  Vessel detection is
-        suppressed inside the cerebellum and cerebellar WM voxels are
-        added to the seed region.
-
-    Returns
-    -------
-    label : nib.Nifti1Image
-        Soft PVE label map (``csf + 2*gm + 3*wm``).
-    gm, wm, csf : nib.Nifti1Image
-        Corrected tissue probability maps.
-    """
-    gm = gm0.get_fdata().copy().astype(np.float32)
-    wm = wm0.get_fdata().copy().astype(np.float32)
-    csf = csf0.get_fdata().copy().astype(np.float32)
-
-    # Normalise probabilities.
-    total = gm + wm + csf
-    total[total == 0] = 1.0
-    gm /= total
-    wm /= total
-    csf /= total
-
-    # PVE label map (CSF=1, GM=2, WM=3 with partial volumes).
-    label_in = (csf + 2.0 * gm + 3.0 * wm).astype(np.float32)
-    mask = label_in > 0
-
-    # Blood vessel correction via cat_surf Python binding (in-process)
-    vx = gm0.header.get_zooms()[:3]
-    label_out = cat_surf.vol_blood_vessel_correction(label_in, voxelsize=vx)
-
-    if cerebellum is not None:
-        mask = mask & (cerebellum == 0)
-
-    # Rescue original label values outside mask
-    label_out[~mask] = label_in[~mask]
-
-    # Get single tissue segmentations
-    csf_new = 1 - np.minimum(1, np.abs(label_out - 1))
-    gm_new = 1 - np.minimum(1, np.abs(label_out - 2))
-    wm_new = 1 - np.minimum(1, np.abs(label_out - 3))
-
-    # Rescue original tissue segmentations outside mask
-    csf_new[~mask] = csf[~mask]
-    gm_new[~mask] = gm[~mask]
-    wm_new[~mask] = wm[~mask]
-
-    gm_new, wm_new, csf_new = normalize_to_sum1(gm_new, wm_new, csf_new)
-    label_out = (csf_new + 2.0 * gm_new + 3.0 * wm_new).astype(np.float32)
-
-    if debug:
-        post_name = f"{mri_dir}/{out_name}_p0_large_post_vessel_cleanup_tmp.{ext}"
-        nib.save(nib.Nifti1Image(label_out, gm0.affine, gm0.header), post_name)
-
-    return (
-        nib.Nifti1Image(label_out, gm0.affine, gm0.header),
-        nib.Nifti1Image(gm_new, gm0.affine, gm0.header),
-        nib.Nifti1Image(wm_new, wm0.affine, wm0.header),
-        nib.Nifti1Image(csf_new, csf0.affine, csf0.header),
-    )
-
-
-def laplacian_3d(f, spacing=(1.0, 1.0, 1.0)):
-    dz, dy, dx = spacing
-    grad = np.gradient(f, dz, dy, dx)
-    lap = sum(np.gradient(grad[i], (dz, dy, dx)[i], axis=i) for i in range(3))
-    return lap
-    
 
 def piecewise_linear_scaling(input_img, label_img):
     """Piecewise linear scaling of an intensity image."""
@@ -781,15 +684,6 @@ def correct_label_map(brain, seg):
     seg_corrected = nib.Nifti1Image(seg0, seg.affine, seg.header)
     brain_corrected = nib.Nifti1Image(brain0, brain.affine, brain.header)
     return seg_corrected, brain_corrected
-
-
-def unsmooth_kernel(factor=3.0, sigma=0.6, device="cpu"):
-    kernel = -factor * smooth_kernel(
-        kernel_size=3 * [3], sigma=torch.tensor(3 * [sigma], device=device)
-    )
-    kernel[1, 1, 1] = 0
-    kernel[1, 1, 1] = 1 - kernel.sum()
-    return kernel
 
 
 def handle_lesions(
