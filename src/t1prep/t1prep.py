@@ -271,13 +271,19 @@ def _build_surface_cmd(
 # ---------------------------------------------------------------------------
 
 def _merge_glued_sulci_qa(report_dir: str, bname: str) -> None:
-    """Fold the per-hemisphere glued-sulcus sidecars into the report JSON.
+    """Fold the per-hemisphere surface QA sidecars into the report JSON.
 
+    The sidecars carry the glued-sulcus measure, the shape of the thickness
+    distribution (see :mod:`t1prep.thickness_qa`) and the reference the
+    sulcal-barrier gate of PBT was derived from.
     ``surface_estimation`` runs the two hemispheres as concurrent subprocesses
     that both resolve the same ``Report_file``, so each writes its own sidecar
     and the merge happens here, once both have finished.  Purely additive: a
-    missing or unreadable sidecar leaves the report untouched.
+    missing or unreadable sidecar, or a measure missing from it, leaves the
+    report untouched.
     """
+    from .thickness_qa import HIGH_FACTOR, LOWER_CUT
+
     sidecars = sorted(
         glob.glob(os.path.join(report_dir, f"{bname}_glued-*.json"))
     )
@@ -300,14 +306,34 @@ def _merge_glued_sulci_qa(report_dir: str, bname: str) -> None:
                 report = json.load(fh)
             qa = report.setdefault("qualitymeasures", {})
             for hemi, data in entries.items():
-                qa[f"glued_{hemi}"] = {
-                    "value": round(100.0 * data["glued_fraction"], 4),
-                    "desc": (
-                        "Percentage of central-surface vertices touching a "
-                        "facing patch of the same surface (glued/buried "
-                        "sulci; ideal = 0; lower is better)"
-                    ),
-                }
+                if data.get("glued_fraction") is not None:
+                    qa[f"glued_{hemi}"] = {
+                        "value": round(100.0 * data["glued_fraction"], 4),
+                        "desc": (
+                            "Percentage of central-surface vertices touching a "
+                            "facing patch of the same surface (glued/buried "
+                            "sulci; ideal = 0; lower is better)"
+                        ),
+                    }
+                if data.get("thickness_upper_skewness") is not None:
+                    qa[f"thickness_skew_{hemi}"] = {
+                        "value": round(data["thickness_upper_skewness"], 4),
+                        "desc": (
+                            "Skewness of the cortical thickness over vertices "
+                            f">= {LOWER_CUT:g} mm (medial wall excluded); a "
+                            "long upper tail (higher value) points at "
+                            "residual overestimation such as unopened glued "
+                            "sulci"
+                        ),
+                    }
+                if data.get("thickness_high_fraction") is not None:
+                    qa[f"thickness_high_{hemi}"] = {
+                        "value": round(100.0 * data["thickness_high_fraction"], 4),
+                        "desc": (
+                            f"Percentage of vertices thicker than {HIGH_FACTOR:g}x "
+                            "the median thickness of this hemisphere"
+                        ),
+                    }
                 if data.get("sulci_sigma_factor") is not None:
                     qa[f"glued_{hemi}_sigma"] = {
                         "value": data["sulci_sigma_factor"],
@@ -316,64 +342,36 @@ def _merge_glued_sulci_qa(report_dir: str, bname: str) -> None:
                             "for this hemisphere"
                         ),
                     }
-            with open(report_path, "w") as fh:
-                json.dump(report, fh, indent=2)
-        except (OSError, ValueError):
-            pass
-    for path in sidecars:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
-
-def _merge_barrier_reference_qa(report_dir: str, bname: str) -> None:
-    """Fold the per-hemisphere sulcal-barrier references into the report JSON.
-
-    ``surface_estimation`` publishes the reference thickness its barrier gate
-    was derived from in ``{bname}_barrier-ref-{hemi}.json``, so that the two
-    concurrent hemisphere processes can gate with their mean.  Reported per
-    hemisphere and shared: the reference follows cortical thickness, and a
-    hemisphere far from its partner points at fused sulci.  Purely additive,
-    like the glued-sulcus merge.
-    """
-    sidecars = sorted(
-        glob.glob(os.path.join(report_dir, f"{bname}_barrier-ref-*.json"))
-    )
-    if not sidecars:
-        return
-    refs = {}
-    report_file = ""
-    for path in sidecars:
-        try:
-            with open(path) as fh:
-                data = json.load(fh)
-            if data.get("reference"):
-                refs[data["hemi"]] = float(data["reference"])
-            report_file = data.get("report_file") or report_file
-        except (OSError, ValueError, KeyError):
-            continue
-    report_path = os.path.join(report_dir, report_file) if report_file else ""
-    if refs and report_path and os.path.exists(report_path):
-        try:
-            with open(report_path) as fh:
-                report = json.load(fh)
-            qa = report.setdefault("qualitymeasures", {})
-            for hemi, ref in refs.items():
-                qa[f"barrier_ref_{hemi}"] = {
-                    "value": round(ref, 4),
+                if data.get("barrier_reference") is not None:
+                    qa[f"barrier_ref_{hemi}"] = {
+                        "value": round(data["barrier_reference"], 4),
+                        "desc": (
+                            "Reference thickness in mm the sulcal-barrier "
+                            "gate of this hemisphere is derived from (trimmed "
+                            "mean of dist_WM + dist_CSF in the cortical band)"
+                        ),
+                    }
+                if data.get("barrier_reference_shared") is not None:
+                    qa["barrier_ref_shared"] = {
+                        "value": round(data["barrier_reference_shared"], 4),
+                        "desc": (
+                            "Mean of both hemisphere references; the barrier "
+                            "gate of both hemispheres is barrier_gmtfactor "
+                            "times this value"
+                        ),
+                    }
+            skew = {h: d.get("thickness_upper_skewness")
+                    for h, d in entries.items()}
+            if skew.get("lh") is not None and skew.get("rh") is not None:
+                # The two hemispheres of a subject agree closely (rank
+                # correlation 0.95 on 38 test hemispheres), so their
+                # difference is the most sensitive use of the measure.
+                qa["thickness_skew_asym"] = {
+                    "value": round(skew["lh"] - skew["rh"], 4),
                     "desc": (
-                        "Reference thickness in mm the sulcal-barrier gate of "
-                        "this hemisphere is derived from (trimmed mean of "
-                        "dist_WM + dist_CSF in the cortical band)"
-                    ),
-                }
-            if len(refs) == 2:
-                qa["barrier_ref_shared"] = {
-                    "value": round(sum(refs.values()) / 2.0, 4),
-                    "desc": (
-                        "Mean of both hemisphere references; the barrier gate "
-                        "of both hemispheres is 1.5x this value"
+                        "Left minus right thickness skewness; a large "
+                        "difference points at residual overestimation in "
+                        "one hemisphere"
                     ),
                 }
             with open(report_path, "w") as fh:
@@ -615,7 +613,6 @@ def _process_single(
             return 1
 
         _merge_glued_sulci_qa(str(report_dir), bname)
-        _merge_barrier_reference_qa(str(report_dir), bname)
 
     # ------------------------------------------------------------------ timing
     elapsed = time.perf_counter() - start
