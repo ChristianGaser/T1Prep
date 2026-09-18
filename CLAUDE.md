@@ -26,7 +26,7 @@ Run in background automatically:
 Entry points are installed into the environment's `bin/` (the canonical way to
 run T1Prep): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`; same
 CLI, PyCAT startup banner), `t1prep-ui`, `t1prep-run` (Python
-single-subject), `CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`. The
+single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`. The
 `scripts/` folder
 is a source-tree/dev fallback and should not be put on `PATH`.
 
@@ -54,6 +54,9 @@ CAT_VolDiff [--rel] [--glob] tp1.nii.gz tp2.nii.gz
 
 # Recalibrate the QA rating bounds from a processed BrainWeb Phantom set
 python scripts/qa_calibrate.py /path/to/BWP/report
+
+# Histogram of volumes, surfaces or text data (CAT12's cat_plot_histogram.m)
+CAT_PlotHistogram [--dist kernel|none|normal|...] [--mean] [--save PREFIX] file...
 
 # Longitudinal: rigid realignment, then the low-dimensional ageing deformation
 ./scripts/process_longitudinal.sh --long-model ageing tp1.nii.gz tp2.nii.gz
