@@ -111,6 +111,7 @@ class TestEveryToolFollowsIt(unittest.TestCase):
     TOOLS = [
         ("t1prep.t1prep", "main"),
         ("t1prep.bbreg", "main"),
+        ("t1prep.plot_histogram", "main"),
         ("t1prep.metrics", "_parse_dice_args"),
         ("t1prep.realign_longitudinal", "_parse_args"),
         ("t1prep.warp_longitudinal", "_parse_args"),
