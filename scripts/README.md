@@ -494,6 +494,21 @@ subject the first image is the reference; every further image `j` gives
 - Input: NIfTI volumes; the images of a subject must share one grid (no reslicing)
 - Output: float32 `diff_*` / `diffrel_*` volumes
 
+### `CAT_PlotHistogram`
+
+Histogram of one or more volumes, surfaces or text files — the Python
+counterpart of CAT12's `cat_plot_histogram.m`. Like the viewers it is
+installed as a console script, not as a wrapper in this folder; from a source
+checkout run it as a module:
+
+```bash
+CAT_PlotHistogram mwp1*.nii.gz                      # installed
+python -m t1prep.plot_histogram mwp1*.nii.gz        # source checkout
+```
+
+The fitted curves, the palettes and the statistics it prints are documented in
+**[docs/tools.md](../docs/tools.md)**.
+
 ### `CAT_GrepJson`
 
 Extracts specific fields from T1Prep JSON report files (generated during processing).

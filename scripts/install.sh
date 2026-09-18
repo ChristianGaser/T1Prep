@@ -556,6 +556,7 @@ main() {
   echo "  t1prep-run             # single-subject Python entry"
   echo "  CAT_SurfView           # surface viewer"
   echo "  CAT_VolView            # volume viewer (3 orthogonal slices)"
+  echo "  CAT_PlotHistogram      # histograms of volumes, surfaces or text data"
   echo "  t1prep-make-apps       # macOS: .app bundles for the viewers"
   echo "  t1prep-download-models # fetch model weights"
   echo "  t1prep-bbreg           # BOLD-to-T1w BBR for fMRIPrep"

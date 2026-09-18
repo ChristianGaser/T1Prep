@@ -55,6 +55,7 @@ following commands are available:
 | `t1prep-make-apps` | macOS: build .app bundles for the viewers |
 | `t1prep-download-models` | fetch model weights |
 | `t1prep-bbreg` | boundary-based BOLD-to-T1w registration for fMRIPrep |
+| `CAT_PlotHistogram` | histograms of volumes, surfaces or text data |
 
 ### Download model weights
 

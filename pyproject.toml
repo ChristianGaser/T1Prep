@@ -46,6 +46,8 @@ dependencies = [
     "SplineSmooth3D>=0.1.1",
     "nxbc>=0.2.0",
     "requests",
+    # Drawing backend of CAT_PlotHistogram; the pipeline itself does not plot
+    "matplotlib>=3.5",
     "flask>=2.3",
     "apscheduler>=3.10",
     "h5py>=3.0",
@@ -64,6 +66,7 @@ t1prep-run = "t1prep.t1prep:main"
 t1prep-ui = "t1prep.webui.app:main"
 CAT_SurfView = "t1prep.gui.cat_surf_view:main"
 CAT_VolView = "t1prep.gui.cat_vol_view:main"
+CAT_PlotHistogram = "t1prep.plot_histogram:main"
 t1prep-make-apps = "t1prep.gui.make_apps:main"
 t1prep-download-models = "t1prep._models:main"
 t1prep-bbreg = "t1prep.bbreg:main"

@@ -1,8 +1,8 @@
 # Additional tools
 
 T1Prep installs more than the pipeline itself: a web UI, four small GUIs for
-surface post-processing, and the two viewers (documented separately in
-[viewers.md](viewers.md)).
+surface post-processing, a histogram plotter, and the two viewers (documented
+separately in [viewers.md](viewers.md)).
 
 | Command | What it is |
 |---------|------------|
@@ -12,6 +12,7 @@ surface post-processing, and the two viewers (documented separately in
 | `CAT_SurfParameters_ui` | Extract surface parameters |
 | `CAT_Surf2ROIMulti_ui` | Map surface values to atlas ROIs |
 | `CAT_VolDiff` | Voxel-wise differences between volumes |
+| `CAT_PlotHistogram` | Histograms of volumes, surfaces or text data |
 | `t1prep-make-apps` | macOS: build the viewer `.app` bundles |
 | `t1prep-download-models` | Fetch the model weights ahead of time |
 
@@ -165,3 +166,79 @@ Options:
 Input expectations:
 - The images of a subject must share one grid; nothing is resliced
 - Output is float32 with the header of the reference image
+
+---
+
+## `CAT_PlotHistogram`
+
+Draws the histogram of one or more data sets, the Python counterpart of
+CAT12's `cat_plot_histogram.m`. Every input is reduced to a one-dimensional
+sample, binned on a grid shared by all inputs, and drawn as one line per
+input, so distributions can be compared directly.
+
+```bash
+CAT_PlotHistogram mwp1*.nii.gz                  # one line per input
+CAT_PlotHistogram --mean p1*.nii.gz             # + average with standard error
+CAT_PlotHistogram --dist none --xrange 0 6 \
+    --save /tmp/hist lh.thickness.* rh.thickness.*
+```
+
+Reads NIfTI volumes (`.nii`, `.nii.gz`, `.img`), GIFTI surface overlays,
+FreeSurfer morphometry data (`lh.thickness`, `lh.curv`, ...) and plain text.
+Volumes, GIFTI and text files lose their zero background — zeros become NaN
+once they make up more than 1% of the data — while FreeSurfer data keeps its
+zeros, where zero is a value like any other.
+
+Options:
+- `--dist <NAME>` the curve fitted through each sample. `kernel` (the default)
+  is a Gaussian kernel density estimate, `none` draws the plain histogram and
+  adds a second figure with all inputs pooled, and the parametric families are
+  `normal`, `gamma`, `rician`, `rayleigh`, `weibull`, `lognormal`,
+  `exponential`, `beta`, `logistic` and `tlocationscale`. The families with
+  positive support are fitted with the location pinned to zero, as MATLAB's
+  `fitdist` does, and refuse data that reaches below it.
+- `--rawline {0,1,2}` the raw histogram as a dotted line next to a fitted
+  curve — never, always, or (the default) only for fewer than six inputs
+- `--bins <N>` upper limit on the number of bins (default 500; without
+  `--xrange` about one bin per 100 values of the first input is used)
+- `--xrange MIN MAX` the range to bin over, `--xlim` / `--ylim` the drawn axes
+- `--no-norm-frequency` plot counts instead of normalizing each histogram by
+  its own total, which is what makes inputs of different size comparable
+- `--mean` the average of all histograms with its standard error as a shaded
+  band, in its own figure (number 11)
+- `--color <NAME>` a categorical palette from CAT12's `cat_io_colormaps`:
+  `nejm` (default), `jco`, `jama`, `d3`, `set1`–`set3`, `accent`, `dark2`,
+  `paired`. `--alpha` sets the line opacity; outside `[0, 1]` it follows the
+  number of inputs.
+- `--winsize W H` figure size in pixels, `--fig N` the figure to draw into
+- `--save <PREFIX>` write `PREFIX.png`, `PREFIX_mean.png`, ... instead of
+  opening windows; `--quiet` suppresses the printed table
+
+Printed per input: mean, median, standard deviation, effect size and the peak
+of the histogram. For `spmT*` maps and effect size maps (names starting with
+`D`) the table shows the upper 5% tail cutoff `TH5` instead, and each legend
+entry is labelled with it.
+
+Two inputs of identical shape additionally get a density scatter plot, and for
+volumes the three orthogonal projections of their difference in CAT12's
+diverging colormap (blue where the first is larger, red where the second is).
+`--no-scatter` turns both off. The surface rendering of a difference between
+two GIFTI files is not reproduced here — use
+[`CAT_SurfView`](viewers.md) for that.
+
+It is also importable, and then returns what it drew instead of only drawing
+it:
+
+```python
+from t1prep.plot_histogram import plot_histogram
+
+result = plot_histogram(["p1a.nii.gz", "p1b.nii.gz"], dist="kernel")
+print([(s.name, s.mean, s.std, s.max_freq) for s in result.stats])
+result.figures["histogram"].savefig("hist.png")
+```
+
+`plot_histogram()` takes file names, a single array, a list of arrays or a
+matrix whose smaller dimension counts the data sets, and returns the bin
+centers, the histograms, the fitted curves, the per-input statistics and the
+figures. Repeated calls with `mean=True` overlay their averages in figure 11,
+each in the next colour, so a caller can label them with one `legend()` call.

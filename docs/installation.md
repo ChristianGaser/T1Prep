@@ -69,6 +69,7 @@ t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
 t1prep-ui                                       # web UI
 CAT_SurfView lh.central.gii                     # surface viewer
 CAT_VolView T1.nii.gz                           # volume viewer
+CAT_PlotHistogram p1*.nii.gz                    # histograms of the inputs
 t1prep-download-models                          # fetch the model weights now
 t1prep-make-apps                                # macOS: build the viewer .app bundles
 ```
@@ -193,8 +194,8 @@ pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
 Either way the entry points (`T1Prep`, `PyCAT`, `t1prep-ui`, `t1prep-run`,
-`CAT_SurfView`, `CAT_VolView`, `t1prep-make-apps`, `t1prep-download-models`,
-`t1prep-bbreg`) are
+`CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `t1prep-make-apps`,
+`t1prep-download-models`, `t1prep-bbreg`) are
 placed in `env/bin`. Activating
 the venv — or adding `env/bin` to your `PATH` — is all that is needed; the
 source `scripts/` folder is only a dev fallback and should not be put on `PATH`.
