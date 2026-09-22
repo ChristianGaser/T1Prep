@@ -71,8 +71,8 @@ python evaluation/tools/eval_mindboggle.py dice --work DIR --protocol both
 make phantom                     # = eval_phantom.py run + check in /tmp/T1Prep_phantom
 make phantom-check PHANTOM_DIR=DIR
 make phantom-pin                 # re-pin after an intended change (two devices, ~30 min)
-make phantom-wmh PHANTOM_SIMS=DIR  # WMH over a set of mri_simulate images (~4 min/image)
-python evaluation/tools/fit_wmh_calibration.py fit --sims DIR --work DIR  # refit WMH_CALIBRATION
+make phantom-wmh                 # WMH over the 14 simulations in evaluation/data/phantom (~1 h)
+python evaluation/tools/fit_wmh_calibration.py fit --work DIR  # refit WMH_CALIBRATION (after dump)
 
 # Linting / formatting
 black src scripts

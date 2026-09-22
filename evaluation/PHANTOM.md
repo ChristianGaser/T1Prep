@@ -17,13 +17,18 @@ python evaluation/tools/eval_phantom.py check --work DIR   # exit 1 on regressio
 
 ## The phantom
 
-`data/phantom/` holds one anatomy, HR075 MPRAGE, re-rendered by
-[mri_simulate](https://github.com/ChristianGaser/T1-MRI-Phantom) 0.10.2:
+`data/phantom/` holds one anatomy, HR075 MPRAGE, rendered 14 times by
+[mri_simulate](https://github.com/ChristianGaser/T1-MRI-Phantom) 0.10.2
+(225 MB, `export-ignore`d from release archives):
 
 | file | contents |
 |---|---|
-| `…_desc-snr25Rf45T4Wmh2_T1w.nii.gz` | 0.75 mm, PIL orientation, whole head. Rician noise at WM SNR 25, RF bias field strength 45 (type 4), 34 WMHs (grade 2). |
-| `…_desc-Wmh2Clean_dseg.nii.gz` | Continuous partial-volume label in T1Prep's `p0` convention: 1 CSF, 2 GM, 3 WM, 4 WMH; 2.5 is half GM, half WM. |
+| `…_desc-snr25Rf45T4Wmh2_T1w.nii.gz` | **the phantom of `run`/`check`**: 0.75 mm, PIL orientation, whole head. Rician noise at WM SNR 25, RF bias field strength 45 (type 4), 34 WMHs (grade 2). |
+| `…_desc-snr{25,50}Rf{45,90}T4[Wmh{2,4}]_T1w.nii.gz` | the grid of `wmh`: SNR 25/50 × bias 45/90 × no WMH / grade 2 (34 lesions) / grade 4 (59 lesions) |
+| `…_desc-snr25_T1w.nii.gz`, `…_desc-simu_T1w.nii.gz` | no bias field; no noise, no bias and no WMH at all |
+| `…_desc-{,Wmh2,Wmh4}Clean_dseg.nii.gz` | the labels, one per WMH grade: continuous partial volume in T1Prep's `p0` convention, 1 CSF, 2 GM, 3 WM, 4 WMH; 2.5 is half GM, half WM |
+
+Each image has a JSON sidecar with its simulation parameters.
 
 The label is *cleaned*: vessels and dura (GM-labelled tissue more than 4 mm
 from WM, measured through the tissue) are relabelled as CSF. The image is
@@ -150,12 +155,13 @@ convention offset, and each degradation is then read on top of it.
 `eval_phantom.py wmh` runs T1Prep (volumes and lesions only, ~4 min an image)
 on every simulated T1w in an mri_simulate folder, pairs each image with the
 label it was rendered from (`…desc-snr50Rf90T4Wmh4_T1w` ↔ `…desc-Wmh4Clean_dseg`,
-no `Wmh` ↔ `…desc-Clean_dseg`), and scores the WMH map per image. The set is
-not in git; point `--sims` or `T1PREP_PHANTOM_SIMS` at it.
+no `Wmh` ↔ `…desc-Clean_dseg`), and scores the WMH map per image. By default
+it uses the 14 images in `data/phantom/`; `--sims` or `T1PREP_PHANTOM_SIMS`
+points it at another mri_simulate folder.
 
 ```bash
-make phantom-wmh PHANTOM_SIMS=~/Dropbox/derivatives/mri_simulate-0.10.2   # ~1 h for 14 images
-make phantom-wmh-pin PHANTOM_SIMS=...                                     # re-pin
+make phantom-wmh        # ~1 h for the 14 images
+make phantom-wmh-pin    # re-pin
 ```
 
 Scores (pinned in `results/phantom_wmh_pinned.json`):

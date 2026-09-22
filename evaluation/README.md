@@ -84,7 +84,7 @@ produces, and `results/dice_boxplots.png` for the distributions behind them.
 | `tools/` | the exact scripts used to run each competing method |
 | `results/RESULTS.md` | the numbers, the protocol, and the caveats |
 | `results/*.csv` | per-region, per-comparison Dice for every arm |
-| `data/phantom/` | simulated T1w + ground-truth label for [`PHANTOM.md`](PHANTOM.md) |
+| `data/phantom/` | 14 simulated T1w of one anatomy + their ground-truth labels, for [`PHANTOM.md`](PHANTOM.md) |
 | `results/phantom_pinned.json` | the pinned scalars `eval_phantom.py check` compares with |
 | `results/phantom_wmh_pinned.json` | the pinned WMH scores over the simulation set |
 | `results/cat_surface_annot_bug.md` | write-up of the annot name bug the phantom found |
