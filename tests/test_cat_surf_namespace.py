@@ -9,14 +9,20 @@ import pytest
 
 cat_surf = pytest.importorskip("cat_surf")
 
-import t1prep.cat_surf as wrapper  # noqa: E402
+
+@pytest.fixture(scope="module")
+def wrapper():
+    import t1prep.cat_surf
+
+    return t1prep.cat_surf
 
 
-def test_every_public_symbol_is_reexported():
-    missing = [n for n in getattr(cat_surf, "__all__", ()) if not hasattr(wrapper, n)]
+def test_every_public_symbol_is_reexported(wrapper):
+    names = getattr(cat_surf, "__all__", ())
+    missing = [n for n in names if not hasattr(wrapper, n)]
     assert not missing
 
 
-def test_reexports_are_the_same_objects():
+def test_reexports_are_the_same_objects(wrapper):
     for name in getattr(cat_surf, "__all__", ()):
         assert getattr(wrapper, name) is getattr(cat_surf, name), name

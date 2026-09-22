@@ -1,4 +1,4 @@
-.PHONY: help version release clean zip cp_binaries
+.PHONY: help version release clean zip cp_binaries phantom phantom-check phantom-score phantom-pin phantom-wmh phantom-wmh-pin
 .DEFAULT_GOAL := help
 
 # ---------------------------------------------------------------------------
@@ -23,6 +23,15 @@ ZIPFILE = T1Prep_$(VERSION).zip
 
 BIN ?= CAT*
 
+# Phantom accuracy test (evaluation/PHANTOM.md).  PHANTOM_DIR holds the run;
+# the re-pin also uses $(PHANTOM_DIR)_cpu.  PHANTOM_ARGS is passed through,
+# e.g. PHANTOM_ARGS=--history, or "-- --no-overwrite" for T1Prep options.
+PHANTOM_DIR  ?= /tmp/T1Prep_phantom
+PHANTOM_ARGS ?=
+# mri_simulate derivatives with several noise/bias/WMH settings (not in git)
+PHANTOM_SIMS ?= $(T1PREP_PHANTOM_SIMS)
+EVAL_PHANTOM  = ./scripts/run_with_env.sh evaluation/tools/eval_phantom.py
+
 # print available commands
 help:
 	-@echo Available commands:
@@ -31,6 +40,12 @@ help:
 	-@echo "  clean         Clean up artifacts and permissions"
 	-@echo "  cp_binaries   Copy CAT-Surface binaries [BIN=CAT_MyBinary]"
 	-@echo "  version       Show current PREV_VERSION / VERSION"
+	-@echo "  phantom       Run T1Prep on the simulated phantom and check the pins (~15 min)"
+	-@echo "  phantom-check Check an existing phantom run against the pins [PHANTOM_DIR=...]"
+	-@echo "  phantom-score Re-score an existing phantom run"
+	-@echo "  phantom-pin   Run on the default device and on the CPU, then re-pin (~30 min)"
+	-@echo "  phantom-wmh   WMH detection on every simulation in PHANTOM_SIMS, checked against its pins"
+	-@echo "  phantom-wmh-pin  The same, then re-pin the WMH scores"
 
 # show resolved versions (sanity check before `make release`)
 version:
@@ -52,7 +67,7 @@ zip: release
 	-@echo zip
 	-@test ! -d T1Prep || rm -r T1Prep
 	-@mkdir T1Prep
-	-@rsync -av . T1Prep --exclude env --exclude '.*' --exclude Makefile --exclude Windows-Installation.txt --exclude test
+	-@rsync -av . T1Prep --exclude env --exclude '.*' --exclude Makefile --exclude Windows-Installation.txt --exclude test --exclude evaluation/data/phantom
 	-@zip ${ZIPFILE} -rm T1Prep
 
 # prepare a release: rewrite PREV_VERSION → VERSION in the few files that
@@ -76,3 +91,28 @@ cp_binaries:
 	-@for i in src/t1prep/bin/Windows/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-w64-mingw32/Progs/`basename $${i}` src/t1prep/bin/Windows/ ; done
 	-@for i in src/t1prep/bin/MacOS/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` src/t1prep/bin/MacOS/ ; done
 	-@for i in src/t1prep/bin/LinuxARM64/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-aarch64-none-elf/Progs/`basename $${i}` src/t1prep/bin/LinuxARM64/ ; done
+
+# phantom accuracy test: T1Prep + ground-truth surface arm, then the pinned check
+# (no "-" prefix: a regression has to fail the make run)
+phantom:
+	$(EVAL_PHANTOM) run --work $(PHANTOM_DIR) --check $(PHANTOM_ARGS)
+
+phantom-check:
+	$(EVAL_PHANTOM) check --work $(PHANTOM_DIR)
+
+phantom-score:
+	$(EVAL_PHANTOM) score --work $(PHANTOM_DIR) $(PHANTOM_ARGS)
+
+# re-pin after an intended change: two devices give the tolerances a spread
+phantom-pin:
+	$(EVAL_PHANTOM) run --work $(PHANTOM_DIR) $(PHANTOM_ARGS)
+	$(EVAL_PHANTOM) run --work $(PHANTOM_DIR)_cpu --device cpu $(PHANTOM_ARGS)
+	$(EVAL_PHANTOM) pin --work $(PHANTOM_DIR) $(PHANTOM_DIR)_cpu
+
+# WMH detection over a set of simulations (T1Prep without surfaces, ~4 min/image)
+phantom-wmh:
+	$(EVAL_PHANTOM) wmh --work $(PHANTOM_DIR)_wmh --sims "$(PHANTOM_SIMS)" --check $(PHANTOM_ARGS)
+
+phantom-wmh-pin:
+	$(EVAL_PHANTOM) wmh --work $(PHANTOM_DIR)_wmh --sims "$(PHANTOM_SIMS)" $(PHANTOM_ARGS)
+	$(EVAL_PHANTOM) pin --work $(PHANTOM_DIR)_wmh
