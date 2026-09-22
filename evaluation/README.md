@@ -8,6 +8,10 @@ protocol for every method: each subject's *manual* labels are carried into a
 common space by the transform under test and compared there, so nothing but
 the registration differs between arms.
 
+Segmentation, bias correction, WMH and thickness accuracy are measured
+separately, against a simulated brain with a known ground truth: see
+[`PHANTOM.md`](PHANTOM.md) (`tools/eval_phantom.py`, a manual test).
+
 ## Protocols
 
 Once every subject's manual labels sit in one common space, there are three
@@ -80,6 +84,9 @@ produces, and `results/dice_boxplots.png` for the distributions behind them.
 | `tools/` | the exact scripts used to run each competing method |
 | `results/RESULTS.md` | the numbers, the protocol, and the caveats |
 | `results/*.csv` | per-region, per-comparison Dice for every arm |
+| `data/phantom/` | simulated T1w + ground-truth label for [`PHANTOM.md`](PHANTOM.md) |
+| `results/phantom_pinned.json` | the pinned scalars `eval_phantom.py check` compares with |
+| `results/cat_surface_annot_bug.md` | write-up of the annot name bug the phantom found |
 
 ## Data
 
@@ -162,6 +169,7 @@ normalisation can be dropped into the same comparison.
 | script | purpose |
 |---|---|
 | `eval_mindboggle.py` | the protocol: project labels, score LOO and pairwise Dice |
+| `eval_phantom.py` | T1Prep against the simulated phantom: run, score, pin, check |
 | `make_affine_baseline.py` | Mindboggle's affine labels on the evaluation grid |
 | `run_ants_batch.sh` + `ants_fmriprep.sh` | `antsRegistration` with fMRIPrep's exact JSON |
 | `run_ants_antspy.py` | ANTsPy arms (note: its default `SyN` uses `reg_iterations=(40,20,0)` — no iterations at the finest level) |
