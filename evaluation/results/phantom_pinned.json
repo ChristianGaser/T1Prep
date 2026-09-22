@@ -1,5 +1,5 @@
 {
- "pinned": "2026-09-22T13:04:07",
+ "pinned": "2026-09-22T18:24:24+02:00",
  "comment": "Characterization of T1Prep on the HR075 phantom; see evaluation/tools/eval_phantom.py. Re-pin after an intended change.",
  "model_hash": "4d39513319f2a73e",
  "versions": {
@@ -7,7 +7,7 @@
   "cat_surf": "1.0.29"
  },
  "git": {
-  "commit": "b9e6f25",
+  "commit": "0bce7ec",
   "dirty": true
  },
  "devices": [
@@ -16,113 +16,113 @@
  ],
  "metrics": {
   "CSF_dice": {
-   "value": 0.831908,
+   "value": 0.83242,
    "tol": 0.005,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.831908,
-    0.831908
+    0.83242,
+    0.83242
    ]
   },
   "GM_dice": {
-   "value": 0.930003,
+   "value": 0.930119,
    "tol": 0.005,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.930003,
-    0.930003
+    0.930119,
+    0.930119
    ]
   },
   "WM_dice": {
-   "value": 0.954961,
+   "value": 0.954996,
    "tol": 0.005,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.954961,
-    0.954961
+    0.954996,
+    0.954996
    ]
   },
   "CSF_soft_dice": {
-   "value": 0.796323,
+   "value": 0.796563,
    "tol": 0.005,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.796322,
-    0.796323
+    0.796563,
+    0.796563
    ]
   },
   "GM_soft_dice": {
-   "value": 0.886693,
+   "value": 0.887344,
    "tol": 0.005,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.886693,
-    0.886693
+    0.887344,
+    0.887344
    ]
   },
   "WM_soft_dice": {
-   "value": 0.931113,
+   "value": 0.9309,
    "tol": 0.005,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.931113,
-    0.931113
+    0.930901,
+    0.9309
    ]
   },
   "CSF_vol_err_pct": {
-   "value": -11.175376,
+   "value": -11.091981,
    "tol": 1.0,
    "direction": "both",
    "spread": 0.0,
    "runs": [
-    -11.175376,
-    -11.175376
+    -11.091981,
+    -11.091981
    ]
   },
   "GM_vol_err_pct": {
-   "value": 2.280154,
+   "value": 2.221827,
    "tol": 1.0,
    "direction": "both",
-   "spread": 4.5e-05,
+   "spread": 1.5e-05,
    "runs": [
-    2.280177,
-    2.280132
+    2.221834,
+    2.221819
    ]
   },
   "WM_vol_err_pct": {
-   "value": 3.382407,
+   "value": 3.400821,
    "tol": 1.0,
    "direction": "both",
-   "spread": 4.6e-05,
+   "spread": 9e-06,
    "runs": [
-    3.382384,
-    3.38243
+    3.400817,
+    3.400826
    ]
   },
   "label_mae": {
-   "value": 0.140046,
+   "value": 0.140098,
    "tol": 0.005,
    "direction": "lower",
    "spread": 0.0,
    "runs": [
-    0.140046,
-    0.140046
+    0.140098,
+    0.140098
    ]
   },
   "report_TIV_err_pct": {
-   "value": -0.979545,
+   "value": -1.126569,
    "tol": 1.0,
    "direction": "both",
    "spread": 0.0,
    "runs": [
-    -0.979545,
-    -0.979545
+    -1.126569,
+    -1.126569
    ]
   },
   "report_GM_err_pct": {
@@ -136,13 +136,13 @@
    ]
   },
   "report_WM_err_pct": {
-   "value": 4.969507,
+   "value": 4.551316,
    "tol": 1.0,
    "direction": "both",
    "spread": 0.0,
    "runs": [
-    4.969507,
-    4.969507
+    4.551316,
+    4.551316
    ]
   },
   "report_CSF_err_pct": {
@@ -156,73 +156,73 @@
    ]
   },
   "shift_white_mm": {
-   "value": 0.068919,
-   "tol": 0.03,
-   "direction": "both",
-   "spread": 1e-06,
-   "runs": [
-    0.068918,
-    0.068919
-   ]
-  },
-  "shift_pial_mm": {
-   "value": 0.128978,
+   "value": 0.069294,
    "tol": 0.03,
    "direction": "both",
    "spread": 0.0,
    "runs": [
-    0.128977,
-    0.128978
+    0.069294,
+    0.069294
+   ]
+  },
+  "shift_pial_mm": {
+   "value": 0.127876,
+   "tol": 0.03,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    0.127876,
+    0.127876
    ]
   },
   "fp_gm_far_ml": {
-   "value": 0.692297,
+   "value": 0.689766,
    "tol": 0.3,
    "direction": "lower",
    "spread": 0.0,
    "runs": [
-    0.692297,
-    0.692297
+    0.689766,
+    0.689766
    ]
   },
   "fp_brain_far_ml": {
-   "value": 1.647,
+   "value": 1.665563,
    "tol": 0.5,
    "direction": "lower",
    "spread": 0.0,
    "runs": [
-    1.647,
-    1.647
+    1.665563,
+    1.665563
    ]
   },
   "missed_brain_ml": {
-   "value": 2.961984,
-   "tol": 0.592397,
+   "value": 2.950594,
+   "tol": 0.590119,
    "direction": "lower",
    "spread": 0.0,
    "runs": [
-    2.961984,
-    2.961984
+    2.950594,
+    2.950594
    ]
   },
   "wmh_soft_dice": {
-   "value": 0.228514,
+   "value": 0.337058,
    "tol": 0.02,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.228514,
-    0.228514
+    0.337058,
+    0.337057
    ]
   },
   "wmh_dice_t010": {
-   "value": 0.449384,
+   "value": 0.63029,
    "tol": 0.02,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.449384,
-    0.449384
+    0.63029,
+    0.63029
    ]
   },
   "wmh_detected_t010": {
@@ -236,23 +236,73 @@
    ]
   },
   "wmh_pred_ml": {
-   "value": 2.394638,
+   "value": 1.825857,
    "tol": 0.3,
    "direction": "both",
-   "spread": 0.0,
+   "spread": 2e-06,
    "runs": [
-    2.394638,
-    2.394637
+    1.825858,
+    1.825856
    ]
   },
   "wmh_mass_in_lesion": {
-   "value": 0.366442,
+   "value": 0.779238,
    "tol": 0.03,
    "direction": "higher",
    "spread": 0.0,
    "runs": [
-    0.366442,
-    0.366442
+    0.779238,
+    0.779238
+   ]
+  },
+  "wmh_f1": {
+   "value": 0.610169,
+   "tol": 0.03,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.610169,
+    0.610169
+   ]
+  },
+  "wmh_false_clusters": {
+   "value": 7.0,
+   "tol": 2.0,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    7.0,
+    7.0
+   ]
+  },
+  "wmh_dice_t050": {
+   "value": 0.401526,
+   "tol": 0.02,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.401526,
+    0.401526
+   ]
+  },
+  "wmh_precision": {
+   "value": 0.687529,
+   "tol": 0.03,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.687529,
+    0.687529
+   ]
+  },
+  "wmh_flagged_ml": {
+   "value": 6.363141,
+   "tol": 0.954471,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    6.363141,
+    6.363141
    ]
   },
   "m_wm_cv": {
@@ -286,13 +336,13 @@
    ]
   },
   "qa_NCR": {
-   "value": 0.0292,
-   "tol": 0.00146,
+   "value": 0.0291,
+   "tol": 0.001455,
    "direction": "both",
    "spread": 0.0,
    "runs": [
-    0.0292,
-    0.0292
+    0.0291,
+    0.0291
    ]
   },
   "qa_ICR": {
@@ -316,63 +366,63 @@
    ]
   },
   "thick_diff_median_mm": {
-   "value": 0.000932,
+   "value": 0.000982,
    "tol": 0.02,
    "direction": "both",
-   "spread": 0.001252,
+   "spread": 0.001055,
    "runs": [
-    0.001558,
-    0.000305
+    0.001509,
+    0.000454
    ]
   },
   "thick_mae_mm": {
-   "value": 0.131384,
-   "tol": 0.01,
+   "value": 0.132412,
+   "tol": 0.016031,
    "direction": "lower",
-   "spread": 0.003098,
+   "spread": 0.005344,
    "runs": [
-    0.129835,
-    0.132933
+    0.12974,
+    0.135084
    ]
   },
   "thick_r": {
-   "value": 0.932453,
-   "tol": 0.01,
+   "value": 0.931683,
+   "tol": 0.014519,
    "direction": "higher",
-   "spread": 0.003189,
+   "spread": 0.00484,
    "runs": [
-    0.934047,
-    0.930858
+    0.934103,
+    0.929263
    ]
   },
   "central_dist_mm": {
-   "value": 0.39528,
+   "value": 0.395274,
    "tol": 0.02,
    "direction": "lower",
-   "spread": 3e-06,
+   "spread": 8.1e-05,
    "runs": [
-    0.395279,
-    0.395281
+    0.395234,
+    0.395315
    ]
   },
   "region_bias_median_mm": {
-   "value": 0.008531,
+   "value": 0.008759,
    "tol": 0.02,
    "direction": "both",
-   "spread": 0.000194,
+   "spread": 0.000882,
    "runs": [
-    0.008434,
-    0.008628
+    0.008318,
+    0.0092
    ]
   },
   "region_spearman": {
-   "value": 0.939096,
+   "value": 0.93776,
    "tol": 0.03,
    "direction": "higher",
-   "spread": 0.003321,
+   "spread": 0.004161,
    "runs": [
-    0.940757,
-    0.937436
+    0.93984,
+    0.93568
    ]
   },
   "defects_lh": {

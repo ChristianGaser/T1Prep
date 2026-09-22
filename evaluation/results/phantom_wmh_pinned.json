@@ -1,0 +1,99 @@
+{
+ "pinned": "2026-09-22T17:51:49+02:00",
+ "comment": "Characterization of T1Prep on the HR075 phantom; see evaluation/tools/eval_phantom.py. Re-pin after an intended change.",
+ "model_hash": "4d39513319f2a73e",
+ "versions": {
+  "t1prep": "0.7.5",
+  "cat_surf": "1.0.29"
+ },
+ "git": {
+  "commit": "0bce7ec",
+  "dirty": true
+ },
+ "devices": [
+  null
+ ],
+ "metrics": {
+  "f1": {
+   "value": 0.688529,
+   "tol": 0.02,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.688529
+   ]
+  },
+  "found_frac": {
+   "value": 0.623656,
+   "tol": 0.02,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.623656
+   ]
+  },
+  "false_clusters": {
+   "value": 51.0,
+   "tol": 12.75,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    51.0
+   ]
+  },
+  "dice_t050": {
+   "value": 0.540502,
+   "tol": 0.02,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.540502
+   ]
+  },
+  "soft_dice": {
+   "value": 0.456074,
+   "tol": 0.02,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.456074
+   ]
+  },
+  "vol_abs_err_ml": {
+   "value": 1.02141,
+   "tol": 0.3,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    1.02141
+   ]
+  },
+  "clean_fp_ml": {
+   "value": 0.582458,
+   "tol": 0.2,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    0.582458
+   ]
+  },
+  "precision": {
+   "value": 0.723645,
+   "tol": 0.03,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.723645
+   ]
+  },
+  "clean_flagged_ml": {
+   "value": 2.801813,
+   "tol": 0.700453,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    2.801813
+   ]
+  }
+ }
+}

@@ -45,12 +45,14 @@ tolerance is reported but only fails with ``--strict``; re-pin to accept it.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import glob
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -102,6 +104,11 @@ METRICS: dict[str, tuple[str, float, float]] = {
     "wmh_detected_t010": ("higher", 0.03, 0.0),
     "wmh_pred_ml": ("both", 0.3, 0.1),
     "wmh_mass_in_lesion": ("higher", 0.03, 0.0),
+    "wmh_f1": ("higher", 0.03, 0.0),
+    "wmh_false_clusters": ("lower", 2.0, 0.25),
+    "wmh_dice_t050": ("higher", 0.02, 0.0),
+    "wmh_precision": ("higher", 0.03, 0.0),
+    "wmh_flagged_ml": ("both", 0.5, 0.15),
     # bias correction: WM uniformity of the corrected image m
     "m_wm_cv": ("lower", 0.002, 0.0),
     "m_wm_lowfreq_cv": ("lower", 0.002, 0.0),
@@ -122,14 +129,30 @@ METRICS: dict[str, tuple[str, float, float]] = {
     "defects_rh": ("lower", 0.0, 0.25),
 }
 
+#: The ``wmh`` command's summary over a set of simulations (same semantics).
+WMH_METRICS: dict[str, tuple[str, float, float]] = {
+    "f1": ("higher", 0.02, 0.0),
+    "found_frac": ("higher", 0.02, 0.0),
+    "false_clusters": ("lower", 3.0, 0.25),
+    "dice_t050": ("higher", 0.02, 0.0),
+    "soft_dice": ("higher", 0.02, 0.0),
+    "vol_abs_err_ml": ("lower", 0.3, 0.1),
+    "clean_fp_ml": ("lower", 0.2, 0.25),
+    "precision": ("higher", 0.03, 0.0),
+    "clean_flagged_ml": ("lower", 0.3, 0.25),
+}
+
+WMH_PINNED_DEFAULT = REPO / "evaluation" / "results" / "phantom_wmh_pinned.json"
+
 #: Invariants every run must satisfy, whatever is pinned.
-MIN_ALIGNMENT = 0.6        # GM soft Dice below this means a misregistered run
-MIN_HEMI_CORR = 0.8        # GT vs pipeline hemisphere: the GT arm is valid
+MIN_ALIGNMENT = 0.6  # GM soft Dice below this means a misregistered run
+MIN_HEMI_CORR = 0.8  # GT vs pipeline hemisphere: the GT arm is valid
 
 
 # ---------------------------------------------------------------------------
 # Metrics (pure functions, tested in tests/test_eval_phantom.py)
 # ---------------------------------------------------------------------------
+
 
 def tissue_fractions(label: np.ndarray) -> dict[str, np.ndarray]:
     """CSF, GM and WM fractions of a ``p0`` label (values above 3 are WM)."""
@@ -202,6 +225,81 @@ def lowfreq_cv(image: np.ndarray, mask: np.ndarray, zooms, sigma_mm=4.0) -> floa
     return float(smooth.std() / smooth.mean())
 
 
+def csf_by_zone(label: np.ndarray, gt_csf, pred_csf, zooms) -> dict:
+    """Net CSF error (ml) in the outer rim, the ventricles and the sulci.
+
+    A CSF volume error can come from the brain mask (skull-strip, dura
+    removal), which acts on the outer rim, or from the segmentation, which acts
+    on sulci and ventricle walls.  On the phantom they had opposite signs: the
+    rim was right to 3 ml, the sulci 37 ml short.
+
+    - **rim:** within 3 mm of the true intracranial edge, or outside it.
+    - **ventricles:** CSF bodies larger than 0.8 ml more than 12 mm inside,
+      plus 2 voxels of wall.
+    - **sulci:** everything else inside, cisterns included.
+    """
+    from scipy import ndimage as ndi
+
+    ml = float(np.prod(zooms)) / 1000.0
+    inside = label > 0.5
+    d_out = ndi.distance_transform_edt(inside, sampling=zooms)
+    comp, _ = ndi.label((label > 0.5) & (label < 1.5) & (d_out > 12))
+    sizes = np.bincount(comp.ravel()) * ml
+    sizes[0] = 0
+    vent = ndi.binary_dilation(np.isin(comp, np.flatnonzero(sizes > 0.8)), iterations=2)
+    rim = (d_out <= 3) | ~inside
+    zones = {"rim": rim, "ventricles": vent & ~rim, "sulci": inside & ~rim & ~vent}
+    diff = pred_csf - gt_csf
+    return {
+        f"csf_err_{k}_ml": round(float(diff[z].sum()) * ml, 2) for k, z in zones.items()
+    }
+
+
+def wmh_scores(label: np.ndarray, p4: np.ndarray, vx_mm3: float) -> dict:
+    """Lesion- and voxel-wise agreement of a WMH map with the ground truth.
+
+    A *reported lesion* is a 26-connected component of ``p4 > 0.01`` (the
+    method's own positive region, whatever its scale).  A true lesion is
+    *found* when a reported lesion overlaps its core (label > 3.5); a reported
+    lesion is *false* when it touches no true WMH at all.  Dice at 0.5 asks
+    whether ``p4`` can be read as a probability.  Counts alone can be gamed by
+    flagging a lot of white matter -- a large enough mask covers every lesion
+    -- so the flagged volume and its voxel precision go with them.
+    """
+    from scipy import ndimage as ndi
+
+    p4 = np.clip(np.nan_to_num(p4), 0, 1)
+    frac = np.clip(label - 3, 0, 1)
+    core = label > 3.5
+    comp, n = ndi.label(core)
+    rep, k = ndi.label(p4 > 0.01, structure=np.ones((3, 3, 3)))
+    found = int((ndi.maximum(rep > 0, comp, np.arange(1, n + 1)) > 0).sum()) if n else 0
+    touching = ndi.maximum(frac > 0, rep, np.arange(1, k + 1)) if k else []
+    false = int(k - int(np.sum(touching)))
+    denom = 2 * found + (n - found) + false
+    near = ndi.binary_dilation(core, iterations=2)
+    return {
+        "lesions": int(n),
+        "found": found,
+        "false_clusters": false,
+        "f1": 2 * found / denom if denom else 1.0,
+        "detected_t010": (
+            float(np.mean(ndi.maximum(p4 > 0.1, comp, np.arange(1, n + 1))))
+            if n
+            else float("nan")
+        ),
+        "dice_t010": dice(p4 > 0.1, core),
+        "dice_t050": dice(p4 > 0.5, core),
+        "soft_dice": soft_dice(frac, p4),
+        "pred_ml": float(p4.sum()) * vx_mm3 / 1000.0,
+        "flagged_ml": float((rep > 0).sum()) * vx_mm3 / 1000.0,
+        "precision": float(((rep > 0) & (frac > 0)).sum() / max((rep > 0).sum(), 1)),
+        "gt_ml": float(frac.sum()) * vx_mm3 / 1000.0,
+        "mass_in_lesion": float(p4[near].sum() / max(p4.sum(), 1e-9)),
+        "p4_max": float(p4.max()),
+    }
+
+
 def compare(value: float, pinned: dict, strict: bool = False) -> str:
     """``ok``, ``improved`` or ``REGRESSED`` for one metric against its pin."""
     if value is None or not np.isfinite(value):
@@ -221,8 +319,9 @@ def compare(value: float, pinned: dict, strict: bool = False) -> str:
 
 def make_pins(runs: list[dict]) -> dict:
     """Pinned value and tolerance of every metric from one or more runs."""
+    table = WMH_METRICS if runs and runs[0].get("kind") == "wmh" else METRICS
     pins = {}
-    for name, (direction, abs_floor, rel_floor) in METRICS.items():
+    for name, (direction, abs_floor, rel_floor) in table.items():
         vals = [r["metrics"].get(name) for r in runs]
         vals = [v for v in vals if v is not None and np.isfinite(v)]
         if not vals:
@@ -244,6 +343,7 @@ def make_pins(runs: list[dict]) -> dict:
 # Scoring a finished run
 # ---------------------------------------------------------------------------
 
+
 def _one(pattern: str) -> str | None:
     hits = sorted(glob.glob(pattern))
     return hits[0] if hits else None
@@ -253,7 +353,9 @@ def _on_grid(img, ref, order=1) -> np.ndarray:
     """Data of ``img`` on the voxel grid of ``ref`` (world-space resampling)."""
     from nibabel.processing import resample_from_to
 
-    if img.shape[:3] == ref.shape[:3] and np.allclose(img.affine, ref.affine, atol=1e-4):
+    if img.shape[:3] == ref.shape[:3] and np.allclose(
+        img.affine, ref.affine, atol=1e-4
+    ):
         return np.asarray(img.dataobj, dtype=np.float32)
     out = resample_from_to(img, (ref.shape[:3], ref.affine), order=order)
     return np.asarray(out.dataobj, dtype=np.float32)
@@ -301,6 +403,7 @@ def score_volumes(work: Path, t1_path: Path, gt_path: Path) -> tuple[dict, dict]
         )
     union = (L > 0) | (P > 0)
     met["label_mae"] = float(np.abs(np.clip(L, 0, 3) - np.clip(P, 0, 3))[union].mean())
+    det.update(csf_by_zone(L, fg["CSF"], fp["CSF"], zooms))
 
     Lc, Pc = np.clip(L, 0, 3), np.clip(P, 0, 3)
     met["shift_white_mm"] = boundary_shift(Lc, Pc, 2.5, zooms)
@@ -317,24 +420,23 @@ def score_volumes(work: Path, t1_path: Path, gt_path: Path) -> tuple[dict, dict]
     met["missed_brain_ml"] = float(((L > 1.5) & (P < 0.5)).sum()) * ml
 
     # White matter hyperintensities
-    frac = np.clip(L - 3, 0, 1)
-    core = L > 3.5
     p4_path = _one(f"{mri}/p4*.nii*")
     if p4_path:
-        W = np.clip(_on_grid(nib.load(p4_path), gt_img), 0, 1)
-        comp, n = ndi.label(core)
-        hit = ndi.maximum(W > 0.1, comp, index=np.arange(1, n + 1)) if n else []
-        near = ndi.binary_dilation(core, iterations=2)
-        met["wmh_soft_dice"] = soft_dice(frac, W)
-        met["wmh_dice_t010"] = dice(W > 0.1, core)
-        det["wmh_dice_t050"] = round(dice(W > 0.5, core), 4)
-        met["wmh_detected_t010"] = float(np.mean(hit)) if n else float("nan")
-        met["wmh_pred_ml"] = float(W.sum()) * ml
-        met["wmh_mass_in_lesion"] = float(W[near].sum() / max(W.sum(), 1e-9))
-        det["wmh_gt_ml"] = round(float(frac.sum()) * ml, 2)
-        det["wmh_gt_core_ml"] = round(float(core.sum()) * ml, 2)
-        det["wmh_gt_lesions"] = int(n)
-        det["wmh_p4_in_core_mean"] = round(float(W[core].mean()), 3)
+        w = wmh_scores(L, _on_grid(nib.load(p4_path), gt_img), float(np.prod(zooms)))
+        met["wmh_soft_dice"] = w["soft_dice"]
+        met["wmh_dice_t010"] = w["dice_t010"]
+        met["wmh_dice_t050"] = w["dice_t050"]
+        met["wmh_detected_t010"] = w["detected_t010"]
+        met["wmh_pred_ml"] = w["pred_ml"]
+        met["wmh_mass_in_lesion"] = w["mass_in_lesion"]
+        met["wmh_f1"] = w["f1"]
+        met["wmh_false_clusters"] = float(w["false_clusters"])
+        met["wmh_precision"] = w["precision"]
+        met["wmh_flagged_ml"] = w["flagged_ml"]
+        det["wmh_gt_ml"] = round(w["gt_ml"], 2)
+        det["wmh_gt_lesions"] = w["lesions"]
+        det["wmh_found"] = w["found"]
+        det["wmh_p4_max"] = round(w["p4_max"], 3)
 
     # Bias correction and the noise that was actually added
     raw = np.asarray(nib.load(str(t1_path)).dataobj, dtype=np.float32)
@@ -365,7 +467,9 @@ def score_volumes(work: Path, t1_path: Path, gt_path: Path) -> tuple[dict, dict]
         M = _on_grid(nib.load(m_path), gt_img)
         met["m_wm_cv"] = float(M[wm].std() / M[wm].mean())
         met["m_wm_lowfreq_cv"] = lowfreq_cv(M, wm, zooms)
-        met["m_cjv"] = float((M[wm].std() + M[gm].std()) / abs(M[wm].mean() - M[gm].mean()))
+        met["m_cjv"] = float(
+            (M[wm].std() + M[gm].std()) / abs(M[wm].mean() - M[gm].mean())
+        )
 
     # The GM overlap doubles as the check that the run is in the right space
     det["aligned"] = met["GM_soft_dice"] >= MIN_ALIGNMENT
@@ -434,13 +538,15 @@ def score_thickness(work: Path) -> tuple[dict, dict]:
         det[f"thick_median_pred_{hemi}"] = round(float(np.median(p_th)), 3)
         det[f"thick_median_gt_{hemi}"] = round(float(np.median(g_th)), 3)
         dist, idx = cKDTree(pv).query(gv)
-        close = dist < 1.0          # compare only where the surfaces coincide
+        close = dist < 1.0  # compare only where the surfaces coincide
         d = p_th[idx][close] - g_th[close]
         diffs.append(d)
         pairs.append((p_th[idx][close], g_th[close]))
         dists.append(dist)
         det[f"thick_diff_median_{hemi}"] = round(float(np.median(d)), 3)
-        det[f"thick_loa95_{hemi}"] = [round(float(x), 3) for x in np.percentile(d, [2.5, 97.5])]
+        det[f"thick_loa95_{hemi}"] = [
+            round(float(x), 3) for x in np.percentile(d, [2.5, 97.5])
+        ]
         det[f"central_far_frac_{hemi}"] = round(float(np.mean(~close)), 4)
 
         # Region means by colour-table index: both annots come from the same
@@ -456,7 +562,13 @@ def score_thickness(work: Path) -> tuple[dict, dict]:
                     continue
                 pm, gm = pl == i, gl == i
                 if pm.sum() > 200 and gm.sum() > 200:
-                    regional.append((f"{hemi}.{name}", float(p_th[pm].mean()), float(g_th[gm].mean())))
+                    regional.append(
+                        (
+                            f"{hemi}.{name}",
+                            float(p_th[pm].mean()),
+                            float(g_th[gm].mean()),
+                        )
+                    )
 
     if diffs:
         d = np.concatenate(diffs)
@@ -487,7 +599,10 @@ def score_hemispheres(work: Path) -> tuple[dict, dict]:
     import nibabel as nib
 
     met, det = {}, {}
-    for arm, mri in (("pred", work / "t1prep" / "mri"), ("gt", work / "gt_arm" / "mri")):
+    for arm, mri in (
+        ("pred", work / "t1prep" / "mri"),
+        ("gt", work / "gt_arm" / "mri"),
+    ):
         for hemi in ("lh", "rh"):
             path = _one(f"{mri}/{hemi}.seg.*.nii*")
             if not path:
@@ -499,7 +614,10 @@ def score_hemispheres(work: Path) -> tuple[dict, dict]:
                 met[f"defects_{hemi}"] = defects
             else:
                 det[f"defects_gt_{hemi}"] = defects
-    for name, key in (("gt_hook.json", "gt_hook"), ("gt_hemispheres.json", "gt_hemispheres")):
+    for name, key in (
+        ("gt_hook.json", "gt_hook"),
+        ("gt_hemispheres.json", "gt_hemispheres"),
+    ):
         path = work / "gt_arm" / "mri" / name
         if path.exists():
             det[key] = json.loads(path.read_text())
@@ -509,8 +627,12 @@ def score_hemispheres(work: Path) -> tuple[dict, dict]:
 def _git_state() -> dict:
     def git(*args):
         try:
-            return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True,
-                                  text=True, check=True).stdout.strip()
+            return subprocess.run(
+                ["git", "-C", str(REPO), *args],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
         except (OSError, subprocess.CalledProcessError):
             return None
 
@@ -523,7 +645,7 @@ def _model_hash() -> str | None:
     try:
         sys.path.insert(0, str(REPO / "src"))
         from t1prep._models import MODEL_DIR, MODEL_FILES
-    except Exception:
+    except ImportError:
         return None
     h = hashlib.sha256()
     for name in sorted(MODEL_FILES):
@@ -538,20 +660,21 @@ def _model_hash() -> str | None:
 
 
 def _versions() -> dict:
-    out = {}
+    """T1Prep and cat-surf versions, ``None`` where one cannot be found."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    out = {"t1prep": None, "cat_surf": None}
+    sys.path.insert(0, str(REPO / "src"))
     try:
-        sys.path.insert(0, str(REPO / "src"))
         import t1prep
 
         out["t1prep"] = t1prep.__version__
-    except Exception:
-        pass
+    except ImportError:
+        out["t1prep"] = None
     try:
-        from importlib.metadata import version
-
         out["cat_surf"] = version("cat-surf")
-    except Exception:
-        pass
+    except PackageNotFoundError:
+        out["cat_surf"] = None
     return out
 
 
@@ -570,7 +693,7 @@ def score(work: Path, t1_path: Path, gt_path: Path) -> dict:
     if info_path.exists():
         run_info = json.loads(info_path.read_text())
     results = {
-        "scored": datetime.datetime.now().isoformat(timespec="seconds"),
+        "scored": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "t1": str(t1_path),
         "gt": str(gt_path),
         "versions": _versions(),
@@ -596,7 +719,8 @@ def invariants(met: dict, det: dict) -> dict[str, bool]:
     }
     for key, val in det.items():
         if key.startswith("hemi_max_"):
-            inv[f"{key[len('hemi_max_'):]} hemisphere within [1, 3]"] = val <= 3.0 + 1e-3
+            arm = key.replace("hemi_max_", "", 1)
+            inv[f"{arm} hemisphere within [1, 3]"] = val <= 3.0 + 1e-3
         if key.startswith("thick_finite_"):
             inv[f"thickness finite, >= 0 ({key[-2:]})"] = val
     hemis = det.get("gt_hemispheres")
@@ -704,7 +828,8 @@ def _patch_utils(module):
                 name = (base.replace(".seg.", "." + kind + ".", 1) if match.group(1)
                         else base.replace("_seg.", "_" + kind + ".", 1))
                 img = nib.Nifti1Image(data, nifti_obj.affine, nifti_obj.header)
-                original(img, grid, affine, header, os.path.join(_OUT, name), *args, **kw)
+                target = os.path.join(_OUT, name)
+                original(img, grid, affine, header, target, *args, **kw)
         return out
 
     module.resample_and_save_nifti = resample_and_save_nifti
@@ -763,7 +888,7 @@ def build_gt_hemispheres(work: Path, gt_path: Path) -> dict:
         zooms = h_img.header.get_zooms()[:3]
         # Confine to this hemisphere's tissue plus a 2 mm margin, so that
         # ground-truth GM across the midline cannot leak in.
-        region = ndi.binary_dilation(H > 1.05, iterations=int(round(2.0 / min(zooms))))
+        region = ndi.binary_dilation(H > 1.05, iterations=round(2.0 / min(zooms)))
         out = np.where(region & ~X, G, 1.0)
         out[F] = 3.0
         tissue = (H > 1.5) & ~F
@@ -772,8 +897,10 @@ def build_gt_hemispheres(work: Path, gt_path: Path) -> dict:
             "fill_frac": float(F.mean()),
             "excluded_frac": float(X.mean()),
         }
-        nib.save(nib.Nifti1Image(out.astype(np.float32), h_img.affine, h_img.header),
-                 str(dst / Path(seg).name))
+        nib.save(
+            nib.Nifti1Image(out.astype(np.float32), h_img.affine, h_img.header),
+            str(dst / Path(seg).name),
+        )
     (dst / "gt_hemispheres.json").write_text(json.dumps(info, indent=1))
     return info
 
@@ -797,42 +924,93 @@ def _surface_arm(work: Path, bname: str, env: dict) -> None:
     gt = work / "gt_arm"
     (gt / "surf").mkdir(parents=True, exist_ok=True)
     (gt / "report").mkdir(parents=True, exist_ok=True)
-    procs = []
+    cmds = []
     for side in ("left", "right"):
         cmd = [
-            sys.executable, "-m", "t1prep.surface_estimation",
-            "--bname", bname, "--side", side,
-            "--mri-dir", str(gt / "mri"), "--surf-dir", str(gt / "surf"),
-            "--estimate-spherereg", d.get("estimate_spherereg", "1"),
-            "--thickness-method", d.get("thickness_method", "3"),
-            "--save-pial-white", d.get("save_pial_white", "1"),
-            "--pre-fwhm", d.get("pre_fwhm", "2"),
-            "--median-filter", d.get("median_filter", "2"),
-            "--vessel", d.get("vessel", "1"),
-            "--amap", d.get("use_amap", "0"),
-            "--correct-folding", d.get("correct_folding", "1"),
-            "--multi", "0",
-            "--nii-ext", d.get("nii_ext", "nii"),
-            "--names-tsv", str(DATA_PATH_T1PREP / "Names.tsv"),
-            "--bids-naming", "0",
-            "--report-log", str(gt / "report" / f"surface_{side}.log"),
-            "--surf-templates-dir", str(DATA_PATH_T1PREP / "templates_surfaces_32k"),
-            "--atlas-templates-dir", str(DATA_PATH_T1PREP / "atlases_surfaces_32k"),
-            "--atlas-surf", "'aparc_DK40.freesurfer'",
+            sys.executable,
+            "-m",
+            "t1prep.surface_estimation",
+            "--bname",
+            bname,
+            "--side",
+            side,
+            "--mri-dir",
+            str(gt / "mri"),
+            "--surf-dir",
+            str(gt / "surf"),
+            "--estimate-spherereg",
+            d.get("estimate_spherereg", "1"),
+            "--thickness-method",
+            d.get("thickness_method", "3"),
+            "--save-pial-white",
+            d.get("save_pial_white", "1"),
+            "--pre-fwhm",
+            d.get("pre_fwhm", "2"),
+            "--median-filter",
+            d.get("median_filter", "2"),
+            "--vessel",
+            d.get("vessel", "1"),
+            "--amap",
+            d.get("use_amap", "0"),
+            "--correct-folding",
+            d.get("correct_folding", "1"),
+            "--multi",
+            "0",
+            "--nii-ext",
+            d.get("nii_ext", "nii"),
+            "--names-tsv",
+            str(DATA_PATH_T1PREP / "Names.tsv"),
+            "--bids-naming",
+            "0",
+            "--report-log",
+            str(gt / "report" / f"surface_{side}.log"),
+            "--surf-templates-dir",
+            str(DATA_PATH_T1PREP / "templates_surfaces_32k"),
+            "--atlas-templates-dir",
+            str(DATA_PATH_T1PREP / "atlases_surfaces_32k"),
+            "--atlas-surf",
+            "'aparc_DK40.freesurfer'",
         ]
-        log = open(gt / "report" / f"surface_{side}.out", "w")
-        procs.append((side, subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env), log))
-    for side, proc, log in procs:
-        code = proc.wait()
-        log.close()
+        cmds.append((side, cmd))
+    with contextlib.ExitStack() as stack:
+        procs = []
+        for side, cmd in cmds:
+            log = stack.enter_context(open(gt / "report" / f"surface_{side}.out", "w"))
+            procs.append(
+                (
+                    side,
+                    subprocess.Popen(
+                        cmd, stdout=log, stderr=subprocess.STDOUT, env=env
+                    ),
+                )
+            )
+        codes = [(side, proc.wait()) for side, proc in procs]
+    for side, code in codes:
         if code:
-            raise SystemExit(f"ground-truth surface arm failed ({side}), see {gt / 'report'}")
+            raise SystemExit(
+                f"ground-truth surface arm failed ({side}), see {gt / 'report'}"
+            )
 
 
-def run(work: Path, t1_path: Path, gt_path: Path, t1prep: str, device: str | None,
-        extra: list[str]) -> None:
-    """T1Prep on the phantom, with the ground-truth arm, into ``work``."""
+def run(
+    work: Path,
+    t1_path: Path,
+    gt_path: Path,
+    t1prep: str,
+    device: str | None,
+    extra: list[str],
+) -> None:
+    """T1Prep on the phantom, with the ground-truth arm, into ``work``.
+
+    Only what an earlier run left in ``work`` is cleared first -- the
+    directories and files this function writes -- so a stale output can never
+    be scored, and nothing else in ``work`` is touched.
+    """
     work.mkdir(parents=True, exist_ok=True)
+    for sub in ("t1prep", "gt_arm", "hook"):
+        shutil.rmtree(work / sub, ignore_errors=True)
+    for name in (RESULTS_NAME, "run_info.json", "t1prep.log"):
+        (work / name).unlink(missing_ok=True)
     hook_dir = work / "hook"
     hook_dir.mkdir(exist_ok=True)
     (hook_dir / "sitecustomize.py").write_text(HOOK)
@@ -851,15 +1029,19 @@ def run(work: Path, t1_path: Path, gt_path: Path, t1prep: str, device: str | Non
     print("running:", " ".join(cmd), flush=True)
     t0 = time.perf_counter()
     with open(work / "t1prep.log", "w") as log:
-        code = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, env=env).returncode
+        code = subprocess.run(
+            cmd, stdout=log, stderr=subprocess.STDOUT, env=env, check=False
+        ).returncode
     t_pipeline = time.perf_counter() - t0
     if code:
         raise SystemExit(f"T1Prep exited with {code}, see {work / 't1prep.log'}")
     for err in gt_mri.glob("gt_hook_error.json"):
         raise SystemExit(f"partition hook failed: {err.read_text()}")
     if not list(gt_mri.glob("*h.fill.*")):
-        raise SystemExit("the partition masks were not written: was surface "
-                         "estimation switched off, or the hook not loaded?")
+        raise SystemExit(
+            "the partition masks were not written: was surface "
+            "estimation switched off, or the hook not loaded?"
+        )
     build_gt_hemispheres(work, gt_path)
 
     # The ground-truth arm must not see the hook; it has nothing to patch.
@@ -871,9 +1053,18 @@ def run(work: Path, t1_path: Path, gt_path: Path, t1prep: str, device: str | Non
     bname = re.sub(r"\.nii(\.gz)?$", "", t1_path.name)
     _surface_arm(work, bname, env_arm)
     probe = subprocess.run(
-        [sys.executable, "-c",
-         "from t1prep._device import resolve_device; print(resolve_device()[0].type)"],
-        capture_output=True, text=True, env=env_arm,
+        [
+            sys.executable,
+            "-c",
+            (
+                "from t1prep._device import resolve_device; "
+                "print(resolve_device()[0].type)"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        env=env_arm,
+        check=False,
     )
     info = {
         "t1prep": t1prep,
@@ -881,16 +1072,143 @@ def run(work: Path, t1_path: Path, gt_path: Path, t1prep: str, device: str | Non
         "device": probe.stdout.strip() or device or "unknown",
         "pipeline_seconds": round(t_pipeline, 1),
         "gt_arm_seconds": round(time.perf_counter() - t1, 1),
-        "started": datetime.datetime.fromtimestamp(time.time() - t_pipeline).isoformat(
-            timespec="seconds"
-        ),
+        "started": (
+            datetime.datetime.now().astimezone()
+            - datetime.timedelta(seconds=t_pipeline)
+        ).isoformat(timespec="seconds"),
     }
     (work / "run_info.json").write_text(json.dumps(info, indent=1))
 
 
 # ---------------------------------------------------------------------------
+# WMH over a set of simulations
+# ---------------------------------------------------------------------------
+
+
+def discover_sims(sims: Path) -> list[dict]:
+    """Simulated T1w images and the ground truth each was rendered from.
+
+    mri_simulate names the label after the WMH grade only, so
+    ``…desc-snr50Rf90T4Wmh4_T1w`` pairs with ``…desc-Wmh4Clean_dseg`` and an
+    image without ``Wmh`` in its description with ``…desc-Clean_dseg``.
+    """
+    cases = []
+    for t1 in sorted(sims.glob("*_T1w.nii*")):
+        m = re.match(r"(.*desc-)([^_]+)_T1w\.nii(\.gz)?$", t1.name)
+        if not m:
+            continue
+        grade = re.search(r"Wmh\d+", m.group(2))
+        gt = sims / f"{m.group(1)}{grade.group(0) if grade else ''}Clean_dseg.nii.gz"
+        if gt.exists():
+            bname = re.sub(r"_T1w\.nii(\.gz)?$", "", t1.name)
+            cases.append({"desc": m.group(2), "t1": t1, "gt": gt, "bname": bname})
+    return cases
+
+
+def run_wmh(work: Path, cases: list[dict], t1prep: str, extra: list[str]) -> None:
+    """T1Prep (volumes and lesions only) on every simulation in one call."""
+    work.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(work / "t1prep", ignore_errors=True)
+    cmd = [t1prep, "--out-dir", str(work / "t1prep"), "--no-surf", "--lesions", *extra]
+    cmd += [str(c["t1"]) for c in cases]
+    print("running:", " ".join(cmd[:6]), f"... ({len(cases)} images)", flush=True)
+    with open(work / "t1prep.log", "w") as log:
+        code = subprocess.run(
+            cmd, stdout=log, stderr=subprocess.STDOUT, check=False
+        ).returncode
+    if code:
+        raise SystemExit(f"T1Prep exited with {code}, see {work / 't1prep.log'}")
+
+
+def score_wmh(work: Path, cases: list[dict]) -> dict:
+    """Per-image WMH scores and their summary; writes phantom_results.json."""
+    import nibabel as nib
+
+    mri, report = work / "t1prep" / "mri", work / "t1prep" / "report"
+    rows, clean_fp, clean_flagged, inv = [], [], [], {}
+    for c in cases:
+        p4 = _one(f"{mri}/p4{c['bname']}.nii*")
+        if not p4:
+            inv[f"{c['desc']}: p4 written"] = False
+            continue
+        gt = nib.load(str(c["gt"]))
+        label = np.asarray(gt.dataobj, dtype=np.float32)
+        img = _on_grid(nib.load(p4), gt)
+        inv[f"{c['desc']}: p4 within [0, 1]"] = bool(
+            np.isfinite(img).all() and img.min() >= -1e-4 and img.max() <= 1 + 1e-4
+        )
+        w = wmh_scores(label, img, float(np.prod(gt.header.get_zooms()[:3])))
+        # exact name: "desc-snr25" is also a prefix of "desc-snr25Rf45T4Wmh2"
+        rep = _one(f"{report}/log_{c['bname']}.json")
+        if rep:
+            sm = json.loads(Path(rep).read_text()).get("subjectmeasures", {})
+            w["report_ml"] = float(sm.get("vol_WMH", {}).get("value", float("nan")))
+        w["desc"] = c["desc"]
+        if w["lesions"]:
+            rows.append(w)
+        else:
+            clean_fp.append(w["pred_ml"])
+            clean_flagged.append(w["flagged_ml"])
+    found = sum(r["found"] for r in rows)
+    n = sum(r["lesions"] for r in rows)
+    vol_key = "report_ml" if all("report_ml" in r for r in rows) else "pred_ml"
+    metrics = {
+        "f1": float(np.mean([r["f1"] for r in rows])) if rows else float("nan"),
+        "found_frac": found / n if n else float("nan"),
+        "false_clusters": float(sum(r["false_clusters"] for r in rows)),
+        "dice_t050": float(np.mean([r["dice_t050"] for r in rows]))
+        if rows
+        else float("nan"),
+        "soft_dice": float(np.mean([r["soft_dice"] for r in rows]))
+        if rows
+        else float("nan"),
+        "vol_abs_err_ml": (
+            float(np.mean([abs(r[vol_key] - r["gt_ml"]) for r in rows]))
+            if rows
+            else float("nan")
+        ),
+        "clean_fp_ml": float(np.mean(clean_fp)) if clean_fp else float("nan"),
+        "precision": (
+            float(np.mean([r["precision"] for r in rows])) if rows else float("nan")
+        ),
+        "clean_flagged_ml": (
+            float(np.mean(clean_flagged)) if clean_flagged else float("nan")
+        ),
+    }
+    results = {
+        "kind": "wmh",
+        "scored": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "versions": _versions(),
+        "git": _git_state(),
+        "model_hash": _model_hash(),
+        "run": {"images": [c["desc"] for c in cases]},
+        "metrics": metrics,
+        "details": {
+            r["desc"]: (
+                f"found {r['found']}/{r['lesions']}, false {r['false_clusters']},"
+                f" Dice@0.5 {r['dice_t050']:.3f}, soft {r['soft_dice']:.3f},"
+                f" vol {r.get(vol_key, r['pred_ml']):.2f} (true {r['gt_ml']:.2f}) ml,"
+                f" flagged {r['flagged_ml']:.2f} ml, precision {r['precision']:.2f}"
+            )
+            for r in rows
+        },
+        "invariants": inv,
+    }
+    if clean_fp:
+        results["details"]["WMH-free images, mean p4 volume"] = (
+            f"{np.mean(clean_fp):.3f} ml"
+        )
+        results["details"]["WMH-free images, mean flagged volume"] = (
+            f"{np.mean(clean_flagged):.3f} ml"
+        )
+    (work / RESULTS_NAME).write_text(json.dumps(results, indent=1, default=float))
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Reporting, pinning, checking
 # ---------------------------------------------------------------------------
+
 
 def _load_results(work: Path) -> dict:
     path = work / RESULTS_NAME
@@ -909,9 +1227,12 @@ def _fmt(v) -> str:
 
 def print_results(res: dict) -> None:
     """The metrics and details of one run as a table."""
-    print(f"\nT1Prep {res['versions'].get('t1prep')}  cat-surf {res['versions'].get('cat_surf')}"
-          f"  git {res['git'].get('commit')}{' (dirty)' if res['git'].get('dirty') else ''}"
-          f"  models {res.get('model_hash')}")
+    versions, git = res["versions"], res["git"]
+    dirty = " (dirty)" if git.get("dirty") else ""
+    print(
+        f"\nT1Prep {versions.get('t1prep')}  cat-surf {versions.get('cat_surf')}"
+        f"  git {git.get('commit')}{dirty}  models {res.get('model_hash')}"
+    )
     for name, value in res["metrics"].items():
         print(f"  {name:28s} {_fmt(value)}")
     print("details:")
@@ -928,9 +1249,12 @@ def append_history(res: dict, path: Path) -> None:
 
     names = list(METRICS)
     row = {
-        "scored": res["scored"], "t1prep": res["versions"].get("t1prep"),
-        "cat_surf": res["versions"].get("cat_surf"), "commit": res["git"].get("commit"),
-        "dirty": res["git"].get("dirty"), "models": res.get("model_hash"),
+        "scored": res["scored"],
+        "t1prep": res["versions"].get("t1prep"),
+        "cat_surf": res["versions"].get("cat_surf"),
+        "commit": res["git"].get("commit"),
+        "dirty": res["git"].get("dirty"),
+        "models": res.get("model_hash"),
         "device": res.get("run", {}).get("device"),
     }
     row.update({k: res["metrics"].get(k) for k in names})
@@ -951,9 +1275,9 @@ def cmd_pin(works: list[Path], pinned: Path) -> int:
     if len(hashes) > 1:
         raise SystemExit("the runs used different model weights")
     doc = {
-        "pinned": datetime.datetime.now().isoformat(timespec="seconds"),
+        "pinned": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "comment": "Characterization of T1Prep on the HR075 phantom; see "
-                   "evaluation/tools/eval_phantom.py. Re-pin after an intended change.",
+        "evaluation/tools/eval_phantom.py. Re-pin after an intended change.",
         "model_hash": runs[0].get("model_hash"),
         "versions": runs[0]["versions"],
         "git": runs[0]["git"],
@@ -963,34 +1287,53 @@ def cmd_pin(works: list[Path], pinned: Path) -> int:
     pinned.write_text(json.dumps(doc, indent=1) + "\n")
     print(f"pinned {len(doc['metrics'])} metrics from {len(runs)} run(s) -> {pinned}")
     for name, pin in doc["metrics"].items():
-        print(f"  {name:28s} {pin['value']:>10.4g}  tol {pin['tol']:.3g}  ({pin['direction']},"
-              f" spread {pin['spread']:.3g})")
+        print(
+            f"  {name:28s} {pin['value']:>10.4g}  tol {pin['tol']:.3g}"
+            f"  ({pin['direction']}, spread {pin['spread']:.3g})"
+        )
     return 0
 
 
 def cmd_check(work: Path, pinned: Path, strict: bool, ignore_models: bool) -> int:
     res = _load_results(work)
+    if not pinned.exists():
+        print(f"no pins at {pinned}: run 'pin' on a trusted run first")
+        return 2
     doc = json.loads(pinned.read_text())
     status = 0
     print_results(res)
     failed_inv = [k for k, ok in res["invariants"].items() if not ok]
-    if doc.get("model_hash") and res.get("model_hash") != doc["model_hash"] and not ignore_models:
-        print(f"\nmodel weights differ from the pinned ones ({res.get('model_hash')} vs "
-              f"{doc['model_hash']}): the pins do not apply -- re-pin, or pass --ignore-models")
+    if (
+        doc.get("model_hash")
+        and res.get("model_hash") != doc["model_hash"]
+        and not ignore_models
+    ):
+        print(
+            f"\nmodel weights differ from the pinned ones ({res.get('model_hash')}"
+            f" vs {doc['model_hash']}): the pins do not apply -- re-pin, or pass"
+            " --ignore-models"
+        )
         return 3
-    print(f"\nagainst {pinned.name} (pinned {doc['pinned']}, T1Prep "
-          f"{doc['versions'].get('t1prep')}, git {doc['git'].get('commit')}):")
+    print(
+        f"\nagainst {pinned.name} (pinned {doc['pinned']}, T1Prep "
+        f"{doc['versions'].get('t1prep')}, git {doc['git'].get('commit')}):"
+    )
     counts = {"ok": 0, "improved": 0, "REGRESSED": 0}
     for name, pin in doc["metrics"].items():
         value = res["metrics"].get(name)
         verdict = compare(value, pin, strict)
         counts[verdict] += 1
         if verdict != "ok":
-            print(f"  {verdict:9s} {name:28s} {_fmt(value):>10s}  pinned {pin['value']:.4g}"
-                  f" +/- {pin['tol']:.3g} ({pin['direction']})")
+            print(
+                f"  {verdict:9s} {name:28s} {_fmt(value):>10s}"
+                f"  pinned {pin['value']:.4g} +/- {pin['tol']:.3g} ({pin['direction']})"
+            )
     missing = [n for n in doc["metrics"] if n not in res["metrics"]]
-    print(f"  {counts['ok']} ok, {counts['improved']} improved, {counts['REGRESSED']} regressed"
-          + (f", missing: {missing}" if missing else ""))
+    print(
+        f"  {counts['ok']} ok, {counts['improved']} improved,"
+        f" {counts['REGRESSED']} regressed"
+        + (f", missing: {missing}" if missing else "")
+    )
     if failed_inv:
         print(f"  invariants failed: {failed_inv}")
     if counts["REGRESSED"] or failed_inv:
@@ -1003,31 +1346,51 @@ def cmd_check(work: Path, pinned: Path, strict: bool, ignore_models: bool) -> in
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
-        epilog="See the module docstring (or evaluation/README.md) for what each metric means.",
+        epilog="See evaluation/PHANTOM.md for what each metric means.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(p, work_many=False):
         if work_many:
-            p.add_argument("--work", type=Path, nargs="+", required=True,
-                           help="scored run directories")
+            p.add_argument(
+                "--work",
+                type=Path,
+                nargs="+",
+                required=True,
+                help="scored run directories",
+            )
         else:
             p.add_argument("--work", type=Path, required=True, help="run directory")
         p.add_argument("--t1", type=Path, default=T1_DEFAULT, help="simulated T1w")
         p.add_argument("--gt", type=Path, default=GT_DEFAULT, help="ground-truth label")
-        p.add_argument("--pinned", type=Path, default=PINNED_DEFAULT, help="pinned scalars")
+        p.add_argument(
+            "--pinned", type=Path, default=PINNED_DEFAULT, help="pinned scalars"
+        )
 
     p = sub.add_parser("run", help="T1Prep + ground-truth arm + score")
     common(p)
-    p.add_argument("--t1prep", default=str(REPO / "scripts" / "T1Prep"),
-                   help="T1Prep launcher (default: this checkout's scripts/T1Prep)")
-    p.add_argument("--device", choices=("cpu", "mps", "cuda"), default=None,
-                   help="set T1PREP_DEVICE for the run")
-    p.add_argument("--history", action="store_true",
-                   help=f"append the scores to {HISTORY_DEFAULT.relative_to(REPO)}")
-    p.add_argument("--check", action="store_true", help="check against the pins afterwards")
-    p.add_argument("extra", nargs=argparse.REMAINDER,
-                   help="after '--': further T1Prep options")
+    p.add_argument(
+        "--t1prep",
+        default=str(REPO / "scripts" / "T1Prep"),
+        help="T1Prep launcher (default: this checkout's scripts/T1Prep)",
+    )
+    p.add_argument(
+        "--device",
+        choices=("cpu", "mps", "cuda"),
+        default=None,
+        help="set T1PREP_DEVICE for the run",
+    )
+    p.add_argument(
+        "--history",
+        action="store_true",
+        help=f"append the scores to {HISTORY_DEFAULT.relative_to(REPO)}",
+    )
+    p.add_argument(
+        "--check", action="store_true", help="check against the pins afterwards"
+    )
+    p.add_argument(
+        "extra", nargs=argparse.REMAINDER, help="after '--': further T1Prep options"
+    )
 
     p = sub.add_parser("score", help="score a finished run")
     common(p)
@@ -1036,12 +1399,32 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("pin", help="pin the scalars of one or more scored runs")
     common(p, work_many=True)
 
+    p = sub.add_parser("wmh", help="WMH over a directory of simulations (+ score)")
+    p.add_argument("--work", type=Path, required=True, help="run directory")
+    p.add_argument(
+        "--sims",
+        type=Path,
+        default=os.environ.get("T1PREP_PHANTOM_SIMS"),
+        help="mri_simulate derivatives folder (default: $T1PREP_PHANTOM_SIMS)",
+    )
+    p.add_argument("--t1prep", default=str(REPO / "scripts" / "T1Prep"))
+    p.add_argument("--no-run", action="store_true", help="only score an earlier run")
+    p.add_argument("--check", action="store_true", help="check against the WMH pins")
+    p.add_argument("--pinned", type=Path, default=WMH_PINNED_DEFAULT)
+    p.add_argument("extra", nargs=argparse.REMAINDER, help="after '--': T1Prep options")
+
     p = sub.add_parser("check", help="compare a scored run with the pins")
     common(p)
-    p.add_argument("--strict", action="store_true",
-                   help="fail on improvements too (pure characterization)")
-    p.add_argument("--ignore-models", action="store_true",
-                   help="compare even if the model weights changed")
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail on improvements too (pure characterization)",
+    )
+    p.add_argument(
+        "--ignore-models",
+        action="store_true",
+        help="compare even if the model weights changed",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "run":
@@ -1060,9 +1443,33 @@ def main(argv: list[str] | None = None) -> int:
         if args.history:
             append_history(res, HISTORY_DEFAULT)
         return 0
+    if args.command == "wmh":
+        if not args.sims or not Path(args.sims).is_dir():
+            raise SystemExit(
+                "--sims (or $T1PREP_PHANTOM_SIMS) must name the simulations"
+            )
+        cases = discover_sims(Path(args.sims))
+        if not cases:
+            raise SystemExit(f"no simulated T1w with ground truth under {args.sims}")
+        if not args.no_run:
+            run_wmh(args.work, cases, args.t1prep, [a for a in args.extra if a != "--"])
+        res = score_wmh(args.work, cases)
+        print_results(res)
+        if args.check:
+            return cmd_check(args.work, args.pinned, False, False)
+        return 0
     if args.command == "pin":
-        return cmd_pin(args.work, args.pinned)
-    return cmd_check(args.work, args.pinned, args.strict, args.ignore_models)
+        return cmd_pin(args.work, _pinned_for(args.work[0], args.pinned))
+    return cmd_check(
+        args.work, _pinned_for(args.work, args.pinned), args.strict, args.ignore_models
+    )
+
+
+def _pinned_for(work: Path, pinned: Path) -> Path:
+    """The WMH pins for a ``wmh`` run unless another file was named."""
+    path = work / RESULTS_NAME
+    is_wmh = path.exists() and json.loads(path.read_text()).get("kind") == "wmh"
+    return WMH_PINNED_DEFAULT if pinned == PINNED_DEFAULT and is_wmh else pinned
 
 
 if __name__ == "__main__":
