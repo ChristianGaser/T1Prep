@@ -68,8 +68,11 @@ python evaluation/tools/eval_mindboggle.py project --mindboggle DIR... --t1prep 
 python evaluation/tools/eval_mindboggle.py dice --work DIR --protocol both
 
 # Accuracy against the simulated phantom (manual, ~15 min): run, then check the pins
-python evaluation/tools/eval_phantom.py run --work DIR
-python evaluation/tools/eval_phantom.py check --work DIR
+make phantom                     # = eval_phantom.py run + check in /tmp/T1Prep_phantom
+make phantom-check PHANTOM_DIR=DIR
+make phantom-pin                 # re-pin after an intended change (two devices, ~30 min)
+make phantom-wmh PHANTOM_SIMS=DIR  # WMH over a set of mri_simulate images (~4 min/image)
+python evaluation/tools/fit_wmh_calibration.py fit --sims DIR --work DIR  # refit WMH_CALIBRATION
 
 # Linting / formatting
 black src scripts

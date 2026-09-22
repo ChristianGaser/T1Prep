@@ -59,7 +59,7 @@ T1Prep/
 │   ├── dice.sh                     # Dice similarity metric wrapper
 │   ├── qa_calibrate.py             # Derive QA rating bounds from BrainWeb Phantom runs
 ├── evaluation/                     # Registration benchmark + simulated-phantom accuracy test
-│   ├── tools/                      # eval_mindboggle.py, eval_phantom.py + the competing tools
+│   ├── tools/                      # eval_mindboggle.py, eval_phantom.py, fit_wmh_calibration.py + competing tools
 │   ├── data/subset20.txt           # subjects used for the volume comparison
 │   ├── data/phantom/               # simulated T1w + ground-truth label (mri_simulate)
 │   ├── PHANTOM.md                  # phantom metrics, the thickness reference, pinning
