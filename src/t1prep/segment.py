@@ -766,6 +766,7 @@ class OutputOptions:
     save_fmriprep: bool
     save_h5: bool
     atlas_list: Optional[tuple]
+    use_amap: bool = False
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "OutputOptions":
@@ -799,6 +800,7 @@ class OutputOptions:
             save_fmriprep=args.save_fmriprep,
             save_h5=args.save_h5,
             atlas_list=atlas_list,
+            use_amap=bool(getattr(args, "amap", False)),
         )
 
     @property
@@ -955,19 +957,31 @@ def _write_volume_report(
     vol_gm = get_volume_native_space(p1_large, wj_affine[0])  # GM    (p1)
     vol_wm = get_volume_native_space(p2_large, wj_affine[0])  # WM    (p2)
     vol_csf = get_volume_native_space(p3_large, wj_affine[0])  # CSF   (p3)
-    if with_lesions:
-        vol_wmh = get_volume_native_space(wmh_large, wj_affine[0])  # WMHs  (lesions)
+    if with_lesions and opts.use_amap:
+        # AMAP: the excess GM probability that was moved to WM
+        vol_wmh = get_volume_native_space(wmh_large, wj_affine[0])
+    elif with_lesions:
+        # The map is a probability, and its sum underestimates the extent
+        # (lesion voxels are individually ambiguous): the volume of the kept
+        # lesions was unbiased on the simulated brains, the sum 4.7 ml short.
+        kept = (np.asanyarray(wmh_large.dataobj) > 0).astype(np.float32)
+        vol_wmh = get_volume_native_space(
+            nib.Nifti1Image(kept, wmh_large.affine, wmh_large.header), wj_affine[0]
+        )
     else:
         vol_wmh = 0
 
-    # treat WMHs as part of WM
-    vol_wm_incl = vol_wm + vol_wmh
+    # The WM map already holds the WMHs: deepmriprep labels them WM, and the
+    # AMAP correction moves them there.  Adding ``vol_wmh`` on top counted
+    # them twice (WM probability inside the lesions of a simulated brain:
+    # 0.995-0.999), so the WMH volume is reported as the part of WM it is.
+    vol_wm_incl = vol_wm
 
     # Absolute volumes
     # Order: CSF-GM-WM(incl.WMH)-WMH
     vol_CGW = [vol_csf, vol_gm, vol_wm_incl]
 
-    # TIV contains CSF + GM + WM (already incl. WMH!)
+    # TIV contains CSF + GM + WM (incl. WMH)
     vol_tiv = vol_csf + vol_gm + vol_wm_incl
 
     # Compute relative volumes as fractions

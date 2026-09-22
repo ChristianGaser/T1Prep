@@ -757,7 +757,8 @@ def run_t1prep(
     hemisphere:
         Save hemispheric (lh/rh) partitions of the label map.
     lesions:
-        Save WMH lesion maps.
+        Save WMH lesion maps (``p4``): the WMH probability inside the
+        detected lesions, 0 elsewhere.
     amap:
         Use AMAP instead of DeepMRIPrep for segmentation.
     nogm_model:

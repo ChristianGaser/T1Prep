@@ -1199,7 +1199,9 @@ ${BOLD}${GREEN}Save Options:${NC}
       This works currently only for native-space and affine-registered segmentations.
 
   --lesions                   
-      Additionally save WMH lesion segmentations.
+      Additionally save WMH lesion maps (p4*): the probability of a WMH
+      inside the detected lesions, 0 elsewhere.  The WMH volume in the report
+      is the volume of these lesions.
       This works currently only for native-space and affine-registered segmentations.
 
   --atlas                     
