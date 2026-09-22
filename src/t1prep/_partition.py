@@ -229,7 +229,8 @@ def get_partition(p0_large, atlas, guard_atlas=None):
     Parameters
     ----------
     p0_large : nib.Nifti1Image
-        PVE label map on the working grid.
+        PVE label map on the working grid.  Values above 3 (the WMHs the
+        ``--lesions`` label adds) are treated as white matter.
     atlas : nib.Nifti1Image
         IBSR label volume resampled onto the same grid; drives the partition
         and seeds the fills.
@@ -254,7 +255,11 @@ def get_partition(p0_large, atlas, guard_atlas=None):
     atlas_mask = atlas_data > 0
     atlas_mask = binary_dilation(atlas_mask, bin_struct3, 3)
 
-    p0_data = p0_large.get_fdata().copy()
+    # With ``--lesions`` the label carries WMHs above 3 (up to 4).  To the
+    # surface they are white matter, and PBT expects the [1, 3] range the
+    # hemispheres are documented to have, so clip them here rather than let
+    # them through to ``?h.seg`` (where they reached 3.8).
+    p0_data = np.clip(p0_large.get_fdata(), 0, 3)
     # Cortical ribbon plus the two archicortical structures that border it.
     # Every fill below is vetoed by this mask, so its margin has to be
     # commensurate with how far those fills reach.  At 2 voxels (1 mm) it was

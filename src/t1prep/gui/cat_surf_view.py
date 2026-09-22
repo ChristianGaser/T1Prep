@@ -690,7 +690,10 @@ def read_annotation(path: str) -> Tuple["np.ndarray", List[str]]:
         labels, _ctab, names = nib.freesurfer.io.read_annot(str(path))
     except Exception as exc:
         raise RuntimeError(f"cannot read {os.path.basename(str(path))}: {exc}")
-    decoded = [n.decode() if isinstance(n, bytes) else str(n) for n in names]
+    # Region names are not guaranteed to be UTF-8: annots written by CAT's
+    # own writer before cat-surf 1.0.29 could carry heap bytes after the name.
+    decoded = [n.decode(errors="replace") if isinstance(n, bytes) else str(n)
+               for n in names]
     return np.asarray(labels), [n.strip() for n in decoded]
 
 

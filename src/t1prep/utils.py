@@ -871,8 +871,10 @@ def get_volume_native_space(vol_nifti, wj_affine):
     vol_prob = vol_nifti.get_fdata()
     vol_sum = np.sum(vol_prob)
 
-    # Voxel volume in target/registered space (mm³)
-    voxel_vol = np.prod(vol_nifti.affine[np.diag_indices(3)])
+    # Voxel volume in target/registered space (mm³).  The determinant rather
+    # than the product of the diagonal: that product is 0 for a permuted grid
+    # (e.g. PIL) and negative for a flipped one (e.g. LAS).
+    voxel_vol = abs(np.linalg.det(vol_nifti.affine[:3, :3]))
 
     # Volume in native space (mm³)
     volume__native_mm3 = vol_sum * voxel_vol * wj_affine

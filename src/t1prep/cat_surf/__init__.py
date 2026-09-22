@@ -148,3 +148,14 @@ __all__ = [
     # sub-modules
     "cli",
 ]
+
+# The list above is kept for readers and static analysis, but it goes stale
+# whenever cat-surf adds a function (``vol_pbt_barrier_reference`` among
+# others was missing), which broke the promise that every public symbol is
+# available here.  Top it up from whatever the installed package exports.
+_name = None
+for _name in getattr(_cat_surf, "__all__", ()):
+    if _name not in globals():
+        globals()[_name] = getattr(_cat_surf, _name)
+        __all__.append(_name)
+del _name
