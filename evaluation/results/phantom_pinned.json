@@ -1,0 +1,399 @@
+{
+ "pinned": "2026-09-22T13:04:07",
+ "comment": "Characterization of T1Prep on the HR075 phantom; see evaluation/tools/eval_phantom.py. Re-pin after an intended change.",
+ "model_hash": "4d39513319f2a73e",
+ "versions": {
+  "t1prep": "0.7.5",
+  "cat_surf": "1.0.29"
+ },
+ "git": {
+  "commit": "b9e6f25",
+  "dirty": true
+ },
+ "devices": [
+  "mps",
+  "cpu"
+ ],
+ "metrics": {
+  "CSF_dice": {
+   "value": 0.831908,
+   "tol": 0.005,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.831908,
+    0.831908
+   ]
+  },
+  "GM_dice": {
+   "value": 0.930003,
+   "tol": 0.005,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.930003,
+    0.930003
+   ]
+  },
+  "WM_dice": {
+   "value": 0.954961,
+   "tol": 0.005,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.954961,
+    0.954961
+   ]
+  },
+  "CSF_soft_dice": {
+   "value": 0.796323,
+   "tol": 0.005,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.796322,
+    0.796323
+   ]
+  },
+  "GM_soft_dice": {
+   "value": 0.886693,
+   "tol": 0.005,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.886693,
+    0.886693
+   ]
+  },
+  "WM_soft_dice": {
+   "value": 0.931113,
+   "tol": 0.005,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.931113,
+    0.931113
+   ]
+  },
+  "CSF_vol_err_pct": {
+   "value": -11.175376,
+   "tol": 1.0,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    -11.175376,
+    -11.175376
+   ]
+  },
+  "GM_vol_err_pct": {
+   "value": 2.280154,
+   "tol": 1.0,
+   "direction": "both",
+   "spread": 4.5e-05,
+   "runs": [
+    2.280177,
+    2.280132
+   ]
+  },
+  "WM_vol_err_pct": {
+   "value": 3.382407,
+   "tol": 1.0,
+   "direction": "both",
+   "spread": 4.6e-05,
+   "runs": [
+    3.382384,
+    3.38243
+   ]
+  },
+  "label_mae": {
+   "value": 0.140046,
+   "tol": 0.005,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    0.140046,
+    0.140046
+   ]
+  },
+  "report_TIV_err_pct": {
+   "value": -0.979545,
+   "tol": 1.0,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    -0.979545,
+    -0.979545
+   ]
+  },
+  "report_GM_err_pct": {
+   "value": 1.204837,
+   "tol": 1.0,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    1.204837,
+    1.204837
+   ]
+  },
+  "report_WM_err_pct": {
+   "value": 4.969507,
+   "tol": 1.0,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    4.969507,
+    4.969507
+   ]
+  },
+  "report_CSF_err_pct": {
+   "value": -14.571854,
+   "tol": 1.0,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    -14.571854,
+    -14.571854
+   ]
+  },
+  "shift_white_mm": {
+   "value": 0.068919,
+   "tol": 0.03,
+   "direction": "both",
+   "spread": 1e-06,
+   "runs": [
+    0.068918,
+    0.068919
+   ]
+  },
+  "shift_pial_mm": {
+   "value": 0.128978,
+   "tol": 0.03,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    0.128977,
+    0.128978
+   ]
+  },
+  "fp_gm_far_ml": {
+   "value": 0.692297,
+   "tol": 0.3,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    0.692297,
+    0.692297
+   ]
+  },
+  "fp_brain_far_ml": {
+   "value": 1.647,
+   "tol": 0.5,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    1.647,
+    1.647
+   ]
+  },
+  "missed_brain_ml": {
+   "value": 2.961984,
+   "tol": 0.592397,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    2.961984,
+    2.961984
+   ]
+  },
+  "wmh_soft_dice": {
+   "value": 0.228514,
+   "tol": 0.02,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.228514,
+    0.228514
+   ]
+  },
+  "wmh_dice_t010": {
+   "value": 0.449384,
+   "tol": 0.02,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.449384,
+    0.449384
+   ]
+  },
+  "wmh_detected_t010": {
+   "value": 0.529412,
+   "tol": 0.03,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.529412,
+    0.529412
+   ]
+  },
+  "wmh_pred_ml": {
+   "value": 2.394638,
+   "tol": 0.3,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    2.394638,
+    2.394637
+   ]
+  },
+  "wmh_mass_in_lesion": {
+   "value": 0.366442,
+   "tol": 0.03,
+   "direction": "higher",
+   "spread": 0.0,
+   "runs": [
+    0.366442,
+    0.366442
+   ]
+  },
+  "m_wm_cv": {
+   "value": 0.018855,
+   "tol": 0.002,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    0.018855,
+    0.018855
+   ]
+  },
+  "m_wm_lowfreq_cv": {
+   "value": 0.014086,
+   "tol": 0.002,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    0.014086,
+    0.014086
+   ]
+  },
+  "m_cjv": {
+   "value": 0.202241,
+   "tol": 0.01,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    0.202241,
+    0.202241
+   ]
+  },
+  "qa_NCR": {
+   "value": 0.0292,
+   "tol": 0.00146,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    0.0292,
+    0.0292
+   ]
+  },
+  "qa_ICR": {
+   "value": 0.2081,
+   "tol": 0.010405,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    0.2081,
+    0.2081
+   ]
+  },
+  "qa_IQR": {
+   "value": 1.41,
+   "tol": 0.05,
+   "direction": "both",
+   "spread": 0.0,
+   "runs": [
+    1.41,
+    1.41
+   ]
+  },
+  "thick_diff_median_mm": {
+   "value": 0.000932,
+   "tol": 0.02,
+   "direction": "both",
+   "spread": 0.001252,
+   "runs": [
+    0.001558,
+    0.000305
+   ]
+  },
+  "thick_mae_mm": {
+   "value": 0.131384,
+   "tol": 0.01,
+   "direction": "lower",
+   "spread": 0.003098,
+   "runs": [
+    0.129835,
+    0.132933
+   ]
+  },
+  "thick_r": {
+   "value": 0.932453,
+   "tol": 0.01,
+   "direction": "higher",
+   "spread": 0.003189,
+   "runs": [
+    0.934047,
+    0.930858
+   ]
+  },
+  "central_dist_mm": {
+   "value": 0.39528,
+   "tol": 0.02,
+   "direction": "lower",
+   "spread": 3e-06,
+   "runs": [
+    0.395279,
+    0.395281
+   ]
+  },
+  "region_bias_median_mm": {
+   "value": 0.008531,
+   "tol": 0.02,
+   "direction": "both",
+   "spread": 0.000194,
+   "runs": [
+    0.008434,
+    0.008628
+   ]
+  },
+  "region_spearman": {
+   "value": 0.939096,
+   "tol": 0.03,
+   "direction": "higher",
+   "spread": 0.003321,
+   "runs": [
+    0.940757,
+    0.937436
+   ]
+  },
+  "defects_lh": {
+   "value": 50.0,
+   "tol": 12.5,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    50.0,
+    50.0
+   ]
+  },
+  "defects_rh": {
+   "value": 61.0,
+   "tol": 15.25,
+   "direction": "lower",
+   "spread": 0.0,
+   "runs": [
+    61.0,
+    61.0
+   ]
+  }
+ }
+}
