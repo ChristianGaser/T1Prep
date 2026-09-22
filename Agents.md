@@ -61,7 +61,7 @@ T1Prep/
 ├── evaluation/                     # Registration benchmark + simulated-phantom accuracy test
 │   ├── tools/                      # eval_mindboggle.py, eval_phantom.py, fit_wmh_calibration.py + competing tools
 │   ├── data/subset20.txt           # subjects used for the volume comparison
-│   ├── data/phantom/               # simulated T1w + ground-truth label (mri_simulate)
+│   ├── data/phantom/               # 14 simulated T1w + ground-truth labels (mri_simulate)
 │   ├── PHANTOM.md                  # phantom metrics, the thickness reference, pinning
 │   └── results/                    # RESULTS.md, phantom_pinned.json, bug write-ups
 │   ├── process_longitudinal.sh     # Batch longitudinal processing

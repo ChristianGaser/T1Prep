@@ -1,0 +1,1 @@
+{"GeneratedBy":[{"Name":"mri_simulate","Version":"0.10.2"}],"Manual":false,"Description":"Ground truth partial volume label image. Values are continuous and interpolate between the tissue labels, e.g. 2.5 is an equal mixture of GM and WM.","Labels":{"CSF":1,"GM":2,"WM":3}}
