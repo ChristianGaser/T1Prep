@@ -3,3 +3,4 @@
 Makefile export-ignore
 tests export-ignore
 Agents.md export-ignore
+evaluation/data/phantom/** export-ignore

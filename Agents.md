@@ -58,10 +58,12 @@ T1Prep/
 │   #                                 (alternative to `pip install T1Prep` from PyPI)
 │   ├── dice.sh                     # Dice similarity metric wrapper
 │   ├── qa_calibrate.py             # Derive QA rating bounds from BrainWeb Phantom runs
-├── evaluation/                     # Registration accuracy benchmark
-│   ├── tools/                      # eval_mindboggle.py + the competing tools
+├── evaluation/                     # Registration benchmark + simulated-phantom accuracy test
+│   ├── tools/                      # eval_mindboggle.py, eval_phantom.py + the competing tools
 │   ├── data/subset20.txt           # subjects used for the volume comparison
-│   └── results/RESULTS.md          # numbers, protocol and caveats
+│   ├── data/phantom/               # simulated T1w + ground-truth label (mri_simulate)
+│   ├── PHANTOM.md                  # phantom metrics, the thickness reference, pinning
+│   └── results/                    # RESULTS.md, phantom_pinned.json, bug write-ups
 │   ├── process_longitudinal.sh     # Batch longitudinal processing
 │   ├── realign_longitudinal.sh     # Longitudinal rigid realignment
 │   ├── warp_longitudinal.sh       # Longitudinal low-dimensional non-linear registration

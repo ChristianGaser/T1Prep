@@ -67,6 +67,10 @@ CAT_PlotHistogram [--dist kernel|none|normal|...] [--mean] [--save PREFIX] file.
 python evaluation/tools/eval_mindboggle.py project --mindboggle DIR... --t1prep DIR --work DIR
 python evaluation/tools/eval_mindboggle.py dice --work DIR --protocol both
 
+# Accuracy against the simulated phantom (manual, ~15 min): run, then check the pins
+python evaluation/tools/eval_phantom.py run --work DIR
+python evaluation/tools/eval_phantom.py check --work DIR
+
 # Linting / formatting
 black src scripts
 flake8 src scripts       # or: ruff check src scripts

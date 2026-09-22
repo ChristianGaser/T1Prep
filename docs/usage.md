@@ -284,11 +284,11 @@ Skip processing for files where 'surf/lh.thickness.*' already exists, and
 save new results in the same directory as the input files.
 
 ```bash
-  T1Prep --lesion --no-sphere sTRIO*.nii
+  T1Prep --lesions --no-sphere-reg sTRIO*.nii
 ```
 Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of 
-spherical registration, but additionally save lesion map (named p7sTRIO*.nii) 
-in native space.
+spherical registration, but additionally save lesion map (named p4sTRIO*.nii, 
+or `*_label-WMH_probseg.nii` with `--bids`) in native space.
 
 ```bash
   T1Prep --amap sTRIO*.nii
