@@ -594,6 +594,22 @@ class TestSurfaceAtlases(unittest.TestCase):
         self.assertGreaterEqual(labels.min(), -1)     # -1 = unlabelled
         self.assertLess(labels.max(), len(names))
 
+    def test_region_names_need_not_be_utf8(self):
+        # cat-surf before 1.0.29 wrote heap bytes after each name when its
+        # input annot lacked NUL terminators; the viewer must still load it.
+        import nibabel as nib
+
+        ctab = np.array([[25, 5, 25, 0, 0], [25, 100, 40, 0, 0]], np.int32)
+        ctab[:, 4] = ctab[:, 0] + ctab[:, 1] * 2**8 + ctab[:, 2] * 2**16
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "lh.garbled.annot")
+            nib.freesurfer.io.write_annot(
+                path, np.array([0, 1, 1], np.int32), ctab,
+                [b"unknown", b"bankssts M(C\xa0\x17\"C"])
+            labels, names = read_annotation(path)
+        self.assertEqual(list(labels), [0, 1, 1])
+        self.assertTrue(names[1].startswith("bankssts"))
+
     def test_an_unreadable_file_says_so(self):
         with tempfile.NamedTemporaryFile(suffix=".annot") as handle:
             handle.write(b"not an annotation")

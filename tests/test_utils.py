@@ -317,6 +317,29 @@ class TestContentBounds(unittest.TestCase):
         self.assertEqual(box[2], slice(0, 10))
 
 
+
+class TestVolumeNativeSpace(unittest.TestCase):
+    """The voxel volume must not depend on the grid's axis order or flips."""
+
+    def _volume(self, axcodes):
+        shape = (4, 5, 6)
+        ornt = nib.orientations.axcodes2ornt(axcodes)
+        affine = np.diag([0.5, 0.5, 0.5, 1.0]) @ nib.orientations.inv_ornt_aff(
+            ornt, shape
+        )
+        img = nib.Nifti1Image(np.ones(shape, np.float32), affine)
+        return t1prep_utils.get_volume_native_space(img, 2.0)
+
+    def test_every_orientation_gives_the_same_volume(self):
+        # 120 voxels of 0.125 mm^3, scaled by 2: 0.03 cm^3.  PIL used to give
+        # 0 (a permuted affine has a zero diagonal) and LAS a negative volume.
+        for axcodes in ("RAS", "LAS", "PIL", "LPI", "ASL"):
+            with self.subTest(axcodes=axcodes):
+                self.assertAlmostEqual(self._volume(axcodes), 0.03, places=12)
+
+    def test_missing_map_gives_zero(self):
+        self.assertEqual(t1prep_utils.get_volume_native_space(None, 1.0), 0)
+
 def nib_to_tensor(img):
     """Volume of ``img`` as a 5D tensor, matching the resampler's layout."""
     import torch

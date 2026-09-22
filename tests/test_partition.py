@@ -136,6 +136,25 @@ def _mask(lab, reg, *abbrs):
     return np.isin(lab, [reg[a] for a in abbrs])
 
 
+def test_lesions_do_not_leave_the_label_range():
+    # With --lesions the label carries WMHs between 3 and 4.  They reached
+    # ?h.seg at up to 3.8 on a simulated brain, outside the [1, 3] range PBT
+    # expects; to the surface they are white matter.
+    lab, p0, reg = _phantom()
+    wm = _mask(lab, reg, "lCbrWM", "rCbrWM")
+    p0 = p0.copy()
+    p0[wm] += np.linspace(0.0, 1.0, int(wm.sum()), dtype=np.float32)
+    atlas = lab
+    lh, rh = get_partition(_nifti(p0), _nifti(atlas), _nifti(_guard_atlas(lab, reg), np.uint8))
+    for hemi in (lh, rh):
+        assert hemi.min() >= 1.0 and hemi.max() <= 3.0
+    ref_lh, ref_rh = get_partition(
+        _nifti(np.clip(p0, 0, 3)), _nifti(atlas), _nifti(_guard_atlas(lab, reg), np.uint8)
+    )
+    np.testing.assert_array_equal(lh, ref_lh)
+    np.testing.assert_array_equal(rh, ref_rh)
+
+
 @pytest.fixture(scope="module", params=[True, False], ids=["guard", "noguard"])
 def aligned(request):
     return (*_partition(guard=request.param), request.param)

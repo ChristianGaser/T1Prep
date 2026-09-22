@@ -81,6 +81,37 @@ def test_annot_is_well_formed(name, mesh_size):
     assert labels.max() < len(ctab), "labels index the colour table"
 
 
+def _raw_names(path):
+    """Region names as stored, terminator included (nibabel strips it)."""
+    import struct
+
+    data = path.read_bytes()
+    word = lambda pos: struct.unpack(">i", data[pos:pos + 4])[0]  # noqa: E731
+    pos = 4 + 8 * word(0) + 4           # vertex table, colour-table tag
+    if word(pos) >= 0:
+        pytest.skip("old colour-table layout")
+    pos += 8                            # version, highest structure id
+    pos += 4 + word(pos)                # original file name
+    count, pos = word(pos), pos + 4
+    names = []
+    for _ in range(count):
+        length = word(pos + 4)          # after the structure id
+        names.append(data[pos + 8:pos + 8 + length])
+        pos += 8 + length + 16          # id, length, name, r, g, b, flag
+    return names
+
+
+@pytest.mark.parametrize("name", _annots())
+def test_region_names_are_nul_terminated(name):
+    # CAT's annot reader did not terminate what it read, so a name stored
+    # without its NUL -- as DK40 and Destrieux were, padded with a space --
+    # ran on into the heap: T1Prep's native annots came out with names like
+    # "bankssts M(C\xa0...".  FreeSurfer's layout counts and stores the NUL.
+    for raw in _raw_names(ATLAS_DIR / name):
+        assert raw.endswith(b"\x00") and b"\x00" not in raw[:-1], raw
+        assert not raw[:-1].endswith(b" "), raw
+
+
 @pytest.mark.parametrize("name, per_hemisphere", FSLR_NATIVE)
 def test_parcel_count_matches_the_publication(name, per_hemisphere):
     for hemi in ("lh", "rh"):
