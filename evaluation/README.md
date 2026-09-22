@@ -86,6 +86,7 @@ produces, and `results/dice_boxplots.png` for the distributions behind them.
 | `results/*.csv` | per-region, per-comparison Dice for every arm |
 | `data/phantom/` | simulated T1w + ground-truth label for [`PHANTOM.md`](PHANTOM.md) |
 | `results/phantom_pinned.json` | the pinned scalars `eval_phantom.py check` compares with |
+| `results/phantom_wmh_pinned.json` | the pinned WMH scores over the simulation set |
 | `results/cat_surface_annot_bug.md` | write-up of the annot name bug the phantom found |
 
 ## Data
@@ -169,7 +170,8 @@ normalisation can be dropped into the same comparison.
 | script | purpose |
 |---|---|
 | `eval_mindboggle.py` | the protocol: project labels, score LOO and pairwise Dice |
-| `eval_phantom.py` | T1Prep against the simulated phantom: run, score, pin, check |
+| `eval_phantom.py` | T1Prep against the simulated phantom: run, score, pin, check; `wmh` over a set of simulations |
+| `fit_wmh_calibration.py` | refits the WMH probability of `t1prep._lesions` on simulations (`dump`, `fit`) |
 | `make_affine_baseline.py` | Mindboggle's affine labels on the evaluation grid |
 | `run_ants_batch.sh` + `ants_fmriprep.sh` | `antsRegistration` with fMRIPrep's exact JSON |
 | `run_ants_antspy.py` | ANTsPy arms (note: its default `SyN` uses `reg_iterations=(40,20,0)` — no iterations at the finest level) |

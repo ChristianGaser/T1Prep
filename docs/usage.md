@@ -290,6 +290,15 @@ Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of
 spherical registration, but additionally save lesion map (named p4sTRIO*.nii, 
 or `*_label-WMH_probseg.nii` with `--bids`) in native space.
 
+The lesion map holds the probability of a white matter hyperintensity inside
+the detected lesions and 0 elsewhere; in the label map (`p0`) lesions read
+`3 + p`.  A lesion is a connected region of `p > 0.1` of at least 30 mm³ in
+deep white matter, outside the deep grey nuclei.  The WMH volume in the report
+is the volume of these lesions (it is part of the WM volume, not added to it).
+With `--amap` the lesion map is AMAP's excess GM probability in deep white
+matter, as before.  How the map was calibrated and what it achieves on
+simulated brains is described in `evaluation/PHANTOM.md`.
+
 ```bash
   T1Prep --amap sTRIO*.nii
 ```
