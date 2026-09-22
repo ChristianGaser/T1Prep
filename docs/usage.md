@@ -299,6 +299,12 @@ With `--amap` the lesion map is AMAP's excess GM probability in deep white
 matter, as before.  How the map was calibrated and what it achieves on
 simulated brains is described in `evaluation/PHANTOM.md`.
 
+`--debug` additionally writes the map the lesion probability is read from
+(`pd*`, or `*_label-Discrepance.nii`): the intensity the segmentation implies
+minus the observed one, on the label scale, so a positive value means the
+image is darker than the label says.  It covers the whole volume, lesions or
+not, which makes it useful for seeing why a lesion was or was not found.
+
 ```bash
   T1Prep --amap sTRIO*.nii
 ```

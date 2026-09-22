@@ -767,6 +767,7 @@ class OutputOptions:
     save_h5: bool
     atlas_list: Optional[tuple]
     use_amap: bool = False
+    debug: bool = False
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "OutputOptions":
@@ -801,6 +802,7 @@ class OutputOptions:
             save_h5=args.save_h5,
             atlas_list=atlas_list,
             use_amap=bool(getattr(args, "amap", False)),
+            debug=bool(getattr(args, "debug", False)),
         )
 
     @property
@@ -933,6 +935,10 @@ def _save_native_outputs(
 
     if opts.save_lesions and wmh_large is not None:
         save(wmh_large, native.get("WMH_volume", ""))
+    # The label-minus-intensity discrepancy the lesion probability is read
+    # from: a diagnostic, not a result, so it goes with the other debugging
+    # output rather than with --lesions.
+    if opts.debug and discrepancy_large is not None:
         save(discrepancy_large, native.get("Discrepance_volume", ""))
 
 

@@ -850,6 +850,10 @@ process()
         done
       fi
 
+      # The progress counter is shared between the two hemisphere processes;
+      # both have finished by now, so the file has done its job.
+      [ "${debug}" -eq 1 ] || rm -f "${_surf_count_file}"
+
       if [ "$surf_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
           # Use 1/1 so the single job bar renders without relying on end_count
@@ -1046,7 +1050,8 @@ ${BOLD}${GREEN}General Options:${NC}
 
   --debug
       Enable verbose output, retain all temporary files, and save additional
-      debugging information for inspection.
+      debugging information for inspection, among it the label-vs-intensity
+      discrepancy map (pd*) the WMH probability is read from.
 
   --verbose
       Print the command of every processing step as it is run.

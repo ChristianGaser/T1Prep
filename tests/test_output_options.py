@@ -95,3 +95,17 @@ def test_outputs_that_need_the_warp(overrides):
 )
 def test_outputs_that_do_not(overrides):
     assert not OutputOptions.from_args(_args(**overrides)).needs_warp
+
+
+def test_amap_and_debug_default_to_off_when_absent():
+    # ``_args`` mirrors older callers whose namespace has neither flag.
+    opts = OutputOptions.from_args(_args())
+    assert not opts.use_amap and not opts.debug
+
+
+@pytest.mark.parametrize("flag", ["amap", "debug"])
+def test_amap_and_debug_are_taken_from_the_arguments(flag):
+    # The report volume follows --amap, and the discrepancy map (pd) is
+    # written only under --debug.
+    opts = OutputOptions.from_args(_args(**{flag: True}))
+    assert getattr(opts, {"amap": "use_amap", "debug": "debug"}[flag])
