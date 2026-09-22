@@ -93,6 +93,18 @@ Segmentation refinement:
   bit-identical native `p0`. What does change is `p1`/`p2`/`p3`, and with them
   the modulated warped maps and the reported tissue volumes (0.05% on that
   subject, with TIV unchanged).
+- Dura removal (always on, no flag). In many scans the skull-strip keeps a
+  thin rim of dura, heaviest over the vertex and along the falx, which shows
+  as a bright line on the outside of the CSF in the bias-corrected image. After
+  the first segmentation, voxels brighter than the CSF/GM midpoint that are
+  separated from the cortex by CSF, and lie on its outer side, are removed
+  from the brain mask together with what lies outside them; the CSF
+  underneath is kept. The label calls this tissue CSF, so grey matter and the
+  surfaces are not affected, but the CSF volume and TIV come out smaller:
+  by 1.0% of TIV on IXI199, with grey matter changing by 0.12 ml, and by
+  about 3% on an atrophied brain with a heavy rim. The step is skipped when
+  the CSF/GM contrast is too weak to set the threshold from:
+  (GM - CSF) / (WM - CSF) below 0.35, against 0.48-0.54 on the test data.
 
 Deformation fields:
 - `--save-h5`: additionally save the T1w↔MNI152NLin2009cAsym deformations as

@@ -16,6 +16,7 @@ T1Prep/
 │       ├── segment.py              # Segmentation logic
 │       ├── nogm.py                 # Conventional non-cortical GM removal (default;
 │       │                           # --nogm-model restores the DeepMRIPrep model)
+│       ├── dura.py                 # Removes dura left outside the CSF by the skull-strip
 │       ├── _atlas.py               # Template lookup, atlas resampling, region masks
 │       ├── _intensity.py           # Bias-field fits, global intensity norm, LAS
 │       ├── _lesions.py             # WMH detection and tissue-map correction
