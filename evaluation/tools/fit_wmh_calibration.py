@@ -301,7 +301,12 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("dump", "fit"):
         p = sub.add_parser(name)
-        p.add_argument("--sims", type=Path, required=True, help="mri_simulate folder")
+        p.add_argument(
+            "--sims",
+            type=Path,
+            default=ep.DATA,
+            help="mri_simulate folder (default: the repo's)",
+        )
         p.add_argument("--work", type=Path, required=True, help="dump directory")
         if name == "dump":
             p.add_argument("--jobs", type=int, default=2, help="parallel segmentations")

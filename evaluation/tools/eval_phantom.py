@@ -1404,8 +1404,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--sims",
         type=Path,
-        default=os.environ.get("T1PREP_PHANTOM_SIMS"),
-        help="mri_simulate derivatives folder (default: $T1PREP_PHANTOM_SIMS)",
+        default=Path(os.environ.get("T1PREP_PHANTOM_SIMS") or DATA),
+        help="mri_simulate folder (default: $T1PREP_PHANTOM_SIMS, else the repo's)",
     )
     p.add_argument("--t1prep", default=str(REPO / "scripts" / "T1Prep"))
     p.add_argument("--no-run", action="store_true", help="only score an earlier run")
@@ -1445,9 +1445,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "wmh":
         if not args.sims or not Path(args.sims).is_dir():
-            raise SystemExit(
-                "--sims (or $T1PREP_PHANTOM_SIMS) must name the simulations"
-            )
+            raise SystemExit(f"no simulations folder at {args.sims}")
         cases = discover_sims(Path(args.sims))
         if not cases:
             raise SystemExit(f"no simulated T1w with ground truth under {args.sims}")

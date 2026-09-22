@@ -28,8 +28,8 @@ BIN ?= CAT*
 # e.g. PHANTOM_ARGS=--history, or "-- --no-overwrite" for T1Prep options.
 PHANTOM_DIR  ?= /tmp/T1Prep_phantom
 PHANTOM_ARGS ?=
-# mri_simulate derivatives with several noise/bias/WMH settings (not in git)
-PHANTOM_SIMS ?= $(T1PREP_PHANTOM_SIMS)
+# mri_simulate renderings with several noise/bias/WMH settings
+PHANTOM_SIMS ?= $(or $(T1PREP_PHANTOM_SIMS),evaluation/data/phantom)
 EVAL_PHANTOM  = ./scripts/run_with_env.sh evaluation/tools/eval_phantom.py
 
 # print available commands
