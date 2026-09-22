@@ -99,6 +99,7 @@ from .vessels import (
 from ._models import prepare_model_files
 from ._conv_chunk import chunked_conv3d
 from .nogm import run_segment_nogm_conventional
+from .dura import remove_dura
 from ._device import (
     mps_routing_requested,
     release_cache,
@@ -1582,6 +1583,21 @@ def run_segment():
 
     # Correct bias using label from deepmriprep
     brain_large = correct_bias_field(brain_large, p0_large)
+
+    # Dura the skull-strip left outside the CSF.  It is cleared from the image,
+    # the label and the mask the final label is cut with, before LAS, AMAP, the
+    # vessel correction and nogm see it.  See t1prep.dura.
+    brain_large, p0_large, dura_large = remove_dura(
+        brain_large, p0_large, verbose=bool(verbose and debug)
+    )
+    if dura_large is not None:
+        mask_large_value &= ~dura_large
+        if debug:
+            nib.save(
+                nib.Nifti1Image(dura_large.astype(np.uint8), p0_large.affine),
+                f"{mri_dir}/{out_name}_dura_large.{ext}",
+            )
+        del dura_large
 
     p0_large_orig = p0_large
 
