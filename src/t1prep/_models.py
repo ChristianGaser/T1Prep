@@ -106,20 +106,52 @@ MODEL_ZIP_URL: str = _os.environ.get("T1PREP_MODEL_ZIP_URL", _DEFAULT_MODEL_ZIP_
 _DEV_MODEL_DIR: Path = Path(__file__).resolve().parent / "data" / "models"
 
 
+def _mirror_deepmriprep_data(fake_data: Path) -> None:
+    """Mirror deepmriprep's non-model data entries into the synthetic DATA_PATH.
+
+    ``deepmriprep`` does not read only ``models/`` from ``DATA_PATH``: it also
+    opens ``patches.csv`` in ``BrainSegmentation.__init__`` and resolves
+    ``templates/`` there.  Those reads happen *after* the redirect, so a
+    synthetic ``DATA_PATH`` holding nothing but ``models/`` makes them fail
+    with ``FileNotFoundError``.  Symlink the siblings across (copying when
+    symlinks are unavailable, e.g. on Windows without developer mode).
+
+    Failures are deliberately silent — a read-only cache directory is not a
+    reason to abort, and the missing entry surfaces as deepmriprep's own error.
+    """
+    try:
+        fake_data.mkdir(parents=True, exist_ok=True)
+        for entry in Path(DATA_PATH).iterdir():
+            if entry.name == "models":
+                continue
+            target = fake_data / entry.name
+            if target.exists() or target.is_symlink():
+                continue
+            try:
+                target.symlink_to(entry, target_is_directory=entry.is_dir())
+            except OSError:
+                if entry.is_dir():
+                    shutil.copytree(entry, target)
+                else:
+                    shutil.copy2(entry, target)
+    except OSError:
+        pass
+
+
 def _redirect_deepmriprep_paths() -> None:
     """Point ``deepmriprep``'s model-path lookups at :data:`MODEL_DIR`.
 
     No-op when :data:`MODEL_DIR` is already deepmriprep's default location.
     Otherwise patches the module-level ``DATA_PATH`` and ``BET_MODEL_PATHS``
     that ``deepmriprep`` reads at construction time (e.g. inside
-    ``Preprocess.__init__``, ``BrainSegmentation.__init__``).  Templates
-    are loaded at deepmriprep's import time and remain in memory — they
-    are unaffected and keep resolving via the original ``DATA_PATH``.
+    ``Preprocess.__init__``, ``BrainSegmentation.__init__``), after mirroring
+    the non-model data entries so those lookups still resolve.
     """
     if MODEL_DIR == _DEEPMRIPREP_MODELS:
         return
     # deepmriprep builds paths as f"{DATA_PATH}/models/<file>", so we hand
     # it MODEL_DIR's parent as the synthetic DATA_PATH.
+    _mirror_deepmriprep_data(MODEL_DIR.parent)
     fake_data = str(MODEL_DIR.parent)
     import deepmriprep.utils as _u
     import deepmriprep.preprocess as _pp

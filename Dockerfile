@@ -47,6 +47,7 @@ RUN set -eux; \
 RUN useradd -m -u 1000 -s /bin/bash t1prep \
  && mkdir -p /data \
  && chown -R t1prep:t1prep /data
+RUN t1prep-download-models
 USER t1prep
 WORKDIR /home/t1prep
 VOLUME ["/data"]

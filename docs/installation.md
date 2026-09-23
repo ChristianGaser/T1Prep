@@ -225,7 +225,7 @@ curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/Dockerfi
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/Dockerfile \
-  | sudo docker build
+  | sudo docker build \
   --build-arg T1PREP_VERSION=0.4.4 \
   -t t1prep:0.4.4 -
 ```
@@ -241,9 +241,30 @@ Mount your data directory into the container (replace /path/to/data with your fo
 ```bash
 docker run --rm -it \
   -v /path/to/data:/data \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/data \
   t1prep:latest \
   --out-dir /data/out /data/file.nii.gz
 ```
+
+`--user` runs the container under your own account. It is **required whenever
+your host uid is not 1000**: the image drops privileges to a built-in `t1prep`
+user with uid 1000, while a bind mount keeps its ownership and permissions from
+the host. A mismatched uid cannot traverse your data directory, and because the
+resulting `stat` fails T1Prep reports the input as missing:
+
+```text
+ERROR: /data/file.nii.gz not found — skipping.
+```
+
+Running as yourself also means the results written to `/data/out` belong to you
+instead of to root.
+
+`-e HOME=/data` belongs with it. Model weights are fetched lazily on first run
+into `$HOME/.cache/t1prep`, and under `--user` the container's built-in home is
+no longer writable. Pointing `HOME` at the mount puts the weights in
+`/path/to/data/.cache/t1prep`, where they persist across runs.
+
 Append `--gpus all` to `docker run` to enable GPU acceleration when available.
 
 ### Memory & performance
@@ -254,6 +275,8 @@ If you obtain an error that no space is left on device: /tmp/ you can try that:
 docker run --rm -it \
   --tmpfs /tmp:rw,exec,nosuid,nodev,size=16g \
   -v /path/to/data:/data \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/data \
   t1prep:latest \
   --out-dir /data/out /data/file.nii.gz
 ```
