@@ -44,12 +44,17 @@ RUN set -eux; \
     python -c "import t1prep, sys; sys.stdout.write(f'Installed T1Prep {t1prep.__version__}\n')"
 
 # Drop privileges.  /data is the expected mount point for user volumes.
+# The home directory is made traversable because the image is routinely run
+# with --user to match the host uid (see docs/installation.md).  The runtime
+# enters WORKDIR while still privileged, so a 0700 home would leave the
+# process started in a directory it is not allowed to return to.
 RUN useradd -m -u 1000 -s /bin/bash t1prep \
  && mkdir -p /data \
- && chown -R t1prep:t1prep /data
+ && chown -R t1prep:t1prep /data \
+ && chmod 755 /home/t1prep
 RUN t1prep-download-models
 USER t1prep
-WORKDIR /home/t1prep
+WORKDIR /data
 VOLUME ["/data"]
 
 # Default: run the T1Prep CLI.  Examples:

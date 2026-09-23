@@ -336,7 +336,17 @@ def surface_estimation(
                             start_count=progress_start_count),
         )
     finally:
-        os.chdir(cwd_prev)
+        try:
+            os.chdir(cwd_prev)
+        except OSError as exc:
+            # The starting directory need not be reachable for the current
+            # user — a container WORKDIR owned by another uid is entered by
+            # the runtime while still privileged, so the process starts there
+            # but cannot return to it.  Surface estimation is finished by this
+            # point; failing here would discard a completed result.
+            log.warning(
+                "Could not restore working directory %s: %s", cwd_prev, exc
+            )
 
 
 def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
