@@ -228,7 +228,6 @@ cs.write_values("lh.corrected_thickness.sub-01", thickness)
 | `remove_intersections(v, fcs)` | Remove self-intersections |
 | `surf_average(meshes)` | Average across a list of meshes |
 | `surf_deform(v, fcs, ...)` | Surface deformation |
-| `surf_warp(v, fcs, deform_field)` | Warp surface by deformation field |
 | `resample_to_sphere(v, fcs, sphere_v, sphere_fcs)` | Resample mesh to sphere |
 | `resample_annot(annot, ...)` | Resample atlas annotation |
 
@@ -339,7 +338,6 @@ Full list of `cli` functions:
 | `surf_remove_intersections` | `CAT_SurfRemoveIntersections` |
 | `surf_resample` | `CAT_SurfResample` |
 | `surf_resample_annot` | `CAT_SurfResampleAnnot` |
-| `surf_warp` | `CAT_SurfWarp` |
 | `vol2surf` | `CAT_Vol2Surf` |
 | `vol_amap` | `CAT_VolAmap` |
 | `vol_blood_vessel_correction` | `CAT_VolBloodVesselCorrection` |
