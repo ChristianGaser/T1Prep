@@ -2119,9 +2119,7 @@ def parse_args(argv: List[str]) -> Options:
             except Exception:
                 mesh_left_resolved = single
             overlay_single_from_pos = single
-        elif _is_gifti_mesh_by_name(single) or (
-            str(single).lower().endswith('.gii') and is_gifti_mesh_file(single)
-        ):
+        elif _is_gifti_mesh_by_name(single) or is_gifti_mesh_file(single):
             mesh_left_resolved = single
             overlay_single_from_pos = None
         elif is_overlay_file(single):
@@ -2140,10 +2138,10 @@ def parse_args(argv: List[str]) -> Options:
         non_mesh_inputs: List[str] = []
         for pth in pos_inputs:
             # Use fast name-based heuristic first to avoid reading every file.
-            # Fall back to content inspection only when the name is ambiguous.
-            if _is_gifti_mesh_by_name(pth) or (
-                str(pth).lower().endswith('.gii') and is_gifti_mesh_file(pth)
-            ):
+            # Fall back to content inspection only when the name is ambiguous;
+            # that also catches FreeSurfer surfaces (lh.pial), which have no
+            # extension to go by.
+            if _is_gifti_mesh_by_name(pth) or is_gifti_mesh_file(pth):
                 mesh_candidates.append(pth)
             else:
                 non_mesh_inputs.append(pth)
@@ -2388,7 +2386,7 @@ class Viewer(QtWidgets.QMainWindow):
             # Combined 'mesh.' files contain geometry AND scalars — treat as overlay.
             is_combined_mesh_overlay = (_parse_mesh_combined_overlay(str(input_path)) is not None)
             if is_combined_mesh_overlay or (
-                not (str(input_path).lower().endswith('.gii') and is_gifti_mesh_file(str(input_path)))
+                not is_gifti_mesh_file(str(input_path))
                 and is_overlay_file(str(input_path))
             ):
                 # Input is an overlay file, find the corresponding mesh
@@ -4793,11 +4791,10 @@ class Viewer(QtWidgets.QMainWindow):
             cand = Path(convert_filename_to_mesh(str(ov_path)))
         except Exception:
             cand = None
-        if cand:
-            if not cand.is_absolute():
-                cand = ov_dir / cand
-            if _is_mesh(cand):
-                return cand
+        # The path already sits next to the overlay; joining a relative one
+        # onto ov_dir again would repeat the folder (sub/surf/sub/surf/lh.pial)
+        if cand and _is_mesh(cand):
+            return cand
 
         # Step 1b: explicit non-BIDS dot-token replacement for lh/rh thickness/pbt
         try:
@@ -4978,10 +4975,9 @@ class Viewer(QtWidgets.QMainWindow):
                 # Nothing conclusive from the filename; _load_overlay still
                 # reconciles the mesh via the value count.
                 return
-            try:
-                self._overlay_mesh_cache[overlay_key] = str(new_mesh_path.resolve())
-            except Exception:
-                self._overlay_mesh_cache[overlay_key] = str(new_mesh_path)
+            # Absolute, but not through symlinks: FreeSurfer's lh.pial links to
+            # lh.pial.T1, whose name finds no lh.inflated sibling
+            self._overlay_mesh_cache[overlay_key] = os.path.abspath(new_mesh_path)
 
         # If the target mesh is the file already shown, do nothing
         if getattr(self.opts, 'mesh_left', None):
@@ -5431,7 +5427,7 @@ class Viewer(QtWidgets.QMainWindow):
         self._mapped = {label: values for label, (_mesh, values) in mapped.items()}
         self.mapped_volume = volume_path
         for label, (mesh, _values) in mapped.items():
-            self._remember_mesh_for_overlay(Path(label), str(Path(mesh).resolve()))
+            self._remember_mesh_for_overlay(Path(label), os.path.abspath(mesh))
         # A volume mapped under the name already on screen still has to show
         self.opts.overlay = None
         self._set_overlay_list(list(mapped), index)

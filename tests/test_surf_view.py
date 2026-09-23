@@ -831,6 +831,30 @@ class TestFreeSurferSubject(unittest.TestCase):
             Path(convert_filename_to_mesh(str(self.tmp / "lh.thickness"))),
             self.tmp / "lh.central.gii")
 
+    def test_several_binary_surfaces_are_surfaces(self):
+        """Without a .gii extension they used to become overlays."""
+        opts = parse_args([str(self.tmp / "lh.pial"), str(self.tmp / "lh.inflated"),
+                           str(self.tmp / "lh.thickness")])
+        self.assertEqual([Path(m).name for m in opts.meshes],
+                         ["lh.pial", "lh.inflated"])
+        self.assertEqual([Path(o).name for o in opts.overlays], ["lh.thickness"])
+
+    def test_each_subject_finds_its_own_surface_from_a_relative_path(self):
+        """sub/surf/lh.thickness used to look for sub/surf/sub/surf/lh.pial."""
+        from nibabel.freesurfer.io import write_geometry
+        points = np.zeros((4, 3))
+        faces = np.array([[0, 1, 2]], dtype=np.int32)
+        for sub in ("s1", "s2"):
+            (self.tmp / sub / "surf").mkdir(parents=True)
+            write_geometry(str(self.tmp / sub / "surf" / "lh.pial"), points, faces)
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            found = Viewer._find_mesh_for_overlay(None, "s2/surf/lh.thickness")
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(found, Path("s2/surf/lh.pial"))
+
     def test_pial_is_offered_in_place_of_central(self):
         stub = TestSurfaceTypes._Stub(str(self.tmp / "lh.inflated"))
         self.assertEqual(sorted(dict(stub.available_surface_types())),
