@@ -211,7 +211,8 @@ export PATH="$PWD/env/bin:$PATH"                  # then use T1Prep, t1prep-ui, 
 
 A Dockerfile is provided that installs T1Prep from PyPI on top of a slim
 Python 3.12 base image. No source checkout is needed — the image is a
-pure-Python distribution with model weights fetched lazily on first run.
+pure-Python distribution with the model weights baked in at build time, so a
+container needs no network access on first run.
 
 ### Build
 
@@ -260,12 +261,83 @@ ERROR: /data/file.nii.gz not found — skipping.
 Running as yourself also means the results written to `/data/out` belong to you
 instead of to root.
 
-`-e HOME=/data` belongs with it. Model weights are fetched lazily on first run
-into `$HOME/.cache/t1prep`, and under `--user` the container's built-in home is
-no longer writable. Pointing `HOME` at the mount puts the weights in
-`/path/to/data/.cache/t1prep`, where they persist across runs.
+`-e HOME=/data` belongs with it. Under `--user` the container's built-in home is
+no longer writable, and several libraries write caches under `$HOME` during a
+run. Pointing `HOME` at the mount keeps those writes on your own volume. The
+model weights themselves are already in the image, so they are unaffected —
+but if you build a variant without the `t1prep-download-models` step, `HOME`
+also decides where they are downloaded to on first run.
 
 Append `--gpus all` to `docker run` to enable GPU acceleration when available.
+
+### Running other tools
+
+The image's `ENTRYPOINT` is the single-subject Python CLI
+(`python -m t1prep.t1prep`), so every other tool is reached with
+`--entrypoint`. A small shell wrapper keeps the mount and identity flags out of
+the way:
+
+```bash
+t1() {
+  local tool="$1"; shift
+  docker run --rm -it \
+    -v /path/to/data:/data \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/data -w /data \
+    --entrypoint "$tool" t1prep:latest "$@"
+}
+```
+
+`t1 ls /usr/local/bin` lists everything that is installed, and `t1 bash` opens a
+shell inside the container.
+
+**Batch processing.** The `T1Prep` bash orchestrator is the full CLI, including
+the `--multi` parallelization that the default entrypoint does not expose:
+
+```bash
+t1 T1Prep --multi 4 --out-dir /data/out /data/sub-01.nii.gz /data/sub-02.nii.gz
+```
+
+`T1Prep` expects an expanded file list, and `--entrypoint` runs the tool
+directly without a shell, so a wildcard is *not* expanded on either side of the
+container boundary. Let the container's own shell do it:
+
+```bash
+t1 bash -c 'T1Prep --multi 4 --out-dir /data/out /data/sub-*.nii.gz'
+```
+
+**Longitudinal pipeline.** All four scripts are installed side by side in
+`/usr/local/bin` and resolve each other from there:
+
+```bash
+t1 process_longitudinal.sh --long-model ageing /data/tp1.nii.gz /data/tp2.nii.gz
+t1 warp_longitudinal.sh --inputs /data/tp1.nii.gz /data/tp2.nii.gz --out-dir /data/out
+t1 modulate_longitudinal.sh --mri-dirs /data/D1 /data/D2 --names tp1 tp2 --out-dir /data/out
+```
+
+`CAT_VolDiff`, `CAT_PlotHistogram`, `t1prep-bbreg`, `CAT_GrepJson` and the
+`CAT_*_ui` helpers are reached the same way.
+
+**The viewers do not run in this image.** `CAT_SurfView` and `CAT_VolView` are
+installed as console scripts, but the slim base image carries none of the
+OpenGL and Qt platform libraries that PySide6 and VTK need, so both fail on a
+missing `libGL.so.1`. For interactive work, install T1Prep natively on the
+machine that has your display and point the viewers at the results.
+
+To render batch figures inside a container instead — both viewers have
+display-free modes, see [Viewers](viewers.md) — add the libraries to your own
+image:
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libgl1 libgl1-mesa-dri libglib2.0-0 libegl1 libxkbcommon0 \
+      libdbus-1-3 libfontconfig1 libx11-6 libxext6 libxrender1 \
+ && rm -rf /var/lib/apt/lists/*
+```
+
+and run with `-e QT_QPA_PLATFORM=offscreen`. `libgl1-mesa-dri` supplies the
+software rasterizer; without it VTK has no way to render off-screen. Expect to
+adjust the list — it is a starting point, not a verified minimum.
 
 ### Memory & performance
 

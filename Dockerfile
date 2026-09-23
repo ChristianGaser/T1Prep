@@ -32,9 +32,9 @@ RUN apt-get update \
       libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 
-# Install T1Prep from PyPI.  Model weights are NOT downloaded at build
-# time; they are fetched lazily on first use into the running container's
-# user cache (~/.cache/t1prep/models) — see t1prep._models.prepare_model_files().
+# Install T1Prep from PyPI.  The weights are fetched further down, at build
+# time and still as root, so they land in deepmriprep's own data/models and
+# the image needs no network on first run — see t1prep._models._resolve_model_dir().
 RUN set -eux; \
     if [ -n "${T1PREP_VERSION}" ]; then \
         pip install --no-cache-dir "T1Prep==${T1PREP_VERSION}"; \
