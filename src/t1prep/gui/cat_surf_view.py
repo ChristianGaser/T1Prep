@@ -261,6 +261,11 @@ UNDERLAY_PERCENTILES = (2.0, 98.0)
 #: than meshes, and sphere/pial/white add little next to these three.
 SWITCHABLE_SURFACES = ('central', 'inflated', 'patch')
 
+#: The folded surface of a FreeSurfer subject, which has no central one: it
+#: takes the place of 'central' in the surface menu when that is missing.
+FOLDED_FALLBACK = 'pial'
+
+
 
 def detect_naming_scheme(filename: str) -> bool:
     """
@@ -365,6 +370,29 @@ def _bids_overlay_to_mesh(overlay_path: Path) -> Optional[Path]:
     return native
 
 
+def _freesurfer_mesh_fallback(mesh_path: Path) -> Path:
+    """The FreeSurfer surface to use when a derived central surface is missing.
+
+    A FreeSurfer ``surf/`` folder has no ``lh.central.gii``, so an overlay
+    such as ``lh.thickness`` is shown on the pial surface next to it
+    (``lh.pial``, or a ``.gii`` export of it).  Returns *mesh_path* unchanged
+    when it exists or no pial surface is found.
+    """
+    if mesh_path.exists():
+        return mesh_path
+    name = mesh_path.name
+    stem = name[:-4] if name.lower().endswith('.gii') else name
+    parts = stem.split('.')
+    if len(parts) < 2 or parts[0] not in ('lh', 'rh') or parts[1] != 'central':
+        return mesh_path
+    for kind in ('pial', 'white'):
+        base = '.'.join([parts[0], kind] + parts[2:])
+        for cand in (mesh_path.with_name(base), mesh_path.with_name(base + '.gii')):
+            if cand.exists():
+                return cand
+    return mesh_path
+
+
 def convert_filename_to_mesh(overlay_filename: str) -> str:
     """
     Convert an overlay filename to the corresponding mesh filename.
@@ -435,7 +463,7 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
     if not detect_naming_scheme(overlay_filename):
         mesh_name = _fs_thickness_to_mesh(overlay_path.name)
         if mesh_name is not None:
-            return str(overlay_path.parent / mesh_name)
+            return str(_freesurfer_mesh_fallback(overlay_path.parent / mesh_name))
 
     # BIDS overlays: derive the midthickness surface from the producer's own
     # naming pattern.  (An earlier hand-rolled pattern here used Path.stem,
@@ -484,7 +512,7 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
     if mesh_candidate is None:
         mesh_name = _fs_overlay_to_mesh(overlay_path.name)
         if mesh_name is not None:
-            mesh_candidate = overlay_path.parent / mesh_name
+            mesh_candidate = _freesurfer_mesh_fallback(overlay_path.parent / mesh_name)
 
     result = mesh_candidate or overlay_path
     # No usable surface from the name — statistic results (TFCE_*, logP_*, …)
@@ -500,6 +528,11 @@ def is_overlay_file(filename: str) -> bool:
     """Heuristic check whether a path is an overlay (texture/label) rather than a mesh."""
     filename_only = Path(filename).name
     filename_lower = filename_only.lower()
+
+    # FreeSurfer surfaces follow the lh.<kind> pattern of overlays too
+    # (lh.orig, lh.smoothwm), but their magic number gives them away
+    if _is_freesurfer_geometry(filename):
+        return False
 
     parts = filename_lower.split('.')
     mesh_types = MESH_TYPE_TOKENS
@@ -1354,7 +1387,8 @@ def map_volume_to_mesh(volume, mesh_path: str, sampling: str = 'crossing'
     shown = read_mesh_pair(mesh_path)
     source = shown
     if any(part in UNFOLDED_SURFACES for part in Path(mesh_path).name.split('.')):
-        central = sibling_file(mesh_path, 'central')
+        central = (sibling_file(mesh_path, 'central')
+                   or sibling_file(mesh_path, FOLDED_FALLBACK))
         if central is not None:
             folded = read_mesh_pair(str(central))
             if all((a is None) == (b is None) and
@@ -1425,15 +1459,54 @@ def _nib_load_gifti(filename: str):
                     pass
 
 
+def _is_freesurfer_geometry(filename: str) -> bool:
+    """Return True when the file starts with the FreeSurfer triangle-surface
+    magic (``lh.pial``, ``lh.white``, ``lh.inflated``, …)."""
+    try:
+        with open(filename, 'rb') as f:
+            return f.read(3) == b'\xff\xff\xfe'
+    except Exception:
+        return False
+
+
+def read_freesurfer_mesh(filename: str) -> vtkPolyData:
+    """Read a FreeSurfer binary surface (``lh.pial``, ``lh.white``, …).
+
+    The vertices stay in FreeSurfer's tkregister space, centred on the brain,
+    as CAT12's reader leaves them; the ``cras`` offset to scanner space is
+    not applied.
+    """
+    from nibabel.freesurfer.io import read_geometry
+    coords, faces = read_geometry(filename)
+    return _polydata_from_arrays(coords, faces)
+
+
+def _polydata_from_arrays(coords, faces) -> vtkPolyData:
+    """A triangle mesh from an (n, 3) vertex and an (m, 3) face array."""
+    pts = vtkPoints()
+    pts.SetData(numpy_to_vtk(np.ascontiguousarray(coords, dtype=np.float64), deep=True))
+    faces = np.asarray(faces, dtype=np.int64)
+    cells = vtkCellArray()
+    offsets = np.arange(0, 3 * len(faces) + 1, 3, dtype=np.int64)
+    cells.SetData(numpy_to_vtk(offsets, deep=True),
+                  numpy_to_vtk(np.ascontiguousarray(faces.ravel()), deep=True))
+    poly = vtkPolyData(); poly.SetPoints(pts); poly.SetPolys(cells)
+    return poly
+
+
 def read_gifti_mesh(filename: str) -> vtkPolyData:
-    """Read a surface mesh from a GIFTI file.
+    """Read a surface mesh from a GIFTI or FreeSurfer surface file.
 
     Uses VTK's reader when the build has one and falls back to nibabel, which
     also covers the files VTK refuses (SPM's external-binary GIFTI).
+    FreeSurfer binary surfaces (``lh.pial``, …) are recognised by their magic
+    number and read with nibabel.
 
     Raises:
         RuntimeError: when the file holds no POINTSET/TRIANGLE arrays.
     """
+    if _is_freesurfer_geometry(filename):
+        return read_freesurfer_mesh(filename)
     if HAVE_VTK_GIFTI:
         r = vtkGIFTIReader(); r.SetFileName(filename); r.Update()
         out = r.GetOutput()
@@ -1472,8 +1545,11 @@ def read_gifti_mesh(filename: str) -> vtkPolyData:
 
 
 def is_gifti_mesh_file(filename: str) -> bool:
-    """Return True if the .gii file contains a surface mesh (POINTSET/TRIANGLE)."""
+    """Return True if the file holds a surface mesh: a .gii with
+    POINTSET/TRIANGLE arrays or a FreeSurfer binary surface."""
     try:
+        if _is_freesurfer_geometry(str(filename)):
+            return True
         if not str(filename).lower().endswith('.gii'):
             return False
         poly = read_gifti_mesh(str(filename))
@@ -1869,7 +1945,8 @@ def _build_parser() -> argparse.ArgumentParser:
             '       statistic results usually carry it),\n'
             '    2. the mesh matching the overlay name (lh.thickness.subj -> lh.central.subj.gii,\n'
             '       sub-01_hemi-L_thickness.shape.gii -> sub-01_hemi-L_midthickness.surf.gii)\n'
-            '       or a central/midthickness surface in the same folder,\n'
+            '       or a central/midthickness surface in the same folder; a FreeSurfer\n'
+            '       folder without one uses lh.pial (lh.thickness -> lh.pial),\n'
             '    3. the number of values, matched against the 4k/32k/164k templates.\n'
             '  Step 3 is what makes free-form names work, e.g. CAT12/SPM statistic folders\n'
             '  (logP_*.gii, TFCE_*.gii), and it is re-run for every overlay, so files\n'
@@ -3867,7 +3944,8 @@ class Viewer(QtWidgets.QMainWindow):
         """
         source = [self.poly_l, self.poly_r]
         if self.current_surface_type() in ('inflated', 'patch'):
-            central = dict(self.available_surface_types()).get('central')
+            siblings = dict(self.available_surface_types())
+            central = siblings.get('central') or siblings.get(FOLDED_FALLBACK)
             if central:
                 cached = getattr(self, '_folded_meshes', None) or {}
                 if central not in cached:
@@ -4014,29 +4092,36 @@ class Viewer(QtWidgets.QMainWindow):
         Only the surfaces worth switching to are offered, and only when the
         file really holds a mesh: ``lh.mc.*`` and ``lh.sqrtsulc.*`` sit next to
         them with the same naming and hold scalars, not geometry.
+
+        A FreeSurfer subject (``lh.pial``, ``lh.inflated``) has no central
+        surface; its pial surface is offered in that place.
         """
         current = self.opts.mesh_left
         if not current:
             return []
         path = Path(current)
         parts = path.name.split('.')
+        kinds = SWITCHABLE_SURFACES + (FOLDED_FALLBACK,)
         found: List[Tuple[str, str]] = []
         for index, part in enumerate(parts):
-            if part not in SWITCHABLE_SURFACES:
+            if part not in kinds:
                 continue
-            for mesh_type in SWITCHABLE_SURFACES:
+            for mesh_type in kinds:
                 candidate = list(parts)
                 candidate[index] = mesh_type
                 sibling = path.with_name('.'.join(candidate))
                 if sibling.exists() and is_gifti_mesh_file(str(sibling)):
                     found.append((mesh_type, str(sibling)))
+            # pial only stands in for a missing central surface
+            if part != FOLDED_FALLBACK and any(t == 'central' for t, _ in found):
+                found = [f for f in found if f[0] != FOLDED_FALLBACK]
             break
         return found
 
     def current_surface_type(self) -> Optional[str]:
         """Which of those the viewer is showing."""
         for part in Path(self.opts.mesh_left or '').name.split('.'):
-            if part in SWITCHABLE_SURFACES:
+            if part in SWITCHABLE_SURFACES or part == FOLDED_FALLBACK:
                 return part
         return None
 
@@ -4699,7 +4784,7 @@ class Viewer(QtWidgets.QMainWindow):
 
         def _is_mesh(path: Path) -> bool:
             try:
-                return path.exists() and path.suffix.lower() == '.gii' and is_gifti_mesh_file(str(path))
+                return path.exists() and is_gifti_mesh_file(str(path))
             except Exception:
                 return False
 
@@ -4783,8 +4868,11 @@ class Viewer(QtWidgets.QMainWindow):
         if self.poly_l is None or n_scal <= 0:
             return False
         n_l = self.poly_l.GetNumberOfPoints()
-        n_r = self.poly_r.GetNumberOfPoints() if self.poly_r is not None else 0
-        return n_scal in (n_l, n_l + n_r)
+        if self.poly_r is None:
+            return n_scal == n_l
+        # A right-hemisphere overlay fits the right surface alone
+        n_r = self.poly_r.GetNumberOfPoints()
+        return n_scal in (n_l, n_r, n_l + n_r)
 
     def _use_embedded_mesh(self, ov_path: Path, n_scal: int) -> bool:
         """Display the geometry stored inside an overlay ``.gii``, if it fits.

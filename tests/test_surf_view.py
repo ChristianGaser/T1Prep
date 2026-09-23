@@ -790,6 +790,54 @@ class TestSurfaceTypes(unittest.TestCase):
         self.assertIsNone(stub.current_surface_type())
 
 
+class TestFreeSurferSubject(unittest.TestCase):
+    """A FreeSurfer surf/ folder: binary surfaces and no central one."""
+
+    def setUp(self):
+        from nibabel.freesurfer.io import write_geometry, write_morph_data
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        points = np.array([[0., 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        faces = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]],
+                         dtype=np.int32)
+        for hemi in ("lh", "rh"):
+            for kind in ("pial", "inflated", "orig"):
+                write_geometry(str(self.tmp / f"{hemi}.{kind}"), points, faces)
+            write_morph_data(str(self.tmp / f"{hemi}.thickness"),
+                             np.arange(4, dtype=np.float32))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_a_binary_surface_is_read(self):
+        left, right = read_mesh_pair(str(self.tmp / "lh.pial"))
+        self.assertEqual(left.GetNumberOfPoints(), 4)
+        self.assertEqual(left.GetNumberOfPolys(), 4)
+        self.assertIsNotNone(right)
+
+    def test_a_binary_surface_is_no_overlay(self):
+        """lh.orig looks like lh.<kind> of an overlay; its magic says mesh."""
+        self.assertFalse(is_overlay_file(str(self.tmp / "lh.orig")))
+        self.assertTrue(is_overlay_file(str(self.tmp / "lh.thickness")))
+
+    def test_thickness_without_central_is_shown_on_pial(self):
+        self.assertEqual(
+            Path(convert_filename_to_mesh(str(self.tmp / "rh.thickness"))),
+            self.tmp / "rh.pial")
+
+    def test_central_is_still_preferred(self):
+        (self.tmp / "lh.central.gii").write_bytes(b"")
+        self.assertEqual(
+            Path(convert_filename_to_mesh(str(self.tmp / "lh.thickness"))),
+            self.tmp / "lh.central.gii")
+
+    def test_pial_is_offered_in_place_of_central(self):
+        stub = TestSurfaceTypes._Stub(str(self.tmp / "lh.inflated"))
+        self.assertEqual(sorted(dict(stub.available_surface_types())),
+                         ["inflated", "pial"])
+        self.assertEqual(stub.current_surface_type(), "inflated")
+
+
 class TestFlatSurfaces(unittest.TestCase):
     """A flat map is shown once per hemisphere, not rotated into six views."""
 

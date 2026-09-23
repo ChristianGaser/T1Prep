@@ -10,7 +10,9 @@ Two viewers ship with T1Prep and are installed as ordinary commands
 
 Both are built on PySide6 and VTK, both render without a display for batch use,
 and both keep their display settings in a right-click menu. Neither needs
-T1Prep output — they open any GIFTI surface or NIfTI volume.
+T1Prep output — they open any GIFTI surface or NIfTI volume, and
+`CAT_SurfView` also reads FreeSurfer's binary surfaces (`lh.pial`, `lh.white`,
+`lh.inflated`) and morph data (`lh.thickness`).
 
 ```bash
 CAT_SurfView lh.central.gii            # a surface
@@ -44,7 +46,9 @@ overlay's name in either scheme — `lh.thickness.sub-01` → `lh.central.sub-01
 or `sub-01_hemi-L_thickness.shape.gii` → `sub-01_hemi-L_midthickness.surf.gii`,
 following the same `Names.tsv` the pipeline wrote it with — then by any
 central/midthickness surface in the folder, then by value count against the
-templates. The second hemisphere is found from the file name (`lh.`↔`rh.`,
+templates. A FreeSurfer `surf/` folder has no central surface, so there
+`lh.thickness` is shown on `lh.pial` (or `lh.white` when that is missing too),
+e.g. `CAT_SurfView ~/subjects/bert/surf/lh.thickness`. The second hemisphere is found from the file name (`lh.`↔`rh.`,
 `left`↔`right`, `_hemi-L_`↔`_hemi-R_`), or split off a combined
 `mesh.central.*` surface.
 
@@ -81,7 +85,8 @@ with — and a mismatch is reported rather than drawn in the wrong place.
 Two independent choices in the menu:
 
 - **Surface** — `central`, `inflated` or `patch` (the flattened map), taken from
-  the sibling files of the one you opened. Switching keeps the overlay.
+  the sibling files of the one you opened; `pial` takes the place of a missing
+  `central` (a FreeSurfer subject). Switching keeps the overlay.
 - **Underlay** — mean curvature, sulcal depth, or nothing (an even grey). The
   shading always comes from the *folded* surface, so an inflated or flattened
   surface keeps its relief instead of turning blank.
@@ -126,7 +131,8 @@ CAT_SurfView surf/?h.pial.sub-01.gii surf/?h.central.sub-01.gii \
   Changing the menu entry maps the volume again and keeps the current surface
   on screen.
 - **Unfolded surfaces.** An inflated, spherical or flattened surface is read at
-  the position of its `central` sibling, since its own vertices are no longer
+  the position of its `central` sibling (or `pial`, when there is no central
+  one), since its own vertices are no longer
   inside the brain.
 - **Existing overlays win.** An overlay (including a CAT12 `mesh.*` file that
   carries its own values) is never replaced. A new volume replaces the maps of
