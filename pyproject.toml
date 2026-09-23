@@ -52,7 +52,7 @@ dependencies = [
     "apscheduler>=3.10",
     "h5py>=3.0",
     "sentry-sdk",
-    "PySide6>=6.5",
+    "PySide6>=6.2",
     "vtk>=9.0.0",
 ]
 

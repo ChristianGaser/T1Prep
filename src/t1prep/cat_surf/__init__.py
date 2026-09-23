@@ -85,7 +85,6 @@ from cat_surf import (  # noqa: F401
     surf_deform,
     surf_to_pial_white,
     surf_to_sphere,
-    surf_warp,
     vol2surf,
     vol_amap,
     vol_blood_vessel_correction,
@@ -125,7 +124,6 @@ __all__ = [
     "fix_self_intersect",
     "surf_average",
     "surf_deform",
-    "surf_warp",
     "resample_to_sphere",
     "resample_annot",
     # surface topology

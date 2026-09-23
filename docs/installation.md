@@ -217,15 +217,17 @@ pure-Python distribution with model weights fetched lazily on first run.
 
 **Latest release from PyPI:**
 ```bash
-docker build -t t1prep:latest .
+curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/Dockerfile \
+  | sudo docker build -t t1prep:latest -
 ```
 
 **Pinned release:**
 
 ```bash
-docker build \
+curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/Dockerfile \
+  | sudo docker build
   --build-arg T1PREP_VERSION=0.4.4 \
-  -t t1prep:0.4.4 .
+  -t t1prep:0.4.4 -
 ```
 
 The `T1PREP_VERSION` build-arg accepts any PEP 440 version string (no

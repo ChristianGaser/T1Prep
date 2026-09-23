@@ -19,7 +19,7 @@ requests
 # Drawing backend of CAT_PlotHistogram; the pipeline itself does not plot
 matplotlib>=3.5
 flask>=2.3
-PySide6>=6.5
+PySide6>=6.2
 vtk>=9.0.0
 apscheduler>=3.10
 h5py>=3.0
