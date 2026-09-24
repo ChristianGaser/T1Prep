@@ -73,6 +73,84 @@ Same subjects as the volume comparison, so the two are directly comparable.
 | `fsavg164k` | *the same registration*, scored at 164k | fsaverage 164k | 0.8158 | 0.7436 | — |
 | **`newmsm`** | **FSL newMSM, fMRIPrep's MSMSulc config** | fs_LR 164k | **0.7317** | **0.6405** | ~4 min |
 
+<!---
+### FreeSurfer 8.1 vs T1Prep 0.7.6 — 19 subjects, head to head
+
+[The same 19 subjects (all of `subset20` except `MMRR-3T7T-2-1` due to preprocessing issues),
+the same manual labels, the same fsaverage 164k target, the same protocol.
+Each pipeline registers its *own* surfaces, so this compares surface
+reconstruction and spherical registration together - the two cannot be
+separated here, because each pipeline's sphere is tied to its own mesh.
+
+| attachment surface | FreeSurfer 8.1 | T1Prep 0.7.6 |
+|---|---|---|
+| **midthickness / central** | **0.8516** / 0.7906 | **0.8143** / 0.7427 |
+| pial | 0.8197 / 0.7425 | 0.7900 / 0.7066 |
+| registration runtime, per hemisphere | 8.4 min (IQR 7.2-12.6, range 4.7-55.7) | not measured |
+| registration runtime, per subject | 17.4 min (IQR 14.4-39.5, range 12.5-95.7) | not measured |
+
+FreeSurfer's runtime is `mris_register` aligning `?h.sphere` to the fsaverage
+folding atlas, read from `FSRUNTIME@` in the `rca-surfreg` logs (38 of 38
+hemispheres).  Two caveats on those numbers: every run reports **`1 threads`**
+despite the command line requesting `-threads 24`, so they are single-core
+timings; and the spread is cohort-structured rather than random -- the four
+MMRR subjects take 59-96 min each while every NKI, OASIS and HLN subject
+finishes in 12-21 min.  `mris_sphere`, which produces the `?h.sphere` this
+step consumes, adds a further ~3.5 min per hemisphere.
+
+FreeSurfer is more accurate on this benchmark, by ~0.037 Dice (LOO) and 
+~0.048 (pairs) at the matched geometry. The margin holds whichever attachment 
+surface is chosen (+0.030 to +0.047), so it does not rest on that decision.
+
+### The attachment surface is a confound, and it is a large one
+
+Which surface the labels attach to moves Dice by more than most method
+differences here, so it has to be fixed on a principled basis and held
+identical across arms:
+
+| pipeline | mid − pial (LOO) | mid − pial (pairs) |
+|---|---|---|
+| T1Prep | +0.0243 | +0.0362 |
+| FreeSurfer | +0.0318 | +0.0481 |
+
+Mindboggle's labelled surfaces sit on the **pial**, so the pial gives the
+smallest vertex-to-label distance and the *worst* transfer: at the pial the
+two banks of a sulcus are in contact, so a nearest-neighbour lookup jumps
+across the fundus.  Counting vertices whose label matches none of their 1-ring
+neighbours (OASIS-TRT-20-2 lh, FreeSurfer mesh):
+
+| mesh | distance | unlabelled | speckle |
+|---|---|---|---|
+| pial | 0.44 mm | 0.4 % | **0.502 %** |
+| mid | 1.12 mm | 0.5 % | **0.175 %** |
+| white | 2.14 mm | 13.6 % | 0.117 % |
+
+White has the least speckle but loses 13.6 % of vertices past the 3 mm cutoff.
+Midthickness is the only geometry good on both counts - and it is what
+T1Prep's central surface already is, so the two pipelines are compared on
+equivalent geometry rather than on a choice tuned to the outcome.
+
+That the mid > pial > white ordering appears in **both** pipelines is the
+check that this is a property of the labelled data, not of either pipeline.
+
+### Setup notes
+
+The two pipelines use opposite coordinate conventions, verified per subject:
+
+| | frame | without the correction |
+|---|---|---|
+| FreeSurfer surfaces | tkrRAS (`--reference-glob none`) | correct as-is |
+| T1Prep surfaces | scanner RAS (`+c_ras`) | 134--166 mm off |
+
+Applying the wrong one is not subtle - it misses by the size of the head -
+but it only shows up on subjects whose `c_ras` is non-zero, and OASIS-TRT-20's
+is exactly zero, so a single-cohort check would pass either way.
+
+Scoring against FreeSurfer 8.1's own `fsaverage/surf/?h.sphere` and against
+T1Prep's shipped `templates_surfaces_164k/?h.sphere.freesurfer.gii` gives
+identical results to four decimals: they are the same mesh, vertex for vertex.
+-->
+
 ### Reading the newMSM result
 
 newMSM is run exactly as sMRIPrep runs MSMSulc: the config
@@ -80,7 +158,7 @@ newMSM is run exactly as sMRIPrep runs MSMSulc: the config
 sMRIPrep, and the four preprocessing steps (affine regression onto the
 fsLR-registered sphere, apply, re-sphere to radius 100, **invert sulc**) are
 reproduced.  So this is what fMRIPrep's surface registration achieves on this
-benchmark -- not a mis-tuned MSM.
+benchmark - not a mis-tuned MSM.
 
 The gap is nevertheless expected rather than surprising.  MSMSulc is a
 deliberately conservative, strain-regularised *refinement*: it is meant to
@@ -93,7 +171,7 @@ the ordering (Spherical Demons > MSM) reproduces what the literature reports:
 SphereMorph table.
 
 Cortical-parcel Dice is not the criterion MSMSulc is optimised for, so this
-number should not be read as "MSM is a worse algorithm" -- it says that for
+number should not be read as "MSM is a worse algorithm" - it says that for
 carrying fold-defined labels between subjects, T1Prep's default registration
 is substantially better than what fMRIPrep currently does on the surface.
 
@@ -109,25 +187,25 @@ change how several of them should be read.
 **The spread within a method dwarfs the differences between methods.** Every
 non-linear arm has an interquartile range about 0.10 wide (LOO) or 0.13
 (pairs), while the means separate by 0.01-0.03.  Which region is being measured
-matters far more than which of these methods produced the registration -- the
+matters far more than which of these methods produced the registration - the
 ranking is a statement about averages over many regions, not a prediction for
 any single parcel.
 
 **Affine is not merely lower, it is a different kind of distribution.** Its
-pairwise IQR spans 0.000-0.526 -- more than a quarter of region-pairs get
-essentially *no* overlap from an affine alignment -- against 0.52-0.66 for
+pairwise IQR spans 0.000-0.526 - more than a quarter of region-pairs get
+essentially *no* overlap from an affine alignment - against 0.52-0.66 for
 ANTs.  69 % of its pairwise values fall below 0.5, versus 10-19 % for the
 non-linear methods.  That is the gap the non-linear step actually closes.
 
 **newMSM is both lower and less consistent than T1Prep on the surface.** Its
 IQR is half again as wide (0.199 vs 0.129 for pairs) and its lower whisker
 reaches 0.27 where T1Prep's stops at 0.51; 17.3 % of its values fall below 0.5
-against T1Prep's 4.6 %.  The mean difference understates it -- the two are
+against T1Prep's 4.6 %.  The mean difference understates it - the two are
 closest on the regions that are easy for both.
 
 **The volume arms overlap heavily.** ANTs, T1Prep and CAT12 have visually
 similar boxes, consistent with paired differences of 0.012-0.028.  Their
-ordering is reliable -- the paired intervals exclude zero -- but no visible
+ordering is reliable - the paired intervals exclude zero - but no visible
 difference should be expected on any one subject.
 
 Regenerate with `tools/plot_dice.py`.
@@ -168,7 +246,7 @@ reporting shooting ahead of DARTEL and of Klein 2009's best on both datasets.
   verbatim from sMRIPrep (`tools/msm_data/`).  On macOS the build needs
   `$FSLDIR/bin/make` (Apple ships GNU Make 3.81, which cannot parse the
   `define VAR =` syntax in FSL's `rules.mk` and silently generates no compile
-  rules) and libomp via `USRCXXFLAGS`/`USRLDFLAGS` -- see
+  rules) and libomp via `USRCXXFLAGS`/`USRLDFLAGS` - see
   `tools/build_newmsm.sh`.
 * T1Prep deformations are the SPM-format `y_*.nii` (5-D, native mm, affine and
   non-linear composed).

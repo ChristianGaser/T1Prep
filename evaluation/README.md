@@ -81,6 +81,7 @@ produces, and `results/dice_boxplots.png` for the distributions behind them.
 | path | contents |
 |------|----------|
 | `data/subset20.txt` | the 20 subjects used for the volume comparison |
+| `data/subset19_fs81.txt` | the 19 of those with FreeSurfer 8.1 output |
 | `tools/` | the exact scripts used to run each competing method |
 | `results/RESULTS.md` | the numbers, the protocol, and the caveats |
 | `results/*.csv` | per-region, per-comparison Dice for every arm |
@@ -134,6 +135,41 @@ tools/run_newmsm.py --t1prep <mb>/data --work <work>/msm \
     --subject-file data/subset20.txt --jobs 4           # FSL newMSM
 ```
 
+<!---
+### FreeSurfer
+
+FreeSurfer needs no T1Prep outputs at all -- its own surfaces and
+`?h.sphere.reg` are the whole arm.  Two things differ from the other arms and
+both are load-bearing:
+
+* **`--reference-glob none`.** FreeSurfer's surfaces and Mindboggle's labelled
+  surfaces are both in the tkrRAS of the same conformed volume, so the
+  tkrRAS-to-scanner shift the other arms need would break this one (141 mm off
+  on subjects whose `c_ras` is non-zero).
+* **midthickness, not pial or white**, as the surface labels attach to -- see
+  `prepare_fs_midthickness.py` for why, and `results/RESULTS.md` for what it
+  costs to get wrong.
+
+T1Prep is scored the same way, with its **central** surface (already a
+midthickness) and `--reference-glob` pointing at any volume in the subject's
+scanner space -- its surfaces are in scanner RAS, not tkrRAS.  A flat output
+directory is addressed through `{subject}` in `--mesh-file`/`--sphere-file`;
+an explicit `--subject-file` is then authoritative, since there are no
+per-subject folders to scan.
+
+```bash
+tools/prepare_fs_midthickness.py --freesurfer <SUBJECTS_DIR> \
+    --out <work>/fsmid --subject-file data/subset19_fs81.txt
+
+tools/eval_mindboggle.py project --space fsaverage --out-space fs81 \
+    --mindboggle <mb>/surfaces --t1prep <SUBJECTS_DIR> --work <work>/eval \
+    --labels surface --subject-file data/subset19_fs81.txt \
+    --mesh-file '<work>/fsmid/{subject}/{hemi}.mid.gii' \
+    --sphere-file '<SUBJECTS_DIR>/{subject}/surf/{hemi}.sphere.reg' \
+    --template-sphere 'src/t1prep/data/templates_surfaces_164k/{fshemi}.sphere.freesurfer.gii' \
+    --reference-glob none
+```
+-->
 An external registration is scored by pointing at its sphere and its target:
 
 ```bash
@@ -180,5 +216,6 @@ normalisation can be dropped into the same comparison.
 | `gen_fslr_msm_spheres.py` | fsLR and msmsulc spheres from an existing run |
 | `build_newmsm.sh` | build FSL newMSM on macOS |
 | `run_newmsm.py` | newMSM as sMRIPrep runs MSMSulc |
+| `prepare_fs_midthickness.py` | midthickness from a FreeSurfer run, for label attachment |
 | `plot_dice.py` | boxplots of the Dice distributions behind the means |
 | `msm_data/` | sMRIPrep's MSM config and reference surfaces, verbatim |

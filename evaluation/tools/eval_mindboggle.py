@@ -319,7 +319,7 @@ def tkr_offset(reference_file: Path) -> np.ndarray:
 
 
 def labels_from_surface(label_file: Path, vertices: np.ndarray,
-                        reference_file: Path,
+                        reference_file: Path | None,
                         max_dist: float) -> tuple[np.ndarray, dict]:
     """Attach Mindboggle's labelled surface to a native mesh by proximity.
 
@@ -331,7 +331,8 @@ def labels_from_surface(label_file: Path, vertices: np.ndarray,
     changes only ~0.5-0.9 % of the labels.
     """
     points, labels = read_vtk_labels(label_file)
-    points = points + tkr_offset(reference_file)
+    if reference_file is not None:
+        points = points + tkr_offset(reference_file)
     dist, idx = cKDTree(points).query(vertices)
     return _assemble(labels, dist, idx, len(vertices), max_dist)
 
@@ -422,9 +423,11 @@ def cmd_project_volume(args: argparse.Namespace) -> int:
     a filled ribbon and vertex Dice on a surface are different measurements,
     comparable across volume methods rather than against the surface numbers.
     """
-    subjects = sorted(p.name for p in Path(args.t1prep).iterdir() if p.is_dir())
-    if args.subjects:
-        subjects = [s for s in subjects if s in set(args.subjects)]
+    # An explicit list is authoritative: --mesh-file/--sphere-file can address
+    # a flat output directory that has no per-subject folders to scan.
+    wanted = wanted_subjects(args)
+    subjects = sorted(wanted) if wanted else sorted(
+        p.name for p in Path(args.t1prep).iterdir() if p.is_dir())
     out_dir = Path(args.work) / args.out_space
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -512,16 +515,26 @@ def native_to_template(native: np.ndarray, mid: Path, sphere: Path,
     return np.rint(out).astype(np.int32)
 
 
+def wanted_subjects(args: argparse.Namespace) -> set | None:
+    """The subject list from --subjects and/or --subject-file, or None."""
+    names: list[str] = list(getattr(args, "subjects", None) or [])
+    path = getattr(args, "subject_file", None)
+    if path:
+        names += [line.strip() for line in open(path) if line.strip()]
+    return set(names) or None
+
+
 def cmd_project(args: argparse.Namespace) -> int:
     sphere_code, template_dir, template_pat = SPACES[args.space]
     tmpl_root = Path(args.data_dir) if args.data_dir else DATA_PATH_T1PREP
     routes = (["surface", "volume"] if args.labels == "auto"
               else [args.labels])
 
-    subjects = sorted(p.name for p in Path(args.t1prep).iterdir() if p.is_dir())
-    if args.subjects:
-        wanted = set(args.subjects)
-        subjects = [s for s in subjects if s in wanted]
+    # An explicit list is authoritative: --mesh-file/--sphere-file can address
+    # a flat output directory that has no per-subject folders to scan.
+    wanted = wanted_subjects(args)
+    subjects = sorted(wanted) if wanted else sorted(
+        p.name for p in Path(args.t1prep).iterdir() if p.is_dir())
     if not subjects:
         raise SystemExit(f"no subject directories under {args.t1prep}")
 
@@ -547,8 +560,14 @@ def cmd_project(args: argparse.Namespace) -> int:
             try:
                 label_file, route = find_ground_truth(
                     args.mindboggle, subject, fshemi, routes, args.label_glob)
-                mid = find_t1prep_file(subject_dir, "Mid_surface", fshemi,
-                                       args.data_dir)
+                if args.mesh_file:
+                    mid = Path(args.mesh_file.format(subject=subject,
+                                                     hemi=fshemi))
+                    if not mid.is_file():
+                        raise FileNotFoundError(f"no mesh at {mid}")
+                else:
+                    mid = find_t1prep_file(subject_dir, "Mid_surface", fshemi,
+                                           args.data_dir)
                 if args.sphere_file:
                     sphere = Path(args.sphere_file.format(subject=subject,
                                                           hemi=fshemi))
@@ -568,8 +587,13 @@ def cmd_project(args: argparse.Namespace) -> int:
                 tmpl_root / template_dir / template_pat.format(fshemi=fshemi))
             verts, _ = cat_surf.read_surface(str(mid))
             if route == "surface":
-                reference = find_labels(args.mindboggle, subject,
-                                        args.reference_glob)
+                # "none" means the labels already sit in the mesh's own frame,
+                # which is the case for FreeSurfer's surfaces: they and
+                # Mindboggle's labelled surfaces are both in the tkrRAS of the
+                # same conformed volume, so shifting by c_ras would break them.
+                reference = (None if args.reference_glob.lower() == "none"
+                             else find_labels(args.mindboggle, subject,
+                                              args.reference_glob))
                 native, qc = labels_from_surface(label_file, verts, reference,
                                                  args.max_dist)
             else:
@@ -668,10 +692,10 @@ def cmd_dice(args: argparse.Namespace) -> int:
         raise SystemExit(f"{manifest_path} not found — run `project` first")
     manifest = json.loads(manifest_path.read_text())
     subjects = sorted(manifest["subjects"])
-    if args.subjects:
+    wanted = wanted_subjects(args)
+    if wanted:
         # Restricting every arm to one subject list is how a method compared
         # on a subset stays comparable with one run over everything.
-        wanted = set(args.subjects)
         missing = wanted - set(subjects)
         if missing:
             raise SystemExit(
@@ -824,19 +848,29 @@ def main(argv: list[str] | None = None) -> int:
                         "'{fshemi}' is substituted.  Needed when an external "
                         "registration targets a different mesh, e.g. MSMSulc "
                         "onto the 164k fs_LR sphere")
+    p.add_argument("--mesh-file",
+                   help="surface the labels attach to, overriding the T1Prep "
+                        "lookup; '{subject}' and '{hemi}' are substituted.  "
+                        "Mindboggle's labelled surfaces sit on the pial, so "
+                        "pointing this at a pial surface keeps the transfer "
+                        "tightest")
     p.add_argument("--sphere-file",
                    help="template path overriding the T1Prep sphere, e.g. "
                         "'/msm/{subject}/{hemi}.sphere.reg.gii'")
     p.add_argument("--reference-glob", default="t1weighted.nii.gz",
                    help="volume defining the scanner space of the subject's "
                         "surfaces; the labelled surfaces are shifted from "
-                        "FreeSurfer tkrRAS into it (surface route only)")
+                        "FreeSurfer tkrRAS into it (surface route only).  "
+                        "Pass 'none' when the mesh is itself in tkrRAS, as "
+                        "FreeSurfer's own surfaces are")
     p.add_argument("--max-unlabelled", type=float, default=0.25,
                    help="drop a subject whose ground truth reaches less than "
                         "this fraction of its surface (default 0.25)")
     p.add_argument("--max-dist", type=float, default=3.0,
                    help="mm beyond which a vertex stays unlabelled")
     p.add_argument("--subjects", nargs="+", help="restrict to these subjects")
+    p.add_argument("--subject-file",
+                   help="file listing subjects, one per line")
     p.add_argument("--fresh", action="store_true",
                    help="ignore any cached manifest instead of topping it up")
     p.set_defaults(func=cmd_project)
@@ -853,6 +887,8 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--label-glob",
                    help="override the manual label volume name")
     v.add_argument("--subjects", nargs="+")
+    v.add_argument("--subject-file",
+                   help="file listing subjects, one per line")
     v.add_argument("--fresh", action="store_true")
     v.add_argument("--preresampled", action="store_true",
                    help="the label volumes are already in the target space "
@@ -880,6 +916,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--subjects", nargs="+",
                    help="score only these subjects (use the same list across "
                         "arms when comparing methods on a subset)")
+    d.add_argument("--subject-file",
+                   help="file listing subjects, one per line")
     d.add_argument("--no-cortex-mask", dest="cortex_mask",
                    action="store_false",
                    help="score the medial wall too (default: exclude it)")
