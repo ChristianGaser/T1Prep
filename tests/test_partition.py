@@ -370,3 +370,36 @@ def test_euler_number_of_a_double_torus():
     # Two rings that overlap in the middle make one genus-2 solid.
     double = _torus(big=8, small=3, shift=-8) | _torus(big=8, small=3, shift=8)
     assert compute_euler_number(np.where(double, 3.0, 1.0)) == -2
+
+
+def test_geodesic_dilation_matches_the_scipy_fallback(monkeypatch):
+    """The libCAT growth and the scipy loop it replaces must agree exactly.
+
+    ``_octagon_dilation`` hands the work to ``cat_surf.vol_dilate_geodesic``
+    when the installed cat-surf has it (1.0.30 and newer) and falls back to a
+    loop of masked dilations otherwise, so both paths have to give the same
+    mask -- including the alternating 6/26 neighbourhood and the early exit
+    once the front stops moving.
+    """
+    from t1prep import _partition
+
+    if not hasattr(_partition.cat_surf, "vol_dilate_geodesic"):
+        pytest.skip("installed cat-surf has no vol_dilate_geodesic")
+
+    rng = np.random.default_rng(5)
+    seed = rng.random((22, 24, 20)) < 0.01
+    seed[0] = rng.random((24, 20)) < 0.02        # growth from the border too
+    region = rng.random((22, 24, 20)) < 0.85
+
+    for iterations in (1, 2, 3, 7, 10):
+        fast = _partition._octagon_dilation(seed, iterations, region)
+        with monkeypatch.context() as patched:
+            patched.delattr(_partition.cat_surf, "vol_dilate_geodesic")
+            slow = _partition._octagon_dilation(seed, iterations, region)
+        np.testing.assert_array_equal(fast, slow)
+        # unconstrained growth as well
+        fast = _partition._octagon_dilation(seed, iterations, None)
+        with monkeypatch.context() as patched:
+            patched.delattr(_partition.cat_surf, "vol_dilate_geodesic")
+            slow = _partition._octagon_dilation(seed, iterations, None)
+        np.testing.assert_array_equal(fast, slow)

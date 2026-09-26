@@ -318,6 +318,48 @@ class TestContentBounds(unittest.TestCase):
 
 
 
+class TestBoxMorphology(unittest.TestCase):
+    """The separable helpers must equal the ``binary_*`` calls they replace.
+
+    They stand in for a 26-connected dilation/closing/opening by ``n`` steps,
+    which is a box of side 2n+1, and a box filter is separable.  The gain is
+    1.4-2.5x on the 0.5 mm working grid; the results have to stay identical,
+    borders included -- hence the plane of foreground at one face below.
+    """
+
+    def _masks(self):
+        rng = np.random.default_rng(3)
+        for touching in (False, True):
+            mask = rng.random((21, 23, 19)) < 0.1
+            if touching:
+                mask[0] = True
+                mask[:, -1] = True
+                mask[..., 0] = True
+            yield mask
+
+    def test_matches_scipy_for_every_iteration_count(self):
+        from scipy.ndimage import (
+            binary_closing,
+            binary_dilation,
+            binary_opening,
+            generate_binary_structure,
+        )
+
+        box = generate_binary_structure(3, 3)
+        for mask in self._masks():
+            for n in (1, 2, 3, 4, 5, 7, 10):
+                with self.subTest(iterations=n, touching=bool(mask[0].any())):
+                    np.testing.assert_array_equal(
+                        t1prep_utils.box_dilate(mask, n),
+                        binary_dilation(mask, box, n))
+                    np.testing.assert_array_equal(
+                        t1prep_utils.box_close(mask, n),
+                        binary_closing(mask, box, n))
+                    np.testing.assert_array_equal(
+                        t1prep_utils.box_open(mask, n),
+                        binary_opening(mask, box, n))
+
+
 class TestVolumeNativeSpace(unittest.TestCase):
     """The voxel volume must not depend on the grid's axis order or flips."""
 
