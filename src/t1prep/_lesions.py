@@ -5,8 +5,6 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.ndimage import (
-    binary_closing,
-    binary_dilation,
     binary_erosion,
     find_objects,
     gaussian_filter,
@@ -17,6 +15,7 @@ from scipy.ndimage import label as label_image
 
 from ._atlas import get_atlas, resolve_template_file
 from ._segment_utils import normalize_to_sum1
+from .utils import box_close, box_dilate
 
 #: Calibration of the WMH probability (default path, without AMAP):
 #: ``logit p = a + b * hp + c * log(prior + WMH_PRIOR_EPS)``.  ``hp`` is the
@@ -76,6 +75,40 @@ def _deep_gm(t1, affine, p0_large, device):
     names = rois.ROIname.astype(str)
     ids = rois.ROIid[names.str.contains("|".join(WMH_EXCLUDE_REGIONS))].tolist()
     return np.isin(np.asanyarray(atlas.dataobj), ids)
+
+
+def _median_in_band(volume, band):
+    """3^3 median of ``volume``, computed only where ``band`` is True.
+
+    The values inside ``band`` are what ``median_filter(volume, size=3)``
+    gives, as long as the band includes one voxel of context around whatever
+    is read afterwards; everything else keeps its unfiltered value.  Unlike
+    :func:`t1prep.qa._median3` the input dtype is preserved, so the result is
+    bit-identical to the full filter rather than its float32 rounding.
+    """
+    out = np.array(volume, copy=True)
+    inner = np.array(band, dtype=bool)
+    inner[[0, -1], :, :] = False
+    inner[:, [0, -1], :] = False
+    inner[:, :, [0, -1]] = False
+    index = np.flatnonzero(inner)
+    if index.size == 0:
+        return out
+    flat = np.asarray(volume).ravel()
+    stride = np.array(
+        [volume.shape[1] * volume.shape[2], volume.shape[2], 1], dtype=np.int64
+    )
+    offsets = np.array(
+        [i * stride[0] + j * stride[1] + k * stride[2]
+         for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)],
+        dtype=np.int64,
+    )
+    chunk = max(1, int(4e6 // offsets.size))
+    flat_out = out.ravel()
+    for start in range(0, index.size, chunk):
+        sel = index[start:start + chunk]
+        flat_out[sel] = np.median(flat[sel[:, None] + offsets[None, :]], axis=1)
+    return out
 
 
 def _highpass(diff, candidates, zooms, sigma_mm=None, ref_max=None):
@@ -168,6 +201,7 @@ def lesion_signal(
     p3_large: nib.Nifti1Image,
     use_amap: bool,
     device: torch.device,
+    full_discrepancy: bool = False,
 ) -> dict:
     """The per-voxel evidence for WMHs, before any lesion is decided on.
 
@@ -187,7 +221,7 @@ def lesion_signal(
     p0_value = p0_large_orig.get_fdata().copy()
     wm = p0_value >= 2.5
     # Fill WM holes to close potential WMH lesions
-    wm = binary_closing(wm, generate_binary_structure(3, 3), 3)
+    wm = box_close(wm, 3)
     # Get a conservative WM mask
     wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
     gm = (p0_value >= 1.5) & (p0_value < 2.5)
@@ -250,17 +284,32 @@ def lesion_signal(
         wmh_mask = wm & (p0_large_diff_value > 0)
         wmh_value[wmh_mask] = p0_large_diff_value[wmh_mask]
 
-    # Apply median filter to remove noise
-    wmh_value = median_filter(wmh_value, size=3)
-    p0_large_diff_value = median_filter(p0_large_diff_value, size=3)
-    wmh_value = np.clip(wmh_value, -1, 1)
+    deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
+    gm_border = box_dilate(gm, 2)
+    candidates = deep_wm & ~gm_border
+
+    # Median filter to remove noise.  Everything downstream reads the signal
+    # inside ``candidates`` only (1.3% of the volume on a 0.5 mm grid), and a
+    # 3^3 median needs one voxel of context, so filtering that band gives
+    # identical values there for a fraction of the cost (3.4 s -> 0.2 s per
+    # map).  The discrepancy map is filtered whole only when it is written,
+    # which is under ``--debug``.
+    band = box_dilate(candidates, 1)
+    if full_discrepancy:
+        p0_large_diff_value = median_filter(p0_large_diff_value, size=3)
+    else:
+        p0_large_diff_value = _median_in_band(p0_large_diff_value, band)
     p0_large_diff_value = np.clip(p0_large_diff_value, -1, 1)
     p0_large_diff = nib.Nifti1Image(
         p0_large_diff_value, p0_large.affine, p0_large.header
     )
-
-    deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
-    gm_border = binary_dilation(gm, generate_binary_structure(3, 3), 2)
+    if use_amap:
+        # AMAP's excess GM probability is read inside the candidates as well.
+        wmh_value = np.clip(_median_in_band(wmh_value, band), -1, 1)
+    else:
+        # The rectified signal is unused on this path -- the probability is
+        # read from the discrepancy above -- so it is not filtered at all.
+        wmh_value = None
 
     atlas = get_atlas(
         t1,
@@ -276,10 +325,10 @@ def lesion_signal(
     wmh_tpm /= np.max(wmh_tpm)
 
     out = {
-        "signal": wmh_value,
+        "signal": wmh_value,   # None without AMAP: nothing reads it there
         "diff": p0_large_diff,
         "prior": wmh_tpm,
-        "candidates": deep_wm & ~gm_border,
+        "candidates": candidates,
         "csf": csf,
     }
     if use_amap:
@@ -322,6 +371,7 @@ def handle_lesions(
     p3_large: nib.Nifti1Image,
     use_amap: bool,
     device: torch.device,
+    full_discrepancy: bool = False,
 ) -> tuple[
     nib.Nifti1Image,
     nib.Nifti1Image,
@@ -338,10 +388,15 @@ def handle_lesions(
         ``(p1_large, p2_large, p3_large, discrepancy, wmh_value, ind_wmh)``:
         the (with AMAP: corrected) GM, WM and CSF maps, the label discrepancy
         map, the lesion map, and the boolean lesion mask.
+
+    ``full_discrepancy`` filters the discrepancy map over the whole volume
+    rather than only where it is read; pass it when the map is written out
+    (``--debug``).
     """
     ev = lesion_signal(
         t1, affine, brain_large, p0_large, p0_large_orig,
         p1_large, p2_large, p3_large, use_amap, device,
+        full_discrepancy=full_discrepancy,
     )
     zooms = p0_large_orig.header.get_zooms()[:3]
     vx_vol = float(np.prod(zooms))

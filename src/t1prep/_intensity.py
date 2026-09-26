@@ -17,13 +17,13 @@ from nxbc.filter import (
     symGaussFilt,
     wiener_filter_withpad,
 )
-from scipy.ndimage import binary_closing, generate_binary_structure, median_filter
+from scipy.ndimage import median_filter
 from SplineSmooth3D.SplineSmooth3D import (
     SplineSmooth3D,
     SplineSmooth3DUnregularized,
 )
 
-from .utils import find_largest_cluster
+from .utils import box_close, find_largest_cluster
 
 
 def scale_intensity(x, low=.5, high=99.5):
@@ -215,7 +215,7 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
 
         # Close remaining holes using morphol. operations and remove filled areas
         # from mask that are rather subcortical structures
-        mask0 = ~mask0 & binary_closing(mask0, generate_binary_structure(3, 3), 10)
+        mask0 = ~mask0 & box_close(mask0, 10)
         mask[mask0] = 0
 
         # Remove thin structures by median filtering and finally create mask

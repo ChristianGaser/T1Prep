@@ -56,11 +56,8 @@ from deepmriprep.atlas import get_volumes, shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from .report import write_t1prep_report
+from .utils import box_close
 from .qa import estimate_qa
-from scipy.ndimage import (
-    binary_closing,
-    generate_binary_structure,
-)
 from .transforms import (
     save_affine_itk_txt,
     save_deformation_h5,
@@ -578,7 +575,7 @@ def mask_from_skullstripped(brain: nib.Nifti1Image) -> nib.Nifti1Image:
     mask = np.isfinite(data) & (data > 0)
     if not bool(mask.any()):
         mask = np.isfinite(data) & (data != 0)
-    mask = binary_closing(mask, generate_binary_structure(3, 3), 2)
+    mask = box_close(mask, 2)
     try:
         mask = fill_voids.fill(mask)
     except Exception:
@@ -1556,7 +1553,7 @@ def run_segment():
 
     # Ensure that minimum of brain is not negative (which can happen after B-spline interpolation)
     brain_value = brain_large.get_fdata().copy()
-    mask_value = binary_closing(brain_value > 0.0, generate_binary_structure(3, 3), 7)
+    mask_value = box_close(brain_value > 0.0, 7)
     min_brain = np.min(brain_value)
     if min_brain < 0:
         brain_value -= min_brain
@@ -1747,6 +1744,7 @@ def run_segment():
             p3_large,
             use_amap,
             device,
+            full_discrepancy=debug,
         )
     else:
         discrepancy_large = None

@@ -89,8 +89,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy.ndimage import (
-    binary_closing,
-    binary_dilation,
     binary_erosion,
     gaussian_filter,
     generate_binary_structure,
@@ -99,6 +97,7 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
+from .utils import box_close, box_dilate
 from ._atlas import (
     get_regions_mask,
     resample_to,
@@ -382,10 +381,9 @@ def _wm_tree(yp0, ym3, vx, close_mm=0.5, cap=WM_TREE_CAP):
     the cue that actually separates a blade from a vessel is local, not
     topological -- see the gate built in :func:`vessel_weight`.
     """
-    struct = generate_binary_structure(3, 3)
     init = (yp0 > 2.25) & (ym3 > 2.25) & (yp0 < 3.1) & (ym3 < cap)
     iters = max(1, int(round(close_mm / float(min(vx)))))
-    return _largest_component(binary_closing(init, struct, iters))
+    return _largest_component(box_close(init, iters))
 
 
 def _deep_wm(yp0, ym3, vx, erode_mm=2.0):
@@ -506,12 +504,11 @@ def protected_regions(target_affine, target_shape, device="cpu"):
     )
     atlas = nib.Nifti1Image(np.round(labels).astype(np.int16), target_affine)
     vx = np.sqrt((target_affine[:3, :3] ** 2).sum(axis=0))
-    struct = generate_binary_structure(3, 3)
 
     def _grow(names, margin_mm):
         mask = get_regions_mask(atlas, "Neuromorphometrics", list(names))
         iters = max(1, int(round(margin_mm / float(min(vx)))))
-        return binary_dilation(mask, struct, iters)
+        return box_dilate(mask, iters)
 
     return (
         _grow(CEREBELLUM_REGIONS, CEREBELLUM_MARGIN_MM)
@@ -906,9 +903,8 @@ def suppress_vessels_for_surface(vol, vx, strength=1.0, device="cpu"):
     ydiv = cat_divergence(vol, vx, floor=None, device=device)
     ridge = -ydiv * _csf_context(vol, vx)
     outside = ~_wm_tree(vol, vol, vx)
-    detected = binary_dilation(
-        _ramp(ridge, SURFACE_RIDGE_RAMP) > 0.5, generate_binary_structure(3, 3), 1
-    ) & (vol > 2.5) & outside
+    detected = (box_dilate(_ramp(ridge, SURFACE_RIDGE_RAMP) > 0.5, 1)
+                & (vol > 2.5) & outside)
     if not detected.any():
         return vol
 

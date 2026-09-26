@@ -107,12 +107,12 @@ from __future__ import annotations
 import nibabel as nib
 import numpy as np
 from scipy.ndimage import (
-    binary_dilation,
     generate_binary_structure,
     label as _connected_components,
     uniform_filter,
 )
 
+from .utils import box_dilate
 from ._atlas import (
     get_regions_mask,
     resample_to,
@@ -260,7 +260,7 @@ def noncortical_gm_regions(target_affine, target_shape, device="cpu"):
 
     vx = np.sqrt((target_affine[:3, :3] ** 2).sum(axis=0))
     iters = max(1, int(round(ADMISSION_MARGIN_MM / float(min(vx)))))
-    return binary_dilation(mask, generate_binary_structure(3, 3), iters)
+    return box_dilate(mask, iters)
 
 
 def noncortical_gm_mask(p0_large, device="cpu", admission=None, verbose=False):
