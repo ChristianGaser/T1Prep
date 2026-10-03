@@ -7,8 +7,8 @@ that voxel is deleted and split half into white matter and half into CSF
 (``deepmriprep/segment.py``, ``NoGMSegmentation.apply_nogm``).  This module
 reproduces that decision with explicit anatomy instead, so the two patch
 forwards -- 89% of the stage's wall clock and effectively all of its 5.6 GB
-peak -- can be skipped.  It is T1Prep's default; ``--nogm-model`` runs the
-UNet instead.
+peak -- can be skipped.  T1Prep uses it in place of the UNet, which it no
+longer runs.
 
 What the model actually does
 ----------------------------

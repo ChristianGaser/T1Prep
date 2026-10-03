@@ -444,14 +444,6 @@ def parse_arguments() -> argparse.Namespace:
         "--amap", action="store_true", help="Use AMAP segmentation."
     )
     parser.add_argument(
-        "--nogm-model",
-        action="store_true",
-        help=(
-            "Remove non-cortical grey matter with the deepmriprep nogm model "
-            "instead of the atlas-and-geometry rule in t1prep.nogm."
-        ),
-    )
-    parser.add_argument(
         "--verbose", action="store_true", help="Print progress output."
     )
     parser.add_argument(
@@ -1496,7 +1488,6 @@ def run_segment():
 
     # Processing options
     use_amap = args.amap
-    use_nogm_model = args.nogm_model
     vessel = args.vessel
     verbose = args.verbose
     debug = args.debug
@@ -1654,9 +1645,10 @@ def run_segment():
     else:
         brain_large = apply_LAS(brain_large, p0_large, verbose=bool(verbose and debug))
 
-        # The deepmriprep path refines p1/p2/p3 from p0_large in
-        # run_segment_nogm below, so the correction has to land before that
-        # call for the vessel removal to reach the tissue maps at all.
+        # The deepmriprep path derives p1/p2/p3 from p0_large in
+        # run_segment_nogm_conventional below, so the correction has to land
+        # before that call for the vessel removal to reach the tissue maps at
+        # all.
         if vessel > 0:
             brain_large, p0_large = apply_blood_vessel_correction(
                 brain_large,
@@ -1689,36 +1681,24 @@ def run_segment():
         p2_large = nib.load(f"{mri_dir}/{out_name}_brain_large_label-WM_probseg.{ext}")
         p3_large = nib.load(f"{mri_dir}/{out_name}_brain_large_label-CSF_probseg.{ext}")
     else:
-        if use_nogm_model:
-            # Call deepmriprep refinement of deepmriprep label
-            if verbose:
-                count = shell_progress(
-                    count, end_count,
-                        "Fine DeepMriPrep segmentation"
-                )
-            # Same story as the brain model: 15.2 GB in one block if left unsplit.
-            with chunked_conv3d():
-                output_nogm = prep.run_segment_nogm(p0_large, affine, t1)
-            release_cache(device)
-        else:
-            # Atlas-and-geometry equivalent of the nogm model.  Measured on a
-            # 0.5 mm subject: 5.5 s / 2.0 GB against 43.8 s / 5.6 GB, agreeing
-            # with the model at Dice 0.74.  See t1prep.nogm.
-            if verbose:
-                count = shell_progress(
-                    count, end_count,
-                        "Remove non-cortical GM"
-                )
-            # No device argument: the rule is numpy/scipy throughout and its
-            # one torch op is a nearest-neighbour atlas sample, which an
-            # accelerator would only round-trip.  MPS has no
-            # ``grid_sampler_3d`` kernel, so routing it there additionally
-            # depends on PYTORCH_ENABLE_MPS_FALLBACK to land back on the CPU.
-            output_nogm = run_segment_nogm_conventional(
-                p0_large,
-                wj_affine=wj_affine,
-                verbose=bool(verbose and debug),
+        # Atlas-and-geometry equivalent of deepmriprep's nogm model.  Measured
+        # on a 0.5 mm subject: 5.5 s / 2.0 GB against 43.8 s / 5.6 GB, agreeing
+        # with the model at Dice 0.74.  See t1prep.nogm.
+        if verbose:
+            count = shell_progress(
+                count, end_count,
+                    "Remove non-cortical GM"
             )
+        # No device argument: the rule is numpy/scipy throughout and its
+        # one torch op is a nearest-neighbour atlas sample, which an
+        # accelerator would only round-trip.  MPS has no
+        # ``grid_sampler_3d`` kernel, so routing it there additionally
+        # depends on PYTORCH_ENABLE_MPS_FALLBACK to land back on the CPU.
+        output_nogm = run_segment_nogm_conventional(
+            p0_large,
+            wj_affine=wj_affine,
+            verbose=bool(verbose and debug),
+        )
 
         # Load probability maps for GM, WM, CSF
         p1_large = output_nogm["p1_large"]
