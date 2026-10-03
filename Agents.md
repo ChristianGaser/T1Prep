@@ -14,8 +14,8 @@ T1Prep/
 │       ├── cli_help.py             # Shared CLI behaviour: synopsis, --help,
 │       │                           # --version, "--" options (see below)
 │       ├── segment.py              # Segmentation logic
-│       ├── nogm.py                 # Conventional non-cortical GM removal (default;
-│       │                           # --nogm-model restores the DeepMRIPrep model)
+│       ├── nogm.py                 # Conventional non-cortical GM removal (replaces
+│       │                           # the DeepMRIPrep nogm model)
 │       ├── dura.py                 # Removes dura left outside the CSF by the skull-strip
 │       ├── _atlas.py               # Template lookup, atlas resampling, region masks
 │       ├── _intensity.py           # Bias-field fits, global intensity norm, LAS
