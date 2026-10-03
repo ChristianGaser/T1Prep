@@ -593,7 +593,7 @@ def main():
         global MPS_READER
         MPS_READER = torch.mps.driver_allocated_memory
 
-    from t1prep.segment import CustomPreprocess, CustomBrainSegmentation
+    from t1prep.segment import CustomPreprocess
     from t1prep._device import route_deepmriprep
 
     # Match the pipeline: deepmriprep pins itself to cuda-or-cpu at import,
@@ -614,6 +614,12 @@ def main():
     SAMPLER.start()
 
     prep = CustomPreprocess(no_gpu=no_gpu)
+    # CustomPreprocess already builds CustomBrainSegmentation, but it skips the
+    # nogm UNet that T1Prep no longer runs; the upstream pipeline and the nogm
+    # stage probed here still need it.
+    from deepmriprep.preprocess import SEGMENT_NOGM_KWARGS
+    from deepmriprep.segment import NoGMSegmentation
+    prep.nogm_segment = NoGMSegmentation(no_gpu, **SEGMENT_NOGM_KWARGS)
 
     if args.verify:
         # Cross-check the slab-wise convolution on real stage shapes; the unit
@@ -684,8 +690,6 @@ def main():
                 print(f"  {st:<24} peakRSS={pk / GB:5.2f} GB")
             print(f"  {'GLOBAL PEAK RSS':<24} peakRSS={SAMPLER.global_peak / GB:5.2f} GB")
         return
-
-    prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
 
     # Apply autocast ONLY around the neural-net forwards (where the peak
     # activations live), casting outputs back to fp32 so resampling / numpy

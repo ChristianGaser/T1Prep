@@ -50,6 +50,7 @@ warnings.filterwarnings("ignore")
 # Import deep learning and image processing utilities
 from deepbet.utils import reoriented_nifti
 from deepmriprep.segment import BrainSegmentation
+import deepmriprep.preprocess as dmp_preprocess
 from deepmriprep.preprocess import Preprocess
 from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
 from deepmriprep.atlas import get_volumes, shape_from_to
@@ -213,7 +214,33 @@ class CustomPreprocess(Preprocess):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        # Upstream's __init__ builds every model it might need, by looking the
+        # classes up in its own module.  Swap two of them while it runs:
+        #
+        # - BrainSegmentation becomes CustomBrainSegmentation (linear instead
+        #   of B-spline interpolation for p0, and MPS support).  Replacing it
+        #   afterwards instead would load the 19 brain models twice, and the
+        #   discarded copy is not handed back to the OS.
+        # - NoGMSegmentation becomes a no-op: T1Prep removes non-cortical grey
+        #   matter with the rule in t1prep.nogm and never calls
+        #   run_segment_nogm.  ``nogm_segment`` is None as a result; a caller
+        #   that does want the UNet (scripts/mem_probe.py) has to attach its
+        #   own ``NoGMSegmentation``.
+        #
+        # Together, measured on the CPU: 1.46 -> 0.72 s and +920 -> +480 MB
+        # resident (+1090 -> +560 MB peak) for setting up the models.
+        swaps = {
+            "BrainSegmentation": CustomBrainSegmentation,
+            "NoGMSegmentation": lambda *a, **k: None,
+        }
+        originals = {name: getattr(dmp_preprocess, name) for name in swaps}
+        for name, cls in swaps.items():
+            setattr(dmp_preprocess, name, cls)
+        try:
+            super().__init__(*args, **kwargs)
+        finally:
+            for name, cls in originals.items():
+                setattr(dmp_preprocess, name, cls)
         # deepbet picks its own device (it does support MPS) and moves inputs to
         # wherever its weights live, so the skull-strip needs no help from us.
         # This used to force it onto the CPU because the traced bbox model hit
@@ -534,12 +561,6 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     # extra memory) — only the quality measures use them.
     t1_raw = nib.Nifti1Image(vol.astype(np.float32), t1.affine, t1.header)
     t1 = nib.Nifti1Image(denoised, t1.affine, t1.header)
-
-
-    # This is a bit faster since for initial segmentation the B-spline interpolation
-    # of the segmentations does not help and is slower.
-    # Furthermore, CustomBrainSegmentation supports mps device
-    prep.brain_segment = CustomBrainSegmentation(no_gpu=no_gpu)
 
     return t1, t1_raw, prep, ras_affine
 

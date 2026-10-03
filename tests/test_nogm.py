@@ -184,5 +184,42 @@ class RunTests(unittest.TestCase):
         self.assertAlmostEqual(two["tiv"], 2 * one["tiv"], places=4)
 
 
+class CustomPreprocessTests(unittest.TestCase):
+    """The pipeline builds each model it runs once, and not the UNet this
+    module replaces."""
+
+    def setUp(self):
+        try:
+            from t1prep import segment
+        except ImportError:  # pragma: no cover - deepmriprep is optional here
+            self.skipTest("deepmriprep not available")
+        self.segment = segment
+
+    def test_only_the_models_t1prep_runs_are_loaded(self):
+        from t1prep._models import all_models_present, prepare_model_files
+
+        if not all_models_present():
+            self.skipTest("model weights not available")
+        prepare_model_files(verbose=False)
+        prep = self.segment.CustomPreprocess(no_gpu=True)
+        self.assertIsNone(prep.nogm_segment)
+        self.assertIsInstance(
+            prep.brain_segment, self.segment.CustomBrainSegmentation
+        )
+
+    def test_upstream_class_is_restored_after_a_failure(self):
+        from unittest import mock
+
+        upstream = self.segment.dmp_preprocess
+        brain, nogm_unet = upstream.BrainSegmentation, upstream.NoGMSegmentation
+        failing = mock.patch.object(
+            self.segment.Preprocess, "__init__", side_effect=RuntimeError
+        )
+        with failing, self.assertRaises(RuntimeError):
+            self.segment.CustomPreprocess(no_gpu=True)
+        self.assertIs(upstream.BrainSegmentation, brain)
+        self.assertIs(upstream.NoGMSegmentation, nogm_unet)
+
+
 if __name__ == "__main__":
     unittest.main()
