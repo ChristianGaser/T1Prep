@@ -19,9 +19,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from t1prep.gui.cat_surf_view import (
+        SSAO_BIAS_MIN,
+        SSAO_BIAS_PER_MM,
         UNDERLAY_GREYS,
         UNDERLAY_PLAIN_GREY,
         VIEWER_KEYS,
+        add_point_normals,
+        smooth_on_mesh,
         default_overlay_range,
         ClusterTableDialog,
         Viewer,
@@ -1268,6 +1272,65 @@ class TestFoldedCurvature(unittest.TestCase):
             stub = self._Stub(path, poly)
             shading = stub._folded_curvature()[0]
             np.testing.assert_allclose(shading, self._own_curvature(poly), atol=1e-9)
+
+
+class TestRenderingHelpers(unittest.TestCase):
+    """Vertex normals, curvature smoothing and the ambient-occlusion bias."""
+
+    @staticmethod
+    def _sphere(radius=50.0):
+        from vtkmodules.vtkFiltersSources import vtkSphereSource
+        from vtkmodules.vtkCommonDataModel import vtkPolyData
+        source = vtkSphereSource()
+        source.SetRadius(radius)
+        source.SetThetaResolution(40)
+        source.SetPhiResolution(40)
+        source.Update()
+        poly = vtkPolyData()
+        poly.DeepCopy(source.GetOutput())
+        poly.GetPointData().SetNormals(None)
+        return poly
+
+    def test_normals_are_added_in_place_and_face_outwards(self):
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        poly = self._sphere()
+        self.assertIs(add_point_normals(poly), poly)
+        normals = vtk_to_numpy(poly.GetPointData().GetNormals())
+        points = vtk_to_numpy(poly.GetPoints().GetData())
+        self.assertEqual(len(normals), poly.GetNumberOfPoints())
+        np.testing.assert_allclose(np.linalg.norm(normals, axis=1), 1.0, atol=1e-5)
+        self.assertTrue((np.einsum('ij,ij->i', normals, points) > 0).all())
+
+    def test_no_mesh_is_left_alone(self):
+        self.assertIsNone(add_point_normals(None))
+
+    def test_smoothing_calms_noise_and_keeps_the_mean(self):
+        poly = self._sphere()
+        rng = np.random.default_rng(0)
+        values = 1.0 + rng.normal(0, 0.2, poly.GetNumberOfPoints())
+        smoothed = smooth_on_mesh(values, poly, 6)
+        self.assertEqual(smoothed.shape, values.shape)
+        self.assertLess(smoothed.std(), 0.5 * values.std())
+        self.assertAlmostEqual(smoothed.mean(), values.mean(), delta=0.02)
+        np.testing.assert_array_equal(smooth_on_mesh(values, poly, 0), values)
+
+    def test_a_spike_does_not_spread(self):
+        poly = self._sphere()
+        values = np.zeros(poly.GetNumberOfPoints())
+        values[0] = 1e6                     # a degenerate triangle's curvature
+        smoothed = smooth_on_mesh(values, poly, 6)
+        self.assertLessEqual(smoothed.max(), np.percentile(values, 99) + 1e-12)
+
+    def test_ssao_bias_follows_the_camera_distance(self):
+        from vtkmodules.vtkRenderingCore import vtkRenderer
+        renderer = vtkRenderer()
+        camera = renderer.GetActiveCamera()
+        for distance in (100.0, 1000.0, 3000.0):
+            camera.SetFocalPoint(0, 0, 0)
+            camera.SetPosition(0, 0, distance)
+            Viewer._adapt_ssao_bias(renderer, None)
+            self.assertAlmostEqual(renderer.GetSSAOBias(),
+                                   max(SSAO_BIAS_MIN, SSAO_BIAS_PER_MM * distance))
 
 
 class TestAtlasBorders(unittest.TestCase):
