@@ -25,6 +25,8 @@ try:
         UNDERLAY_PLAIN_GREY,
         VIEWER_KEYS,
         add_point_normals,
+        is_annotation_file,
+        read_annotation_colours,
         smooth_on_mesh,
         default_overlay_range,
         ClusterTableDialog,
@@ -620,6 +622,51 @@ class TestSurfaceAtlases(unittest.TestCase):
             handle.flush()
             with self.assertRaises(RuntimeError):
                 read_annotation(handle.name)
+
+    def test_the_colours_come_in_the_order_of_the_names(self):
+        import nibabel as nib
+
+        ctab = np.array([[25, 5, 25, 0, 0], [220, 20, 10, 0, 0]], np.int32)
+        ctab[:, 4] = ctab[:, 0] + ctab[:, 1] * 2**8 + ctab[:, 2] * 2**16
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "lh.two.annot")
+            nib.freesurfer.io.write_annot(path, np.array([0, 1, 1], np.int32), ctab,
+                                          [b"unknown", b"precentral"])
+            colours = read_annotation_colours(path)
+        np.testing.assert_allclose(colours, ctab[:, :3] / 255.0)
+
+    def test_an_annotation_is_not_read_as_values(self):
+        from t1prep.gui.cat_surf_view import read_scalars
+        self.assertTrue(is_annotation_file("lh.aparc_DK40.freesurfer.sub-01.annot"))
+        self.assertFalse(is_annotation_file("lh.thickness.sub-01"))
+        with self.assertRaisesRegex(RuntimeError, "annotation"):
+            read_scalars("lh.aparc_DK40.freesurfer.sub-01.annot")
+
+
+class TestAnnotationSurface(unittest.TestCase):
+    """The surface an annotation belongs to, found from its name."""
+
+    def test_a_subject_annotation_finds_its_central_surface(self):
+        # the atlas name holds a dot itself: aparc_DK40.freesurfer
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("lh.central.sub-01.gii", "rh.central.sub-01.gii"):
+                Path(tmp, name).touch()
+            for hemi in ("lh", "rh"):
+                annot = os.path.join(tmp, f"{hemi}.aparc_DK40.freesurfer.sub-01.annot")
+                self.assertEqual(convert_filename_to_mesh(annot),
+                                 os.path.join(tmp, f"{hemi}.central.sub-01.gii"))
+            annot = os.path.join(tmp, "lh.aparc_HCP_MMP1.sub-01.annot")
+            self.assertEqual(convert_filename_to_mesh(annot),
+                             os.path.join(tmp, "lh.central.sub-01.gii"))
+
+    def test_a_template_atlas_is_shown_on_the_template(self):
+        atlases = dict(available_surface_atlases())
+        path = next((p for n, p in atlases.items() if "aparc_DK40" in n), None)
+        if path is None:
+            self.skipTest("DK40 atlas not installed")
+        mesh = convert_filename_to_mesh(path)
+        self.assertTrue(mesh.endswith(os.path.join("templates_surfaces_32k", "lh.central.freesurfer.gii")))
+        self.assertTrue(os.path.exists(mesh))
 
 
 class TestPickReadout(unittest.TestCase):
@@ -1413,6 +1460,8 @@ class TestAtlasHemisphereOrder(unittest.TestCase):
         _update_pick_label = lambda self: None
         _build_border_actors = lambda self: None
         _build_montage = lambda self: None
+        _apply_atlas_colours = lambda self: None
+        _render = lambda self: None
         show_borders = False
         poly_l = poly_r = None
 

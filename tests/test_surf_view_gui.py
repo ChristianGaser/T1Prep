@@ -289,6 +289,65 @@ class TestAtlasAndBorders(_ViewerTest):
         self.assertIsNone(view.actor_border_l)
 
 
+class TestAnnotationShownInColour(_ViewerTest):
+    """An .annot file given to the viewer is shown as the atlas, in its colours."""
+
+    def colours(self, view):
+        array = view.curv_l_out.GetPointData().GetArray(view.ATLAS_COLOUR_ARRAY)
+        return vtk_to_numpy(array) if array is not None else None
+
+    def assert_coloured(self, view):
+        self.assertEqual(view.atlas_path, self.ATLAS)
+        self.assertTrue(view.atlas_colours)
+        self.assertIsNone(view.opts.overlay)
+        colours = self.colours(view)
+        self.assertEqual(colours.shape, (view.poly_l.GetNumberOfPoints(), 3))
+        # every region in its own colour, dimmed at most to the darkest shading
+        labels, _names = sv.read_annotation(self.ATLAS)
+        table = sv.read_annotation_colours(self.ATLAS) * 255
+        vertex = int(np.flatnonzero(labels >= 0)[0])
+        expected = table[labels[vertex]]
+        ratio = colours[vertex] / np.maximum(expected, 1)
+        self.assertTrue(((ratio > 0.4) & (ratio <= 1.01))[expected > 20].all())
+        self.assertEqual(view.actor_bkg_l.GetMapper().GetArrayName(), view.ATLAS_COLOUR_ARRAY)
+
+    def test_an_annotation_opens_its_surface_and_shows_the_regions(self):
+        view = self.viewer(self.ATLAS)
+        self.assert_coloured(view)
+        self.assertEqual(view.poly_l.GetNumberOfPoints(), len(sv.read_annotation(self.ATLAS)[0]))
+
+    def test_an_annotation_given_as_overlay_is_shown_the_same_way(self):
+        view = self.viewer(self.MESH, "-overlay", self.ATLAS)
+        self.assert_coloured(view)
+
+    def test_switching_the_colours_off_shows_the_shading_again(self):
+        view = self.viewer(self.ATLAS)
+        view.set_atlas_colours(False)
+        self.settle()
+        self.assertIsNone(self.colours(view))
+        greys = self.shading(view)
+        low, high = sv.UNDERLAY_GREYS
+        self.assertGreaterEqual(greys.min(), low - 1e-6)
+        self.assertLessEqual(greys.max(), high + 1e-6)
+        # the region under the cursor is still named
+        self.assertEqual(view.atlas_path, self.ATLAS)
+
+    def test_the_colours_follow_a_surface_switch(self):
+        view = self.viewer(self.ATLAS)
+        surfaces = dict(view.available_surface_types())
+        if "inflated" not in surfaces:
+            self.skipTest("no inflated template")
+        view.switch_surface_type(surfaces["inflated"])
+        self.settle()
+        self.assertEqual(self.colours(view).shape, (view.poly_l.GetNumberOfPoints(), 3))
+
+    def test_choosing_an_atlas_from_the_menu_keeps_the_surface_grey(self):
+        view = self.viewer(self.MESH)
+        view.set_atlas(self.ATLAS)
+        self.settle()
+        self.assertIsNone(self.colours(view))
+
+
 class TestClusterTable(_ViewerTest):
     """The suprathreshold clusters, as the table shows them."""
 
