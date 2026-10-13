@@ -28,7 +28,11 @@ Features:
     atlas selected from the right-click menu — the region it belongs to.  The
     atlases are the .annot files shipped with T1Prep, and their region borders
     can be drawn on the surface (Atlas > Show region borders), as in
-    cat_surf_results.
+    cat_surf_results.  An .annot file given on the command line (also with
+    -overlay) or dropped on the window becomes the atlas and is shown in its
+    own colours, as in cat_surf_render (Atlas > Show region colors); its
+    surface is found from the name (lh.aparc_DK40.freesurfer.<subject>.annot
+    -> lh.central.<subject>.gii), or is the template for a template atlas.
   • Clusters: the suprathreshold regions of an overlay as a table (peak, p, mm,
     vertices, mm², region), with a threshold to change, rows that mark the peak
     on the surface, and CSV export.
@@ -435,6 +439,11 @@ def convert_filename_to_mesh(overlay_filename: str) -> str:
     """
     overlay_path = Path(overlay_filename)
 
+    if is_annotation_file(overlay_filename):
+        mesh = _annotation_mesh(overlay_path)
+        if mesh is not None:
+            return str(mesh)
+
     # SPM analysis overlays map to the template mesh they were computed on
     if is_spm_surface_overlay(overlay_filename):
         tpl = _template_mesh_for_points(_gifti_scalar_count(overlay_filename))
@@ -758,6 +767,50 @@ def read_annotation(path: str) -> Tuple["np.ndarray", List[str]]:
     decoded = [n.decode(errors="replace") if isinstance(n, bytes) else str(n)
                for n in names]
     return np.asarray(labels), [n.strip() for n in decoded]
+
+
+def read_annotation_colours(path: str) -> "np.ndarray":
+    """The colour of every region of an ``.annot`` file, as (regions, 3) in 0..1.
+
+    In the order of the names read_annotation() returns, so a vertex label
+    indexes it directly.
+    """
+    try:
+        import nibabel as nib
+        _labels, ctab, _names = nib.freesurfer.io.read_annot(str(path))
+    except Exception as exc:
+        raise RuntimeError(f"cannot read {os.path.basename(str(path))}: {exc}")
+    return np.asarray(ctab, dtype=float)[:, :3] / 255.0
+
+
+def is_annotation_file(path) -> bool:
+    """Whether *path* names a FreeSurfer annotation (regions, not values)."""
+    return bool(path) and str(path).lower().endswith('.annot')
+
+
+def _annotation_mesh(path: Path) -> Optional[Path]:
+    """The surface an annotation such as ``lh.aparc_DK40.freesurfer.sub.annot`` belongs to.
+
+    The atlas part of the name can hold dots itself, so leading tokens are
+    dropped until a central surface of that name exists next to the file
+    (``lh.central.sub.gii``).  An atlas of the templates has none; it is shown
+    on the template surface with its number of vertices.
+    """
+    parts = path.name[:-len('.annot')].split('.')
+    if len(parts) < 2 or parts[0].lower() not in ('lh', 'rh'):
+        return None
+    hemi, tokens = parts[0].lower(), parts[1:]
+    for start in range(1, len(tokens) + 1):      # tokens[0] is the atlas itself
+        rest = '.'.join(tokens[start:])
+        mesh = _freesurfer_mesh_fallback(
+            path.parent / (f'{hemi}.central.{rest}.gii' if rest else f'{hemi}.central.gii'))
+        if mesh.exists():
+            return mesh
+    try:
+        count = len(read_annotation(str(path))[0])
+    except RuntimeError:
+        return None
+    return _template_mesh_for_points(count, hemi)
 
 
 def vertex_areas(poly) -> "np.ndarray":
@@ -1743,10 +1796,14 @@ def read_scalars(filename: str) -> vtkDoubleArray:
     """Read one value per vertex from an overlay file.
 
     Handles GIFTI (including SPM's ``.gii`` + ``.dat`` pair), FreeSurfer morph
-    data such as thickness or curv, FreeSurfer annotations and plain text with
-    one value per line.
+    data such as thickness or curv, and plain text with one value per line.
+    FreeSurfer annotations hold regions rather than values; the viewer shows
+    them as an atlas (Viewer.set_atlas).
     """
     ext = Path(filename).suffix.lower()
+    if ext == ".annot":
+        raise RuntimeError(f"{Path(filename).name} is an annotation: it holds regions, "
+                           "not values, and is shown as an atlas")
 
     # --- SPM surface analysis overlays (.gii with .dat companion) ---
     # Always use nibabel for these; vtkGIFTIReader may not support
@@ -2428,6 +2485,10 @@ class Viewer(QtWidgets.QMainWindow):
         self.atlas_path: Optional[str] = None
         #: Draw the boundaries between atlas regions on the surface
         self.show_borders = False
+        #: Paint the atlas regions in the colours of the annotation
+        self.atlas_colours = False
+        #: An annotation given on the command line, shown once the scene is set up
+        self._startup_atlas: Optional[str] = None
         self.actor_border_l: Optional[vtkActor] = None
         self.actor_border_r: Optional[vtkActor] = None
 
@@ -2594,6 +2655,14 @@ class Viewer(QtWidgets.QMainWindow):
             self.overlay_list = self.opts.overlays
         elif self.opts.overlay:
             self.overlay_list = [self.opts.overlay]
+        # An annotation holds regions, not values: it becomes the atlas and is
+        # shown in its own colours instead of on the scale of an overlay
+        annotations = [p for p in self.overlay_list if is_annotation_file(p)]
+        if annotations:
+            self._startup_atlas = annotations[0]
+            self.overlay_list = [p for p in self.overlay_list if not is_annotation_file(p)]
+            self.opts.overlays = self.overlay_list or None
+            self.opts.overlay = self.overlay_list[0] if self.overlay_list else None
         # Enforce initial fix scaling policy based on overlay count
         self._enforce_fix_scaling_policy()
         
@@ -2962,6 +3031,10 @@ class Viewer(QtWidgets.QMainWindow):
         if had_right != (self.poly_r is not None):
             self._build_montage()
 
+        # The new curvature output has no atlas colours: paint them again, or
+        # let the underlay show its shading when the atlas does not fit
+        self._apply_atlas_colours()
+
         # Keep slider bounds in sync with the new data
         self._update_slider_bounds()
 
@@ -2993,6 +3066,12 @@ class Viewer(QtWidgets.QMainWindow):
         atlas_menu.addSeparator()
         atlas_menu.addAction("Other…").triggered.connect(self._choose_atlas)
         atlas_menu.addSeparator()
+        colours = atlas_menu.addAction("Show region colors")
+        colours.setCheckable(True)
+        colours.setChecked(self.atlas_colours)
+        colours.setEnabled(self._atlas is not None)
+        colours.triggered.connect(
+            lambda checked=False: self.set_atlas_colours(checked))
         borders = atlas_menu.addAction("Show region borders")
         borders.setCheckable(True)
         borders.setChecked(self.show_borders)
@@ -3119,10 +3198,10 @@ class Viewer(QtWidgets.QMainWindow):
         others = [p for p in paths if p not in meshes]
         if meshes:
             self.switch_surface_type(meshes[0])
-        annots = [p for p in others if p.lower().endswith('.annot')]
+        annots = [p for p in others if is_annotation_file(p)]
         overlays = [p for p in others if p not in annots]
         if annots:
-            self.set_atlas(annots[0])
+            self.set_atlas(annots[0], colours=True)
         if overlays:
             self._set_overlay_list(overlays)
 
@@ -3196,7 +3275,11 @@ class Viewer(QtWidgets.QMainWindow):
             self._fit_camera()
             self._base_cam_state = dict(self._cam_state) if self._cam_state else None
             if not self.opts.overlay:
-                self.setWindowTitle(self._mesh_title(self.opts.mesh_left or ""))
+                if self._startup_atlas and self.atlas_path:
+                    # the annotation given on the command line is what is shown
+                    self.setWindowTitle(self.opts.title or _title_from_path(self.atlas_path))
+                else:
+                    self.setWindowTitle(self._mesh_title(self.opts.mesh_left or ""))
             self._render()
         except Exception:
             pass
@@ -3639,7 +3722,9 @@ class Viewer(QtWidgets.QMainWindow):
         # with -bkg is the user's own and stays as it is.
         if not self.opts.overlay_bkg:
             self.set_underlay(self.underlay)
-        
+        if self._startup_atlas:
+            self.set_atlas(self._startup_atlas, colours=True)
+
         # Initialize slider bounds from current data
         self._update_slider_bounds()
     
@@ -3707,25 +3792,30 @@ class Viewer(QtWidgets.QMainWindow):
         except Exception:
             return None
 
-    def set_atlas(self, path: Optional[str]):
+    def set_atlas(self, path: Optional[str], colours: Optional[bool] = None):
         """Name the region under the cursor using the annotation *path*.
 
         The right hemisphere is taken from the matching file next to it.  An
-        atlas only fits a mesh with the same number of vertices (the 32k
-        templates T1Prep works with), so a mismatch is reported rather than
-        silently naming the wrong region.  None switches the lookup off.
+        atlas only fits a mesh with the same number of vertices, so a mismatch
+        is reported rather than silently naming the wrong region.  None
+        switches the lookup off.  *colours* paints the regions in the colours
+        of the annotation (True) or not (False); None keeps the current choice.
         """
+        if colours is not None:
+            self.atlas_colours = bool(colours)
         self._atlas = None
         self.atlas_path = None
         if not path:
             if self.show_borders:
                 self._build_border_actors()
                 self._build_montage()
-                self._render()
+            self._apply_atlas_colours()
+            self._render()
             self._update_pick_label()
             return
         try:
             own, names = read_annotation(path)
+            region_colours = read_annotation_colours(path)
             other_labels = None
             other = _hemi_counterpart(Path(path))
             if other is not None and other.exists():
@@ -3738,7 +3828,8 @@ class Viewer(QtWidgets.QMainWindow):
             if right is not None:
                 labels[1] = right
         except RuntimeError as exc:
-            QtWidgets.QMessageBox.warning(self, "Atlas", str(exc))
+            self._warn("Atlas", str(exc))
+            self._apply_atlas_colours()
             self._update_pick_label()
             return
 
@@ -3746,23 +3837,84 @@ class Viewer(QtWidgets.QMainWindow):
             if poly is None or side not in labels:
                 continue
             if poly.GetNumberOfPoints() != len(labels[side]):
-                QtWidgets.QMessageBox.warning(
-                    self, "Atlas",
+                self._warn(
+                    "Atlas",
                     f"{os.path.basename(path)} has {len(labels[side])} vertices, "
                     f"the surface {poly.GetNumberOfPoints()} — they do not match.")
+                self._apply_atlas_colours()
                 self._update_pick_label()
                 return
         stem = os.path.basename(path)
-        if stem.startswith('lh.'):
+        if stem.startswith(('lh.', 'rh.')):
             stem = stem[3:]
-        self._atlas = {'labels': labels, 'names': names,
+        self._atlas = {'labels': labels, 'names': names, 'colours': region_colours,
                        'name': stem[:-len('.annot')] if stem.endswith('.annot') else stem}
         self.atlas_path = path
         if self.show_borders:
             self._build_border_actors()
             self._build_montage()
-            self._render()
+        self._apply_atlas_colours()
+        self._render()
         self._update_pick_label()
+
+    def set_atlas_colours(self, visible: bool):
+        """Show or hide the regions of the atlas in their own colours."""
+        self.atlas_colours = bool(visible)
+        self._apply_atlas_colours()
+        self._render()
+
+    #: Name of the per-vertex array that holds the atlas colours
+    ATLAS_COLOUR_ARRAY = 'atlas_colours'
+
+    def _apply_atlas_colours(self):
+        """Paint the atlas regions in the colours of the annotation, or stop.
+
+        The colours go into an array of their own and the underlay is drawn
+        with it, so its shading values stay untouched and come back when the
+        colours are switched off.  Their brightness follows the shading as it
+        is shown, so the folds stay visible, as in cat_surf_render; vertices
+        outside every region keep their grey.
+        """
+        atlas = self._atlas if self.atlas_colours else None
+        plain = self.underlay is None
+        for side, output, actor in ((0, getattr(self, 'curv_l_out', None),
+                                     getattr(self, 'actor_bkg_l', None)),
+                                    (1, getattr(self, 'curv_r_out', None),
+                                     getattr(self, 'actor_bkg_r', None))):
+            if output is None or actor is None:
+                continue
+            mapper = actor.GetMapper()
+            labels = atlas['labels'].get(side) if atlas else None
+            if labels is None or len(labels) != output.GetNumberOfPoints():
+                output.GetPointData().RemoveArray(self.ATLAS_COLOUR_ARRAY)
+                mapper.SetScalarModeToDefault()
+                mapper.SetColorModeToDefault()
+                if plain:
+                    mapper.ScalarVisibilityOff()    # as _apply_underlay leaves it
+                continue
+            # The grey every vertex is shown with now: the shading through the
+            # linear grey table of the underlay, or one grey without shading
+            scalars = output.GetPointData().GetScalars()
+            low, high = mapper.GetScalarRange()
+            if plain or scalars is None or scalars.GetNumberOfComponents() != 1 or high <= low:
+                grey = np.full(len(labels), 0.55)
+            else:
+                grey = np.clip((vtk_to_numpy(scalars).astype(float) - low) / (high - low), 0.0, 1.0)
+            # gyri (light grey) in the full colour, sulci darker
+            brightness = 1.0 if plain else np.clip(0.65 + 0.7 * (grey - UNDERLAY_GREYS[0]), 0.45, 1.0)
+            colours = atlas['colours']
+            labelled = (labels >= 0) & (labels < len(colours))
+            rgb = np.repeat(grey[:, None], 3, axis=1)
+            rgb[labelled] = (colours[labels[labelled]]
+                             * np.broadcast_to(brightness, grey.shape)[labelled, None])
+            array = numpy_to_vtk(np.rint(np.clip(rgb, 0.0, 1.0) * 255).astype(np.uint8), deep=True)
+            array.SetName(self.ATLAS_COLOUR_ARRAY)
+            output.GetPointData().RemoveArray(self.ATLAS_COLOUR_ARRAY)
+            output.GetPointData().AddArray(array)
+            mapper.SetScalarModeToUsePointFieldData()
+            mapper.SelectColorArray(self.ATLAS_COLOUR_ARRAY)
+            mapper.SetColorModeToDirectScalars()
+            mapper.ScalarVisibilityOn()
 
     def set_atlas_borders(self, visible: bool):
         """Show or hide the boundaries between the regions of the atlas."""
@@ -4179,6 +4331,8 @@ class Viewer(QtWidgets.QMainWindow):
                         widget.blockSignals(False)
                 except Exception:
                     pass
+        # The atlas colours follow the shading they are drawn with
+        self._apply_atlas_colours()
         # The montage clones carry copies of the actors
         self._build_montage()
         self._render()
