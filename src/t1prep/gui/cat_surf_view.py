@@ -128,11 +128,13 @@ DOCK_LEFT = Qt.DockWidgetArea.LeftDockWidgetArea
 # --- VTK imports (module-accurate for common wheels) ---
 from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 from vtkmodules.vtkCommonCore import vtkLookupTable, vtkDoubleArray, vtkPoints, vtkVariant
-from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray
+from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray, vtkImageData
 from vtkmodules.vtkFiltersGeneral import vtkCurvatures
+from vtkmodules.vtkFiltersCore import vtkPolyDataNormals
 from vtkmodules.vtkRenderingCore import (
     vtkActor,
     vtkCamera,
+    vtkLightKit,
     vtkPolyDataMapper,
     vtkRenderWindow,
     vtkRenderWindowInteractor,
@@ -255,6 +257,34 @@ UNDERLAY_GREYS = (0.30, 0.80)
 #: to those leaves the whole brain one even grey; what lies outside saturates,
 #: the way it does in a display range.
 UNDERLAY_PERCENTILES = (2.0, 98.0)
+
+#: Neighbour averages applied to the curvature computed on the mesh before it
+#: shades the surface.  Single triangles make that curvature speckled; six
+#: averages come close to the 3 mm averaging of CAT_DumpCurv.
+CURVATURE_SMOOTHING = 6
+
+#: Specular reflection of the surfaces (amount, power): a soft highlight on
+#: the crowns of the gyri which, with the light kit, gives the folds their shape.
+SURFACE_SPECULAR = (0.10, 18.0)
+
+#: Ambient part of the lighting of the underlay (curvature shading) and the
+#: overlay actors; the rest is diffuse.  The shading keeps more of its own
+#: grey levels, the overlay colours are modelled by the lights.
+AMBIENT_UNDERLAY, AMBIENT_OVERLAY = 0.4, 0.2
+
+#: Screen-space ambient occlusion: sulci are darkened by how much of their
+#: surroundings within the radius (mm) hides them.  Too small a bias makes
+#: the surface occlude itself in rings, like contour lines; the precision it
+#: has to cover falls with the distance of the camera, so the bias grows with
+#: it (SSAO_BIAS_PER_MM of the distance, at least SSAO_BIAS_MIN mm).
+SSAO_RADIUS, SSAO_KERNEL = 5.0, 128
+SSAO_BIAS_MIN, SSAO_BIAS_PER_MM = 0.5, 0.0013
+
+#: Screenshots (-output, Save PNG) average n x n renders of the window, each
+#: with the view shifted by a fraction of a pixel, which smooths the edges like
+#: supersampling.  A larger image rendered in tiles would do the same, but the
+#: ambient occlusion cannot see across the tile borders and leaves seams.
+SCREENSHOT_SAMPLES = 2
 
 #: Surfaces the viewer offers to switch between, in the order they are shown.
 #: A subset of the tokens above: 'mc' and 'sqrtsulc' name scalar files rather
@@ -1494,6 +1524,56 @@ def _polydata_from_arrays(coords, faces) -> vtkPolyData:
     return poly
 
 
+def add_point_normals(poly: Optional[vtkPolyData]) -> Optional[vtkPolyData]:
+    """Store smooth vertex normals on a mesh, in place.
+
+    Without normals VTK lights every triangle on its own, which makes a folded
+    surface look grainy.  Points, cells and the other arrays are left as they
+    are, so the mesh stays the same object for everything that refers to it.
+    """
+    if poly is None or poly.GetNumberOfPolys() == 0:
+        return poly
+    normals = vtkPolyDataNormals()
+    normals.SetInputData(poly)
+    normals.ComputePointNormalsOn()
+    normals.ComputeCellNormalsOff()
+    normals.SplittingOff()           # a cortex has no hard edges
+    normals.ConsistencyOn()
+    normals.AutoOrientNormalsOff()   # flat patches are open; meshes already face outwards
+    normals.Update()
+    result = normals.GetOutput().GetPointData().GetNormals()
+    if result is not None and result.GetNumberOfTuples() == poly.GetNumberOfPoints():
+        poly.GetPointData().SetNormals(result)
+    return poly
+
+
+def smooth_on_mesh(values, poly: vtkPolyData, iterations: int) -> "np.ndarray":
+    """Average per-vertex values with their neighbours, *iterations* times.
+
+    Values outside the 1st to 99th percentile are clipped first: curvature
+    computed on the mesh has spikes at nearly degenerate triangles, and the
+    averaging would otherwise spread them over their neighbourhood.
+    """
+    values = np.asarray(values, dtype=float)
+    polys = poly.GetPolys()
+    cells = vtk_to_numpy(polys.GetConnectivityArray())
+    finite = np.isfinite(values)
+    if (iterations <= 0 or not finite.any() or len(values) != poly.GetNumberOfPoints()
+            or polys.GetMaxCellSize() != 3 or cells.size != 3 * polys.GetNumberOfCells()):
+        return values
+    low, high = np.percentile(values[finite], [1, 99])
+    smoothed = np.clip(np.where(finite, values, 0.5 * (low + high)), low, high)
+    triangles = cells.reshape(-1, 3)
+    first, second = triangles.ravel(), triangles[:, [1, 2, 0]].ravel()   # every edge, once per triangle
+    n = len(smoothed)
+    count = np.maximum(np.bincount(first, minlength=n) + np.bincount(second, minlength=n), 1)
+    for _ in range(iterations):
+        neighbours = (np.bincount(first, weights=smoothed[second], minlength=n)
+                      + np.bincount(second, weights=smoothed[first], minlength=n))
+        smoothed = 0.5 * smoothed + 0.5 * neighbours / count
+    return smoothed
+
+
 def read_gifti_mesh(filename: str) -> vtkPolyData:
     """Read a surface mesh from a GIFTI or FreeSurfer surface file.
 
@@ -2287,6 +2367,7 @@ class Viewer(QtWidgets.QMainWindow):
             self.vtk_widget.setFocusPolicy(Qt.StrongFocus)
 
         self.ren = vtkRenderer(); self.ren.SetBackground(1,1,1) if self.opts.white else self.ren.SetBackground(0,0,0)
+        self._setup_lighting()
         self.rw: vtkRenderWindow = self.vtk_widget.GetRenderWindow();
         try:
             self.rw.SetMultiSamples(0)
@@ -2411,6 +2492,8 @@ class Viewer(QtWidgets.QMainWindow):
                 # Input is a mesh file
                 left_mesh_path = input_path
             self.poly_l, self.poly_r = read_mesh_pair(str(left_mesh_path))
+            add_point_normals(self.poly_l)
+            add_point_normals(self.poly_r)
             # Normalize Y-origin similar to C++ utility
             self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
             if self.poly_r is not None:
@@ -2613,21 +2696,25 @@ class Viewer(QtWidgets.QMainWindow):
             # clipped two thirds of a curvature-shaded surface to pure white
             # and took the folds with it.  The overlay actor was always at one.
             actor.GetProperty().SetDiffuse(1.0 - ambient)
+            # Smooth shading across the vertex normals, with a soft highlight
+            actor.GetProperty().SetInterpolationToPhong()
+            actor.GetProperty().SetSpecular(SURFACE_SPECULAR[0])
+            actor.GetProperty().SetSpecularPower(SURFACE_SPECULAR[1])
             self._actors.append(actor)
             return actor
 
         if self.actor_bkg_l is None and getattr(self, 'curv_l_out', None) is not None:
-            self.actor_bkg_l = _new_actor(self.curv_l_out, self.lut_bkg, self.range_bkg, 0.8)
+            self.actor_bkg_l = _new_actor(self.curv_l_out, self.lut_bkg, self.range_bkg, AMBIENT_UNDERLAY)
             created = True
         if self.actor_ov_l is None and self.scal_l is not None and self.poly_l is not None:
-            self.actor_ov_l = _new_actor(self.poly_l, self.lut_overlay_l, self.overlay_range, 0.3)
+            self.actor_ov_l = _new_actor(self.poly_l, self.lut_overlay_l, self.overlay_range, AMBIENT_OVERLAY)
             created = True
         if (self.actor_bkg_r is None and self.poly_r is not None
                 and getattr(self, 'curv_r_out', None) is not None):
-            self.actor_bkg_r = _new_actor(self.curv_r_out, self.lut_bkg, self.range_bkg, 0.8)
+            self.actor_bkg_r = _new_actor(self.curv_r_out, self.lut_bkg, self.range_bkg, AMBIENT_UNDERLAY)
             created = True
         if self.actor_ov_r is None and self.scal_r is not None and self.poly_r is not None:
-            self.actor_ov_r = _new_actor(self.poly_r, self.lut_overlay_r, self.overlay_range, 0.3)
+            self.actor_ov_r = _new_actor(self.poly_r, self.lut_overlay_r, self.overlay_range, AMBIENT_OVERLAY)
             created = True
         return created
 
@@ -2665,6 +2752,42 @@ class Viewer(QtWidgets.QMainWindow):
         rotx = [270, 270, 270, 270, 0, 0]
         rotz = [90, -90, -90, 90, 0, 0]
         return (self._MONTAGE_ORDER, posx, posy, rotx, rotz)
+
+    def _setup_lighting(self):
+        """Light the surfaces like a figure rather than with a single headlight.
+
+        A light kit (key, fill and back lights that move with the camera) gives
+        the folds their shape; screen-space ambient occlusion darkens the sulci
+        and FXAA smooths jagged edges, since multisampling stays off for the Qt
+        widget.  Ambient occlusion is skipped with software OpenGL (headless
+        Linux), where it would make the viewer slow.
+        """
+        kit = vtkLightKit()
+        kit.SetKeyLightIntensity(0.95)
+        kit.SetKeyToFillRatio(2.6)
+        kit.SetKeyToHeadRatio(3.2)
+        kit.SetKeyLightElevation(45)
+        kit.SetKeyLightAzimuth(15)
+        kit.AddLightsToRenderer(self.ren)
+        software_gl = (sys.platform.startswith('linux')
+                       and os.environ.get('LIBGL_ALWAYS_SOFTWARE') == '1')
+        try:
+            if not software_gl:
+                self.ren.UseSSAOOn()
+                self.ren.SetSSAORadius(SSAO_RADIUS)
+                self.ren.SetSSAOBias(SSAO_BIAS_MIN)
+                self.ren.SetSSAOKernelSize(SSAO_KERNEL)
+                self.ren.SSAOBlurOn()
+                self.ren.AddObserver('StartEvent', self._adapt_ssao_bias)
+            self.ren.UseFXAAOn()
+        except AttributeError:   # VTK without these render passes
+            pass
+
+    @staticmethod
+    def _adapt_ssao_bias(renderer, _event):
+        """Scale the occlusion bias with the camera distance before each frame."""
+        distance = renderer.GetActiveCamera().GetDistance()
+        renderer.SetSSAOBias(max(SSAO_BIAS_MIN, SSAO_BIAS_PER_MM * distance))
 
     def _render(self):
         """Draw a frame, unless a :meth:`_batch_render` block is collecting them."""
@@ -2795,8 +2918,8 @@ class Viewer(QtWidgets.QMainWindow):
         geometry embedded in an overlay file).
         """
         had_right = self.poly_r is not None
-        self.poly_l = poly_l
-        self.poly_r = poly_r
+        self.poly_l = add_point_normals(poly_l)
+        self.poly_r = add_point_normals(poly_r)
         self._y_shift_l = self._shift_y_to(self.poly_l) or 0.0
         self._y_shift_r = (self._shift_y_to(self.poly_r) or 0.0) if self.poly_r is not None else 0.0
 
@@ -4002,6 +4125,10 @@ class Viewer(QtWidgets.QMainWindow):
             values = computed[index] if index < len(computed) else None
             if values is not None and len(values) != output.GetNumberOfPoints():
                 values = None
+            if values is not None:
+                # Averaged over the neighbourhood, as CAT does: the curvature
+                # of single triangles makes the shading speckled
+                values = smooth_on_mesh(values, output, CURVATURE_SMOOTHING)
             raw.append(values)
         present = [values for values in raw if values is not None]
         if present:
@@ -5572,6 +5699,10 @@ class Viewer(QtWidgets.QMainWindow):
         returns whatever the window server happens to hold, which on a
         freshly-shown window can be just the topmost layer — the colorbar —
         instead of the rendered surfaces.
+
+        The edges are smoothed by averaging SCREENSHOT_SAMPLES x
+        SCREENSHOT_SAMPLES renders, each with the view shifted by a fraction
+        of a pixel; the file has the size of the window.
         """
         swap_off = False
         try:
@@ -5579,26 +5710,57 @@ class Viewer(QtWidgets.QMainWindow):
             swap_off = True
         except Exception:
             pass
+        camera = self.ren.GetActiveCamera()
+        center = camera.GetWindowCenter()
+        fxaa = self.ren.GetUseFXAA()
         try:
-            self._render()
-            w2i = vtkWindowToImageFilter()
-            w2i.SetInput(self.rw)
-            try:
-                w2i.SetInputBufferTypeToRGB()
-                w2i.ReadFrontBufferOff()
-            except Exception:
-                pass
-            w2i.Modified()
-            w2i.Update()
+            self.rw.Render()
+            frame, (width, height) = self._grab_frame()
+            n = max(1, int(SCREENSHOT_SAMPLES))
+            if n > 1:
+                self.ren.UseFXAAOff()          # the samples smooth the edges themselves
+                viewport = self.ren.GetViewport()
+                pixel_x = 2.0 / max(1.0, width * (viewport[2] - viewport[0]))
+                pixel_y = 2.0 / max(1.0, height * (viewport[3] - viewport[1]))
+                frame = np.zeros_like(frame)
+                for i in range(n):
+                    for j in range(n):
+                        camera.SetWindowCenter(center[0] + ((i + 0.5) / n - 0.5) * pixel_x,
+                                               center[1] + ((j + 0.5) / n - 0.5) * pixel_y)
+                        self.rw.Render()
+                        frame += self._grab_frame()[0]
+                frame /= n * n
+            image = vtkImageData()
+            image.SetDimensions(width, height, 1)
+            image.GetPointData().SetScalars(
+                numpy_to_vtk(np.clip(np.rint(frame), 0, 255).astype(np.uint8), deep=True))
             writer = vtkPNGWriter(); writer.SetFileName(path)
-            writer.SetInputConnection(w2i.GetOutputPort()); writer.Write()
+            writer.SetInputData(image); writer.Write()
         finally:
+            camera.SetWindowCenter(*center)
+            self.ren.SetUseFXAA(fxaa)
             if swap_off:
                 try:
                     self.rw.SwapBuffersOn()
                 except Exception:
                     pass
         print(f"Saved {path}")
+
+    def _grab_frame(self) -> Tuple["np.ndarray", Tuple[int, int]]:
+        """The rendered window as (width*height, 3) floats, rows from the bottom."""
+        w2i = vtkWindowToImageFilter()
+        w2i.SetInput(self.rw)
+        try:
+            w2i.SetInputBufferTypeToRGB()
+            w2i.ReadFrontBufferOff()
+        except Exception:
+            pass
+        w2i.Modified()
+        w2i.Update()
+        output = w2i.GetOutput()
+        width, height, _ = output.GetDimensions()
+        pixels = vtk_to_numpy(output.GetPointData().GetScalars()).astype(np.float64)
+        return pixels.reshape(width * height, -1)[:, :3], (width, height)
 
     # -- Volume Integration --
     def _open_volume_dialog(self):
