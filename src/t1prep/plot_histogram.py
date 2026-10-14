@@ -6,7 +6,15 @@ reduced to a one-dimensional sample, binned on a grid shared by all inputs,
 and drawn as a line — one line per input — so that distributions can be
 compared directly.  By default a smooth curve is fitted through the sample
 (a Gaussian kernel density estimate) and the raw histogram is added as a
-dotted line of the same colour.
+dotted line of the same colour.  ``--ridgeline`` stacks the curves instead,
+one filled ridge per input, which keeps many inputs apart.
+
+The kernel density estimate uses a Gaussian kernel whose bandwidth comes
+from the Improved Sheather-Jones selector, which resolves multimodal
+densities -- see :func:`kernel_bandwidth`.  ``--dist gaussian_kde`` takes the
+bandwidth of scipy's ``gaussian_kde`` instead, Scott's rule.  Either is
+computed from every value, not a subsample, and the density scatter of two
+inputs uses the same kernel in two dimensions.
 
 For ``spmT*`` maps, and for files whose name starts with ``D`` (effect size
 maps), the printed table adds the upper 5% tail cutoff (``TH5``) and the
@@ -22,6 +30,9 @@ Usage::
 
     # average histogram with its standard error in a second figure
     CAT_PlotHistogram --mean p1*.nii.gz
+
+    # one ridge per input, stacked from the first input downwards
+    CAT_PlotHistogram --ridgeline lh.thickness.*
 
     # from a source checkout, without the entry point on PATH
     python -m t1prep.plot_histogram p1*.nii.gz
@@ -278,14 +289,215 @@ _DISTRIBUTIONS: Dict[str, Tuple[str, bool]] = {
     "beta": ("beta", True),
 }
 
-#: Everything ``--dist`` accepts.  ``kernel`` is the default and needs no
-#: parametric family; ``none`` draws the plain histogram instead of a curve.
-DISTRIBUTIONS: Tuple[str, ...] = ("kernel", "none") + tuple(sorted(_DISTRIBUTIONS))
+#: Everything ``--dist`` accepts.  ``kernel`` is the default and
+#: ``gaussian_kde`` the estimate of scipy's ``gaussian_kde``; neither needs a
+#: parametric family.  ``none`` draws the plain histogram instead of a curve.
+DISTRIBUTIONS: Tuple[str, ...] = (
+    ("kernel", "gaussian_kde", "none") + tuple(sorted(_DISTRIBUTIONS))
+)
 
 
-#: Above this many values a kernel density estimate is computed on a thinned
-#: sample -- see :func:`fit_density`.
-_KDE_MAX_POINTS = 20000
+#: Grid points per bandwidth on which :func:`kernel_density` bins the
+#: sample.  Binning and interpolation errors fall with the square of the
+#: spacing and stay below 0.1% of the peak at this density.
+_KDE_GRID_PER_BANDWIDTH = 20
+
+#: Upper limit on that grid, reached only by data whose range is tens of
+#: thousands of bandwidths wide.
+_KDE_MAX_GRID = 2 ** 20
+
+#: The Gaussian is cut off this many bandwidths from its center.
+_KDE_TRUNCATE = 5.0
+
+#: Bins of the Improved Sheather-Jones selector, spread over the data range
+#: padded by a tenth on either side -- the setting of Botev et al.
+_ISJ_GRID = 2 ** 14
+
+#: Lowest bandwidth :func:`kernel_bandwidth` accepts, as a fraction of
+#: Silverman's rule of thumb.  On smooth densities the ISJ bandwidth hardly
+#: reaches it -- three times below the rule for two well separated modes,
+#: 4.8 times only for four narrow ones -- but it collapses by a factor of
+#: thousands on data that are not smooth: values stored on a lattice (uint8
+#: p1 maps), ties, or the steep pile-up of near-zero probabilities in a p1
+#: map.
+_ISJ_FLOOR = 0.25
+
+
+def _rule_of_thumb(values: np.ndarray, ndim: int = 1) -> float:
+    """Return Silverman's rule-of-thumb bandwidth of the finite *values*.
+
+    The scale is the robust ``a = min(std, IQR / 1.349)``.  One dimension
+    gets Silverman's ``0.9 a n^(-1/5)``, the default of R's ``density()``;
+    one axis of a two-dimensional estimate the normal reference
+    ``a n^(-1/6)``.
+    """
+    std = float(values.std(ddof=1)) if values.size > 1 else 0.0
+    q25, q75 = np.percentile(values, [25, 75])
+    scale = min(std, float(q75 - q25) / 1.349)
+    if not scale > 0:
+        # Half the values or more tied
+        scale = std
+    if not scale > 0:
+        # A constant sample: any width will do, so take its magnitude
+        scale = abs(float(values[0])) or 1.0
+    if ndim == 2:
+        return scale * values.size ** (-1.0 / 6.0)
+    return 0.9 * scale * values.size ** -0.2
+
+
+def _isj_bandwidth(values: np.ndarray) -> Optional[float]:
+    """Return the Improved Sheather-Jones bandwidth of the finite *values*.
+
+    Botev, Grotowski & Kroese (2010), "Kernel density estimation via
+    diffusion", Ann. Statist. 38(5): the fixed point ``t = xi gamma^[7](t)``
+    of the squared bandwidth, solved on the discrete cosine transform of the
+    binned sample.
+
+    Returns:
+        The bandwidth, or ``None`` when the equation has no root -- for a
+        constant sample or one with very few values.
+    """
+    from scipy.fft import dct
+    from scipy.optimize import brentq
+
+    lo, hi = float(values.min()), float(values.max())
+    pad = (hi - lo) / 10.0
+    if not pad > 0:
+        return None
+    counts, _ = np.histogram(values, bins=_ISJ_GRID, range=(lo - pad, hi + pad))
+    power = (np.asarray(dct(counts / values.size, type=2))[1:] / 2.0) ** 2
+    k2 = np.arange(1, _ISJ_GRID, dtype=np.float64) ** 2
+    k2_powers = {s: k2 ** s for s in range(2, 8)}
+    n = values.size
+
+    def functional(s: int, time: float) -> float:
+        """Estimate of the squared norm of the s-th density derivative."""
+        weights = np.exp(-k2 * np.pi ** 2 * time)
+        return 2.0 * np.pi ** (2 * s) * float(np.sum(k2_powers[s] * power * weights))
+
+    def fixed_point(t: float) -> float:
+        f = functional(7, t)
+        for s in range(6, 1, -1):
+            if not f > 0:
+                return -1.0
+            k0 = float(np.prod(np.arange(1, 2 * s, 2))) / np.sqrt(2.0 * np.pi)
+            const = (1.0 + 0.5 ** (s + 0.5)) / 3.0
+            f = functional(s, (2.0 * const * k0 / (n * f)) ** (2.0 / (3 + 2 * s)))
+        if not f > 0:
+            return -1.0
+        return t - (2.0 * n * np.sqrt(np.pi) * f) ** -0.4
+
+    try:
+        t_star = brentq(fixed_point, 0.0, 0.1)
+    except ValueError:
+        return None
+    return float(np.sqrt(t_star)) * (hi - lo + 2.0 * pad)
+
+
+def kernel_bandwidth(sample: np.ndarray) -> float:
+    """Return the bandwidth of the Gaussian kernel for *sample*.
+
+    The Improved Sheather-Jones (ISJ) selector of Botev et al. (2010).  It
+    makes no normal-reference assumption, so it resolves multimodal and
+    skewed densities that Silverman's and Scott's rules oversmooth: on
+    simulated multimodal mixtures its error was up to 17 times lower than
+    Silverman's, and on normal data it finds the optimal bandwidth.
+
+    Plug-in selectors collapse where the data are not a smooth density --
+    the lattice of a uint8 p1 map, its saturated end, the pile-up of
+    near-zero probabilities -- so the result is never taken below a quarter
+    of Silverman's rule of thumb, and that rule is used outright where the
+    ISJ equation has no solution.
+
+    Args:
+        sample: The values; non-finite ones are ignored.
+
+    Returns:
+        The standard deviation of the Gaussian kernel.
+    """
+    values = _finite(sample)
+    if values.size == 0:
+        raise ValueError("cannot estimate a bandwidth without finite values")
+    rule = _rule_of_thumb(values)
+    isj = _isj_bandwidth(values)
+    return rule if isj is None else max(isj, _ISJ_FLOOR * rule)
+
+
+def kernel_density(sample: np.ndarray, x: np.ndarray,
+                   bandwidth: Optional[float] = None) -> np.ndarray:
+    """Evaluate a Gaussian kernel density estimate of *sample* at *x*.
+
+    Computed on a regular grid, as R's ``density()`` and statsmodels do: the
+    sample is linearly binned onto it and convolved with the Gaussian.  That
+    costs ``O(n + m log m)`` instead of ``O(n len(x))``, so every value of a
+    whole-brain map is used and none has to be thinned out.
+
+    Args:
+        sample: The values; non-finite ones are ignored.
+        x: Points at which the density is evaluated.
+        bandwidth: Standard deviation of the kernel; :func:`kernel_bandwidth`
+            when ``None``.
+
+    Returns:
+        The probability density at *x*.
+    """
+    from scipy.signal import fftconvolve
+
+    values = _finite(sample)
+    x = np.asarray(x, dtype=np.float64)
+    width = kernel_bandwidth(values) if bandwidth is None else float(bandwidth)
+    if not width > 0:
+        raise ValueError(f"the bandwidth has to be positive, not {width:g}")
+
+    # The grid spans x and the reach of the kernel around it; values beyond
+    # that add nothing measurable at x
+    reach = _KDE_TRUNCATE * width
+    lo = float(x.min()) - reach
+    hi = float(x.max()) + reach
+    size = int(min(np.ceil((hi - lo) / width * _KDE_GRID_PER_BANDWIDTH),
+                   _KDE_MAX_GRID)) + 1
+    step = (hi - lo) / (size - 1)
+
+    # Linear binning: each value is shared between its two grid neighbours
+    position = (values - lo) / step
+    position = position[(position >= 0) & (position <= size - 1)]
+    left = np.minimum(position.astype(np.int64), size - 2)
+    frac = position - left
+    counts = (np.bincount(left, 1.0 - frac, size)
+              + np.bincount(left + 1, frac, size))
+
+    half = int(np.ceil(reach / step))
+    t = np.arange(-half, half + 1) * (step / width)
+    kernel = np.exp(-0.5 * t * t) / (np.sqrt(2.0 * np.pi) * width * values.size)
+    # The FFT leaves round-off of either sign where the density is zero
+    density = np.maximum(fftconvolve(counts, kernel, mode="same"), 0.0)
+    return np.interp(x, lo + step * np.arange(size), density)
+
+
+def gaussian_kde_bandwidth(sample: np.ndarray) -> float:
+    """Return the bandwidth scipy's ``gaussian_kde`` picks for *sample*.
+
+    Its default, Scott's rule ``std n^(-1/5)``, which seaborn's ``kdeplot``
+    uses as well.  The rule assumes a normal density, so it is smoother than
+    :func:`kernel_bandwidth` and flattens sharp or close peaks.
+
+    Args:
+        sample: The values; non-finite ones are ignored.
+
+    Returns:
+        The standard deviation of the Gaussian kernel.
+    """
+    from scipy import stats
+
+    values = _finite(sample)
+    try:
+        kde = stats.gaussian_kde(values)
+    except (np.linalg.LinAlgError, ValueError):
+        # scipy refuses a constant sample and a single value
+        if values.size == 0:
+            raise ValueError("cannot estimate a bandwidth without finite values")
+        return _rule_of_thumb(values)
+    return float(np.sqrt(kde.covariance[0, 0]))
 
 
 def fit_density(sample: np.ndarray, dist: str, x: np.ndarray) -> np.ndarray:
@@ -293,8 +505,10 @@ def fit_density(sample: np.ndarray, dist: str, x: np.ndarray) -> np.ndarray:
 
     Args:
         sample: The values to fit.
-        dist: ``"kernel"`` for a Gaussian kernel density estimate, or one of
-            the parametric families in :data:`DISTRIBUTIONS`.
+        dist: ``"kernel"`` for a Gaussian kernel density estimate (see
+            :func:`kernel_density`), ``"gaussian_kde"`` for the one of
+            scipy's ``gaussian_kde``, or one of the parametric families in
+            :data:`DISTRIBUTIONS`.
         x: Points at which the fitted density is evaluated.
 
     Returns:
@@ -303,16 +517,11 @@ def fit_density(sample: np.ndarray, dist: str, x: np.ndarray) -> np.ndarray:
     from scipy import stats
 
     if dist == "kernel":
-        # A KDE over millions of voxels evaluates in O(n * len(x)); the
-        # estimate itself is stable long before that, so the sample is
-        # thinned first.  The bandwidth still follows Scott's rule on the
-        # full count, which is what MATLAB's kernel fitdist uses as well.
-        values = sample
-        if values.size > _KDE_MAX_POINTS:
-            step = int(np.ceil(values.size / _KDE_MAX_POINTS))
-            values = values[::step]
-        kde = stats.gaussian_kde(values, bw_method=sample.size ** (-1.0 / 5.0))
-        return kde(x)
+        return kernel_density(sample, x)
+    if dist == "gaussian_kde":
+        # scipy's own evaluation costs seconds per whole-brain map; the
+        # binned one is the same curve, to within 0.03% of its peak
+        return kernel_density(sample, x, gaussian_kde_bandwidth(sample))
 
     try:
         name, pin_loc = _DISTRIBUTIONS[dist]
@@ -461,6 +670,107 @@ def _figure(plt, handle, winsize: Sequence[float]):
     return handle
 
 
+#: How :func:`plot_histogram` scales the ridges of a ridgeline plot: all on
+#: one scale, or each to its own maximum.
+RIDGE_SCALES: Tuple[str, ...] = ("shared", "own")
+
+#: Ridge labels longer than this are shortened in the middle; the y axis
+#: would otherwise squeeze the plot into a corner of the figure.
+_RIDGE_LABEL_LENGTH = 40
+
+
+def _ellipsize(label: str, length: int = _RIDGE_LABEL_LENGTH) -> str:
+    """Shorten *label* to *length* characters by cutting out its middle.
+
+    The start keeps a ``TH5=`` prefix, the end keeps the file name.
+    """
+    if len(label) <= length:
+        return label
+    head = (length - 1) * 2 // 5
+    return label[:head] + "…" + label[len(label) - (length - 1 - head):]
+
+
+def _draw_ridgeline(axes, x: np.ndarray, curves: np.ndarray,
+                    raw: Optional[np.ndarray], colors: np.ndarray,
+                    labels: Sequence[str], height: float, alpha: float,
+                    xlim: Optional[Sequence[float]] = None,
+                    own_scale: bool = False) -> None:
+    """Draw *curves* as a ridgeline plot into *axes*.
+
+    The first curve gets the top baseline.  All ridges share one scale, set
+    so that the tallest reaches *height* baseline spacings within *xlim* --
+    or, with *own_scale*, each ridge reaches that height on its own -- and
+    each one is drawn in front of the ridge above it.
+
+    Args:
+        axes: The axes to draw into.
+        x: The shared x positions.
+        curves: One curve per row.
+        raw: Histograms drawn as dotted lines on the same scale, or ``None``.
+        colors: One RGB row per curve.
+        labels: The y tick label of every baseline.
+        height: Height of the tallest ridge in baseline spacings.
+        alpha: Opacity of the fill.
+        xlim: The drawn x range, which the scale is taken from; all of *x*
+            when ``None``.  A peak cut off there, such as the saturated end
+            of a p1 map, then no longer flattens the rest.
+        own_scale: Scale every ridge to its own maximum instead of the
+            maximum of all of them.
+    """
+    from matplotlib.ticker import AutoMinorLocator
+
+    count = len(curves)
+    visible = np.ones(len(x), dtype=bool)
+    if xlim is not None:
+        visible = (x >= min(xlim)) & (x <= max(xlim))
+    peaks = np.zeros(count)
+    for j in range(count):
+        finite = curves[j, visible]
+        finite = finite[np.isfinite(finite)]
+        peaks[j] = finite.max() if finite.size else 0.0
+    if not own_scale:
+        peaks[:] = peaks.max() if count else 0.0
+    baselines = np.arange(count - 1, -1, -1, dtype=float)
+    background = axes.get_facecolor()
+    top = 0.0
+    for j in range(count):
+        scale = height / peaks[j] if peaks[j] > 0 else 0.0
+        ridge = baselines[j] + scale * curves[j]
+        # An opaque backing hides the ridges behind, so that the tinted fill
+        # on top of it stays light where it overlaps them
+        zorder = 2 + 3 * j
+        axes.fill_between(x, baselines[j], ridge, color=background,
+                          linewidth=0, zorder=zorder)
+        axes.fill_between(x, baselines[j], ridge, color=colors[j], alpha=alpha,
+                          linewidth=0, zorder=zorder + 1)
+        axes.plot(x, ridge, color=colors[j], linewidth=1, zorder=zorder + 2)
+        if raw is not None:
+            ridge = baselines[j] + scale * raw[j]
+            axes.plot(x, ridge, color=colors[j], linewidth=1, linestyle=":",
+                      zorder=zorder + 2)
+        drawn = ridge[visible & np.isfinite(ridge)]
+        if drawn.size:
+            top = max(top, float(drawn.max()))
+
+    axes.set_ylim(-0.1, max(top, baselines[0]) + 0.1)
+    axes.set_yticks(baselines)
+    short = [_ellipsize(label) for label in labels]
+    # Two labels made identical by the cut would not tell the ridges apart
+    axes.set_yticklabels(short if len(set(short)) == len(set(labels)) else labels)
+    # Shrink the labels when the rows get narrower than the text
+    row = (axes.get_position().height * axes.figure.get_figheight() * 72.0
+           / (count - 1 + height + 0.2))
+    for label in axes.get_yticklabels():
+        label.set_fontsize(min(label.get_fontsize(), max(4.0, 0.9 * row)))
+    axes.tick_params(axis="y", which="both", length=0)
+    for side in ("left", "right", "top"):
+        axes.spines[side].set_visible(False)
+    axes.set_axisbelow(True)
+    axes.xaxis.set_minor_locator(AutoMinorLocator())
+    axes.grid(True, axis="x", which="major")
+    axes.grid(True, axis="x", which="minor", alpha=0.3)
+
+
 # ----------------------------------------------------------------------
 # The plot
 # ----------------------------------------------------------------------
@@ -483,6 +793,9 @@ def plot_histogram(
     scatter: bool = True,
     names: Optional[Sequence[str]] = None,
     verbose: bool = True,
+    ridgeline: bool = False,
+    ridge_height: float = 1.5,
+    ridge_scale: str = "shared",
 ) -> HistogramResult:
     """Draw the histogram of one or more data sets.
 
@@ -500,9 +813,10 @@ def plot_histogram(
         xlim: ``(min, max)`` of the drawn x axis.
         ylim: ``(min, max)`` of the drawn y axis.
         dist: Curve fitted through each sample, one of :data:`DISTRIBUTIONS`.
-            ``"kernel"`` is a Gaussian kernel density estimate, ``"none"``
-            draws the plain histogram and adds a second figure with all
-            inputs pooled.
+            ``"kernel"`` is a Gaussian kernel density estimate with the ISJ
+            bandwidth, ``"gaussian_kde"`` the one of scipy's
+            ``gaussian_kde`` (Scott's rule), ``"none"`` draws the plain
+            histogram and adds a second figure with all inputs pooled.
         mean: Also draw the average of all histograms with its standard
             error as a shaded band, in its own figure (number 11).  Repeated
             calls overlay their averages there in the next colour and have
@@ -510,7 +824,8 @@ def plot_histogram(
             the legend.
         bins: Upper limit on the number of bins.
         alpha: Opacity of the lines; outside ``[0, 1]`` it is derived from
-            the number of inputs.
+            the number of inputs.  With *ridgeline* it is the opacity of the
+            filled ridges instead, 0.6 when automatic.
         rawline: Draw the raw histogram as a dotted line next to a fitted
             curve -- ``0`` never, ``1`` always, ``2`` only for fewer than
             six inputs.
@@ -519,6 +834,20 @@ def plot_histogram(
         names: Legend labels, one per input; derived from the file names or
             numbered when ``None``.
         verbose: Print the summary table.
+        ridgeline: Draw the curves as a ridgeline plot -- one filled curve
+            per input, stacked from the first input at the top downwards
+            and labelled on the y axis -- instead of overlaying them.  All
+            ridges share one height scale, taken within *xlim* when that is
+            given; *ylim* does not apply.
+        ridge_height: Height of the tallest ridge -- of every ridge with
+            *ridge_scale* ``"own"`` -- in units of the spacing between
+            neighbouring baselines; at ``1`` it just reaches the baseline
+            above.
+        ridge_scale: ``"shared"`` puts all ridges on one height scale, so
+            that their heights compare -- the default of joypy, seaborn's
+            ridge plot and ggridges.  ``"own"`` scales every ridge to its own
+            maximum, so that all reach *ridge_height* and only their shapes
+            compare; one sharp peak then no longer flattens the others.
 
     Returns:
         A :class:`HistogramResult` with the binned data, the statistics and
@@ -568,6 +897,13 @@ def plot_histogram(
         if len(colors) < count:
             raise ValueError(f"color has {len(colors)} rows for {count} inputs")
         colors = colors[:count]
+    if ridgeline and not ridge_height > 0:
+        raise ValueError(f"ridge_height has to be positive, not {ridge_height:g}")
+    if ridge_scale not in RIDGE_SCALES:
+        raise ValueError(f"ridge_scale has to be one of {', '.join(RIDGE_SCALES)}, "
+                         f"not '{ridge_scale}'")
+    # Ridges do not overlap the way lines do, so they fill at a fixed opacity
+    ridge_alpha = alpha if 0 <= alpha <= 1 else 0.6
     if alpha > 1 or alpha < 0:
         # Automatic: the more lines overlap, the more transparent they get
         alpha = max(0.2, 1.0 / max(1, count - 5) ** 0.5)
@@ -678,28 +1014,39 @@ def plot_histogram(
 
     # -- draw ------------------------------------------------------------
     inner = slice(1, -1)  # the open outer bins hold everything off-range
-    lines = []
-    for j in range(count):
-        line, = axes.plot(centers[inner], (curves if dist else histograms)[j][inner],
-                          linewidth=1, color=colors[j], label=labels[j])
-        lines.append(line)
-    if dist and (rawline == 1 or (rawline == 2 and count < 6)):
+    shown = curves if dist else histograms
+    raw = bool(dist) and (rawline == 1 or (rawline == 2 and count < 6))
+    if ridgeline:
+        _draw_ridgeline(axes, centers[inner], shown[:, inner],
+                        histograms[:, inner] if raw else None, colors[:, :3],
+                        labels, ridge_height, ridge_alpha,
+                        xlim if xlim is not None and len(xlim) == 2 else None,
+                        own_scale=ridge_scale == "own")
+    else:
         for j in range(count):
-            axes.plot(centers[inner], histograms[j][inner], linewidth=1,
-                      linestyle=":", color=colors[j], label="_nolegend_")
+            axes.plot(centers[inner], shown[j][inner], linewidth=1,
+                      color=colors[j], label=labels[j])
+        if raw:
+            for j in range(count):
+                axes.plot(centers[inner], histograms[j][inner], linewidth=1,
+                          linestyle=":", color=colors[j], label="_nolegend_")
 
-    axes.set_ylabel("Normalized Frequency" if norm_frequency else "Frequency")
-    axes.grid(True, which="major")
-    axes.minorticks_on()
-    axes.grid(True, which="minor", alpha=0.3)
-    # A legend with more entries than that hides the plot instead of
-    # explaining it, so it is left off -- as the MATLAB original does
-    if count <= 20:
-        axes.legend()
+        axes.set_ylabel("Normalized Frequency" if norm_frequency else "Frequency")
+        axes.grid(True, which="major")
+        axes.minorticks_on()
+        axes.grid(True, which="minor", alpha=0.3)
+        # A legend with more entries than that hides the plot instead of
+        # explaining it, so it is left off -- as the MATLAB original does
+        if count <= 20:
+            axes.legend()
+        if ylim is not None and len(ylim) == 2:
+            axes.set_ylim(ylim)
     if xlim is not None and len(xlim) == 2:
         axes.set_xlim(xlim)
-    if ylim is not None and len(ylim) == 2:
-        axes.set_ylim(ylim)
+    if ridgeline:
+        # The labels sit left of the axes, where the default margin is too
+        # narrow for file names
+        figure.tight_layout()
     figures["histogram"] = figure
 
     # -- all inputs pooled into one histogram, when nothing was fitted ---
@@ -778,13 +1125,19 @@ def _difference_colormap():
 
 
 def _density_scatter(axes, x: np.ndarray, y: np.ndarray, bins: int = 200) -> None:
-    """Scatter *x* against *y*, coloured by the local density of the points."""
+    """Scatter *x* against *y*, coloured by the local density of the points.
+
+    The density is the two-dimensional counterpart of :func:`kernel_density`:
+    the binned points smoothed with a Gaussian whose width on each axis is
+    the two-dimensional rule of thumb.  The colour does not need the ISJ
+    selector, which would cost a two-dimensional fixed point.
+    """
     from scipy.ndimage import gaussian_filter
 
     counts, x_edges, y_edges = np.histogram2d(x, y, bins=bins)
-    # Smooth over a few bins, as dscatter's spline smoothing does, so that
-    # the colour follows the density rather than the binning
-    counts = gaussian_filter(counts, bins / 50.0)
+    sigma = [_rule_of_thumb(values, ndim=2) / (edges[1] - edges[0])
+             for values, edges in ((x, x_edges), (y, y_edges))]
+    counts = gaussian_filter(counts, sigma, mode="constant")
     ix = np.clip(np.searchsorted(x_edges, x, side="right") - 1, 0, bins - 1)
     iy = np.clip(np.searchsorted(y_edges, y, side="right") - 1, 0, bins - 1)
     density = counts[ix, iy]
@@ -886,8 +1239,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="volumes, surfaces or text files to plot")
     parser.add_argument("--dist", default="kernel", choices=DISTRIBUTIONS,
                         metavar="NAME",
-                        help="curve fitted through each sample: "
-                             + ", ".join(DISTRIBUTIONS))
+                        help="curve fitted through each sample: kernel "
+                             "(Gaussian KDE with the ISJ bandwidth, default), "
+                             "gaussian_kde (scipy's, Scott's rule), none "
+                             "(the plain histogram) or a parametric family: "
+                             + ", ".join(sorted(_DISTRIBUTIONS)))
     parser.add_argument("--bins", type=int, default=500,
                         help="upper limit on the number of bins")
     parser.add_argument("--xrange", type=float, nargs=2, metavar=("MIN", "MAX"),
@@ -914,6 +1270,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mean", action="store_true",
                         help="also plot the average histogram with its "
                              "standard error in a second figure")
+    parser.add_argument("--ridgeline", action="store_true",
+                        help="stack the curves as a ridgeline plot, the first "
+                             "input at the top, instead of overlaying them")
+    parser.add_argument("--ridge-height", type=float, default=1.5, metavar="H",
+                        help="height of the tallest ridge (of every ridge "
+                             "with --ridge-scale own) in baseline spacings; "
+                             "1 just reaches the baseline above (default 1.5)")
+    parser.add_argument("--ridge-scale", default="shared", choices=RIDGE_SCALES,
+                        help="shared: one height scale for all ridges, so "
+                             "heights compare (default); own: every ridge "
+                             "scaled to its own maximum")
     parser.add_argument("--no-scatter", dest="scatter", action="store_false",
                         help="skip the scatter plot and the difference "
                              "projections drawn for two matching inputs")
@@ -953,6 +1320,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             xrange=args.xrange, xlim=args.xlim, ylim=args.ylim, dist=args.dist,
             mean=args.mean, bins=args.bins, alpha=args.alpha,
             rawline=args.rawline, scatter=args.scatter, verbose=args.verbose,
+            ridgeline=args.ridgeline, ridge_height=args.ridge_height,
+            ridge_scale=args.ridge_scale,
         )
     except (OSError, ValueError) as exc:
         print(f"{parser.prog}: error: {exc}", file=sys.stderr)

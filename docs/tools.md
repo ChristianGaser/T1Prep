@@ -179,6 +179,7 @@ input, so distributions can be compared directly.
 ```bash
 CAT_PlotHistogram mwp1*.nii.gz                  # one line per input
 CAT_PlotHistogram --mean p1*.nii.gz             # + average with standard error
+CAT_PlotHistogram --ridgeline lh.thickness.*    # one stacked ridge per input
 CAT_PlotHistogram --dist none --xrange 0 6 \
     --save /tmp/hist lh.thickness.* rh.thickness.*
 ```
@@ -191,8 +192,9 @@ zeros, where zero is a value like any other.
 
 Options:
 - `--dist <NAME>` the curve fitted through each sample. `kernel` (the default)
-  is a Gaussian kernel density estimate, `none` draws the plain histogram and
-  adds a second figure with all inputs pooled, and the parametric families are
+  is a Gaussian kernel density estimate (see below), `gaussian_kde` the
+  estimate of scipy's `gaussian_kde` with Scott's rule, which seaborn uses as
+  well, `none` draws the plain histogram and adds a second figure with all inputs pooled, and the parametric families are
   `normal`, `gamma`, `rician`, `rayleigh`, `weibull`, `lognormal`,
   `exponential`, `beta`, `logistic` and `tlocationscale`. The families with
   positive support are fitted with the location pinned to zero, as MATLAB's
@@ -210,6 +212,19 @@ Options:
   `nejm` (default), `jco`, `jama`, `d3`, `set1`–`set3`, `accent`, `dark2`,
   `paired`. `--alpha` sets the line opacity; outside `[0, 1]` it follows the
   number of inputs.
+- `--ridgeline` stacks the curves as a ridgeline plot instead of overlaying
+  them: one filled ridge per input, the first input at the top, labelled on
+  the y axis instead of in a legend. Good for many inputs, where overlaid
+  lines become unreadable. By default all ridges share one height scale, so
+  their heights stay comparable, as in joypy, seaborn's ridge plot and R's
+  ggridges; `--ridge-height <H>` sets the tallest ridge to `H` baseline
+  spacings (default 1.5; at 1 it just reaches the baseline above). The scale
+  is taken within `--xlim`, so cutting off a dominant peak — the saturated
+  end of a p1 map — brings out the rest. `--ridge-scale own` instead scales
+  every ridge to its own maximum, so that all reach `H` and only their
+  shapes compare (joypy's `ylim='own'`, ggridges' `ndensity`). `--alpha`
+  sets the fill opacity here (0.6 when automatic), and `--ylim` does not
+  apply.
 - `--winsize W H` figure size in pixels, `--fig N` the figure to draw into
 - `--save <PREFIX>` write `PREFIX.png`, `PREFIX_mean.png`, ... instead of
   opening windows; `--quiet` suppresses the printed table
@@ -218,6 +233,25 @@ Printed per input: mean, median, standard deviation, effect size and the peak
 of the histogram. For `spmT*` maps and effect size maps (names starting with
 `D`) the table shows the upper 5% tail cutoff `TH5` instead, and each legend
 entry is labelled with it.
+
+The kernel density estimate uses a Gaussian kernel. Its bandwidth comes from
+the Improved Sheather–Jones selector (Botev et al., 2010), which does not
+assume a normal distribution. It therefore resolves multimodal and skewed
+distributions, such as the sharp GM peak of a p1 map, which rules of thumb
+like Silverman's or Scott's flatten and widen. On data that are not a smooth
+density, the selector would collapse into a spike at every value: values
+stored at fixed steps (a uint8 p1 map), many tied values, or a pile-up of
+near-zero probabilities. So the bandwidth never goes below a quarter of
+Silverman's rule of thumb, a bound that smooth distributions do not reach.
+`--dist gaussian_kde` uses the bandwidth of scipy's `gaussian_kde` instead,
+Scott's rule `σ · n^(-1/5)`: smoother, but it flattens sharp peaks like the
+GM peak of a p1 map. Either density is computed from every value, binned onto
+a fine grid, so whole-brain maps are not thinned out. That gives scipy's
+curve to within 0.03% of its peak, 50 to 80 times faster than scipy's own
+evaluation (65 ms instead of 3.4 s for 2 million voxels). This differs from MATLAB's
+`fitdist(y, 'kernel')`, which uses a normal-reference bandwidth, so curves
+are not identical to `cat_plot_histogram.m`. The density scatter below uses
+the same Gaussian kernel with the two-dimensional rule of thumb.
 
 Two inputs of identical shape additionally get a density scatter plot, and for
 volumes the three orthogonal projections of their difference in CAT12's

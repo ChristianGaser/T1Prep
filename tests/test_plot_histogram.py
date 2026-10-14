@@ -107,6 +107,19 @@ class TestTheFittedCurves(unittest.TestCase):
 
     def test_the_kernel_estimate_integrates_to_one(self):
         self.assertAlmostEqual(self._area("kernel"), 1.0, places=2)
+        self.assertAlmostEqual(self._area("gaussian_kde"), 1.0, places=2)
+
+    def test_gaussian_kde_is_scipys_estimate(self):
+        from scipy import stats
+
+        expected = stats.gaussian_kde(self.sample)(self.x)
+        density = cph.fit_density(self.sample, "gaussian_kde", self.x)
+        np.testing.assert_allclose(density, expected, atol=1e-3 * expected.max())
+
+    def test_gaussian_kde_survives_a_constant_sample(self):
+        # scipy itself refuses it: the covariance cannot be inverted
+        density = cph.fit_density(np.full(100, 2.0), "gaussian_kde", self.x)
+        self.assertTrue(np.isfinite(density).all())
 
     def test_a_parametric_fit_integrates_to_one(self):
         self.assertAlmostEqual(self._area("normal"), 1.0, places=2)
@@ -118,6 +131,70 @@ class TestTheFittedCurves(unittest.TestCase):
     def test_an_unknown_family_is_refused(self):
         with self.assertRaises(ValueError):
             cph.fit_density(self.sample, "no-such-distribution", self.x)
+
+
+class TestTheKernelDensity(unittest.TestCase):
+    """``kernel_density`` with the Improved Sheather-Jones bandwidth."""
+
+    @staticmethod
+    def _error(sample, x, truth, bandwidth):
+        """Integrated squared error relative to that of the truth itself."""
+        density = cph.kernel_density(sample, x, bandwidth)
+        return np.sum((density - truth) ** 2) / np.sum(truth ** 2)
+
+    def test_a_normal_sample_gets_the_optimal_bandwidth(self):
+        sample = np.random.default_rng(6).normal(size=100000)
+        # The bandwidth that minimises the asymptotic MISE of a normal density
+        optimal = (4.0 / (3.0 * sample.size)) ** 0.2
+        self.assertAlmostEqual(cph.kernel_bandwidth(sample) / optimal, 1.0,
+                               delta=0.05)
+
+    def test_separated_modes_are_resolved(self):
+        rng = np.random.default_rng(7)
+        sample = np.concatenate([rng.normal(-2, 0.5, 5000),
+                                 rng.normal(2, 0.5, 5000)])
+        x = np.linspace(-4, 4, 400)
+        truth = 0.5 * (np.exp(-0.5 * ((x + 2) / 0.5) ** 2)
+                       + np.exp(-0.5 * ((x - 2) / 0.5) ** 2)) / (0.5 * np.sqrt(2 * np.pi))
+        chosen = self._error(sample, x, truth, cph.kernel_bandwidth(sample))
+        rule = self._error(sample, x, truth, cph._rule_of_thumb(sample))
+        # Silverman's rule oversmooths the two modes; ISJ does not
+        self.assertLess(chosen, rule / 5)
+
+    def test_a_lattice_does_not_comb_the_curve(self):
+        from scipy.special import ndtri
+
+        # A uint8 p1 map: values on multiples of 1/255, most of them at 1.
+        # Normal quantiles instead of random draws leave no sampling noise
+        # that could pass for a comb
+        count = 400000
+        smooth = np.clip(0.55 + 0.15 * ndtri((np.arange(count) + 0.5) / count), 0, 1)
+        sample = np.concatenate([np.round(smooth * 255) / 255, np.ones(600000)])
+        on_lattice = np.arange(50, 200) / 255.0
+        between = (np.arange(49, 200) + 0.5) / 255.0
+        level = cph.kernel_density(sample, on_lattice)
+        gaps = cph.kernel_density(sample, between)
+        # A comb puts a spike on every lattice value; the mean of the two
+        # neighbouring gaps cancels the slope of the density itself.  Plain
+        # ISJ collapses here, to a bandwidth of a few millionths, and even
+        # half a lattice step leaves a 3% comb
+        ratio = level / (0.5 * (gaps[:-1] + gaps[1:]))
+        self.assertLess(np.abs(ratio - 1.0).max(), 0.002)
+
+    def test_binning_matches_the_exact_sum(self):
+        rng = np.random.default_rng(9)
+        sample = np.concatenate([rng.normal(0, 1, 30000), rng.normal(4, 0.3, 10000)])
+        x = np.linspace(-4, 6, 300)
+        width = cph.kernel_bandwidth(sample)
+        exact = np.exp(-0.5 * ((x[:, None] - sample[None, :]) / width) ** 2).sum(1)
+        exact /= sample.size * width * np.sqrt(2 * np.pi)
+        np.testing.assert_allclose(cph.kernel_density(sample, x), exact,
+                                   atol=1e-3 * exact.max())
+
+    def test_degenerate_samples_still_get_a_bandwidth(self):
+        for sample in (np.full(50, 3.0), np.array([1.0, 2.0]),
+                       np.array([0.0, 1.0, 1.0, 1.0])):
+            self.assertGreater(cph.kernel_bandwidth(sample), 0.0)
 
 
 class TestTheZeroBackground(unittest.TestCase):
@@ -192,6 +269,66 @@ class TestTheResult(unittest.TestCase):
         with self.assertRaises(ValueError):
             cph.plot_histogram(["file.nii", np.zeros(10)])
 
+    def _ridges(self, **options):
+        rng = np.random.default_rng(8)
+        data = [rng.normal(loc, scale, 6000)
+                for loc, scale in ((0, 1), (2, 0.5), (-1, 2))]
+        result = cph.plot_histogram(data, names=["a", "b", "c"], ridgeline=True,
+                                    verbose=False, **options)
+        return result, result.figures["histogram"].axes[0]
+
+    def test_a_ridgeline_puts_the_first_input_at_the_top(self):
+        _, axes = self._ridges()
+        ticks = dict(zip([t.get_text() for t in axes.get_yticklabels()],
+                         axes.get_yticks()))
+        self.assertEqual(ticks, {"a": 2.0, "b": 1.0, "c": 0.0})
+        self.assertIsNone(axes.get_legend())
+
+    def test_the_tallest_ridge_reaches_the_requested_height(self):
+        result, axes = self._ridges(ridge_height=1.2, rawline=0)
+        # Ridge outlines are the solid lines; b is the narrowest, hence tallest
+        outlines = [line for line in axes.lines if line.get_linestyle() == "-"]
+        self.assertEqual(len(outlines), 3)
+        heights = [line.get_ydata().max() - base
+                   for line, base in zip(outlines, (2.0, 1.0, 0.0))]
+        self.assertAlmostEqual(max(heights), 1.2)
+        self.assertEqual(int(np.argmax(heights)), 1)
+        # The curves themselves are what the overlay would have drawn
+        self.assertEqual(result.fit.shape, (3, len(result.x)))
+
+    def test_a_ridgeline_scales_to_the_drawn_range(self):
+        # Cut off the peak of b: the tallest visible ridge then sets the scale
+        _, axes = self._ridges(ridge_height=1.0, rawline=0, xlim=(-6, 1))
+        outlines = [line for line in axes.lines if line.get_linestyle() == "-"]
+        visible = []
+        for line, base in zip(outlines, (2.0, 1.0, 0.0)):
+            x, y = line.get_xdata(), line.get_ydata()
+            visible.append((y[(x >= -6) & (x <= 1)] - base).max())
+        self.assertAlmostEqual(max(visible), 1.0)
+
+    def test_long_ridge_labels_are_shortened_in_the_middle(self):
+        label = "TH5=3.1416 " + "x" * 60 + "_subject.nii"
+        short = cph._ellipsize(label)
+        self.assertEqual(len(short), cph._RIDGE_LABEL_LENGTH)
+        self.assertTrue(short.startswith("TH5=3.1416"))
+        self.assertTrue(short.endswith("_subject.nii"))
+        self.assertEqual(cph._ellipsize("short.nii"), "short.nii")
+
+    def test_each_ridge_can_get_its_own_scale(self):
+        _, axes = self._ridges(ridge_height=0.8, rawline=0, ridge_scale="own")
+        outlines = [line for line in axes.lines if line.get_linestyle() == "-"]
+        heights = [line.get_ydata().max() - base
+                   for line, base in zip(outlines, (2.0, 1.0, 0.0))]
+        np.testing.assert_allclose(heights, 0.8)
+
+    def test_an_unknown_ridge_scale_is_refused(self):
+        with self.assertRaises(ValueError):
+            self._ridges(ridge_scale="tallest")
+
+    def test_a_ridgeline_needs_a_positive_height(self):
+        with self.assertRaises(ValueError):
+            self._ridges(ridge_height=0)
+
 
 class TestTheCommandLine(unittest.TestCase):
     """The tool follows the shared T1Prep command-line conventions.
@@ -208,6 +345,16 @@ class TestTheCommandLine(unittest.TestCase):
         single_dash = re.findall(r"(?<![\w-])-(?!-)[A-Za-z][\w-]*", text)
         self.assertEqual(single_dash, [],
                          f"single-dash spellings advertised: {single_dash}")
+
+    def test_the_ridgeline_options_reach_the_plot(self):
+        args = cph.build_parser().parse_args(
+            ["--ridgeline", "--ridge-height", "2", "--ridge-scale", "own", "a.nii"])
+        self.assertTrue(args.ridgeline)
+        self.assertEqual(args.ridge_height, 2.0)
+        self.assertEqual(args.ridge_scale, "own")
+        self.assertEqual(cph.build_parser().parse_args(["a.nii"]).ridge_scale,
+                         "shared")
+        self.assertEqual(args.files, ["a.nii"])
 
     def test_it_answers_version_with_the_release(self):
         with self.assertRaises(SystemExit) as caught:

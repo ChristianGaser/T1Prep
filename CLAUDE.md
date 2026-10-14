@@ -56,7 +56,7 @@ CAT_VolDiff [--rel] [--glob] tp1.nii.gz tp2.nii.gz
 python scripts/qa_calibrate.py /path/to/BWP/report
 
 # Histogram of volumes, surfaces or text data (CAT12's cat_plot_histogram.m)
-CAT_PlotHistogram [--dist kernel|none|normal|...] [--mean] [--save PREFIX] file...
+CAT_PlotHistogram [--dist kernel|gaussian_kde|none|normal|...] [--mean] [--ridgeline] [--save PREFIX] file...
 
 # Longitudinal: rigid realignment, then the low-dimensional ageing deformation
 ./scripts/process_longitudinal.sh --long-model ageing tp1.nii.gz tp2.nii.gz
