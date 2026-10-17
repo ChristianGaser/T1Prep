@@ -2,6 +2,7 @@ import unittest
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import nibabel as nib
@@ -319,12 +320,12 @@ class TestContentBounds(unittest.TestCase):
 
 
 class TestBoxMorphology(unittest.TestCase):
-    """The separable helpers must equal the ``binary_*`` calls they replace.
+    """The box helpers must equal the ``binary_*`` calls they replace.
 
-    They stand in for a 26-connected dilation/closing/opening by ``n`` steps,
-    which is a box of side 2n+1, and a box filter is separable.  The gain is
-    1.4-2.5x on the 0.5 mm working grid; the results have to stay identical,
-    borders included -- hence the plane of foreground at one face below.
+    They stand in for a 26-connected dilation/erosion/closing/opening by ``n``
+    steps, which is a box of side 2n+1, done in libCAT by sliding-window
+    counts.  The results have to stay identical, borders included -- hence
+    the planes of foreground at three faces below.
     """
 
     def _masks(self):
@@ -341,6 +342,7 @@ class TestBoxMorphology(unittest.TestCase):
         from scipy.ndimage import (
             binary_closing,
             binary_dilation,
+            binary_erosion,
             binary_opening,
             generate_binary_structure,
         )
@@ -353,11 +355,90 @@ class TestBoxMorphology(unittest.TestCase):
                         t1prep_utils.box_dilate(mask, n),
                         binary_dilation(mask, box, n))
                     np.testing.assert_array_equal(
+                        t1prep_utils.box_erode(~mask, n),
+                        binary_erosion(~mask, box, n))
+                    np.testing.assert_array_equal(
                         t1prep_utils.box_close(mask, n),
                         binary_closing(mask, box, n))
                     np.testing.assert_array_equal(
                         t1prep_utils.box_open(mask, n),
                         binary_opening(mask, box, n))
+
+    def test_any_non_zero_voxel_is_foreground(self):
+        # as for binary_*: the input need not be boolean, the result is
+        from scipy.ndimage import binary_dilation, generate_binary_structure
+
+        mask = next(self._masks())
+        weights = mask.astype(np.uint8) * 3
+        out = t1prep_utils.box_dilate(weights, 2)
+        self.assertEqual(out.dtype, np.bool_)
+        np.testing.assert_array_equal(
+            out, binary_dilation(weights, generate_binary_structure(3, 3), 2))
+        np.testing.assert_array_equal(t1prep_utils.box_dilate(mask, 0), mask)
+
+
+class TestBsplineGridSample(unittest.TestCase):
+    """``bspline_grid_sample`` must give what ``spline_resize.grid_sample`` gives.
+
+    A single float32 volume on the CPU goes to libCAT, which keeps positions
+    and sums in double precision; on a volume this small torch's float32
+    positions are exact enough for the two to agree closely.  Anything else
+    must be ``spline_resize``'s own result, bit for bit.
+    """
+
+    def _case(self):
+        import torch
+        import torch.nn.functional as F
+
+        rng = np.random.default_rng(5)
+        vol = rng.random((18, 22, 20)).astype(np.float32) * 100
+        vol[vol < 20] = 0.0                     # background for mask_value
+        c, s = np.cos(0.1), np.sin(0.1)
+        theta = torch.tensor([[[0.9 * c, -0.9 * s, 0.0, 0.03],
+                               [0.9 * s, 0.9 * c, 0.0, -0.02],
+                               [0.0, 0.0, 1.1, 0.01]]], dtype=torch.float32)
+        grid = F.affine_grid(theta, [1, 3, 15, 17, 16], align_corners=True)
+        return torch.from_numpy(vol)[None, None], grid
+
+    def test_matches_spline_resize(self):
+        import torch
+        from spline_resize import grid_sample
+
+        im, grid = self._case()
+        for mask_value in (None, 0.0):
+            with self.subTest(mask_value=mask_value):
+                want = grid_sample(im, grid, align_corners=True, prefilter=True,
+                                   mask_value=mask_value)
+                got = t1prep_utils.bspline_grid_sample(
+                    im, grid, align_corners=True, prefilter=True,
+                    mask_value=mask_value)
+                self.assertEqual(got.shape, want.shape)
+                self.assertEqual(got.dtype, torch.float32)
+                np.testing.assert_allclose(got.numpy(), want.numpy(), atol=1e-3)
+
+    def test_a_cpu_float32_volume_runs_in_libcat(self):
+        im, grid = self._case()
+        with mock.patch.object(t1prep_utils, "vol_bspline_sample",
+                               wraps=t1prep_utils.vol_bspline_sample) as spy:
+            t1prep_utils.bspline_grid_sample(im, grid, align_corners=True)
+        self.assertEqual(spy.call_count, 1)
+
+    def test_everything_else_stays_with_spline_resize(self):
+        from spline_resize import grid_sample
+
+        im, grid = self._case()
+        cases = {
+            "float64": (im.double(), grid.double(), True),
+            "align_corners=False": (im, grid, False),
+            "two channels": (im.repeat(1, 2, 1, 1, 1), grid, True),
+        }
+        with mock.patch.object(t1prep_utils, "vol_bspline_sample") as spy:
+            for name, (a, g, align) in cases.items():
+                with self.subTest(case=name):
+                    np.testing.assert_array_equal(
+                        t1prep_utils.bspline_grid_sample(a, g, align_corners=align).numpy(),
+                        grid_sample(a, g, align_corners=align).numpy())
+        spy.assert_not_called()
 
 
 class TestVolumeNativeSpace(unittest.TestCase):
