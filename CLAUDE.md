@@ -166,7 +166,7 @@ and keeps any old single-dash spelling only as a hidden alias.
   of `binary_dilation/erosion/closing/opening` with `generate_binary_structure(3, 3)`
   (libCAT `cat_surf.vol_box_morph`, cat-surf >= 1.0.32: ~25x, identical result).
   Region-constrained growth belongs in `cat_surf.vol_dilate_geodesic` (libCAT, 20x,
-  cat-surf >= 1.0.30, with a scipy fallback in `_partition._octagon_dilation`)
+  via `_partition._octagon_dilation`)
 - B-spline resampling: `utils.bspline_grid_sample` instead of `spline_resize.grid_sample`
   (libCAT `cat_surf.vol_bspline_sample` for a CPU float32 volume: 13-18x, more accurate)
 
