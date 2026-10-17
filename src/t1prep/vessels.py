@@ -89,7 +89,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy.ndimage import (
-    binary_erosion,
     gaussian_filter,
     generate_binary_structure,
     label as _connected_components,
@@ -97,7 +96,7 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
-from .utils import box_close, box_dilate
+from .utils import box_close, box_dilate, box_erode
 from ._atlas import (
     get_regions_mask,
     resample_to,
@@ -394,9 +393,7 @@ def _deep_wm(yp0, ym3, vx, erode_mm=2.0):
     safe by the cues, not by this mask.
     """
     iters = max(1, int(round(erode_mm / float(min(vx)))))
-    return binary_erosion(
-        _wm_tree(yp0, ym3, vx), generate_binary_structure(3, 3), iters
-    )
+    return box_erode(_wm_tree(yp0, ym3, vx), iters)
 
 
 def _csf_context(yp0, vx, radius_mm=2.5):

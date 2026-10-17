@@ -41,13 +41,14 @@ from __future__ import annotations
 import numpy as np
 from scipy.ndimage import (
     binary_dilation,
-    binary_erosion,
     correlate1d,
     distance_transform_edt,
     gaussian_filter,
     label as cc_label,
     zoom,
 )
+
+from .utils import box_dilate, box_erode, box_open
 
 
 # Conversion between the FWHM used by ``spm_smooth`` (in voxels when it is
@@ -690,7 +691,7 @@ def _estimate_ecr0(intensity: np.ndarray, p0: np.ndarray, vx_vol,
 
     p0r = np.round(p0s)
     wmr = p0r > 2.5
-    edge = binary_dilation(wmr, _BOX3) & ~binary_erosion(wmr, _BOX3)
+    edge = box_dilate(wmr, 1) & ~box_erode(wmr, 1)
     if np.count_nonzero(edge) < 50:
         return float("nan")
 
@@ -715,7 +716,7 @@ def _estimate_ecr0(intensity: np.ndarray, p0: np.ndarray, vx_vol,
     if recurse:
         base = np.minimum(2.0, p0r)
         candidates = [ecr]
-        for morphed in (binary_erosion(wmr, _BOX3), binary_dilation(wmr, _BOX3)):
+        for morphed in (box_erode(wmr, 1), box_dilate(wmr, 1)):
             val = _estimate_ecr0(intensity, base + morphed, vx, recurse=False)
             if np.isfinite(val):
                 candidates.append(val)
@@ -791,7 +792,7 @@ def estimate_qa(
     background = (
         (seg <= 0)
         | ~np.isfinite(org)
-        | binary_dilation(binary_erosion(org == 0, _BOX3), _BOX3)
+        | box_open(org == 0, 1)
     )
     org = np.nan_to_num(org, nan=0.0, posinf=0.0, neginf=0.0)
     org[background] = 0.0
@@ -816,7 +817,7 @@ def estimate_qa(
     # ---------------------------------------------------------------
     step2 = _reduce_factor(vx, 2.0, shape=seg.shape)
     seg_small = _reduce_meanm(seg, step2)
-    core = binary_erosion(seg_small > 0.9, _BOX3)
+    core = box_erode(seg_small > 0.9, 1)
     core = _largest_components(core, 0.5)
     core = binary_dilation(core, _BOX3)
     core_full = _match_shape(
@@ -831,7 +832,7 @@ def estimate_qa(
     #    Without this the noise estimate is dominated by the intensity
     #    inhomogeneity rather than by the noise.
     # ---------------------------------------------------------------
-    wm_seed = (seg > 2.95) | binary_erosion(seg > 2.25, _BOX3)
+    wm_seed = (seg > 2.95) | box_erode(seg > 2.25, 1)
     if np.count_nonzero(wm_seed) < 100:
         return {"qualitymeasures": _empty_result()}
 

@@ -37,6 +37,7 @@ import random
 import time
 import subprocess
 import sentry_sdk
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import NamedTuple, Optional
 import nibabel as nib
@@ -69,6 +70,7 @@ from .bids_derivatives import (
     write_sidecar,
 )
 from .utils import (
+    bspline_grid_sample,
     smart_round,
     remove_file,
     resample_and_save_nifti,
@@ -206,6 +208,29 @@ class CustomBrainSegmentation(BrainSegmentation):
         return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
 
 
+class _SplineResizeViaLibcat:
+    """``spline_resize`` as deepmriprep sees it, with ``grid_sample`` in libCAT."""
+
+    grid_sample = staticmethod(bspline_grid_sample)
+
+    def __init__(self, module):
+        self._module = module
+
+    def __getattr__(self, name):
+        return getattr(self._module, name)
+
+
+@contextmanager
+def _spline_resize_via_libcat():
+    """Route ``deepmriprep.preprocess``'s ``sr.grid_sample`` to libCAT while active."""
+    original = dmp_preprocess.sr
+    dmp_preprocess.sr = _SplineResizeViaLibcat(original)
+    try:
+        yield
+    finally:
+        dmp_preprocess.sr = original
+
+
 class CustomPreprocess(Preprocess):
     """
     Custom class to override Preprocess
@@ -250,6 +275,20 @@ class CustomPreprocess(Preprocess):
         # The branch was dead code anyway until `_device` started routing
         # deepmriprep to MPS, at which point it would have *demoted* the
         # skull-strip from MPS to CPU.
+
+    def run_affine_register(self, brain_nifti, mask_nifti):
+        """Affine registration, with its B-spline resampling done in libCAT.
+
+        Upstream resamples the brain onto the 0.5 mm working grid with
+        ``spline_resize.grid_sample``, whose 27-tap torch gather takes ~6 s on
+        the CPU.  While it runs, ``deepmriprep.preprocess`` sees a
+        ``spline_resize`` whose ``grid_sample`` is
+        :func:`t1prep.utils.bspline_grid_sample` -- the same samples in ~0.4 s,
+        and more accurate -- so upstream's code is otherwise untouched.  On an
+        accelerator the call still goes to ``spline_resize``.
+        """
+        with _spline_resize_via_libcat():
+            return super().run_affine_register(brain_nifti, mask_nifti)
 
     def run_segment_brain(self, brain_large, mask, affine, mask_large):
         """Brain segmentation without deepmriprep's unused native-space ``p0``.

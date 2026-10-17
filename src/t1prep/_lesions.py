@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.ndimage import (
-    binary_erosion,
     find_objects,
     gaussian_filter,
     generate_binary_structure,
@@ -15,7 +14,7 @@ from scipy.ndimage import label as label_image
 
 from ._atlas import get_atlas, resolve_template_file
 from ._segment_utils import normalize_to_sum1
-from .utils import box_close, box_dilate
+from .utils import box_close, box_dilate, box_erode
 
 #: Calibration of the WMH probability (default path, without AMAP):
 #: ``logit p = a + b * hp + c * log(prior + WMH_PRIOR_EPS)``.  ``hp`` is the
@@ -223,7 +222,7 @@ def lesion_signal(
     # Fill WM holes to close potential WMH lesions
     wm = box_close(wm, 3)
     # Get a conservative WM mask
-    wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
+    wm = box_erode(wm, 2)
     gm = (p0_value >= 1.5) & (p0_value < 2.5)
     csf = (p0_value < 1.5) & (p0_value > 0)
 
@@ -284,7 +283,7 @@ def lesion_signal(
         wmh_mask = wm & (p0_large_diff_value > 0)
         wmh_value[wmh_mask] = p0_large_diff_value[wmh_mask]
 
-    deep_wm = binary_erosion(wm, generate_binary_structure(3, 3), 2)
+    deep_wm = box_erode(wm, 2)
     gm_border = box_dilate(gm, 2)
     candidates = deep_wm & ~gm_border
 

@@ -14,7 +14,8 @@ from deepbet.utils import reoriented_nifti
 from deepmriprep.utils import nifti_to_tensor
 from torchreg.utils import INTERP_KWARGS
 from spline_resize import grid_sample as spline_grid_sample
-from scipy.ndimage import label, maximum_filter, minimum_filter
+from scipy.ndimage import label
+from cat_surf import vol_box_morph, vol_bspline_sample
 from pathlib import Path
 from typing import Optional
 try:
@@ -252,45 +253,42 @@ codes = [
 
 
 #: Why these exist: a 26-connected dilation by ``n`` steps is a dilation with
-#: a (2n+1)^3 box, and a box filter is separable, so ``maximum_filter`` does it
-#: in three 1-D passes instead of ``n`` full 3-D passes.  Measured on T1Prep's
-#: 0.5 mm working grid (47M voxels): dilation 2.4-2.5x faster, closing
-#: 1.5-1.8x, opening 1.4x, every result bit-identical to the ``binary_*``
-#: call it replaces (borders included).  Erosion is deliberately *not* here:
-#: ``binary_erosion`` shrinks a sparse mask and is twice as fast as the
-#: separable form, so it stays as it is.
+#: a (2n+1)^3 box.  libCAT (``morph_box``, via ``cat_surf.vol_box_morph``) does
+#: it with one sliding-window count per axis on up to four threads, so the cost
+#: does not depend on ``n``: on T1Prep's 0.5 mm working grid (47M voxels) a
+#: dilation takes ~18 ms where scipy's separable ``maximum_filter`` took
+#: ~480 ms -- ~14 s per subject over the ~30 calls of a run -- and the erosion
+#: beats ``binary_erosion`` by 13-24x.  Every result is bit-identical to the
+#: ``binary_*`` call it replaces, borders included.  Any non-zero voxel counts
+#: as foreground, and the result is boolean.
 
 
 def box_dilate(mask, iterations: int = 1):
     """26-connected dilation, as ``binary_dilation(mask, box, iterations)``.
 
     Args:
-        mask: Boolean array.
+        mask: 3-D array; non-zero voxels are foreground.
         iterations: Number of dilation steps.
 
     Returns:
         The dilated mask, bit-identical to the ``scipy.ndimage`` call.
     """
-    return maximum_filter(mask, size=2 * iterations + 1, mode="constant", cval=0)
+    return vol_box_morph(mask, "dilate", iterations)
 
 
 def box_erode(mask, iterations: int = 1):
-    """26-connected erosion, as ``binary_erosion(mask, box, iterations)``.
-
-    Only for use inside :func:`box_close` and :func:`box_open`; on its own
-    ``scipy.ndimage.binary_erosion`` is faster (see the note above).
-    """
-    return minimum_filter(mask, size=2 * iterations + 1, mode="constant", cval=0)
+    """26-connected erosion, as ``binary_erosion(mask, box, iterations)``."""
+    return vol_box_morph(mask, "erode", iterations)
 
 
 def box_close(mask, iterations: int = 1):
     """26-connected closing, as ``binary_closing(mask, box, iterations)``."""
-    return box_erode(box_dilate(mask, iterations), iterations)
+    return vol_box_morph(mask, "close", iterations)
 
 
 def box_open(mask, iterations: int = 1):
     """26-connected opening, as ``binary_opening(mask, box, iterations)``."""
-    return box_dilate(box_erode(mask, iterations), iterations)
+    return vol_box_morph(mask, "open", iterations)
 
 
 def smart_round(x):
@@ -647,6 +645,46 @@ def _content_bounds(mask, border):
     return tuple(bounds)
 
 
+def bspline_grid_sample(im, grid, align_corners=False, prefilter=True, mask_value=None):
+    """``spline_resize.grid_sample``, computed in libCAT for a volume on the CPU.
+
+    Same arguments and result as the ``spline_resize`` call: ``im`` is
+    (N, C, D, H, W), ``grid`` (N, Do, Ho, Wo, 3) in the convention of
+    ``torch.nn.functional.grid_sample``, and the result (N, C, Do, Ho, Wo).  A
+    single float32 volume on the CPU with ``align_corners=True`` -- every call
+    in T1Prep -- goes to ``cat_surf.vol_bspline_sample``: 13-18x faster than
+    the 27-tap torch gather on the working grid, and more accurate, because it
+    keeps positions and sums in double precision where torch rounds them to
+    float32 (an error of up to 2e-5 of the range at 0.5 mm).  Anything else --
+    an accelerator, a batch, several channels, another dtype, or
+    ``align_corners=False``, which spline_resize computes against the wrong
+    axis sizes -- stays with ``spline_resize``.
+    """
+    import torch
+
+    if (
+        align_corners
+        and im.ndim == 5
+        and grid.ndim == 5
+        and im.shape[0] == im.shape[1] == grid.shape[0] == 1
+        and im.device.type == "cpu"
+        and grid.device.type == "cpu"
+        and im.dtype == torch.float32
+        and grid.dtype == torch.float32
+    ):
+        out = vol_bspline_sample(
+            im[0, 0].detach().numpy(),
+            grid[0].detach().numpy(),
+            align_corners=True,
+            prefilter=prefilter,
+            mask_value=mask_value,
+        )
+        return torch.from_numpy(out)[None, None]
+    return spline_grid_sample(
+        im, grid, align_corners=align_corners, prefilter=prefilter, mask_value=mask_value
+    )
+
+
 def resample_and_save_nifti(
     nifti_obj, grid, affine, header, out_name, align=False, crop=False, round=False,
     clip=None, bspline=False, clip_overshoot=False,
@@ -667,18 +705,16 @@ def resample_and_save_nifti(
         clip (tuple, optional): A tuple with min and max values to clip the data.
                                  Defaults to None.
         bspline (bool, optional): Sample with a quadratic B-spline
-                                 (``spline_resize``) instead of the default
-                                 trilinear kernel.  It reconstructs edges far
-                                 more faithfully -- against a quintic reference
-                                 the median displacement of the GM/WM boundary
-                                 drops from ~61 um to ~17 um for a reslice at
-                                 matched 0.5 mm resolution -- at the price of a
-                                 27-tap gather, so it costs roughly an order of
-                                 magnitude more time than trilinear.  Combined
-                                 with ``crop`` the gather is restricted to the
-                                 box that survives cropping, which cuts most of
-                                 that cost back while leaving the saved file
-                                 bit-identical.  Defaults to False.
+                                 (:func:`bspline_grid_sample`) instead of the
+                                 default trilinear kernel.  It reconstructs
+                                 edges far more faithfully -- against a quintic
+                                 reference the median displacement of the GM/WM
+                                 boundary drops from ~61 um to ~17 um for a
+                                 reslice at matched 0.5 mm resolution -- at the
+                                 price of 27 taps per sample.  Combined with
+                                 ``crop`` the taps are only taken inside the
+                                 box that survives cropping, leaving the saved
+                                 file bit-identical.  Defaults to False.
         clip_overshoot (bool, optional): Clamp the resampled values to the range
                                  of the *input* volume.  Spline reconstruction
                                  overshoots at sharp edges, which on a label-like
@@ -720,7 +756,7 @@ def resample_and_save_nifti(
         return F.grid_sample(source, sample_grid, align_corners=align_corners)[0, 0]
 
     def sample_spline(sample_grid):
-        return spline_grid_sample(
+        return bspline_grid_sample(
             source, sample_grid, align_corners=align_corners, prefilter=True
         )[0, 0]
 
@@ -730,13 +766,13 @@ def resample_and_save_nifti(
     elif not crop:
         tensor = sample_spline(grid)
     else:
-        # Cropping discards everything outside the content box, so the 27-tap
-        # gather only has to run inside it -- on a hemisphere label map that is
-        # ~11 M of 101 M target voxels.  A trilinear pass, two orders of
-        # magnitude cheaper, locates the box; the spline then runs on that
-        # sub-grid and its values are pasted over the trilinear ones.  Only the
-        # margin that the crop throws away is left trilinear, so the saved file
-        # is identical to sampling the whole volume with the spline.
+        # Cropping discards everything outside the content box, so the 27 taps
+        # only have to be taken inside it -- on a hemisphere label map that is
+        # ~11 M of 101 M target voxels.  A trilinear pass locates the box; the
+        # spline then runs on that sub-grid and its values are pasted over the
+        # trilinear ones.  Only the margin that the crop throws away is left
+        # trilinear, so the saved file is identical to sampling the whole
+        # volume with the spline.
         tensor = sample_linear(grid)
         box = _content_bounds(
             limit_values(tensor) > _CROP_THRESHOLD,
