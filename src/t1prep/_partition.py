@@ -8,11 +8,7 @@ the result.
 import cat_surf
 import numpy as np
 import pandas as pd
-from scipy.ndimage import (
-    binary_dilation,
-    binary_opening,
-    generate_binary_structure,
-)
+from scipy.ndimage import binary_opening, generate_binary_structure
 
 from ._atlas import resolve_template_file
 from .utils import box_close, box_dilate, box_open, find_largest_cluster
@@ -44,27 +40,12 @@ def _octagon_dilation(mask, iterations, mask_region=None):
 
     Notes
     -----
-    Runs in libCAT when the installed cat-surf provides
-    ``vol_dilate_geodesic`` (1.0.30 and newer), otherwise in the scipy loop
-    kept below; both give the same result.
+    Runs in libCAT (``cat_surf.vol_dilate_geodesic``), which walks the front of
+    the growing region instead of the whole volume once per step: 20x faster
+    than the equivalent loop of masked scipy dilations on the 0.5 mm working
+    grid (6.9 s -> 0.35 s for the ventricle fill), with the same result.
     """
-    if hasattr(cat_surf, "vol_dilate_geodesic"):
-        # libCAT walks the front of the growing region instead of the whole
-        # volume once per step: 20x faster on the 0.5 mm working grid (6.9 s
-        # -> 0.35 s for the ventricle fill), bit-identical to the loop below.
-        return cat_surf.vol_dilate_geodesic(mask, mask_region, iterations)
-
-    struct26 = generate_binary_structure(3, 3)
-    struct6 = generate_binary_structure(3, 1)
-    out = mask
-    for i in range(iterations):
-        prev = out
-        out = binary_dilation(
-            out, struct26 if i % 2 else struct6, 1, mask=mask_region
-        )
-        if mask_region is not None and out.sum() == prev.sum():
-            break  # front has converged, further steps cannot change it
-    return out
+    return cat_surf.vol_dilate_geodesic(mask, mask_region, iterations)
 
 
 #: Neuromorphometrics structures whose grey matter no fill may enter, however

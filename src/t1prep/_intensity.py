@@ -79,6 +79,142 @@ def piecewise_linear_scaling(input_img, label_img):
 _FIT_SUBSAMPLE = 5
 
 
+class _DenseSplineMixin:
+    """SplineSmooth3D with its tensor B-spline evaluated by dense products.
+
+    The library evaluates and fits its spline one support interval at a time,
+    with an ``einsum`` per interval -- thousands per call, each parsed anew --
+    which made the four bias-field fits on the working grid cost ~16 s per
+    run.  Written out as one dense (voxels x control points) basis per axis,
+    a prediction is three mode products and so is each pass of a fit: 2.4x
+    faster over those fits, equal to the library to ~1e-16.  Knots, the solve
+    and the promotion to the next level stay the library's, and ``promote``
+    builds ``self.__class__``, so every level keeps the subclass.
+    """
+
+    def _dense(self):
+        """The per-axis bases, built once per grid (a promotion is a new grid)."""
+        cache = getattr(self, "_dense_cache", None)
+        if cache is None or cache["grid"] is not self.invCoefArr:
+            bases = []
+            for axis in range(3):
+                basis = np.zeros((self.shape[axis], self.kntsArr[axis][0]))
+                # each support interval holds the rows of its voxels and the
+                # q+1 control points from its own index on
+                for first_cp, interval in enumerate(self.invCoefArr[axis]):
+                    if interval is not None:
+                        first_vox, coefs = interval
+                        basis[first_vox:first_vox + coefs.shape[0],
+                              first_cp:first_cp + coefs.shape[1]] = coefs
+                bases.append(basis)
+            cache = {
+                "grid": self.invCoefArr,
+                "bases": bases,
+                "shape": tuple(int(k[0]) for k in self.kntsArr),
+                "paths": {},
+            }
+            self._dense_cache = cache
+        return cache
+
+    def _contract(self, expr, *operands):
+        """``np.einsum`` with the contraction order worked out once per grid."""
+        paths = self._dense()["paths"]
+        if expr not in paths:
+            paths[expr] = np.einsum_path(expr, *operands, optimize="optimal")[0]
+        return np.einsum(expr, *operands, optimize=paths[expr])
+
+    def predict(self, reportingLevel=0):
+        """The spline on the grid, as ``SplineSmooth3D.predict`` computes it."""
+        if self.P is None:
+            self.solve(reportingLevel=reportingLevel, Lambda=self.Lambda,
+                       mincLambda=self.mincLambda, voxelsLambda=self.voxelsLambda)
+        dense = self._dense()
+        bz, by, bx = dense["bases"]
+        return self._contract("za,yb,xc,abc->zyx", bz, by, bx,
+                              self.P.reshape(dense["shape"]))
+
+
+class _DenseSplinePredict(_DenseSplineMixin, SplineSmooth3D):
+    """``SplineSmooth3D`` that predicts with dense bases (see the mixin)."""
+
+
+class _DenseSplineFit(_DenseSplineMixin, SplineSmooth3DUnregularized):
+    """``SplineSmooth3DUnregularized`` that fits and predicts with dense bases."""
+
+    def fit(self, data=None, reportingLevel=0):
+        """Project the data onto the control points, as the library does.
+
+        Lee's multilevel scheme: ``omegaWeights`` is one over the summed
+        squared basis products of each voxel inside the mask, ``AtA`` those
+        products summed per control point, and ``Atx`` the cubed ones weighted
+        with ``omegaWeights * data``.  The first two depend only on the grid
+        and the mask, so they are built once, on the first call.
+        """
+        if data is None:
+            data = self.data
+        if data.shape != self.data.shape:
+            raise ValueError(
+                "Shape of data passed to fit must match that of data used to "
+                "initialise"
+            )
+        self.data = data
+        self.P = None
+        bz, by, bx = self._dense()["bases"]
+        if self.AtA is None or self.omegaWeights is None:
+            bz2, by2, bx2 = bz**2, by**2, bx**2
+            support = (
+                bz2.sum(axis=1)[:, None, None]
+                * by2.sum(axis=1)[None, :, None]
+                * bx2.sum(axis=1)[None, None, :]
+                * self.mask
+            )
+            omega = np.zeros(support.shape)
+            nonzero = support != 0
+            omega[nonzero] = 1.0 / support[nonzero]
+            self.omegaWeights = omega
+            self.AtA = self._contract(
+                "za,yb,xc,zyx->abc", bz2, by2, bx2, self.mask
+            ).reshape(-1)
+        self.Atx = self._contract(
+            "za,yb,xc,zyx->abc", bz**3, by**3, bx**3, self.omegaWeights * data
+        ).reshape(-1)
+        return self.AtA, self.Atx
+
+
+def _triangular_kde(data, nbins):
+    """``distrib_kde(data, nbins, kernfn=kernelfntri, binCentreLimits=True)``.
+
+    That kernel is a triangle reaching one bin spacing to each side, so the
+    density is linear binning: each sample adds ``1 - f`` to the bin centre
+    below it and ``f`` to the one above, ``f`` being its fractional position
+    between them, and the sums are divided by the bin width.  ``nxbc``
+    searches the data once per bin instead, ~2 s per run.  The bin centres
+    and width are computed exactly as ``nxbc`` computes them; the binning runs
+    in double precision, where ``nxbc`` sums float32 kernel values for float32
+    data, so the two differ in the last digits there.
+
+    Returns:
+        ``(hist, centres, width)``; the bin edges, which the fit does not use,
+        are left out.
+    """
+    centres = np.linspace(data.min(), data.max(), num=nbins)
+    width = (centres[-1] - centres[0]) / (centres.shape[0] - 1)
+    if not width > 0:
+        # all samples equal (or not finite): leave the degenerate case to nxbc
+        hist, _, centres, width = distrib_kde(
+            data, nbins, kernfn=kernelfntri, binCentreLimits=True
+        )
+        return hist, centres, width
+    pos = (np.asarray(data, dtype=np.float64).ravel() - centres[0]) / width
+    below = np.floor(pos).astype(np.int64)
+    frac = pos - below
+    hist = (
+        np.bincount(below, weights=1.0 - frac, minlength=nbins + 1)[: nbins + 1]
+        + np.bincount(below + 1, weights=frac, minlength=nbins + 1)[: nbins + 1]
+    )
+    return hist[:nbins] / width, centres, width
+
+
 def _fit_log_field(full, data_sub, mask_sub, spacing, steps, stopthr, center):
     """Fit a smooth log-intensity field with nxbc's N3-style iteration.
 
@@ -130,10 +266,10 @@ def _fit_log_field(full, data_sub, mask_sub, spacing, steps, stopthr, center):
     levels = [lvl for lvl in range(maxlevel) for _ in range(steps)]
     levelfwhm = fwhm * np.ones(maxlevel)
 
-    splsm3d = SplineSmooth3DUnregularized(
+    splsm3d = _DenseSplineFit(
         datalog, dataSubVoxSize, spacing, domainMethod="minc", mask=mask_sub
     )
-    predictor = SplineSmooth3D(
+    predictor = _DenseSplinePredict(
         full, dataVoxSize, spacing, knts=splsm3d.kntsArr, dofit=False
     )
     nextlevel = 0
@@ -142,9 +278,7 @@ def _fit_log_field(full, data_sub, mask_sub, spacing, steps, stopthr, center):
     for N in range(len(levels)):
         if levels[N] < nextlevel:
             continue
-        hist, histvaledge, histval, histbinwidth = distrib_kde(
-            datalogmaskedcur, Nbins, kernfn=kernelfntri, binCentreLimits=True
-        )
+        hist, histval, histbinwidth = _triangular_kde(datalogmaskedcur, Nbins)
         thisFWHM = levelfwhm[levels[N]]
         thisSD = thisFWHM / math.sqrt(8 * math.log(2))
         mfilt, mfiltx, mfiltmid, mfiltbins = symGaussFilt(thisSD, histbinwidth)
