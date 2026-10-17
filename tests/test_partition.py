@@ -372,19 +372,26 @@ def test_euler_number_of_a_double_torus():
     assert compute_euler_number(np.where(double, 3.0, 1.0)) == -2
 
 
-def test_geodesic_dilation_matches_the_scipy_fallback(monkeypatch):
-    """The libCAT growth and the scipy loop it replaces must agree exactly.
+def _scipy_octagon(mask, iterations, region):
+    """The definition: masked scipy dilations, alternating 6 and 26 neighbours."""
+    from scipy.ndimage import binary_dilation, generate_binary_structure
 
-    ``_octagon_dilation`` hands the work to ``cat_surf.vol_dilate_geodesic``
-    when the installed cat-surf has it (1.0.30 and newer) and falls back to a
-    loop of masked dilations otherwise, so both paths have to give the same
-    mask -- including the alternating 6/26 neighbourhood and the early exit
-    once the front stops moving.
+    struct26 = generate_binary_structure(3, 3)
+    struct6 = generate_binary_structure(3, 1)
+    out = mask
+    for i in range(iterations):
+        out = binary_dilation(out, struct26 if i % 2 else struct6, 1, mask=region)
+    return out
+
+
+def test_geodesic_dilation_matches_masked_scipy_dilations():
+    """The libCAT growth must equal the scipy loop it replaced, exactly.
+
+    ``_octagon_dilation`` hands the work to ``cat_surf.vol_dilate_geodesic``;
+    the reference is the loop of masked dilations it used to run, alternating
+    the 6- and the 26-neighbourhood, constrained and unconstrained.
     """
     from t1prep import _partition
-
-    if not hasattr(_partition.cat_surf, "vol_dilate_geodesic"):
-        pytest.skip("installed cat-surf has no vol_dilate_geodesic")
 
     rng = np.random.default_rng(5)
     seed = rng.random((22, 24, 20)) < 0.01
@@ -392,14 +399,7 @@ def test_geodesic_dilation_matches_the_scipy_fallback(monkeypatch):
     region = rng.random((22, 24, 20)) < 0.85
 
     for iterations in (1, 2, 3, 7, 10):
-        fast = _partition._octagon_dilation(seed, iterations, region)
-        with monkeypatch.context() as patched:
-            patched.delattr(_partition.cat_surf, "vol_dilate_geodesic")
-            slow = _partition._octagon_dilation(seed, iterations, region)
-        np.testing.assert_array_equal(fast, slow)
-        # unconstrained growth as well
-        fast = _partition._octagon_dilation(seed, iterations, None)
-        with monkeypatch.context() as patched:
-            patched.delattr(_partition.cat_surf, "vol_dilate_geodesic")
-            slow = _partition._octagon_dilation(seed, iterations, None)
-        np.testing.assert_array_equal(fast, slow)
+        for constraint in (region, None):
+            np.testing.assert_array_equal(
+                _partition._octagon_dilation(seed, iterations, constraint),
+                _scipy_octagon(seed, iterations, constraint))
