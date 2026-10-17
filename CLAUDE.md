@@ -162,11 +162,13 @@ and keeps any old single-dash spelling only as a hidden alias.
 - Docstrings for all public functions and classes
 - Format with `black`, lint with `flake8`/`ruff`, check shell scripts with `shellcheck`
 - For compute-heavy voxel-wise operations consider PyTorch or Numba; optimize only after measuring
-- Morphology on the working grid: `utils.box_dilate/box_close/box_open` instead of
-  `binary_dilation/closing/opening` with `generate_binary_structure(3, 3)` (separable,
-  1.4-2.5x, identical result).  `binary_erosion` stays as it is -- it is faster.
+- Morphology on the working grid: `utils.box_dilate/box_erode/box_close/box_open` instead
+  of `binary_dilation/erosion/closing/opening` with `generate_binary_structure(3, 3)`
+  (libCAT `cat_surf.vol_box_morph`, cat-surf >= 1.0.32: ~25x, identical result).
   Region-constrained growth belongs in `cat_surf.vol_dilate_geodesic` (libCAT, 20x,
   cat-surf >= 1.0.30, with a scipy fallback in `_partition._octagon_dilation`)
+- B-spline resampling: `utils.bspline_grid_sample` instead of `spline_resize.grid_sample`
+  (libCAT `cat_surf.vol_bspline_sample` for a CPU float32 volume: 13-18x, more accurate)
 
 ## Commit Conventions
 
