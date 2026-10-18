@@ -144,8 +144,9 @@ def _redirect_deepmriprep_paths() -> None:
     No-op when :data:`MODEL_DIR` is already deepmriprep's default location.
     Otherwise patches the module-level ``DATA_PATH`` and ``BET_MODEL_PATHS``
     that ``deepmriprep`` reads at construction time (e.g. inside
-    ``Preprocess.__init__``, ``BrainSegmentation.__init__``), after mirroring
-    the non-model data entries so those lookups still resolve.
+    ``Preprocess.__init__``, ``BrainSegmentation.__init__``,
+    ``WarpRegistration.__init__``), after mirroring the non-model data entries
+    so those lookups still resolve.
     """
     if MODEL_DIR == _DEEPMRIPREP_MODELS:
         return
@@ -153,12 +154,14 @@ def _redirect_deepmriprep_paths() -> None:
     # it MODEL_DIR's parent as the synthetic DATA_PATH.
     _mirror_deepmriprep_data(MODEL_DIR.parent)
     fake_data = str(MODEL_DIR.parent)
-    import deepmriprep.utils as _u
+    # Every ``from .utils import DATA_PATH`` copies the binding, so each
+    # submodule needs its own rebind -- missing ``register`` left the warp
+    # model on the default path.  ``preprocess`` imports all of them.
     import deepmriprep.preprocess as _pp
-    import deepmriprep.segment as _seg
-    _u.DATA_PATH = fake_data
-    _pp.DATA_PATH = fake_data
-    _seg.DATA_PATH = fake_data
+
+    for name, module in list(sys.modules.items()):
+        if name.split(".")[0] == "deepmriprep" and hasattr(module, "DATA_PATH"):
+            module.DATA_PATH = fake_data
     _pp.BET_MODEL_PATHS = {
         "model_path": str(MODEL_DIR / "brain_extraction_model.pt"),
         "bbox_model_path": str(MODEL_DIR / "brain_extraction_bbox_model.pt"),
