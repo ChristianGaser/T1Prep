@@ -23,9 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         # 3.9 is supported (pinned to PyTorch 2.8 via the conditional torch
-        # requirement); 3.10-3.12 use PyTorch 2.9+.  Keep this list in sync with
-        # `requires-python` in pyproject.toml.
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        # requirement); 3.10-3.14 use PyTorch 2.9+.  Keep this list in sync with
+        # the classifiers in pyproject.toml.  3.14 needs a cat-surf release
+        # with cp314 wheels (> 1.0.32) on PyPI.
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout repository
