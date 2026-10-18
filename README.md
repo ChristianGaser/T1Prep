@@ -1,4 +1,4 @@
-[![Python 3.9 - 3.12](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.9 - 3.14](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11|%203.12|%203.13|%203.14-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
 <!--
@@ -39,7 +39,7 @@ It is designed for both single-subject and batch processing, with optional paral
 CAT12 folder structures and the BIDS derivatives standard.
 
 ## Requirements
- [Python 3.9-3.12](https://www.python.org/downloads/) is required (3.10+ recommended), and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+ [Python 3.9-3.14](https://www.python.org/downloads/) is required (3.10+ recommended), and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
 
 > **Why prefer 3.10+?** Python 3.9 works, but PyTorch publishes no wheels for it after 2.8, so a 3.9 install is pinned to PyTorch 2.8. The GPU (MPS) kernels T1Prep relies on — `max_pool3d_with_indices`, `avg_pool3d` and `grid_sampler_3d` — only arrived in PyTorch 2.9; on 2.8 they silently fall back to the CPU. On Apple Silicon that is worth a measurable amount: one subject takes **3:02 min on Python 3.9 / PyTorch 2.8 versus 2:39 min on Python 3.12 / PyTorch 2.13**. On Linux/CUDA/CPU the two stacks perform the same, so 3.9 is a fine choice there.
 

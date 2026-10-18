@@ -1,4 +1,4 @@
-[![Python 3.9 - 3.12](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11|%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.9 - 3.14](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11|%203.12|%203.13|%203.14-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?logo=apache&logoColor=white)](https://github.com/ChristianGaser/T1Prep/blob/main/LICENSE)
 [![Release](https://img.shields.io/github/v/release/ChristianGaser/T1Prep?display_name=tag&include_prereleases)](https://github.com/ChristianGaser/T1Prep/releases)
 
@@ -34,7 +34,7 @@ pip install T1Prep
 
 > **Multiple Python versions?** Install with the exact interpreter you will run
 > T1Prep with, e.g. `python3.12 -m pip install T1Prep` (requires Python
-> 3.9–3.12; on macOS prefer 3.10+, since a 3.9 install is pinned to PyTorch 2.8
+> 3.9–3.14; on macOS prefer 3.10+, since a 3.9 install is pinned to PyTorch 2.8
 > and runs slower). If the wrong interpreter is auto-detected, point T1Prep at
 > the right one with `T1Prep --python /path/to/python …` or
 > `export T1PREP_PYTHON=/path/to/python`. `pipx install T1Prep` or a dedicated

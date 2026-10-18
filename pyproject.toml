@@ -10,7 +10,9 @@ authors = [
     { name = "Christian Gaser", email = "christian.gaser@uni-jena.de" },
 ]
 license = {file = "LICENSE"}
-requires-python = ">=3.9,<3.13"
+# No upper bound: a cap makes pip fall back to an old, uncapped T1Prep release
+# on a newer Python.  Tested through 3.14; the launcher warns beyond that.
+requires-python = ">=3.9"
 readme = {file = "README_pypi.md", content-type = "text/markdown"}
 
 classifiers = [
@@ -22,6 +24,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
     "License :: OSI Approved :: Apache Software License",

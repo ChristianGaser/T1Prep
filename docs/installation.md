@@ -15,7 +15,7 @@ Once it is installed, see [usage.md](usage.md) for running it and
 
 ## Requirements
 
- [Python 3.9-3.12](https://www.python.org/downloads/) is required (3.10+ recommended), and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+ [Python 3.9-3.14](https://www.python.org/downloads/) is required (3.10+ recommended), and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
 
 > **Why prefer 3.10+?** Python 3.9 works, but PyTorch publishes no wheels for it after 2.8, so a 3.9 install is pinned to PyTorch 2.8. The GPU (MPS) kernels T1Prep relies on — `max_pool3d_with_indices`, `avg_pool3d` and `grid_sampler_3d` — only arrived in PyTorch 2.9; on 2.8 they silently fall back to the CPU. On Apple Silicon that is worth a measurable amount: one subject takes **3:02 min on Python 3.9 / PyTorch 2.8 versus 2:39 min on Python 3.12 / PyTorch 2.13**. On Linux/CUDA/CPU the two stacks perform the same, so 3.9 is a fine choice there.
 
@@ -38,7 +38,7 @@ pipx install T1Prep
 
 > **Multiple Python versions?** Install with the *exact* interpreter you intend
 > to run T1Prep with, e.g. `python3.12 -m pip install T1Prep` (T1Prep requires
-> Python 3.9–3.12; a `pip` bound to a Python older than 3.9 will refuse to
+> Python 3.9–3.14; a `pip` bound to a Python older than 3.9 will refuse to
 > install). On macOS, prefer 3.10+ — a 3.9 install is pinned to PyTorch 2.8 and
 > runs slower (see [Requirements](#requirements)).
 > T1Prep first tries the interpreter it was installed into and the newest
@@ -123,7 +123,7 @@ T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" T1PREP_PYTHON=python3.12 
 |---------------------|-------------|
 | `T1PREP_VERSION` | Release tag (e.g., `v1.0.0`) or `latest` |
 | `T1PREP_INSTALL_DIR` | Absolute path for installation |
-| `T1PREP_PYTHON` | Python interpreter to install into (e.g., `python3.12` or an absolute path); must be Python 3.9–3.12 |
+| `T1PREP_PYTHON` | Python interpreter to install into (e.g., `python3.12` or an absolute path); must be Python 3.9–3.14 |
 
 ## Windows Installation via WSL (Recommended)
 
