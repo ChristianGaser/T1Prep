@@ -109,6 +109,7 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 | The other GUI tools | `docs/tools.md` |
 | Installation process | `docs/installation.md`, `README.md`, `README_pypi.md`, `scripts/install.sh` (bash bootstrapper is secondary to `pip install T1Prep`) |
 | Docker configuration | `docs/installation.md`, `Dockerfile` |
+| Supported Python range | `pyproject.toml` classifiers, `.github/workflows/tests.yml` matrix, `scripts/T1Prep_utils.sh`, `scripts/install.sh`, README badges, `docs/installation.md`, `Agents.md`; new Pythons also need cat-surf wheels (CAT-Surface `cat_surface_cython/pyproject.toml`) |
 | Version number | `src/t1prep/__init__.py` is the single source of truth — `pyproject.toml` derives via `setuptools.dynamic`, `scripts/T1Prep_utils.sh` awks it, `Makefile` bumps it via `make release`. Also update README badges + git tag. |
 
 ## Command-Line Conventions
@@ -158,7 +159,7 @@ and keeps any old single-dash spelling only as a hidden alias.
 
 ## Coding Style
 
-- Python 3.9–3.12, PEP 8, 4-space indentation
+- Python 3.9–3.14, PEP 8, 4-space indentation
 - Docstrings for all public functions and classes
 - Format with `black`, lint with `flake8`/`ruff`, check shell scripts with `shellcheck`
 - For compute-heavy voxel-wise operations consider PyTorch or Numba; optimize only after measuring
