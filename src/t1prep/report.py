@@ -7,6 +7,8 @@ CAT12 XML-report layout (``filedata``, ``software``, ``subjectmeasures``,
 quality measures are progressively filled in.
 """
 
+import functools
+import hashlib
 import json
 import platform
 import re
@@ -14,6 +16,72 @@ from datetime import datetime
 from pathlib import Path
 
 from .utils import get_filenames
+
+#: Distributions whose versions determine the numerical result of a run.
+#: ``pyproject.toml`` only sets lower bounds, so two installs can differ here.
+PROVENANCE_PACKAGES = (
+    "numpy",
+    "scipy",
+    "nibabel",
+    "torch",
+    "deepmriprep",
+    "deepbet",
+    "torchreg",
+    "spline-resize",
+    "SplineSmooth3D",
+    "nxbc",
+    "cat-surf",
+)
+
+
+def _package_versions() -> dict:
+    """Installed versions of :data:`PROVENANCE_PACKAGES` (``None`` if missing)."""
+    import importlib.metadata as md
+
+    versions = {}
+    for name in PROVENANCE_PACKAGES:
+        try:
+            versions[name] = md.version(name)
+        except md.PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def _sha256(path: Path, block: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(block), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@functools.lru_cache(maxsize=1)
+def model_provenance() -> dict:
+    """Where the model weights were loaded from and what they were.
+
+    The weights are only checked for presence by file name, and
+    ``_resolve_model_dir`` prefers deepmriprep's own model directory whenever
+    it holds a complete set, so the weights in use can change with a
+    deepmriprep update.  The SHA-256 of every file and a fingerprint over all
+    of them make that visible in each subject's report.  Hashed once per
+    process (about 210 MB).
+    """
+    try:
+        from ._models import MODEL_DIR, MODEL_FILES
+    except Exception as exc:  # report must never fail because of provenance
+        return {"error": f"model directory unavailable: {exc}"}
+
+    files = {}
+    for name in sorted(MODEL_FILES):
+        path = Path(MODEL_DIR) / name
+        files[name] = _sha256(path) if path.is_file() else None
+    joined = "\n".join(f"{n}:{h}" for n, h in files.items())
+    return {
+        "dir": str(MODEL_DIR),
+        "fingerprint": hashlib.sha256(joined.encode()).hexdigest(),
+        "complete": all(files.values()),
+        "sha256": files,
+    }
 
 
 def write_t1prep_report(
@@ -117,6 +185,8 @@ def write_t1prep_report(
             "version_python": platform.python_version(),
             "date": datetime.now().strftime("%Y%m%d-%H%M%S"),
             "system": system_str,
+            "versions": _package_versions(),
+            "models": model_provenance(),
         },
         "subjectmeasures": subjectmeasures,
         "qualitymeasures": qualitymeasures,

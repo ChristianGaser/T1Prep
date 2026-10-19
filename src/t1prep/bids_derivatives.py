@@ -64,26 +64,24 @@ def write_dataset_description(
             is placed at the dataset root found by :func:`derivatives_root`.
         source_datasets: Raw BIDS datasets the derivatives were computed from.
         overwrite: Replace an existing description.  Off by default so a run
-            over a second subject does not clobber the first one's file.
+            over a second subject does not clobber the first one's file.  An
+            existing description is still extended by a ``GeneratedBy`` entry
+            when this T1Prep version is not yet listed, so a dataset processed
+            partly with one version and partly with another says so.
 
     Returns:
         Path to the description that is now on disk.
     """
     path = os.path.join(derivatives_root(out_dir), "dataset_description.json")
     if os.path.exists(path) and not overwrite:
+        _add_generated_by(path)
         return path
 
     description: dict[str, Any] = {
         "Name": "T1Prep - T1-weighted MRI preprocessing and surface reconstruction",
         "BIDSVersion": "1.4.0",
         "DatasetType": "derivative",
-        "GeneratedBy": [
-            {
-                "Name": "T1Prep",
-                "Version": __version__,
-                "CodeURL": "https://github.com/ChristianGaser/T1Prep",
-            }
-        ],
+        "GeneratedBy": [_generated_by_entry()],
         "HowToAcknowledge": (
             "Please cite T1Prep (https://github.com/ChristianGaser/T1Prep)."
         ),
@@ -93,10 +91,49 @@ def write_dataset_description(
         description["SourceDatasets"] = [{"URL": s} for s in sources]
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as fh:
-        json.dump(description, fh, indent=2)
-        fh.write("\n")
+    _write_json_atomic(path, description)
     return path
+
+
+def _generated_by_entry() -> dict[str, Any]:
+    return {
+        "Name": "T1Prep",
+        "Version": __version__,
+        "CodeURL": "https://github.com/ChristianGaser/T1Prep",
+    }
+
+
+def _add_generated_by(path: str) -> None:
+    """Append this T1Prep version to ``GeneratedBy`` of an existing description.
+
+    A description that cannot be read is left untouched.
+    """
+    try:
+        with open(path) as fh:
+            description = json.load(fh)
+    except (OSError, ValueError):
+        return
+    if not isinstance(description, dict):
+        return
+    generated = description.get("GeneratedBy")
+    if not isinstance(generated, list):
+        generated = []
+    if any(
+        isinstance(g, dict) and g.get("Name") == "T1Prep" and g.get("Version") == __version__
+        for g in generated
+    ):
+        return
+    description["GeneratedBy"] = generated + [_generated_by_entry()]
+    _write_json_atomic(path, description)
+
+
+def _write_json_atomic(path: str, payload: Any) -> None:
+    """Write JSON via a temporary file so parallel subjects never see half a file."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump(payload, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
 
 
 def write_sidecar(data_path: str, **fields: Any) -> str | None:
