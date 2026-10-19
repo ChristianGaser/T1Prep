@@ -65,6 +65,31 @@ def test_existing_dataset_description_is_kept(tmp_path):
     assert json.loads((tmp_path / "dataset_description.json").read_text())["Name"] != "mine"
 
 
+def test_new_version_is_added_to_generated_by(tmp_path):
+    """A dataset processed with two T1Prep versions lists both."""
+    import t1prep.bids_derivatives as bd
+
+    path = tmp_path / "dataset_description.json"
+    path.write_text(json.dumps({
+        "Name": "mine", "DatasetType": "derivative",
+        "GeneratedBy": [{"Name": "T1Prep", "Version": "0.0.1"}],
+    }))
+    write_dataset_description(str(tmp_path))
+    gen = json.loads(path.read_text())["GeneratedBy"]
+    assert [g["Version"] for g in gen] == ["0.0.1", bd.__version__]
+    assert json.loads(path.read_text())["Name"] == "mine"
+
+    write_dataset_description(str(tmp_path))          # same version: no duplicate
+    assert len(json.loads(path.read_text())["GeneratedBy"]) == 2
+
+
+def test_unreadable_description_is_left_alone(tmp_path):
+    path = tmp_path / "dataset_description.json"
+    path.write_text("not json")
+    write_dataset_description(str(tmp_path))
+    assert path.read_text() == "not json"
+
+
 # ---------------------------------------------------------------------------
 # Sidecars
 # ---------------------------------------------------------------------------
