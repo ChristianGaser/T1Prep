@@ -9,8 +9,9 @@ ones already evaluated.  The features themselves need neither: they are a
 property of the central surface, so they can be added afterwards.
 
 This mirrors what ``surface_estimation`` does in its fMRIPrep branch:
-``sulc`` is CAT-Surface curvature type 11 (inverted), ``curv`` is type 4
-smoothed 5 mm (inverted), matching FreeSurfer's ``?h.sulc`` and ``?h.curv``.
+``sulc`` is CAT-Surface curvature type 11 (cat-surf >= 1.1.1), ``curv`` is
+type 4 smoothed 5 mm (inverted), matching FreeSurfer's ``?h.sulc`` and
+``?h.curv``.
 """
 import argparse
 import glob
@@ -49,7 +50,7 @@ def main() -> int:
             cs_cli.surf_curvature(
                 surface_file=mid,
                 output_values_file=os.path.join(surf, f"{hemi}.sulc.{bname}"),
-                curvtype=11, fwhm=0.0, use_abs_values=False, invert_values=True)
+                curvtype=11, fwhm=0.0, use_abs_values=False, invert_values=False)
             if a.curv:
                 cs_cli.surf_curvature(
                     surface_file=mid,

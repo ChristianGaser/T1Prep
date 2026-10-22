@@ -705,16 +705,20 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
     #     resampling) — fully in-process via cs_cli.
     # =====================================================================
     if fmriprep:
-        with _run_step(log, "CAT_SurfCurvature (curvtype=11, invert)", verbose=verbose):
-            # CAT_SurfCurvature <surf> <out> 11 0 0 1 in the legacy CLI is:
-            #   curvtype=11, fwhm=0, use_abs_values=0, invert_values=1
+        with _run_step(log, "CAT_SurfCurvature (curvtype=11)", verbose=verbose):
+            # fMRIPrep's ``sulc`` mirrors FreeSurfer's ?h.sulc: average
+            # convexity in mm, positive in sulci.  That is curvtype 11 as
+            # is (CAT_SurfCurvature <surf> <out> 11 0 0 0); before cat-surf
+            # 1.1.1 it did not measure depth at all.  Against FreeSurfer's
+            # own sulc for sub-01 this gives Spearman 0.94 on the central
+            # surface, and 0.99 on recon-all's midthickness.
             cs_cli.surf_curvature(
                 surface_file=p(surf, "Mid_surface"),
                 output_values_file=p(surf, "Sulc_shape"),
                 curvtype=11,
                 fwhm=0.0,
                 use_abs_values=False,
-                invert_values=True,
+                invert_values=False,
             )
         with _run_step(log, "CAT_SurfCurvature (curvtype=4, invert)", verbose=verbose):
             # fMRIPrep's ``curv`` mirrors FreeSurfer's ?h.curv: mean curvature
