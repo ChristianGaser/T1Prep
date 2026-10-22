@@ -479,6 +479,11 @@ check_python_cmd()
 #     wrappers only need the Python dependencies, so any interpreter providing
 #     them works -- including a system Python that T1Prep was pip installed
 #     into.  An explicit --python / $T1PREP_PYTHON always wins over the venv.
+#   * without a venv, the interpreter check_python_cmd picked by name is kept
+#     only if it has those dependencies; otherwise the first one that has
+#     them is used, in the order of the installed-mode search.  On a GitHub
+#     runner the system python3.12 comes ahead of the python3 that T1Prep was
+#     installed into.
 #
 # Callers that parse --python themselves set ``python_explicit`` before
 # calling, exactly as scripts/dice.sh does.
@@ -487,6 +492,7 @@ check_python_cmd()
 activate_t1prep_env()
 {
   python="${python:-${T1PREP_PYTHON:-}}"
+  local python_given="${python}" _cand
   check_python_cmd
 
   [ "${T1PREP_INSTALLED:-0}" -eq 1 ] && return 0
@@ -497,6 +503,19 @@ activate_t1prep_env()
     # shellcheck disable=SC1091
     source "${T1prep_env}/bin/activate"
     python="${T1prep_env}/bin/python"
+  elif [ -z "${python_given}" ] && ! "${python}" -c 'import cat_surf' >/dev/null 2>&1; then
+    # cat_surf is the first dependency t1prep/__init__.py imports; importing
+    # t1prep itself would add seconds (torch) to every call.  If no candidate
+    # has it, the pick stays so the module call reports the import error.
+    for _cand in python3.14 python3.13 python3.12 python3.11 python3.10 \
+                 python3 python python3.9; do
+      [ "${_cand}" != "${python}" ] || continue
+      command -v "${_cand}" >/dev/null 2>&1 || continue
+      if "${_cand}" -c 'import cat_surf' >/dev/null 2>&1; then
+        python="${_cand}"
+        break
+      fi
+    done
   fi
 
   return 0
