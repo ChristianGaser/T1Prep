@@ -474,11 +474,13 @@ check_python_cmd()
 #     is searched before site-packages, so the checkout wins over a
 #     pip-installed (possibly older) t1prep -- otherwise running a wrapper
 #     from a source tree can silently execute stale code from site-packages.
-#   * the project-managed venv at ${T1prep_env} is activated when it exists.
-#     A missing venv is *not* fatal: unlike the full T1Prep pipeline these
-#     wrappers only need the Python dependencies, so any interpreter providing
-#     them works -- including a system Python that T1Prep was pip installed
-#     into.  An explicit --python / $T1PREP_PYTHON always wins over the venv.
+#   * an explicit --python / $T1PREP_PYTHON is used as given, whether or not
+#     there is a venv, and is never replaced by the search below.
+#   * otherwise the project-managed venv at ${T1prep_env} is activated when it
+#     exists.  A missing venv is *not* fatal: unlike the full T1Prep pipeline
+#     these wrappers only need the Python dependencies, so any interpreter
+#     providing them works -- including a system Python that T1Prep was pip
+#     installed into.
 #   * without a venv, the interpreter check_python_cmd picked by name is kept
 #     only if it has those dependencies; otherwise the first one that has
 #     them is used, in the order of the installed-mode search.  On a GitHub
@@ -492,18 +494,20 @@ check_python_cmd()
 activate_t1prep_env()
 {
   python="${python:-${T1PREP_PYTHON:-}}"
-  local python_given="${python}" _cand
+  local _cand
   check_python_cmd
 
   [ "${T1PREP_INSTALLED:-0}" -eq 1 ] && return 0
 
   export PYTHONPATH="${root_dir}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-  if [ -z "${python_explicit:-}" ] && [ -f "${T1prep_env}/bin/activate" ]; then
+  [ -n "${python_explicit:-}${T1PREP_PYTHON:-}" ] && return 0
+
+  if [ -f "${T1prep_env}/bin/activate" ]; then
     # shellcheck disable=SC1091
     source "${T1prep_env}/bin/activate"
     python="${T1prep_env}/bin/python"
-  elif [ -z "${python_given}" ] && ! "${python}" -c 'import cat_surf' >/dev/null 2>&1; then
+  elif ! "${python}" -c 'import cat_surf' >/dev/null 2>&1; then
     # cat_surf is the first dependency t1prep/__init__.py imports; importing
     # t1prep itself would add seconds (torch) to every call.  If no candidate
     # has it, the pick stays so the module call reports the import error.

@@ -5,9 +5,9 @@
 # Python discovery and dispatch follow the same strategy as scripts/T1Prep:
 # T1Prep_utils.sh resolves the source-tree vs. installed layout (and, in
 # installed mode, the interpreter that actually has t1prep), check_python_cmd
-# validates/auto-detects the interpreter in source-tree mode, and the module
-# form "${python} -m t1prep.dice" is used so package-relative imports work in
-# both layouts.
+# validates/auto-detects the interpreter in source-tree mode, and t1prep.dice
+# is imported as part of the package, never run as a file, so package-relative
+# imports work in both layouts.
 #
 # ______________________________________________________________________
 #
@@ -67,7 +67,7 @@ Notes:
     - --python <FILE> selects the interpreter (or set $T1PREP_PYTHON), exactly
       as for T1Prep. In a source checkout the project venv (../env) is
       activated when it exists and no interpreter was given explicitly; if it
-      is absent, any Python providing numpy/nibabel/scipy is used and the
+      is absent, the first Python with T1Prep's requirements is used and the
       checkout under ../src takes precedence over an installed t1prep. An
       installed T1Prep is used as-is.
 USAGE
@@ -117,22 +117,26 @@ source "${script_dir}/T1Prep_utils.sh"
 
 # Validate/auto-detect the interpreter, put the checkout on PYTHONPATH and
 # activate the project-managed venv when there is one.  A missing venv is not
-# fatal: this wrapper only needs numpy/nibabel/scipy, so any interpreter
-# providing them works — see activate_t1prep_env() in T1Prep_utils.sh.
+# fatal: any interpreter with T1Prep's requirements works — see
+# activate_t1prep_env() in T1Prep_utils.sh.
 activate_t1prep_env
 
-# Fail with an actionable message instead of a bare ImportError further down
-if ! missing="$("${python}" -c 'import importlib.util as u; print(" ".join(m for m in ("numpy", "nibabel", "scipy") if u.find_spec(m) is None))' 2>/dev/null)"; then
-    echo "${RED}ERROR: cannot run the Python interpreter '${python}'.${NC}" >&2
-    echo "Select one with '--python <FILE>' or \$T1PREP_PYTHON." >&2
-    exit 1
-fi
-if [ -n "${missing}" ]; then
-    echo "${RED}ERROR: '${python}' is missing required module(s): ${missing}${NC}" >&2
-    echo "Install them (${python} -m pip install ${missing}), or select an" >&2
-    echo "interpreter that has them with '--python <FILE>' / \$T1PREP_PYTHON." >&2
-    exit 1
-fi
-
-# Module form so package-relative imports resolve in both layouts
-exec "${python}" -m t1prep.dice "${args[@]}"
+# The import is the dependency check, in the process that then computes the
+# metric.  t1prep.dice itself needs only numpy/nibabel/scipy, but importing it
+# runs the package __init__ first, which pulls in cat_surf and torch: a module
+# list kept here goes stale, and a check in a separate process would import
+# torch twice.  A failure names the interpreter and the missing module instead
+# of ending in a bare traceback.  (In an installed tree T1Prep_utils.sh has
+# already settled on an interpreter that imports t1prep.)
+# shellcheck disable=SC2016  # $T1PREP_PYTHON is literal text in the message
+exec "${python}" -c '
+import sys
+requirements = sys.argv.pop(1)
+try:
+    from t1prep.dice import main
+except ImportError as exc:
+    sys.exit(f"ERROR: {sys.executable} cannot import t1prep: {exc}\n"
+             f"Install the requirements ({sys.executable} -m pip install -r {requirements}),\n"
+             "or select an interpreter that has them with --python <FILE> / $T1PREP_PYTHON.")
+sys.exit(main())
+' "${root_dir}/requirements.txt" "${args[@]}"
