@@ -205,8 +205,8 @@ call the tools sitting next to them, so the whole family stays on one version.
 `T1Prep_utils.sh` resolves the layout and `activate_t1prep_env` picks the
 interpreter: in a source checkout `src/` goes first on `PYTHONPATH` and `env/`
 is activated *if it exists*, otherwise the interpreter T1Prep is installed into
-is used; in an installed tree the environment pip installed into is already the
-right one. The T1Prep step itself is the exception -- it needs the managed venv
+is used (an explicit `$T1PREP_PYTHON` wins over both); in an installed tree the
+environment pip installed into is already the right one. The T1Prep step itself is the exception -- it needs the managed venv
 for its models and heavy dependencies, so a source checkout without `env/` is
 reported before the first subject is realigned (`T1Prep --install` creates it).
 
@@ -322,7 +322,7 @@ Computes Dice-based similarity metrics between a ground truth and a predicted se
 ./scripts/dice.sh --python python3.12 --gt GT.nii.gz --pred PRED.nii.gz
 ```
 
-**Python discovery:** identical to `T1Prep` — `T1Prep_utils.sh` resolves the source-tree vs. installed layout, `--python <FILE>` / `$T1PREP_PYTHON` override the auto-detected interpreter, the project venv (`env/`) is activated in a source checkout, and the module form `python -m t1prep.dice` is used in both layouts.
+**Python discovery:** shared with the longitudinal wrappers (`activate_t1prep_env` in `T1Prep_utils.sh`) — `--python <FILE>` / `$T1PREP_PYTHON` override the auto-detected interpreter; in a source checkout the project venv (`env/`) is activated when it exists, otherwise the first interpreter with T1Prep's requirements is used. `t1prep.dice` is imported as part of the package in both layouts, and that import is the dependency check: `t1prep.dice` itself needs only numpy/nibabel/scipy, but the package `__init__` also needs `cat_surf` and torch, so an interpreter without them gets the missing module and the install command instead of a traceback.
 
 **Output (default):** `[dice_label_1, dice_label_2, ...] generalized_dice, dice_weighted`
 
