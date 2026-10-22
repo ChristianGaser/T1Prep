@@ -68,6 +68,37 @@ class TestASourceCheckoutWithoutAVenv(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn(f"PP={self.tmp / 'src'}", done.stdout)
 
+    def test_an_interpreter_without_the_dependencies_is_passed_over(self):
+        # A GitHub runner: the system python3.12 wins the name order of
+        # check_python_cmd over the python3 that T1Prep was installed into.
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        bare = bin_dir / "python3.12"
+        bare.write_text(
+            '#!/bin/sh\n[ "$1" = "-V" ] && echo "Python 3.12.0" && exit 0\nexit 1\n'
+        )
+        good = bin_dir / "python3"
+        good.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        for exe in (bare, good):
+            exe.chmod(0o755)
+        site = self.tmp / "site"
+        site.mkdir()
+        (site / "cat_surf.py").write_text("")
+
+        env = {k: v for k, v in os.environ.items() if k != "T1PREP_PYTHON"}
+        env["PATH"] = os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"])
+        env["PYTHONPATH"] = str(site)
+
+        done = probe(
+            self.tmp / "scripts",
+            'activate_t1prep_env; echo "P=${python}"; '
+            '"${python}" -c "import t1prep; print(t1prep.__version__)"',
+            env=env,
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertNotIn("P=python3.12", done.stdout)
+        self.assertIn("9.9.9", done.stdout)
+
     def test_an_existing_venv_is_activated(self):
         env_dir = self.tmp / "env" / "bin"
         env_dir.mkdir(parents=True)
