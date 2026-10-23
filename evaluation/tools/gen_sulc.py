@@ -5,12 +5,14 @@ MSM is driven by a feature map on the sphere, conventionally sulcal depth.
 T1Prep writes ``?h.sulc`` only under ``--fmriprep``, which also switches the
 run to BIDS naming and to AMAP segmentation -- so re-running with that flag
 would produce differently named *and* differently segmented surfaces than the
-ones already evaluated.  The features themselves need neither: they are a
-property of the central surface, so they can be added afterwards.
+ones already evaluated.  The features themselves need neither: ``sulc`` is a
+property of the central surface and ``curv`` of the white one, so they can be
+added afterwards.
 
 This mirrors what ``surface_estimation`` does in its fMRIPrep branch:
 ``sulc`` is CAT-Surface curvature type 11 (cat-surf >= 1.1.1), ``curv`` is
-type 4 smoothed 5 mm (inverted), matching FreeSurfer's ``?h.sulc`` and
+type 4 of the white surface, clipped and smoothed 5 mm (inverted;
+``surface_estimation.write_curv``), matching FreeSurfer's ``?h.sulc`` and
 ``?h.curv``.
 """
 import argparse
@@ -27,10 +29,13 @@ def main() -> int:
     ap.add_argument("--subjects", nargs="+",
                     help="restrict to these subjects")
     ap.add_argument("--curv", action="store_true",
-                    help="also write ?h.curv (mean curvature, 5 mm FWHM)")
+                    help="also write ?h.curv (mean curvature of the white "
+                         "surface, 5 mm FWHM)")
     a = ap.parse_args()
 
     from cat_surf import cli as cs_cli
+    if a.curv:
+        from t1prep.surface_estimation import write_curv
 
     subjects = sorted(p for p in os.listdir(a.t1prep)
                       if os.path.isdir(os.path.join(a.t1prep, p)))
@@ -52,11 +57,11 @@ def main() -> int:
                 output_values_file=os.path.join(surf, f"{hemi}.sulc.{bname}"),
                 curvtype=11, fwhm=0.0, use_abs_values=False, invert_values=False)
             if a.curv:
-                cs_cli.surf_curvature(
-                    surface_file=mid,
-                    output_values_file=os.path.join(surf, f"{hemi}.curv.{bname}"),
-                    curvtype=4, fwhm=5.0, use_abs_values=False,
-                    invert_values=True)
+                # Without a white surface the central one stands in, as in
+                # surface_estimation
+                white = os.path.join(surf, f"{hemi}.white.{bname}.gii")
+                write_curv(white if os.path.isfile(white) else mid,
+                           os.path.join(surf, f"{hemi}.curv.{bname}"))
             n += 1
         print(f"{subject}: sulc written", flush=True)
     print(f"\n{n} hemispheres processed")

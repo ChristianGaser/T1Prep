@@ -256,6 +256,27 @@ def _barrier_references(*, own_vol, own_zooms, other_src: str, vessel: int,
 
 
 # ===========================================================================
+# FreeSurfer-style curvature
+# ===========================================================================
+
+def write_curv(surface_file: str, output_file: str, fwhm: float = 5.0) -> None:
+    """Write FreeSurfer's ``curv`` of *surface_file*: mean curvature in mm^-1,
+    positive in sulci, smoothed with a heat kernel of *fwhm* mm.
+
+    That is curvtype 4 -- (k1+k2)/2 in radians -- and *not* curvtype 0, which
+    is the same measure averaged over 3 mm and expressed in degrees, so ~190x
+    larger.  The raw values are clipped to their 0.5-99.5 percentiles before
+    smoothing: the white surface has vertices shared by only three or four
+    nearly degenerate triangles, whose curvature reaches thousands (2537 for
+    sub-01) and is still -69 after the 5 mm kernel.
+    """
+    v, f = cat_surf.read_surface(surface_file)
+    curv = cat_surf.surf_curvature(v, f, curvtype=4, invert_values=True)
+    curv = np.clip(curv, *np.percentile(curv, (0.5, 99.5)))
+    cat_surf.write_values(output_file, cat_surf.smooth_heatkernel(v, f, curv, fwhm))
+
+
+# ===========================================================================
 # The main port
 # ===========================================================================
 
@@ -721,23 +742,20 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
                 invert_values=False,
             )
         with _run_step(log, "CAT_SurfCurvature (curvtype=4, invert)", verbose=verbose):
-            # fMRIPrep's ``curv`` mirrors FreeSurfer's ?h.curv: mean curvature
-            # in mm^-1, positive in sulci.  That is curvtype 4 -- (k1+k2)/2 in
-            # radians -- and *not* curvtype 0, which is the same measure
-            # averaged over 3 mm and expressed in degrees, so ~190x larger.
-            # The 5 mm kernel tames the outliers of the raw pointwise estimate;
-            # against FreeSurfer's own curv for sub-01 this gives r = 0.95 with
-            # a near-identical distribution (sd 0.156 vs 0.166, range
-            # -0.90..1.27 vs -0.98..1.17), where the unsmoothed measure reaches
-            # r = 0.73 only.
-            cs_cli.surf_curvature(
-                surface_file=p(surf, "Mid_surface"),
-                output_values_file=p(surf, "Curv_shape"),
-                curvtype=4,
-                fwhm=5.0,
-                use_abs_values=False,
-                invert_values=True,
-            )
+            # fMRIPrep's ``curv`` mirrors FreeSurfer's ?h.curv, which is the
+            # curvature of the white surface (see write_curv); without one
+            # (--no-pial, --fast) the central surface stands in.  Against
+            # FreeSurfer's own curv for sub-01 (cortex, vertices matched in T1w
+            # space) the white surface gives Spearman 0.95/0.94 (lh/rh), the
+            # central one 0.94/0.92, and FreeSurfer's sulcal tail (95th
+            # percentile +0.20 vs +0.21/+0.22; central +0.33/+0.35).  The gyral
+            # tail is heavier (5th percentile -0.51 vs -0.32), as it is with
+            # FreeSurfer's own estimator on this white surface: its gyral
+            # crowns are sharper.
+            curv_surface = p(surf, "WM_surface")
+            if not os.path.isfile(curv_surface):
+                curv_surface = p(surf, "Mid_surface")
+            write_curv(curv_surface, p(surf, "Curv_shape"))
         with _run_step(log, "CAT_Surf2Sphere stop_at=2", verbose=verbose):
             # Stopping the inflation short of a sphere is how the inflated
             # surface is made -- it is *not* a midthickness any more (every
