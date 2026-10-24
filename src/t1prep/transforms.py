@@ -20,6 +20,7 @@ from scipy.ndimage import map_coordinates
 
 __all__ = [
     "save_affine_itk_txt",
+    "save_affines_itk_txt",
     "load_affine_itk_txt",
     "save_deformation_spm",
     "save_deformation_h5",
@@ -44,16 +45,34 @@ def save_affine_itk_txt(affine_ras: np.ndarray, out_path: str) -> None:
             registration matrix returned by deepmriprep).
         out_path: Output file path (should end with ``.txt``).
     """
+    save_affines_itk_txt([affine_ras], out_path)
+
+
+def save_affines_itk_txt(affines_ras, out_path: str) -> None:
+    """Save several 4x4 RAS affines as one ITK/ANTs plain-text transform file.
+
+    The transforms follow one another, numbered from 0, as in the per-volume
+    head-motion transforms fMRIPrep writes and reads.  Each is converted as
+    in :func:`save_affine_itk_txt`.
+
+    Args:
+        affines_ras: Sequence of 4x4 affine matrices in RAS coordinates.
+        out_path: Output file path (should end with ``.txt``).
+    """
     ras2lps = np.diag([-1.0, -1.0, 1.0])
-    M_lps = ras2lps @ affine_ras[:3, :3] @ ras2lps
-    T_lps = ras2lps @ affine_ras[:3, 3]
-    params = np.concatenate([M_lps.ravel(order="C"), T_lps])
     with open(out_path, "w") as fh:
         fh.write("#Insight Transform File V1.0\n")
-        fh.write("#Transform 0\n")
-        fh.write("Transform: AffineTransform_float_3_3\n")
-        fh.write("Parameters: " + " ".join(f"{v:.10g}" for v in params) + "\n")
-        fh.write("FixedParameters: 0 0 0\n")
+        for index, affine_ras in enumerate(affines_ras):
+            affine_ras = np.asarray(affine_ras, dtype=np.float64)
+            M_lps = ras2lps @ affine_ras[:3, :3] @ ras2lps
+            T_lps = ras2lps @ affine_ras[:3, 3]
+            params = np.concatenate([M_lps.ravel(order="C"), T_lps])
+            if index:
+                fh.write("\n")
+            fh.write(f"#Transform {index}\n")
+            fh.write("Transform: AffineTransform_float_3_3\n")
+            fh.write("Parameters: " + " ".join(f"{v:.10g}" for v in params) + "\n")
+            fh.write("FixedParameters: 0 0 0\n")
 
 
 def load_affine_itk_txt(path: str) -> np.ndarray:

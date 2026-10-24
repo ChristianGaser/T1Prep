@@ -54,7 +54,7 @@ following commands are available:
 | `CAT_VolView` | volume viewer (3 orthogonal slices) |
 | `t1prep-make-apps` | macOS: build .app bundles for the viewers |
 | `t1prep-download-models` | fetch model weights |
-| `t1prep-bbreg` | boundary-based BOLD-to-T1w registration for fMRIPrep |
+| `t1prep-bbreg` | BOLD reference, head-motion correction and boundary-based BOLD-to-T1w registration for fMRIPrep to reuse |
 | `CAT_PlotHistogram` | histograms of volumes, surfaces or text data |
 
 ### Download model weights

@@ -337,6 +337,44 @@ extraction, ensuring efficient parallelization across the two stages. The
 default setting is -1, which automatically estimates the number of
 available processors.
 
+## Using the results in fMRIPrep
+
+With `--fmriprep`, T1Prep writes its results under the names sMRIPrep and
+fMRIPrep look for in `--derivatives`, and they then skip the anatomical steps
+those results replace: brain extraction, segmentation and spatial
+normalization.  They skip FreeSurfer's surface reconstruction as well once
+nipreps/smriprep#588 and the matching fMRIPrep change are released; until
+then, `--fs-no-reconall` avoids it, at the price of the surface outputs.
+
+`t1prep-bbreg` does the same for the BOLD runs.  Given the 4-D series, it
+realigns the volumes with CAT-Surface, averages them into a reference and
+registers that to T1Prep's white surfaces with boundary-based registration.
+With `--fmriprep-dir` it writes the reference and the transform where fMRIPrep
+reuses them, and with `--hmc` also the head-motion transforms; fMRIPrep then
+skips its own reference, head-motion correction and coregistration.  Without
+`--hmc`, fMRIPrep estimates head motion itself, against that reference.
+
+```bash
+  T1Prep --fmriprep sub-01/anat/sub-01_T1w.nii.gz
+  A=derivatives/T1Prep-v<version>/sub-01/anat
+  t1prep-bbreg --bold sub-01/func/sub-01_task-rest_bold.nii.gz \
+    --t1w $A/sub-01_desc-preproc_T1w.nii.gz \
+    --lh-white $A/sub-01_hemi-L_white.surf.gii --rh-white $A/sub-01_hemi-R_white.surf.gii \
+    --lh-cortex-mask $A/sub-01_hemi-L_desc-cortex_mask.label.gii \
+    --rh-cortex-mask $A/sub-01_hemi-R_desc-cortex_mask.label.gii \
+    --lh-thickness $A/sub-01_hemi-L_thickness.shape.gii \
+    --rh-thickness $A/sub-01_hemi-R_thickness.shape.gii \
+    --gm-proj-frac 0.5 --contrast t2 --hmc --fmriprep-dir derivatives/T1Prep-v<version>
+  fmriprep . derivatives/fmriprep participant --derivatives derivatives/T1Prep-v<version>
+```
+Run from the root of the BIDS dataset, once per BOLD run for `t1prep-bbreg`.
+
+fMRIPrep's methods text leaves out the steps it reuses, so describe them
+yourself, e.g.: "Each BOLD run was realigned with CAT-Surface's robust rigid
+registration and averaged into a reference volume, which was co-registered to
+the T1w with boundary-based registration to T1Prep's white-matter surfaces
+(six degrees of freedom; `t1prep-bbreg`, T1Prep <version>)."
+
 ## Longitudinal realignment (experimental)
 
 For rigid realignment of a series of NIfTI volumes, use the realignment helper:
