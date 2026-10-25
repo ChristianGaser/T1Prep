@@ -35,6 +35,7 @@ from typing import List, Optional, Sequence, Union
 # Command-line behaviour shared by every T1Prep tool: no argument prints the
 # synopsis, --help the full description, and only "--" options are advertised.
 from .cli_help import ArgumentParser
+from ._telemetry import NO_TRACK_ENV
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +201,27 @@ def _build_segment_cmd(
     cmd += ["--count",      str(end_count)]
 
     return cmd
+
+
+def _segment_env(track: bool = True) -> dict:
+    """Return the environment for the ``segment.py`` subprocess."""
+    # When invoked via ``python -m t1prep.segment``, the subprocess must
+    # be able to locate the ``t1prep`` package.  If we are running from a
+    # source checkout (not installed into site-packages), the parent
+    # directory of this file (``src/``) is what carries ``t1prep`` — make
+    # sure it is on PYTHONPATH for the child.  Prepend so it wins over a
+    # stale installed copy.
+    env = os.environ.copy()
+    pkg_parent = str(Path(__file__).resolve().parent.parent)
+    env["PYTHONPATH"] = (
+        pkg_parent + os.pathsep + env["PYTHONPATH"]
+        if env.get("PYTHONPATH")
+        else pkg_parent
+    )
+    # segment.py reports a crash unless this is set (see _telemetry)
+    if not track:
+        env[NO_TRACK_ENV] = "1"
+    return env
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +442,7 @@ def _process_single(
     verbose: bool = True,
     initial_surf: str = "",
     retry: bool = False,
+    track: bool = True,
 ) -> int:
     """Process one NIfTI file through the T1Prep pipeline.
 
@@ -511,19 +534,7 @@ def _process_single(
             skip_skullstrip=skip_skullstrip,
             seed=seed,
         )
-        # When invoked via ``python -m t1prep.segment``, the subprocess must
-        # be able to locate the ``t1prep`` package.  If we are running from a
-        # source checkout (not installed into site-packages), the parent
-        # directory of this file (``src/``) is what carries ``t1prep`` — make
-        # sure it is on PYTHONPATH for the child.  Prepend so it wins over a
-        # stale installed copy.
-        seg_env = os.environ.copy()
-        _pkg_parent = str(Path(__file__).resolve().parent.parent)
-        seg_env["PYTHONPATH"] = (
-            _pkg_parent + os.pathsep + seg_env["PYTHONPATH"]
-            if seg_env.get("PYTHONPATH")
-            else _pkg_parent
-        )
+        seg_env = _segment_env(track)
 
         seg_status = subprocess.call(seg_cmd, env=seg_env)
         if seg_status != 0 and retry:
@@ -679,6 +690,7 @@ def run_t1prep(
     verbose: bool = True,
     retry: bool = False,
     no_retry: bool = False,
+    track: bool = True,
 ) -> int:
     """Run the T1Prep pipeline for one or more input files.
 
@@ -771,6 +783,11 @@ def run_t1prep(
     no_retry:
         Deprecated. Retry is off by default; passing ``True`` still forces it
         off and overrides ``retry``.
+    track:
+        Report a crash of the segmentation to the T1Prep developers, with
+        its exception type and code location only (default ``True``).
+        ``False`` switches it off, as does ``T1PREP_NO_TRACK=1`` or
+        ``DO_NOT_TRACK=1`` in the environment.
 
     Returns
     -------
@@ -854,6 +871,7 @@ def run_t1prep(
             verbose=bool(verbose),
             initial_surf=str(initial_surf) if initial_surf else "",
             retry=bool(retry) and not no_retry,
+            track=bool(track),
         )
         errors += rc
 
@@ -968,6 +986,9 @@ def _build_parser() -> ArgumentParser:
                     help="Retry a failed processing step once (default: off)")
     g3.add_argument("--no-retry", action="store_true",
                     help=argparse.SUPPRESS)
+    g3.add_argument("--no-track", dest="track", action="store_false",
+                    help="Do not report a crash to the T1Prep developers "
+                         "(only its type and code location are sent)")
     g3.add_argument("--debug", action="store_true",
                     help="Retain temporary files and save extra diagnostic outputs")
     g3.add_argument("--verbose", action="store_true", default=True,
@@ -1025,6 +1046,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         verbose=args.verbose,
         retry=args.retry,
         no_retry=args.no_retry,
+        track=args.track,
     )
 
 

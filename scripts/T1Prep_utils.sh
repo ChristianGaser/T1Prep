@@ -911,7 +911,22 @@ get_output_folder()
 {
   local FILE=$1
   t1prep_output_folder_from_input "$FILE" "${outdir:-}" "${T1PREP_VERSION}" "${use_amap}"
-} 
+}
+
+telemetry_allowed()
+{
+  # Usage: telemetry_allowed
+  # Fails when T1PREP_NO_TRACK or DO_NOT_TRACK is set to anything but
+  # 0/false/no/off; mirrors telemetry_enabled() in src/t1prep/_telemetry.py.
+  local value
+  for value in "${T1PREP_NO_TRACK:-}" "${DO_NOT_TRACK:-}"; do
+    case "$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')" in
+      ""|0|false|no|off) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
 
 _send_sentry_event()
 {
@@ -924,6 +939,9 @@ _send_sentry_event()
   EVENT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')
   local SENT_AT
   SENT_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  # The "system" tag, e.g. Darwin-arm64 (cpu_arch used to be unset, so empty)
+  local cpu_arch
+  cpu_arch="${os_type:-$(uname -s)}-$(uname -m)"
 
   local event
   event=$(printf \
@@ -949,6 +967,8 @@ send_sentry()
   #   error event – only when n_errors > 0 (feeds "Errors Over Time" widget)
   local n_success="${1:-0}"
   local n_errors="${2:-0}"
+
+  telemetry_allowed || return 0
 
   local DSN="https://ca6089ed5dc4326c6c69afc3684c5fc1@o4511309449068544.ingest.de.sentry.io/4511309454311504"
   local HOST

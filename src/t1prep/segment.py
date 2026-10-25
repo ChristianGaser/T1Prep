@@ -36,7 +36,6 @@ import json
 import random
 import time
 import subprocess
-import sentry_sdk
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import NamedTuple, Optional
@@ -97,6 +96,7 @@ from .vessels import (
     protected_regions,
 )
 from ._models import prepare_model_files
+from ._telemetry import init_crash_reporting
 from ._conv_chunk import chunked_conv3d
 from .nogm import run_segment_nogm_conventional
 from .dura import remove_dura
@@ -1557,13 +1557,10 @@ def run_segment():
     # Check for GPU support
     device, no_gpu = setup_device()
 
-    sentry_sdk.init(
-        dsn="https://ca6089ed5dc4326c6c69afc3684c5fc1@o4511309449068544.ingest.de.sentry.io/4511309454311504",
-        # Add data like request headers and IP for users,
-        # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
-        send_default_pii=False,
-    )
-    
+    # Report a crash of this run, unless telemetry is switched off: the
+    # exception type and code location only, no paths (see _telemetry)
+    init_crash_reporting()
+
     # Set processing parameters
     target_res = np.array([0.5] * 3)  # Target resolution for resampling
     count = 1

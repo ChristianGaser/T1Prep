@@ -88,6 +88,12 @@ main()
   if ! [[ "${use_bids_naming}" =~ ^[0-9]+$ ]]; then use_bids_naming=0; fi
   if ! [[ "${min_memory}" =~ ^[0-9]+$ ]]; then min_memory=10; fi
 
+  # Telemetry is off after --no-track, track=0 (or none) in the defaults file,
+  # or T1PREP_NO_TRACK=1 / DO_NOT_TRACK=1; exporting the choice switches off
+  # the crash report of the Python processes started below as well
+  if ! [[ "${track}" =~ ^[0-9]+$ ]] || ! telemetry_allowed; then track=0; fi
+  if [ "${track}" -eq 0 ]; then export T1PREP_NO_TRACK=1; fi
+
   if [[ "$multi" -ne -2 ]]; then
     logo
     check_python_module venv
@@ -1146,7 +1152,13 @@ ${BOLD}${GREEN}Save Options:${NC}
       Use t1prep-bbreg afterwards to replace fMRIPrep's bbregister step.
       
   --no-track
-      Do not collect telemetry information for T1Prep.
+      Do not send telemetry. By default T1Prep reports the number of
+      processed and failed files with its version, the operating system
+      and the CPU architecture, and the exception type and code location of
+      a crash. File names,
+      paths, images, the command line and the host name are never sent.
+      Setting T1PREP_NO_TRACK=1 or DO_NOT_TRACK=1 in the environment has
+      the same effect.
 
   --gz                        
       Save images in compressed NIfTI format (*.nii.gz).
