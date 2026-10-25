@@ -50,7 +50,7 @@ from deepmriprep.segment import BrainSegmentation
 import deepmriprep.preprocess as dmp_preprocess
 from deepmriprep.preprocess import Preprocess
 from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
-from deepmriprep.atlas import get_volumes, shape_from_to
+from deepmriprep.atlas import shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from .report import write_t1prep_report
@@ -77,7 +77,7 @@ from .utils import (
     progress_bar,
     TEMPLATE_PATH_T1PREP,
 )
-from ._atlas import get_atlas
+from ._atlas import get_atlas, roi_table, roi_tissue_volumes
 from ._intensity import (
     apply_LAS,
     correct_bias_field,
@@ -378,6 +378,7 @@ class CustomPreprocess(Preprocess):
                             base_atl = os.path.splitext(os.path.splitext(fname)[0])[0]
                             break
             atlas = nib.as_closest_canonical(nib.load(atlas_path))
+            template_ids = np.unique(np.asarray(atlas.dataobj)).astype(np.int64)
             header = atlas.header
             shape = tuple(shape_from_to(atlas, warp_yx))
             if shape not in warps:
@@ -398,23 +399,17 @@ class CustomPreprocess(Preprocess):
                 atlases[f"{atl}_affine"] = atlas
             atlas_tensor = nifti_to_tensor(atlas).to(self.device)
             if f"{atl}_volumes" in atlas_list:
-                # Check for csf file and create dummy ROIs if not found
+                # Region names from the atlas CSV (Region_<id> without one)
                 csv_path = (
                     f"{TEMPLATE_PATH_T1PREP}/{base_atl}.csv"
                     if not os.path.isabs(atl)
                     else os.path.splitext(atl)[0] + ".csv"
                 )
-                if os.path.exists(csv_path):
-                    rois = pd.read_csv(csv_path, sep=";")[["ROIid", "ROIname"]]
-                else:
-                    # Fallback: Dummy-ROI-list with increasing IDs
-                    labels = torch.unique(atlas_tensor).cpu().numpy()
-                    labels = labels[labels > 0]
-                    rois = pd.DataFrame(
-                        {"ROIid": labels, "ROIname": [f"Region_{i}" for i in labels]}
-                    )
-                volumes = voxel_vol * get_volumes(
-                    atlas_tensor, p1_large, p2_large, p3_large
+                # One row per label of the template, looked up by id; the
+                # CSV used to be matched to the present labels by position
+                rois = roi_table(csv_path, template_ids)
+                volumes = voxel_vol * roi_tissue_volumes(
+                    atlas_tensor, p1_large, p2_large, p3_large, rois["ROIid"]
                 )
                 volumes *= wj_affine[0] / 1000
                 # Smart rounding

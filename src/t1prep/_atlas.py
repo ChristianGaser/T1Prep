@@ -288,3 +288,58 @@ def get_regions_mask(
     atlas_data = np.round(atlas.get_fdata())
     region_ids = [regions[r] for r in region_name if r in regions]
     return np.isin(atlas_data, region_ids)
+
+
+def roi_table(csv_path, template_ids) -> pd.DataFrame:
+    """Return the ``ROIid``/``ROIname`` rows for the labels an atlas has.
+
+    *template_ids* are the label ids of the atlas template (0 excluded).  CSV
+    rows of ids the template lacks are dropped -- they can only ever be empty
+    (Neuromorphometrics lists the vessels, 63/64; AAL3 seven retired ids) --
+    and template ids without a CSV row are added as ``Region_<id>`` (SUIT
+    29-34), so every label is reported exactly once.  Without a CSV every id
+    gets such a name.
+    """
+    ids = np.unique(np.asarray(template_ids, dtype=np.int64))
+    ids = ids[ids > 0]
+    if csv_path and os.path.exists(csv_path):
+        rois = pd.read_csv(csv_path, sep=";")[["ROIid", "ROIname"]]
+        rois = rois[rois["ROIid"].isin(ids)]
+    else:
+        rois = pd.DataFrame({"ROIid": [], "ROIname": []})
+    missing = np.setdiff1d(ids, rois["ROIid"].to_numpy(dtype=np.int64))
+    if missing.size:
+        rois = pd.concat(
+            [rois, pd.DataFrame({"ROIid": missing,
+                                 "ROIname": [f"Region_{i}" for i in missing]})],
+            ignore_index=True,
+        )
+    rois["ROIid"] = rois["ROIid"].astype(np.int64)
+    return rois.reset_index(drop=True)
+
+
+def roi_tissue_volumes(atlas, p1, p2, p3, roi_ids, chunk=1 << 23) -> np.ndarray:
+    """Sum GM, WM, CSF and count voxels per label, one row per id in *roi_ids*.
+
+    *atlas* is a label tensor, resized to the tissue maps' grid by nearest
+    neighbour as deepmriprep's ``get_volumes`` does.  That function returned
+    one unlabelled row per label *present*: matched to the CSV by position,
+    every row after an id missing from the atlas carried the next region's
+    volume, and a one-voxel region was merged into its neighbour.  Here each
+    id is looked up; an id without voxels gets zeros.  Sums are accumulated
+    in float64, chunk by chunk.
+    """
+    labels = F.interpolate(atlas[None, None].float(), tuple(p1.shape), mode="nearest")
+    labels = labels.flatten().to(torch.int32).cpu().numpy()
+    probs = [p.flatten().float().cpu().numpy() for p in (p1, p2, p3)]
+    roi_ids = np.asarray(roi_ids, dtype=np.int64)
+    n = int(max(labels.max(initial=0), roi_ids.max(initial=0))) + 1
+
+    table = np.zeros((n, 4))
+    for start in range(0, labels.size, chunk):
+        lab = labels[start:start + chunk]
+        for k, prob in enumerate(probs):
+            table[:, k] += np.bincount(lab, weights=prob[start:start + chunk],
+                                       minlength=n)
+        table[:, 3] += np.bincount(lab, minlength=n)
+    return table[roi_ids]
