@@ -2,14 +2,16 @@
 FROM python:3.12-slim
 
 # T1Prep version to install from PyPI.  This line is bumped automatically by
-# the "Update Dockerfile" GitHub Actions workflow on each release, so the
-# committed Dockerfile always builds a reproducible, pinned version.  Override
+# the "Update Dockerfile" GitHub Actions workflow once a release has reached
+# PyPI, so the committed Dockerfile always builds a reproducible, pinned
+# version (0.8.0 never reached PyPI, so this stays at 0.7.9 until the next
+# release does).  Override
 # at build time to build a different version, or pass an empty value to install
 # the latest release instead:
 #
 #     docker build --build-arg T1PREP_VERSION=0.4.4 -t t1prep .   # specific
 #     docker build --build-arg T1PREP_VERSION=      -t t1prep .   # latest
-ARG T1PREP_VERSION=0.8.0
+ARG T1PREP_VERSION=0.7.9
 
 LABEL org.opencontainers.image.authors="Christian Gaser <christian.gaser@uni-jena.de>"
 LABEL org.opencontainers.image.source="https://github.com/ChristianGaser/T1Prep"

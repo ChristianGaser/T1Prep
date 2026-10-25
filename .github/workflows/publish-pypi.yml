@@ -27,6 +27,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check that the release tag matches __version__
+        # The tag is what gets built, so the version has to be bumped before
+        # tagging (make release VERSION=x.y.z).  v0.8.0 was tagged first and
+        # bumped afterwards: this job rebuilt 0.7.9 and PyPI rejected it.
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n -E 's/^__version__ = "([^"]+)".*/\1/p' src/t1prep/__init__.py)
+          if [ "${TAG#v}" != "${version}" ]; then
+            echo "::error::Release tag ${TAG} does not match __version__ = \"${version}\" in src/t1prep/__init__.py. Bump the version before tagging (make release VERSION=${TAG#v}), then recreate the release." >&2
+            exit 1
+          fi
+          echo "Tag ${TAG} matches __version__ ${version}"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

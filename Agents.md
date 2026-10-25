@@ -117,7 +117,7 @@ T1Prep/
 | Installation process (PyPI distribution) | `pyproject.toml`, `README_pypi.md` |
 | Docker configuration | `docs/installation.md` -> Docker section |
 | Docker configuration | `Dockerfile` |
-| Version number | `src/t1prep/__init__.py` (canonical — pyproject.toml derives via setuptools attr, scripts/T1Prep_utils.sh reads it via awk); `Makefile` PREV_VERSION/VERSION drive `make release`; release tags + README badges |
+| Version number | `src/t1prep/__init__.py` (canonical — pyproject.toml derives via setuptools attr, scripts/T1Prep_utils.sh reads it via awk); `make release VERSION=x.y.z` bumps, commits and tags it *before* the GitHub release ("Publish to PyPI" refuses a tag ≠ `__version__`; the Dockerfile is pinned after a successful publish); README badges |
 
 ### Core File Relationships
 

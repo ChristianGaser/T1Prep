@@ -5,15 +5,23 @@ on:
     inputs:
       tag:
         description: "Release tag/version to pin (e.g., v0.5.3 or 0.5.3)"
-        required: false
-  release:
-    types: [published]
+        required: true
+  # Pin only what PyPI really has: after a successful "Publish to PyPI" run
+  # that a release triggered.  Pinning on the release event itself pinned
+  # 0.8.0 although its upload had failed, which broke `docker build .`.
+  workflow_run:
+    workflows: ["Publish to PyPI"]
+    types: [completed]
 
 permissions:
   contents: write
 
 jobs:
   bump-dockerfile:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'release')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
@@ -24,29 +32,33 @@ jobs:
 
       - name: Determine version from tag
         id: get_version
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          # For a run triggered by a release, head_branch is the release tag
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
-          # Prefer explicit input for manual runs, else use the release tag_name.
-          RAW_TAG="${{ github.event.release.tag_name }}"
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            RAW_TAG="${{ github.event.inputs.tag }}"
-          fi
-
+          RAW_TAG="${INPUT_TAG:-${RUN_TAG:-}}"
           if [ -z "$RAW_TAG" ]; then
-            echo "::error::No tag found. Provide 'tag' input for workflow_dispatch or trigger from a Release." >&2
+            echo "::error::No tag found. Provide 'tag' input for workflow_dispatch." >&2
             exit 1
           fi
 
           # pip expects a bare PEP 440 version (no leading 'v') for the
           # "T1Prep==${T1PREP_VERSION}" install in the Dockerfile.
           VERSION="${RAW_TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*([.-]?[A-Za-z0-9]+)*$ ]]; then
+            echo "::error::'$RAW_TAG' is not a version tag." >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved version: $VERSION"
 
       - name: Pin version in Dockerfile
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION='${{ steps.get_version.outputs.version }}'
           sed -i -E "s/^ARG T1PREP_VERSION=.*/ARG T1PREP_VERSION=${VERSION}/" Dockerfile
           if ! grep -qE "^ARG T1PREP_VERSION=${VERSION}$" Dockerfile; then
             echo "::error::Failed to pin T1PREP_VERSION to ${VERSION} in Dockerfile" >&2
@@ -68,8 +80,8 @@ jobs:
           git add Dockerfile
           git commit -m "chore: pin Dockerfile T1PREP_VERSION to ${VERSION}"
 
-          # The "Update T1Prep version on release" workflow may push to main on
-          # the same release event; rebase-and-retry so concurrent pushes don't fail.
+          # Someone may push to main in the meantime; rebase-and-retry so a
+          # concurrent push doesn't fail the pin.
           n=0
           until git push origin HEAD:main; do
             n=$((n + 1))

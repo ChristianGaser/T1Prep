@@ -2,22 +2,19 @@
 .DEFAULT_GOAL := help
 
 # ---------------------------------------------------------------------------
-# Single source of truth for the project version.
+# src/t1prep/__init__.py is the single source of truth for the version;
+# pyproject.toml (setuptools.dynamic) and the bash scripts read it from there.
 #
-# Bump VERSION to the new release.  Set PREV_VERSION to whatever VERSION
-# was on the last release — the `release` target uses an *exact*-match sed
-# to rewrite occurrences of PREV_VERSION to VERSION in the one file that
-# doesn't auto-derive (src/t1prep/__init__.py).
-#
-# Auto-derived (no manual update needed):
-#   - pyproject.toml      → version = {attr = "t1prep.__version__"}
-#   - scripts/utils.sh    → reads __version__ from src/t1prep/__init__.py
-#   - scripts/T1Prep      → sources scripts/utils.sh
-#   - Dockerfile          → installs T1Prep from PyPI (pin via build-arg
-#                            T1PREP_VERSION=$(VERSION) at `docker build` time)
+# Release in this order, so that the tag carries the new version (PyPI builds
+# the tag, and "Publish to PyPI" refuses a tag that differs from __version__;
+# v0.8.0 was tagged before its bump and never reached PyPI):
+#   make release VERSION=0.8.1     # on a clean main: bump, commit, tag v0.8.1
+#   git push origin main v0.8.1
+#   then create the GitHub release from tag v0.8.1.  Once PyPI has it, the
+#   "Update Dockerfile" workflow pins the Docker image to that version.
 # ---------------------------------------------------------------------------
-PREV_VERSION := 0.7.8
-VERSION      := 0.7.9
+CURRENT_VERSION := $(shell sed -n -E 's/^__version__ = "([^"]+)".*/\1/p' src/t1prep/__init__.py)
+VERSION ?= $(CURRENT_VERSION)
 
 ZIPFILE = T1Prep_$(VERSION).zip
 
@@ -35,11 +32,11 @@ EVAL_PHANTOM  = ./scripts/run_with_env.sh evaluation/tools/eval_phantom.py
 # print available commands
 help:
 	-@echo Available commands:
-	-@echo "  release       Bump version files from PREV_VERSION to VERSION"
-	-@echo "  zip           Run release and zip the project"
+	-@echo "  release       Bump __version__, commit and tag: make release VERSION=x.y.z"
+	-@echo "  zip           Zip the project (current version)"
 	-@echo "  clean         Clean up artifacts and permissions"
 	-@echo "  cp_binaries   Copy CAT-Surface binaries [BIN=CAT_MyBinary]"
-	-@echo "  version       Show current PREV_VERSION / VERSION"
+	-@echo "  version       Show the current version"
 	-@echo "  phantom       Run T1Prep on the simulated phantom and check the pins (~15 min)"
 	-@echo "  phantom-check Check an existing phantom run against the pins [PHANTOM_DIR=...]"
 	-@echo "  phantom-score Re-score an existing phantom run"
@@ -47,13 +44,9 @@ help:
 	-@echo "  phantom-wmh   WMH detection on every simulation in PHANTOM_SIMS, checked against its pins"
 	-@echo "  phantom-wmh-pin  The same, then re-pin the WMH scores"
 
-# show resolved versions (sanity check before `make release`)
+# show the current version (the one `make release` bumps from)
 version:
-	-@echo "PREV_VERSION = $(PREV_VERSION)"
-	-@echo "VERSION      = $(VERSION)"
-	-@echo
-	-@echo "Tracked locations:"
-	-@grep -H '^__version__'  src/t1prep/__init__.py
+	-@echo "$(CURRENT_VERSION)"
 
 # remove .DS_Store files and correct file permissions
 clean:
@@ -63,26 +56,34 @@ clean:
 	-@find . -type f \( -name "*_ui" \) -exec chmod a+x {} \;
 
 # zip release
-zip: release
+zip: clean
 	-@echo zip
 	-@test ! -d T1Prep || rm -r T1Prep
 	-@mkdir T1Prep
 	-@rsync -av . T1Prep --exclude env --exclude '.*' --exclude Makefile --exclude Windows-Installation.txt --exclude test --exclude evaluation/data/phantom
 	-@zip ${ZIPFILE} -rm T1Prep
 
-# prepare a release: rewrite PREV_VERSION → VERSION in the few files that
-# don't auto-derive.  Uses exact-match seds so nothing unrelated can be hit.
-# When PREV_VERSION == VERSION (e.g. fresh checkout, no bump yet) this is a
-# safe no-op.
+# bump __version__, commit and tag v$(VERSION); see the header for the order
 update: release
-release: clean
-	-@if [ "$(PREV_VERSION)" = "$(VERSION)" ]; then \
-	    echo "PREV_VERSION == VERSION ($(VERSION)) — nothing to bump."; \
-	  else \
-	    echo "Bumping $(PREV_VERSION) -> $(VERSION)"; \
-	    sed -i "" 's/^__version__ = "$(PREV_VERSION)"/__version__ = "$(VERSION)"/' src/t1prep/__init__.py; \
-	    echo "Done. Update PREV_VERSION := $(VERSION) in the Makefile before the next release."; \
-	  fi
+release:
+	@if [ "$(VERSION)" = "$(CURRENT_VERSION)" ]; then \
+	  echo "Usage: make release VERSION=x.y.z (current: $(CURRENT_VERSION))" >&2; exit 1; fi
+	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-]?[A-Za-z0-9]+)*$$' || \
+	  { echo "'$(VERSION)' is not a version like 0.8.1" >&2; exit 1; }
+	@test "$$(git branch --show-current)" = main || \
+	  { echo "Release from main" >&2; exit 1; }
+	@test -z "$$(git status --porcelain --untracked-files=no)" || \
+	  { echo "Commit or stash your changes first" >&2; exit 1; }
+	@if git rev-parse -q --verify "refs/tags/v$(VERSION)" >/dev/null; then \
+	  echo "Tag v$(VERSION) exists already" >&2; exit 1; fi
+	@perl -pi -e 's/^__version__ = "[^"]*"/__version__ = "$(VERSION)"/' src/t1prep/__init__.py
+	@grep -q '^__version__ = "$(VERSION)"' src/t1prep/__init__.py || \
+	  { echo "Failed to set __version__" >&2; exit 1; }
+	@git commit -q -m "chore: bump version to $(VERSION)" src/t1prep/__init__.py
+	@git tag -a "v$(VERSION)" -m "T1Prep $(VERSION)"
+	@echo "Bumped $(CURRENT_VERSION) -> $(VERSION) and tagged v$(VERSION). Next:"
+	@echo "  git push origin main v$(VERSION)"
+	@echo "  then create the GitHub release from tag v$(VERSION)"
 
 # copy binaries after cross-compiling
 cp_binaries: 

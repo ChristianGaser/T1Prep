@@ -110,7 +110,7 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 | Installation process | `docs/installation.md`, `README.md`, `README_pypi.md`, `scripts/install.sh` (bash bootstrapper is secondary to `pip install T1Prep`) |
 | Docker configuration | `docs/installation.md`, `Dockerfile` |
 | Supported Python range | `pyproject.toml` classifiers, `.github/workflows/tests.yml` matrix, `scripts/T1Prep_utils.sh`, `scripts/install.sh`, README badges, `docs/installation.md`, `Agents.md`; new Pythons also need cat-surf wheels (CAT-Surface `cat_surface_cython/pyproject.toml`) |
-| Version number | `src/t1prep/__init__.py` is the single source of truth — `pyproject.toml` derives via `setuptools.dynamic`, `scripts/T1Prep_utils.sh` awks it, `Makefile` bumps it via `make release`. Also update README badges + git tag. |
+| Version number | `src/t1prep/__init__.py` is the single source of truth — `pyproject.toml` derives via `setuptools.dynamic`, `scripts/T1Prep_utils.sh` awks it. `make release VERSION=x.y.z` bumps, commits and tags it *before* the GitHub release is created ("Publish to PyPI" refuses a tag that differs from `__version__`; the Dockerfile pin follows a successful publish). Also update README badges. |
 
 ## Command-Line Conventions
 

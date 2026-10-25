@@ -1,13 +1,18 @@
-name: Update T1Prep version on release
+name: Bump T1Prep version
 
+# Bumps __version__ on main *before* a release, for releasing from the GitHub
+# web UI: run this with the new version, then create the release from main.
+# (Locally, `make release VERSION=x.y.z` does the same and tags as well.)
+#
+# It used to run on the release event, i.e. after the tag had been created,
+# so the tag kept the old version: v0.8.0 contained 0.7.9 and its PyPI upload
+# failed.  "Publish to PyPI" now refuses a tag that differs from __version__.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to use as version (e.g., v0.2.4 or 0.2.4)"
-        required: false
+        description: "New version (e.g., v0.8.1 or 0.8.1)"
+        required: true
 
 permissions:
   contents: write
@@ -24,24 +29,15 @@ jobs:
 
       - name: Determine version from tag
         id: get_version
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag }}
         run: |
-          # Prefer explicit input for manual runs, else use release tag_name
-          RAW_TAG="${{ github.event.release.tag_name }}"
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            RAW_TAG="${{ github.event.inputs.tag }}"
-          fi
-
-          if [ -z "$RAW_TAG" ]; then
-            echo "::error::No tag found. Provide 'tag' input for workflow_dispatch or trigger from a Release." >&2
+          set -euo pipefail
+          VERSION="${RAW_TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-]?[A-Za-z0-9]+)*$ ]]; then
+            echo "::error::'$RAW_TAG' is not a version like 0.8.1." >&2
             exit 1
           fi
-
-          # Strip leading 'v' if present, keep only numeric semantic version (e.g., 1.2.3)
-          VERSION="${RAW_TAG#v}"
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "::warning::Tag '$RAW_TAG' does not look like a semantic version. Using '$VERSION' as-is."
-          fi
-
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved version: $VERSION"
 
@@ -50,20 +46,14 @@ jobs:
         # Everything else derives from it automatically: pyproject.toml via
         # setuptools.dynamic, the bash scripts awk it from here at runtime, and
         # the Dockerfile ARG is pinned by the separate "Update Dockerfile"
-        # workflow.  So this is the only file this workflow needs to edit.
+        # workflow once PyPI has the release.
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION='${{ steps.get_version.outputs.version }}'
           FILE='src/t1prep/__init__.py'
-
-          if [ ! -f "$FILE" ]; then
-            echo "::error::File $FILE not found" >&2
-            exit 1
-          fi
-
           echo "Updating $FILE to version $VERSION"
           sed -i -E "s/^__version__ = \"[^\"]*\"/__version__ = \"${VERSION}\"/" "$FILE"
-
           if ! grep -qE "^__version__ = \"${VERSION}\"" "$FILE"; then
             echo "::error::Failed to set __version__ to ${VERSION} in $FILE" >&2
             exit 1
@@ -75,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           if git diff --quiet; then
-            echo "No changes to commit. Version may already be ${VERSION}."
+            echo "No changes to commit. Version is already ${VERSION}."
             exit 0
           fi
 
@@ -84,8 +74,8 @@ jobs:
           git add src/t1prep/__init__.py
           git commit -m "chore: bump T1Prep version to ${VERSION}"
 
-          # The "Update Dockerfile" workflow may push to main on the same
-          # release event; rebase-and-retry so concurrent pushes don't fail.
+          # Someone may push to main in the meantime; rebase-and-retry so a
+          # concurrent push doesn't fail the bump.
           n=0
           until git push origin HEAD:main; do
             n=$((n + 1))
