@@ -25,7 +25,7 @@ _PARALLELIZE = _ROOT / "scripts" / "parallelize"
 _SHOW = (
     'source "$T1PREP" && parse_args "$@" && '
     'for v in save_p save_pial_white outdir multi python save_hemi '
-    'save_lesions min_memory initial_surface atlas_surf seed; do '
+    'save_lesions min_memory initial_surface atlas_surf seed long_data; do '
     'printf "%s=%s\\n" "$v" "${!v}"; done && '
     'printf "file=%s\\n" "${ARRAY[@]}"'
 )
@@ -93,6 +93,32 @@ class TestTheDefaultsFile(_InATempDir):
         (self.tmp / "my.txt").write_text(defaults + "\nseed=7\n")
         _, v, _ = self.parse("--defaults=my.txt", "f.nii")
         self.assertEqual(v["seed"], "7")
+
+
+class TestLongData(_InATempDir):
+    """--long-data names the file processed in place of the one input."""
+
+    def setUp(self):
+        super().setUp()
+        (self.tmp / "r.nii").write_bytes(b"")
+        (self.tmp / "g.nii").write_bytes(b"")
+
+    def test_a_file_for_one_input(self):
+        done, v, files = self.parse("--long-data", "r.nii", "f.nii")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual((v["long_data"], files), ("r.nii", ["f.nii"]))
+
+    def test_anything_else_is_an_error(self):
+        (self.tmp / "folder").mkdir()
+        for args, message in (
+            (("--long-data", "missing.nii", "f.nii"), "is not a file"),
+            (("--long-data", "folder", "f.nii"), "is not a file"),
+            (("--long-data", "r.nii", "f.nii", "g.nii"), "stands for one input"),
+        ):
+            with self.subTest(args=args):
+                done, _, _ = self.parse(*args)
+                self.assertEqual(done.returncode, 1)
+                self.assertIn(message, done.stderr)
 
 
 class TestMultiKeepsTheArguments(unittest.TestCase):

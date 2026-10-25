@@ -389,6 +389,18 @@ parse_args()
     exit 1
   fi
 
+  # --long-data is the volume processed in place of the one input file
+  if [ -n "${long_data:-}" ]; then
+    if [ ! -f "${long_data}" ]; then
+      echo "${RED}ERROR: --long-data ${long_data} is not a file.${NC}" >&2
+      exit 1
+    fi
+    if [ "${#ARRAY[@]}" -gt 1 ]; then
+      echo "${RED}ERROR: --long-data stands for one input file, but ${#ARRAY[@]} were given.${NC}" >&2
+      exit 1
+    fi
+  fi
+
   if [[ "${skullstrip_only}" -eq 1 ]]; then
     # Skull stripping only: run volume pipeline step to produce skullstrip outputs and stop.
     estimate_seg=1
@@ -958,7 +970,7 @@ usage() {
   print_usage "[options] <filename(s)>" \
     "${BOLD}General:${NC}  --defaults <FILE>  --install  --re-install  --python <FILE>" \
     "          --multi <NUMBER>  --min-memory <NUMBER>  --seed <NUMBER>" \
-    "          --retry  --no-retry  --long-data <PATH>  --debug  --verbose" \
+    "          --retry  --no-retry  --long-data <FILE>  --debug  --verbose" \
     "" \
     "${BOLD}Save:${NC}     --out-dir <DIR>  --bids  --gz  --no-overwrite <STRING>" \
     "          --save-h5  --fmriprep  --no-track  --skullstrip-only" \
@@ -1104,14 +1116,11 @@ ${BOLD}${GREEN}General Options:${NC}
       Do not retry failed processing steps. This is the default; the flag is
       kept so existing command lines keep working.
 
-  --long-data <PATH>
-      Use longitudinally realigned images as the actual input data while still
-      deriving output folders from the original input path.
-      If <PATH> is relative, it is interpreted relative to the derived output folder.
-      Expected filenames inside <PATH> are tried in this order:
-        1) '<stem>_desc-realigned.nii[.gz]'
-        2) 'r<stem>.nii[.gz]'
-        3) '<original-basename>'
+  --long-data <FILE>
+      Process <FILE> -- the longitudinally realigned copy of the input, as
+      process_longitudinal.sh passes it -- instead of the input, while the
+      output folders and names are still derived from the input file.
+      Takes exactly one input file.
 
 ${BOLD}${GREEN}Save Options:${NC}
   --out-dir <DIR>             

@@ -496,22 +496,16 @@ def _process_single(
         return 0
 
     # ------------------------------------------- --long-data input override
+    # The file processed in place of the input (the realigned copy that
+    # process_longitudinal.sh passes); folders and names stay with the input.
+    # It used to be searched as a folder here, and a file silently fell back
+    # to the non-realigned input.
     actual_input = input_file
     if long_data:
-        ld = Path(long_data)
-        if not ld.is_absolute():
-            ld = outdir0 / ld
-        stem = Path(input_file).name.removesuffix(".nii.gz").removesuffix(".nii")
-        for candidate in (
-            ld / f"{stem}_desc-realigned.nii.gz",
-            ld / f"{stem}_desc-realigned.nii",
-            ld / f"r{stem}.nii.gz",
-            ld / f"r{stem}.nii",
-            ld / Path(input_file).name,
-        ):
-            if candidate.exists():
-                actual_input = str(candidate)
-                break
+        if not os.path.isfile(long_data):
+            print(f"ERROR: --long-data {long_data} is not a file", file=sys.stderr)
+            return 1
+        actual_input = str(long_data)
 
     report_log = str(report_dir / f"{bname}.log")
 
@@ -721,8 +715,9 @@ def run_t1prep(
         Base output directory.  When ``None`` the output is placed next to
         the input (non-BIDS) or inside a BIDS derivatives folder (BIDS).
     long_data:
-        Longitudinal data path.  Use the realigned volume at this location
-        as the actual input while deriving output folders from *inputs*.
+        File processed in place of the input -- the longitudinally realigned
+        copy of it -- while output folders and names are derived from
+        *inputs*, which must then be a single file.
     initial_surf:
         Path to an initial surface (skips Marching Cubes, longitudinal use).
     no_overwrite:
@@ -815,6 +810,13 @@ def run_t1prep(
         input_list = [str(i) for i in inputs]
     if not input_list:
         raise ValueError("No input files provided.")
+    if long_data is not None:
+        if len(input_list) > 1:
+            raise ValueError(
+                f"long_data stands for one input file, but {len(input_list)} were given."
+            )
+        if not os.path.isfile(long_data):
+            raise ValueError(f"long_data {long_data} is not a file.")
 
     # --fast shortcut
     if fast:
@@ -1006,9 +1008,10 @@ def _build_parser() -> ArgumentParser:
                     help="Use AMAP instead of DeepMRIPrep for segmentation")
     g3.add_argument("--seed", type=int, default=0,
                     help="Random seed for reproducibility (default 0)")
-    g3.add_argument("--long-data", metavar="PATH",
-                    help="Use realigned volume at PATH as the actual input "
-                         "while deriving output folders from the original file")
+    g3.add_argument("--long-data", metavar="FILE",
+                    help="Process FILE (the longitudinally realigned copy of "
+                         "the input) instead of the input, keeping the output "
+                         "folders and names of the input; one input only")
     g3.add_argument("--initial-surf", metavar="FILE", default="",
                     help="Initial surface file for longitudinal processing")
     g3.add_argument("--retry", action="store_true",
@@ -1036,6 +1039,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     # '--help' then gives the full description
     parser.exit_without_arguments(argv)
     args = parser.parse_args(argv)
+    if args.long_data is not None:
+        if len(args.inputs) > 1:
+            parser.error("--long-data stands for one input file, "
+                         f"but {len(args.inputs)} were given")
+        if not os.path.isfile(args.long_data):
+            parser.error(f"--long-data {args.long_data} is not a file")
 
     return run_t1prep(
         args.inputs,

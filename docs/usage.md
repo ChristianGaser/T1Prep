@@ -62,7 +62,7 @@ Skull-stripping modes:
 
 Longitudinal / advanced flags:
 - `--initial-surf <FILE>`: use an initial surface estimate for longitudinal processing.
-- `--long-data <PATH>`: process the volume at `<PATH>` while keeping output naming/folders based on the provided input file.
+- `--long-data <FILE>`: process `<FILE>`, the longitudinally realigned copy of the input (as `process_longitudinal.sh` passes it), instead of the input, while output folders and names still follow the input file. Takes exactly one input file.
 - `--no-atlas`: disable atlas labeling (overrides any defaults file atlas selection).
 
 Segmentation refinement:

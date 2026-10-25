@@ -106,5 +106,35 @@ class TestPresets(_InATempDir):
         self.assertEqual(kw["atlas"], "'cobra'")
 
 
+class TestLongData(_InATempDir):
+    """--long-data is a file, as in bash.  It used to be searched as a folder,
+    and a file silently fell back to the non-realigned input."""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("a.nii", "b.nii", "ra.nii"):
+            (self.tmp / name).write_bytes(b"")
+
+    def test_the_file_is_what_gets_segmented(self):
+        with mock.patch.object(orchestrator.subprocess, "call", return_value=0) as call:
+            rc = orchestrator._process_single(
+                str(self.tmp / "a.nii"), out_dir=str(self.tmp / "out"),
+                long_data=str(self.tmp / "ra.nii"), skullstrip_only=True,
+            )
+        self.assertEqual(rc, 0)
+        cmd = call.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("--input") + 1], str(self.tmp / "ra.nii"))
+
+    def test_one_input_and_an_existing_file_only(self):
+        with self.assertRaises(ValueError):
+            orchestrator.run_t1prep([str(self.tmp / "a.nii"), str(self.tmp / "b.nii")],
+                                    long_data=str(self.tmp / "ra.nii"))
+        with self.assertRaises(ValueError):
+            orchestrator.run_t1prep(str(self.tmp / "a.nii"), long_data=str(self.tmp))
+        with self.assertRaises(SystemExit):
+            orchestrator.main([str(self.tmp / "a.nii"), "--long-data",
+                               str(self.tmp / "missing.nii")])
+
+
 if __name__ == "__main__":
     unittest.main()
