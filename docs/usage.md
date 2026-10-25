@@ -135,10 +135,12 @@ run_t1prep("/data/sub-01/ses-1/anat/sub-01_ses-1_T1w.nii.gz", bids=True)
 run_t1prep([
   "/data/T1/sub-01.nii.gz",
   "/data/T1/sub-02.nii.gz",
-], out_dir="/results", atlas=["neuromorphometrics", "suit"], multi=-1,
-   wp=True, p=True, csf=True, lesions=True, gz=True, stream_output=True,
-   log_file="/results/T1Prep_run.log")
+], out_dir="/results", atlas=["neuromorphometrics", "suit"],
+   wp=True, p=True, csf=True, lesions=True, gz=True)
 ```
+
+The files are processed one after another; for parallel batches use
+`T1Prep --multi N`.
 
 `track=False` switches off the crash report (see [Telemetry](#telemetry)).
 
@@ -304,8 +306,10 @@ directory as the input files.
   T1Prep --python python3.11 --no-overwrite "surf/lh.thickness." sTRIO*.nii
 ```
 Process all files matching the pattern `'sTRIO*.nii'` and use python3.11. 
-Skip processing for files where 'surf/lh.thickness.*' already exists, and 
-save new results in the same directory as the input files.
+Skip a subject whose `surf/lh.thickness.<name>` already exists, and save new
+results in the same directory as the input files. With BIDS names the pattern
+is looked for after the subject's name instead, e.g.
+`--no-overwrite label-GM_probseg` checks for `<name>*label-GM_probseg*`.
 
 ```bash
   T1Prep --lesions --no-sphere-reg sTRIO*.nii

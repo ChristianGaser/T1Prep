@@ -54,3 +54,22 @@ def test_report_contains_provenance(tmp_path, monkeypatch):
     assert sw["versions"]["numpy"]
     assert sw["models"]["complete"] and len(sw["models"]["fingerprint"]) == 64
     report.model_provenance.cache_clear()
+
+
+def test_version_and_system_without_the_bash_log(tmp_path, monkeypatch):
+    # t1prep-run, the Python API and Docker write no T1Preplog, which used to
+    # leave "unknown" in the report
+    import t1prep
+    import t1prep._models as models
+
+    for name in models.MODEL_FILES:
+        (tmp_path / name).write_bytes(b"w")
+    monkeypatch.setattr(models, "MODEL_DIR", tmp_path)
+    report.model_provenance.cache_clear()
+    names = get_filenames(False, "sub01", "", "", "", "")
+    (tmp_path / names["Report_file"]).write_text(json.dumps({"vol_tiv": {"value": 1500}}))
+    report.write_t1prep_report(str(tmp_path), "sub01", False, str(tmp_path / "sub01.nii"))
+    sw = json.loads((tmp_path / names["Report_file"]).read_text())["software"]
+    assert sw["version_t1prep"] == t1prep.__version__
+    assert sw["system"] != "unknown"
+    report.model_provenance.cache_clear()

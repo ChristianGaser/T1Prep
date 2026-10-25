@@ -92,11 +92,14 @@ def _resolve_output_dirs(
     bname : str
         Stem of the input filename (no extension).
     """
-    p = Path(input_file).resolve()
+    # Absolute, but symlinks not resolved, as in bash: a DataLad/git-annex
+    # input is a link into .git/annex/objects/<hash>, and resolving it put
+    # the results there, named after the hash.
+    p = Path(os.path.abspath(input_file))
     bname = p.name.removesuffix(".nii.gz").removesuffix(".nii")
 
     add_str = "Amap" if use_amap else ""
-    version_clean = version.lstrip("v")
+    version_clean = version.removeprefix("v")
 
     dname = p.parent
     if dname.name == "anat":
@@ -112,7 +115,7 @@ def _resolve_output_dirs(
         subj_base = subj_dir.name
         dataset_root = subj_dir.parent
 
-        base_dir = Path(out_dir).resolve() if out_dir else dataset_root
+        base_dir = Path(os.path.abspath(out_dir)) if out_dir else dataset_root
         deriv = f"T1Prep{add_str}-v{version_clean}"
         if sess_folder:
             outdir0 = base_dir / "derivatives" / deriv / subj_base / sess_folder / "anat"
@@ -121,9 +124,24 @@ def _resolve_output_dirs(
     else:
         # Non-BIDS – CAT12-style subfolders under outdir0
         use_subfolder = True
-        outdir0 = Path(out_dir).resolve() if out_dir else dname
+        outdir0 = Path(os.path.abspath(out_dir)) if out_dir else dname
 
     return outdir0, use_subfolder, bname
+
+
+def _already_processed(outdir0, bname: str, pattern: str, bids: bool) -> bool:
+    """Whether ``--no-overwrite PATTERN`` finds this subject's results.
+
+    CAT12 names: ``<outdir0>/<PATTERN><bname>*`` (e.g. ``surf/lh.thickness.``);
+    BIDS names: ``<outdir0>/<bname without _T1w>*<PATTERN>*`` (e.g.
+    ``label-GM_probseg``).  Mirrors ``already_processed`` in
+    ``scripts/T1Prep_utils.sh``; *bname* and *PATTERN* are taken literally.
+    """
+    if bids:
+        name = glob.escape(bname.removesuffix("_T1w")) + "*" + glob.escape(pattern) + "*"
+    else:
+        name = glob.escape(pattern + bname) + "*"
+    return bool(glob.glob(os.path.join(glob.escape(str(outdir0)), name)))
 
 
 # ---------------------------------------------------------------------------
@@ -470,16 +488,12 @@ def _process_single(
         os.makedirs(surf_dir, exist_ok=True)
 
     # ---------------------------------------------------- --no-overwrite skip
-    if no_overwrite:
-        import glob as _glob
-        found = any(
-            _glob.glob(os.path.join(str(d), f"*{no_overwrite}*"))
-            for d in {str(mri_dir), str(surf_dir)}
-        )
-        if found:
-            if verbose:
-                print(f"Skip processing of {input_file}")
-            return 0
+    # Look for this subject's results only: the old "*PATTERN*" over the whole
+    # folder skipped every subject once the first one was done
+    if no_overwrite and _already_processed(outdir0, bname, no_overwrite, bids):
+        if verbose:
+            print(f"Skip processing of {input_file}")
+        return 0
 
     # ------------------------------------------- --long-data input override
     actual_input = input_file
@@ -712,8 +726,10 @@ def run_t1prep(
     initial_surf:
         Path to an initial surface (skips Marching Cubes, longitudinal use).
     no_overwrite:
-        Filename pattern string; skip a subject when matching files already
-        exist in the output directory.
+        Skip a subject whose results exist already: with CAT12 names a file
+        ``<PATTERN><bname>*`` in its output folder (e.g.
+        ``"surf/lh.thickness."``), with BIDS names ``<bname>*<PATTERN>*``
+        (e.g. ``"label-GM_probseg"``).
     pre_fwhm:
         Pre-smoothing FWHM (mm) applied before Marching Cubes (default 2).
     median_filter:
@@ -811,6 +827,15 @@ def run_t1prep(
         if atlas_surf is None:
             atlas_surf = ""
 
+    # --fmriprep: what fMRIPrep reads, as in scripts/T1Prep
+    if fmriprep:
+        bids = gz = csf = p = True
+        no_mwp = True
+        hemisphere = False
+        no_sphere_reg = False
+        if atlas is None:
+            atlas = ""
+
     # Resolve atlas strings
     if atlas is None:
         atlas_str = "'neuromorphometrics', 'cobra'"
@@ -904,7 +929,9 @@ def _build_parser() -> ArgumentParser:
     g.add_argument("--gz", action="store_true",
                    help="Write compressed .nii.gz outputs")
     g.add_argument("--no-overwrite", metavar="PATTERN",
-                   help="Skip subject if files matching PATTERN already exist")
+                   help="Skip a subject whose results exist: <PATTERN><name>* "
+                        "with CAT12 names (e.g. surf/lh.thickness.), "
+                        "<name>*<PATTERN>* with BIDS names")
     g.add_argument("--no-surf", action="store_true",
                    help="Skip cortical surface estimation")
     g.add_argument("--no-seg", action="store_true",
@@ -944,14 +971,14 @@ def _build_parser() -> ArgumentParser:
 
     # atlas
     g2 = p.add_argument_group("Atlas options")
+    # No argparse defaults: run_t1prep() applies them, so that --fast and
+    # --fmriprep can switch the atlases off unless they are given explicitly
     g2.add_argument("--atlas", metavar="LIST",
-                    default="'neuromorphometrics', 'cobra'",
                     help="Comma-separated volumetric atlas list "
-                         "(default: %(default)r)")
+                         "(default: 'neuromorphometrics', 'cobra')")
     g2.add_argument("--atlas-surf", metavar="LIST",
-                    default="'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'",
-                    help="Comma-separated surface atlas list "
-                         "(default: %(default)r)")
+                    help="Comma-separated surface atlas list (default: "
+                         "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer')")
     g2.add_argument("--no-atlas", action="store_true",
                     help="Disable atlas labelling")
 

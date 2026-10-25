@@ -118,8 +118,13 @@ def write_t1prep_report(
     log_path = Path(report_dir) / log_name
 
     # --- Parse T1Preplog for version and changed-voxel quality measure ---
-    t1prep_version = "unknown"
-    system_str = "unknown"
+    # Only the bash orchestrator writes that log; t1prep-run, the Python API
+    # and Docker do not, so start from the running package and platform
+    from . import __version__
+
+    uname = platform.uname()
+    t1prep_version = __version__
+    system_str = f"{uname.system} {uname.release} {uname.machine}"
     changed_voxels_total = 0
 
     if log_path.exists():

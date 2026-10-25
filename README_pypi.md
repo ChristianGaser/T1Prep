@@ -97,26 +97,25 @@ run_t1prep(
     ["/data/T1/sub-01.nii.gz", "/data/T1/sub-02.nii.gz"],
     out_dir="/results",
     atlas=["neuromorphometrics", "suit"],
-    multi=-1,          # auto-detect parallelism
     wp=True,           # save warped segmentations
     p=True,            # save native segmentations
     csf=True,          # save CSF segmentation
     lesions=True,      # save WMH lesion map
     gz=True,           # compress outputs (.nii.gz)
-    stream_output=True,
-    log_file="/results/T1Prep_run.log",
 )
 ```
+
+`run_t1prep` processes the files one after another; for parallel batches use
+`T1Prep --multi N` or call it from several processes.
 
 ### Key parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `files` | `str` or `list[str]` | Input NIfTI file(s) |
+| `inputs` | `str` or `list[str]` | Input NIfTI file(s) (first argument) |
 | `out_dir` | `str` | Output directory (default: same as input) |
 | `atlas` | `list[str]` | Atlas names for ROI extraction |
-| `surf` | `bool` | Run cortical surface estimation (default: `True`) |
-| `multi` | `int` | Parallel workers; `-1` = auto (default: `1`) |
+| `no_surf` | `bool` | Skip cortical surface estimation (default: `False`) |
 | `bids` | `bool` | Use BIDS derivatives naming |
 | `gz` | `bool` | Save compressed NIfTI (`.nii.gz`) |
 | `wp` | `bool` | Save warped (MNI space) segmentations |

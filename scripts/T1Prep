@@ -569,15 +569,13 @@ process()
   # Do not mangle spaces; always quote variables instead
 
     # Check whether processed files exist if no-overwrite flag is used
+    processed=""
     if [ -n "${no_overwrite}" ]; then
 
       # Output folders are always derived from the original input file.
       get_output_folder "$FILE"
-      
-      if [ "${use_bids_naming}" -eq 1 ]; then  
-        processed=$(ls "${outdir0}/${bname}"*"/${no_overwrite}"* 2>/dev/null)
-      else
-        processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
+      if already_processed "${outdir0}" "${bname}" "${no_overwrite}" "${use_bids_naming}"; then
+        processed=1
       fi
     fi
     
@@ -622,19 +620,12 @@ process()
     # Output folders are always derived from the original input file.
     get_output_folder "$FILE" # sets outdir0/use_subfolder/bname
 
-    # Check again whether processed files exist if no-overwrite flag is used
-    if [ -n "${no_overwrite}" ]; then
-      if [ "${use_bids_naming}" -eq 1 ]; then  
-        processed=$(ls "${outdir0}/${no_overwrite}${bname}"* 2>/dev/null)
-      else
-        processed=$(ls "${outdir0}/${bname}"*"${no_overwrite}"* 2>/dev/null)
-      fi
-
-      # Check if $processed is empty
-      if [ -n "$processed" ]; then
-        echo Skip processing of "${FILE}"
-        continue  # Skip to the next iteration of the loop
-      fi
+    # Check again: another job may have finished this subject meanwhile
+    if [ -n "${no_overwrite}" ] &&
+       already_processed "${outdir0}" "${bname}" "${no_overwrite}" "${use_bids_naming}"; then
+      echo Skip processing of "${FILE}"
+      ((i++))
+      continue
     fi
     
     # Get output folders for surfaces and volumes
@@ -1167,8 +1158,10 @@ ${BOLD}${GREEN}Save Options:${NC}
         With --out-dir /results:
             /results/mri/
 
-  --no-overwrite <STRING>     
-      Prevent overwriting existing results by checking for the given filename pattern.
+  --no-overwrite <STRING>
+      Skip a subject whose results exist already: with CAT12 names a file
+      <STRING><name>* in its output folder (e.g. "surf/lh.thickness."),
+      with BIDS names <name>*<STRING>* (e.g. "label-GM_probseg").
 
   --save-h5
       Additionally save the T1w<->MNI152NLin2009cAsym deformations as

@@ -917,6 +917,23 @@ get_output_folder()
   t1prep_output_folder_from_input "$FILE" "${outdir:-}" "${T1PREP_VERSION}" "${use_amap}"
 }
 
+already_processed()
+{
+  # Usage: already_processed <outdir0> <bname> <pattern> <use_bids_naming>
+  # Succeeds when the subject's results exist (--no-overwrite <pattern>):
+  #   CAT12 names: <outdir0>/<pattern><bname>*, e.g. pattern surf/lh.thickness.
+  #   BIDS names:  <outdir0>/<bname without _T1w>*<pattern>*, e.g. label-GM_probseg
+  # Mirrors _already_processed() in src/t1prep/t1prep.py.
+  local outdir0="$1" bname="$2" pattern="$3" bids="${4:-0}"
+  local matches
+  if [ "${bids}" -eq 1 ]; then
+    matches=$(ls -d "${outdir0}/${bname%_T1w}"*"${pattern}"* 2>/dev/null)
+  else
+    matches=$(ls -d "${outdir0}/${pattern}${bname}"* 2>/dev/null)
+  fi
+  [ -n "${matches}" ]
+}
+
 telemetry_allowed()
 {
   # Usage: telemetry_allowed
