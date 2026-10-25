@@ -55,7 +55,8 @@ dependencies = [
     "flask>=2.3",
     "apscheduler>=3.10",
     "h5py>=3.0",
-    "sentry-sdk",
+    # Crash reports (t1prep._telemetry); 2.0 has the options that keep paths out
+    "sentry-sdk>=2.0",
     "PySide6>=6.2",
     "vtk>=9.0.0",
 ]
