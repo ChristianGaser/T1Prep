@@ -808,16 +808,15 @@ def resample_and_save_nifti(
     nib.save(nii_data, out_name)
 
 
-def get_resampled_header(header, aff, new_vox_size, ras_aff, reorder_method=1):
+def get_resampled_header(header, aff, new_vox_size):
     """
     Adjusts the NIfTI header and affine matrix for a new voxel size.
 
     Args:
-        header (nib.Nifti1Header): The header of the input NIfTI image.
+        header (nib.Nifti1Header): The header of the input NIfTI image, with
+            pixdim in the order of its data axes (``align_brain`` keeps it so).
         aff (np.ndarray): The affine transformation matrix of the input image.
         new_vox_size (np.ndarray): The desired voxel size as a 3-element array.
-        ras_aff (np.ndarray): The RAS affine matrix.
-        reorder_method (int, optional): The reordering method. Defaults to 1.
 
     Returns:
         tuple: A tuple containing the updated header and affine matrix.
@@ -829,17 +828,9 @@ def get_resampled_header(header, aff, new_vox_size, ras_aff, reorder_method=1):
     dim = header2["dim"]
     pixdim = header2["pixdim"]
 
-    ras_ref, dirs_ref = get_ras(aff, 3)
+    # pixdim already follows the data axes; it used to be permuted here,
+    # because align_brain left it in the order of the input file
     factor = pixdim[1:4] / new_vox_size
-    reordered_factor = np.zeros_like(pixdim[1:4])
-    for i, axis in enumerate(ras_ref):
-        if reorder_method == 1:
-            reordered_factor[i] = factor[np.where(ras_aff == axis)[0][0]]
-        else:
-            reordered_factor[axis] = (
-                dirs_ref[i] * factor[i]
-            )  # Adjust for axis direction
-    factor = reordered_factor
 
     dim[1:4] = np.abs(np.round(dim[1:4] * factor))
 
@@ -912,12 +903,13 @@ def align_brain(data, aff, header, aff_ref, do_flip=1):
     reordered_aff[:dim, 3] = aff[:dim, 3]
     reordered_aff[3, :] = [0, 0, 0, 1]
 
-    header["srow_x"] = reordered_aff[0, :]
-    header["srow_y"] = reordered_aff[1, :]
-    header["srow_z"] = reordered_aff[2, :]
-    header["qoffset_x"] = reordered_aff[0, 3]
-    header["qoffset_y"] = reordered_aff[1, 3]
-    header["qoffset_z"] = reordered_aff[2, 3]
+    # Both forms, and with the qform the voxel sizes in pixdim, have to follow
+    # the permuted axes.  Writing only srow and qoffset kept the input's qform
+    # rotation and pixdim order: a sagittal scan came out with a PSR qform on
+    # an RPS array and zooms (0.94, 0.94, 1.2) for (1.2, 0.94, 0.94), and ITK
+    # -- ANTs, fMRIPrep -- reads that qform and misplaces the image.
+    header.set_sform(reordered_aff, code=int(header["sform_code"]) or 1)
+    header.set_qform(reordered_aff, code=int(header["qform_code"]) or 1)
 
     # Update the affine matrix after reordering
     aff = reordered_aff

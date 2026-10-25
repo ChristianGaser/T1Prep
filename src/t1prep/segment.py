@@ -1634,7 +1634,7 @@ def run_segment():
         
     # Prepare for resampling
     header_resamp, affine_resamp = get_resampled_header(
-        brain.header, brain.affine, target_res, ras_affine
+        brain.header, brain.affine, target_res
     )
     dim_target_res = header_resamp["dim"]
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
