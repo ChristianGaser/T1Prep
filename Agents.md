@@ -22,6 +22,7 @@ T1Prep/
 │       ├── _lesions.py             # WMH detection and tissue-map correction
 │       ├── _partition.py           # Hemisphere partition + Euler number
 │       ├── _segment_utils.py       # Small shared segmentation helpers
+│       ├── _telemetry.py           # Telemetry opt-out, crash reports without paths
 │       ├── transforms.py           # ITK .txt/.h5 transforms, SPM y_ deformations
 │       ├── utils.py                # Shared utilities
 │       ├── metrics.py              # Dice/evaluation metrics + CLI
