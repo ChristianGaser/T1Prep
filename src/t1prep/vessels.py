@@ -768,8 +768,8 @@ def apply_blood_vessel_correction(
     if strength <= 0:
         return brain, label
 
-    ym01 = brain.get_fdata().astype(np.float32)
-    yp0 = label.get_fdata().astype(np.float32)
+    ym01 = np.array(brain.dataobj, dtype=np.float32, order="C")  # no float64 detour
+    yp0 = np.array(label.dataobj, dtype=np.float32, order="C")
     vx = tuple(float(z) for z in brain.header.get_zooms()[:3])
 
     if bv_prior is None:

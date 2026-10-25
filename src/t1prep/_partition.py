@@ -241,7 +241,9 @@ def get_partition(p0_large, atlas, guard_atlas=None):
     ]
     regions = dict(zip(rois.ROIabbr, rois.ROIid))
 
-    atlas_data = atlas.get_fdata().copy()
+    # The label ids are integers, so isin on the stored uint8/int16 array gives
+    # the same masks as on a float64 copy, without the 2 x 360 MB.
+    atlas_data = np.asanyarray(atlas.dataobj)
     atlas_mask = atlas_data > 0
     atlas_mask = box_dilate(atlas_mask, 3)
 

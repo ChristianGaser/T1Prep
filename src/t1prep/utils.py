@@ -560,17 +560,26 @@ def crop_nifti_image_with_border(img, border=5, threshold=0):
         it.
     """
     # Load image data, affine, and header
-    data = img.get_fdata().copy()
+    # One float64 copy; get_fdata() plus .copy() kept a second, cached one
+    data = img.get_fdata(caching="unchanged")
+    if data is img.dataobj:  # float64 in-memory image: keep it untouched
+        data = data.copy()
     affine = img.affine
     header = img.header
 
     # Find the bounding box of non-zero values
+    # Per-axis projections instead of np.where over every voxel (three int64
+    # index arrays of the whole content); same min/max.
     mask = data > threshold
-    coords = np.array(np.where(mask))
-    if coords.size == 0:
+    if not mask.any():
         return img
-    min_coords = coords.min(axis=1)
-    max_coords = coords.max(axis=1)
+    min_coords = np.empty(3, dtype=np.int64)
+    max_coords = np.empty(3, dtype=np.int64)
+    for axis in range(3):
+        others = tuple(a for a in range(3) if a != axis)
+        present = np.flatnonzero(mask.any(axis=others))
+        min_coords[axis], max_coords[axis] = present[0], present[-1]
+    del mask
 
     # Add border
     min_coords = np.maximum(min_coords - border, 0)
@@ -942,7 +951,7 @@ def get_volume_native_space(vol_nifti, wj_affine):
     if vol_nifti is None:
         return 0
 
-    vol_prob = vol_nifti.get_fdata()
+    vol_prob = vol_nifti.get_fdata(caching="unchanged")  # no float64 cache
     vol_sum = np.sum(vol_prob)
 
     # Voxel volume in target/registered space (mm³).  The determinant rather

@@ -55,7 +55,7 @@ def scale_intensity(x, low=.5, high=99.5):
 def piecewise_linear_scaling(input_img, label_img):
     """Piecewise linear scaling of an intensity image."""
     target_values = np.arange(0, 5)
-    Ym = input_img.copy().astype(float)
+    Ym = np.array(input_img, dtype=float, order="C")  # one copy, C order
     median_input = {}
     for k in [1, 2, 3]:
         mask = np.abs(label_img - k) < 0.01
@@ -329,10 +329,10 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
     white-matter-like mask estimated from low-gradient bright voxels.
     ``get_discrepancy`` is unused.
     """
-    brain0 = brain.get_fdata().copy()
+    brain0 = np.array(brain.dataobj, dtype=np.float64, order="C")  # one copy
 
     if seg is not None:
-        seg0 = seg.get_fdata().copy()
+        seg0 = np.ascontiguousarray(seg.get_fdata(caching="unchanged"))  # read only
         max_seg = np.max(seg0)
         mask = seg0 >= (2.75 / 3.0 * max_seg)
     else:
@@ -369,8 +369,16 @@ def correct_bias_field(brain, seg=None, steps=1000, spacing=1.0, get_discrepancy
     )
 
     bias0 = np.exp(log_bias)
-    tissue_idx = bias0 != 0
-    brain0[tissue_idx] /= bias0[tissue_idx]
+    del log_bias
+    # exp() is never 0 here, so divide the whole array in place: the same
+    # per-voxel division as the masked form, without gathering two full-size
+    # temporaries (np.divide(where=) is slower still).
+    if bias0.all():
+        brain0 /= bias0
+    else:
+        tissue_idx = bias0 != 0
+        brain0[tissue_idx] /= bias0[tissue_idx]
+    del bias0
     if seg is not None:
         brain0 = piecewise_linear_scaling(brain0, seg0)
     return nib.Nifti1Image(brain0, brain.affine, brain.header)
@@ -439,8 +447,8 @@ def global_intensity_norm(brain, seg, vx=None, verbose=False):
     filter.
     """
     eps = np.finfo(np.float32).eps
-    src = brain.get_fdata().astype(np.float32)
-    seg0 = seg.get_fdata()
+    src = np.array(brain.dataobj, dtype=np.float32, order="C")  # no float64 detour
+    seg0 = np.ascontiguousarray(seg.get_fdata(caching="unchanged"))  # read only
     if vx is None:
         vx = tuple(float(z) for z in brain.header.get_zooms()[:3])
 
@@ -533,8 +541,8 @@ def fit_intensity_field(
     if not (isinstance(limit, (list, tuple)) and len(limit) == 2):
         raise ValueError("limit must be a 2-element list or tuple")
 
-    brain0 = brain.get_fdata().copy()
-    seg0 = seg.get_fdata().copy()
+    brain0 = np.ascontiguousarray(brain.get_fdata(caching="unchanged"))  # read only
+    seg0 = np.ascontiguousarray(seg.get_fdata(caching="unchanged"))
     mask = (seg0 > limit[0]) & (seg0 <= limit[1])
     if exclude is not None:
         # Drop edge / partial-volume / vessel voxels before fitting, so the
@@ -590,7 +598,7 @@ def apply_LAS(t1, label, verbose=False):
 
     t1, stats = global_intensity_norm(t1, label, verbose=verbose)
 
-    Ysrc = t1.get_fdata().copy()
+    Ysrc = np.array(t1.dataobj, dtype=np.float64, order="C")  # one copy
     minYsrc = np.min(Ysrc)
 
     # Edge / partial-volume / vessel voxels, excluded from every fit below.
@@ -622,17 +630,18 @@ def apply_LAS(t1, label, verbose=False):
     # kink at the WM level (it used fit_wm - fit_csf here, roughly twice the
     # GM->WM span, so the slope halved).  Yml is bounded at 5 afterwards,
     # which is the same ceiling the global node mapping applies.
-    mask_wm = Ysrc >= fit_wm
-    Yml += mask_wm * (3 + (Ysrc - fit_wm) / np.maximum(eps, fit_wm - fit_gm))
-
-    mask_gm = (Ysrc >= fit_gm) & (Ysrc < fit_wm)
-    Yml += mask_gm * (2 + (Ysrc - fit_gm) / np.maximum(eps, fit_wm - fit_gm))
-
-    mask_csf = (Ysrc >= fit_csf) & (Ysrc < fit_gm)
-    Yml += mask_csf * (1 + (Ysrc - fit_csf) / np.maximum(eps, fit_gm - fit_csf))
-
-    mask_bg = Ysrc < fit_csf
-    Yml += mask_bg * ((Ysrc - minYsrc) / np.maximum(eps, fit_csf - minYsrc))
+    #
+    # The four ``Yml += mask * term`` updates are evaluated slab by slab: every voxel sees exactly the same float64 operations in the same
+    # order, but the temporaries are a few planes instead of eight to ten
+    # full 0.5 mm float64 volumes.
+    step = 16
+    for z0 in range(0, Ysrc.shape[0], step):
+        sl = slice(z0, z0 + step)
+        ys, fw, fg, fc, out = Ysrc[sl], fit_wm[sl], fit_gm[sl], fit_csf[sl], Yml[sl]
+        out += (ys >= fw) * (3 + (ys - fw) / np.maximum(eps, fw - fg))
+        out += ((ys >= fg) & (ys < fw)) * (2 + (ys - fg) / np.maximum(eps, fw - fg))
+        out += ((ys >= fc) & (ys < fg)) * (1 + (ys - fc) / np.maximum(eps, fg - fc))
+        out += (ys < fc) * ((ys - minYsrc) / np.maximum(eps, fc - minYsrc))
 
     Yml[Yml < 0.25] = 0
     np.clip(Yml, 0.0, 5.0, out=Yml)

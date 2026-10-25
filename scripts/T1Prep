@@ -742,9 +742,9 @@ process()
       [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
       [ "${multi}" -ne -2 ] && cmd+=" --verbose"
       [ "${debug}" -eq 1 ] && cmd+=" --debug"
-      [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ] || \
-      [ "${save_mwp}" -eq 1 ] || [ "${save_wp}" -eq 1 ] || \
-      [ -n "${atlas_vol}" ] && cmd+=" --surf"
+      # --surf writes the hemisphere label maps, which only the surfaces and
+      # --hemi use; warped and atlas outputs come without it (needs_warp)
+      { [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ]; } && cmd+=" --surf"
       [ "${save_csf}" -eq 1 ] && cmd+=" --csf"
       [ "${skullstrip_only}" -eq 1 ] && cmd+=" --skullstrip-only"
       [ "${skip_skullstrip}" -eq 1 ] && cmd+=" --skip-skullstrip"

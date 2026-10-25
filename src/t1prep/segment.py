@@ -285,7 +285,13 @@ class CustomPreprocess(Preprocess):
         accelerator the call still goes to ``spline_resize``.
         """
         with _spline_resize_via_libcat():
-            return super().run_affine_register(brain_nifti, mask_nifti)
+            out = super().run_affine_register(brain_nifti, mask_nifti)
+        # nifti_to_tensor() cached a float32 copy of the 0.5 mm template
+        # (180 MB) in the template image; it is never read again.
+        template = getattr(self, "affine_template", None)
+        if template is not None:
+            template.uncache()
+        return out
 
     def run_segment_brain(self, brain_large, mask, affine, mask_large):
         """Brain segmentation without deepmriprep's unused native-space ``p0``.
@@ -1045,9 +1051,12 @@ def _write_volume_report(
 
     # Mean intensities per tissue class
     mean_CGW = []
+    p0_round = np.round(p0_large.get_fdata(caching="unchanged"))  # rounded once
+    brain_vals = brain_large.get_fdata(caching="unchanged")
     for label in (1, 2, 3):  # p0_large: 1=CSF, 2=GM, 3=WM
-        mask_label = np.round(p0_large.get_fdata()) == label
-        mean_CGW.append(brain_large.get_fdata()[mask_label].mean())
+        mask_label = p0_round == label
+        mean_CGW.append(brain_vals[mask_label].mean())
+    del p0_round, brain_vals, mask_label
 
     # Estimate image quality measures at native acquisition resolution.
     # CAT12 reads the ORIGINAL file (varargin{2}); both branches that would use
@@ -1415,10 +1424,11 @@ def _save_hemispheres(
     # ~17 um for the B-spline.  ``clip_overshoot`` removes the ringing
     # the spline introduces at the sharp label edges, keeping the values
     # inside the [1, 3] range ``get_partition`` produces.
+    grid = grid_target_res() if callable(grid_target_res) else grid_target_res
     for hemi, side_names in ((lh, names.left), (rh, names.right)):
         resample_and_save_nifti(
             nib.Nifti1Image(hemi, p0_large.affine, p0_large.header),
-            grid_target_res,
+            grid,
             affine_resamp,
             header_resamp,
             f"{mri_dir}/{side_names.get('Hemi_volume', '')}",
@@ -1604,6 +1614,7 @@ def run_segment():
         brain_value -= min_brain
     brain_value[~mask_value] = 0
     brain_large = nib.Nifti1Image(brain_value, brain_large.affine, brain_large.header)
+    del brain_value, mask_value  # the image owns the array now
 
     # Step 4: Segmentation
     if verbose:
@@ -1615,14 +1626,16 @@ def run_segment():
         output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
     release_cache(device)
     p0_large = output_seg["p0_large"]
+    del output_seg, mask_large
 
     # Due to B-spline interpolation we have to change values below zero
-    p0_value = p0_large.get_fdata()
+    p0_value = p0_large.get_fdata(caching="unchanged")  # no float64 cache
     if np.min(p0_value) < 0:
         p0_value[p0_value < 0] = 0
         p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
 
-    mask_large_value = p0_large.get_fdata() > 1E-3
+    mask_large_value = p0_value > 1E-3
+    del p0_value
         
     # Prepare for resampling
     header_resamp, affine_resamp = get_resampled_header(
@@ -1631,11 +1644,14 @@ def run_segment():
     dim_target_res = header_resamp["dim"]
     inv_affine = torch.linalg.inv(torch.from_numpy(affine.values).float())
 
-    grid_target_res = F.affine_grid(
-        inv_affine[None, :3],
-        [1, 3, *dim_target_res[1:4]],
-        align_corners=INTERP_KWARGS["align_corners"],
-    )
+    # ~1 GB for a 0.5 mm native grid and needed only by _save_hemispheres, so
+    # it is built there, on demand, and freed right after.
+    def grid_target_res():
+        return F.affine_grid(
+            inv_affine[None, :3],
+            [1, 3, *dim_target_res[1:4]],
+            align_corners=INTERP_KWARGS["align_corners"],
+        )
     shape = nib.as_closest_canonical(mask).shape
     grid_native = F.affine_grid(
         inv_affine[None, :3],
@@ -1661,7 +1677,8 @@ def run_segment():
             )
         del dura_large
 
-    p0_large_orig = p0_large
+    # Only the lesion / AMAP path reads the unrefined label
+    p0_large_orig = p0_large if (use_amap or opts.save_lesions) else None
 
     # Regions the vessel correction must not touch, and the MRA-derived
     # spatial prior.  Both only depend on the grid, so they are built once
@@ -1716,6 +1733,8 @@ def run_segment():
                 out_name=out_name,
                 ext=ext,
             )
+
+    protect = bv_prior = None  # not needed from here on
 
     if debug:
         nib.save(brain_large, f"{mri_dir}/{out_name}_brain_large_tmp.{ext}")
@@ -1787,16 +1806,20 @@ def run_segment():
 
     # Rebuild the label from the (possibly lesion-corrected) tissue maps.
     gm, wm, csf = normalize_to_sum1(
-        p1_large.get_fdata(), p2_large.get_fdata(), p3_large.get_fdata()
+        p1_large.get_fdata(caching="unchanged"),
+        p2_large.get_fdata(caching="unchanged"),
+        p3_large.get_fdata(caching="unchanged"),
     )
     p0_large = nib.Nifti1Image(
         csf + 2 * gm + 3 * wm, p0_large.affine, p0_large.header
     )
+    del gm, wm, csf
 
     # We have to apply the initial mask again to the label
     p0_value = p0_large.get_fdata().copy()
     p0_value[mask_large_value == 0] = 0
     p0_large = nib.Nifti1Image(p0_value, p0_large.affine, p0_large.header)
+    del mask_large_value
 
     if use_amap or opts.save_lesions:
         p0_value = p0_large.get_fdata().copy()

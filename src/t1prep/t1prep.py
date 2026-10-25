@@ -187,8 +187,8 @@ def _build_segment_cmd(
     flag("--csf",             save_csf)
     flag("--skullstrip-only", skullstrip_only)
     flag("--skip-skullstrip", skip_skullstrip)
-    # --surf tells segment.py to emit hemisphere partition maps consumed by
-    # surface_estimation; also required when any warped/atlas output is requested.
+    # --surf tells segment.py to emit the hemisphere partition maps consumed
+    # by surface_estimation and saved by --hemi.
     flag("--surf",            need_surf_outputs)
 
     cmd += ["--seed",       str(seed)]
@@ -506,11 +506,10 @@ def _process_single(
     # ------------------------------------------------------------------ segmentation
     if estimate_seg:
         atlas_arg = "" if no_atlas else atlas
-        # --surf flag: segment.py must emit hemisphere partition maps when
-        # surface estimation, hemispheric outputs, or warped outputs are needed.
-        need_surf_outputs = (
-            estimate_surf or hemisphere or save_mwp or wp or bool(atlas_arg)
-        )
+        # --surf: segment.py writes the hemisphere partition maps, which only
+        # the surfaces and --hemi use; warped and atlas outputs (needs_warp in
+        # segment.py) come without them.
+        need_surf_outputs = estimate_surf or hemisphere
         seg_cmd = _build_segment_cmd(
             actual_input,
             str(mri_dir), str(report_dir), str(label_dir),

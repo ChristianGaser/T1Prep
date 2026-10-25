@@ -42,8 +42,11 @@ __all__ = ["ChunkedConv3d", "chunked_conv3d"]
 
 #: Column-buffer ceiling per convolution.  Measured on the warp model at the
 #: 1.5 mm grid, the peak keeps falling until ~256 MB (14.3 GB -> 3.5 GB) and
-#: flattens out below it, while smaller budgets start costing wall-clock.
-DEFAULT_BUDGET = 256 << 20
+#: flattens out below it.  96 rather than 256 MB: macOS libmalloc keeps freed
+#: blocks of up to 128 MB for reuse, larger ones go back to the kernel, so every
+#: 256 MB slab faulted in all its pages again (34 M faults in the NN stage on an
+#: M2; 96 MB saves ~9 s per subject with identical outputs).
+DEFAULT_BUDGET = 96 << 20
 
 #: Both spellings of the forward convolution reach the dispatcher: eager code
 #: emits ``aten::convolution``, TorchScript graphs emit ``aten::_convolution``.
