@@ -477,10 +477,7 @@ process()
     if [ "$multi" -gt 0 ]; then
       arg_parallelize=( --processes "${multi}" )
     else
-      # Each job runs both hemispheres at once: use 2/3 of the logical
-      # processors for the hemisphere processes, i.e. a third as jobs
-      get_no_surface_jobs
-      arg_parallelize=( --processes "${NUM_SURF_JOBS}" )
+      arg_parallelize=( --processes 0.5 )
     fi
     cmd=(
       "${script_dir}/parallelize"
@@ -1031,10 +1028,8 @@ ${BOLD}${GREEN}General Options:${NC}
       Path to the Python interpreter to use (default: $python).
 
   --multi <NUMBER>            
-      Set the maximum number of parallel jobs. Use '-1' to estimate it
-      automatically (default: $multi): from the available memory for the
-      segmentation, and a third of the logical processors for the surface
-      estimation, whose jobs run both hemispheres at once.  
+      Set the maximum number of parallel jobs. Use '-1' to automatically 
+      detect and use all available CPU cores (default: $multi).  
       If you specify a value here and it is lower than the number of jobs 
       calculated based on --min-memory, your specified value will be used.
 
@@ -1286,11 +1281,9 @@ ${BLUE}T1Prep --multi 8 --p --csf --atlas "'neuromorphometrics', 'suit'" sTRIO*.
      optimize resource usage. If you notice system overload due to peak memory usage
      you can set a higher minimum memory limit using the "--min-memory" flag.
 
-  2. Surface Extraction: This stage does not require significant memory. Every job
-     runs both hemispheres at once, so by default a third of the logical processors
-     are used as jobs -- 2/3 of them busy with hemisphere processes, the rest left for
-     the threads of the surface tools -- or the number of processes defined with the
-     "--multi" flag.
+  2. Surface Extraction: This stage does not require significant memory and is 
+     distributed across all available processors or limited to the defined number of
+     processes using the "--multi" flag.
 
   If "--multi" is set to a specific number (e.g., 8), the system still estimates memory-based 
   constraints for segmentation parallelization. However, the specified number of processes 
