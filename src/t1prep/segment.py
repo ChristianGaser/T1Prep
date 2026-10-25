@@ -49,7 +49,7 @@ from deepbet.utils import reoriented_nifti
 from deepmriprep.segment import BrainSegmentation
 import deepmriprep.preprocess as dmp_preprocess
 from deepmriprep.preprocess import Preprocess
-from deepmriprep.utils import DATA_PATH, nifti_to_tensor, nifti_volume
+from deepmriprep.utils import DATA_PATH, nifti_to_tensor
 from deepmriprep.atlas import shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
@@ -72,9 +72,13 @@ from .utils import (
     resample_and_save_nifti,
     get_resampled_header,
     align_brain,
+    centre_extent_volume,
+    from_ras_storage,
     get_filenames,
+    in_ras_storage,
     get_volume_native_space,
     progress_bar,
+    to_ras_storage,
     TEMPLATE_PATH_T1PREP,
 )
 from ._atlas import get_atlas, roi_table, roi_tissue_volumes
@@ -593,7 +597,13 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
     prep = CustomPreprocess(no_gpu=no_gpu)
 
-    denoised = cat_surf.vol_sanlm(t1.get_fdata().astype(np.float32))
+    # SANLM works on the stored voxel lattice: a flipped copy of the same scan
+    # gave different values in 69% of the voxels.  Denoise in RAS storage
+    # order and store back.
+    denoised = from_ras_storage(
+        cat_surf.vol_sanlm(to_ras_storage(t1.get_fdata().astype(np.float32), t1.affine)),
+        t1.affine,
+    )
     # Keep the un-denoised intensities on the same grid (float32 to halve the
     # extra memory) — only the quality measures use them.
     t1_raw = nib.Nifti1Image(vol.astype(np.float32), t1.affine, t1.header)
@@ -1465,12 +1475,16 @@ def save_results(
     header_resamp,
     warp_template: nib.Nifti1Image,
     wj_affine: pd.Series,
+    wj_warp: pd.Series,
     device,
     verbose: bool,
     count: int,
     end_count: int,
 ) -> None:
     """Save segmentation and atlas results to disk.
+
+    ``wj_affine`` turns volumes on the 0.5 mm working grid into native ones,
+    ``wj_warp`` modulates the maps warped on the 1.5 mm template grid.
 
     Writes the affine-registered tissue maps, the native-space outputs and the
     volume/QA report.  If any requested output needs the non-linear
@@ -1517,7 +1531,7 @@ def save_results(
     # the whole run.  Slab it: same result, roughly a quarter of the memory.
     with chunked_conv3d():
         output_reg = prep.run_warp_register(
-            p0_large, p1_affine, p2_affine, wj_affine
+            p0_large, p1_affine, p2_affine, wj_warp
         )
     release_cache(device)
     warp_yx = output_reg["warp_yx"]
@@ -1603,8 +1617,10 @@ def run_segment():
         return
 
     # Step 2: Initial bias-correction that is benefitial for strong signal
-    # inhomogeneities (i.e. 7T data)
-    brain = correct_bias_field(brain)
+    # inhomogeneities (i.e. 7T data).  The fit subsamples every 5th voxel and
+    # median-filters with an even size, so it is run in RAS storage order as
+    # well: otherwise the storage order of the scan changed the result.
+    brain = in_ras_storage(brain, correct_bias_field)
 
     # Step 3: Affine registration
     affine, brain_large, mask_large, affine_loss, count = affine_register(
@@ -1749,8 +1765,21 @@ def run_segment():
     # it to express its volumes in native space, and nothing here depends on
     # the tissue maps it is computed alongside.
     warp_template = nib.load(f"{DATA_PATH}/templates/Template_4_GS.nii.gz")
+    # Native volume per template volume.  The affine maps normalised
+    # coordinates of the 0.5 mm affine template (align_corners: -1 and +1 are
+    # the corner voxel centres).  deepmriprep's nifti_volume used the
+    # edge-to-edge box and the 1.5 mm warp template instead: +0.3 to +1.8% on
+    # every absolute volume and ROI, depending on the matrix size.
+    det_affine = np.linalg.det(affine.values)
     wj_affine = (
-        np.linalg.det(affine.values) * nifti_volume(t1) / nifti_volume(warp_template)
+        det_affine * centre_extent_volume(t1) / centre_extent_volume(prep.affine_template)
+    )
+    # The maps that are warped and modulated reach the 1.5 mm warp grid
+    # corner centre to corner centre (_to_template_space, align_corners), so
+    # that grid's box is the reference for mwp: with wj_affine, sum(mwp1)
+    # came out 1.6% below the native GM volume
+    wj_warp = (
+        det_affine * centre_extent_volume(t1) / centre_extent_volume(warp_template)
     )
 
     if use_amap:
@@ -1808,6 +1837,7 @@ def run_segment():
         discrepancy_large = None
 
     wj_affine = pd.Series([wj_affine])
+    wj_warp = pd.Series([wj_warp])
 
     # Rebuild the label from the (possibly lesion-corrected) tissue maps.
     gm, wm, csf = normalize_to_sum1(
@@ -1863,6 +1893,7 @@ def run_segment():
         header_resamp=header_resamp,
         warp_template=warp_template,
         wj_affine=wj_affine,
+        wj_warp=wj_warp,
         device=device,
         verbose=verbose,
         count=count,

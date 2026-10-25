@@ -477,6 +477,61 @@ def remove_file(name):
     Path(name).unlink(missing_ok=True)
 
 
+_RAS_ORNT = np.array([[0, 1], [1, 1], [2, 1]])
+
+
+def to_ras_storage(data, affine):
+    """Return *data*, stored as *affine* describes, in RAS storage order.
+
+    For the steps that work on the stored voxel lattice (SANLM, the first
+    bias fit): run on the same anatomy, they gave different results for a
+    flipped storage order (GM -0.73% and thickness -1.3% between the LPI and
+    PSR copies of one scan).  Contiguous, so it can go to C code.
+    """
+    ornt = nib.io_orientation(affine)
+    transform = nib.orientations.ornt_transform(ornt, _RAS_ORNT)
+    return np.ascontiguousarray(nib.apply_orientation(data, transform))
+
+
+def from_ras_storage(data, affine):
+    """Inverse of :func:`to_ras_storage`: back to the order *affine* describes."""
+    ornt = nib.io_orientation(affine)
+    transform = nib.orientations.ornt_transform(_RAS_ORNT, ornt)
+    return np.ascontiguousarray(nib.apply_orientation(data, transform))
+
+
+def in_ras_storage(img, func):
+    """Run ``func(image) -> image`` on *img* stored in RAS order.
+
+    The result is stored back in *img*'s order and gets *img*'s affine and
+    header; for an image stored in RAS order already this is just ``func``.
+    """
+    ornt = nib.io_orientation(img.affine)
+    transform = nib.orientations.ornt_transform(ornt, _RAS_ORNT)
+    ras_affine = img.affine @ nib.orientations.inv_ornt_aff(transform, img.shape[:3])
+    ras_img = nib.Nifti1Image(
+        to_ras_storage(np.asanyarray(img.dataobj), img.affine), ras_affine, img.header
+    )
+    result = func(ras_img)
+    return nib.Nifti1Image(
+        from_ras_storage(np.asanyarray(result.dataobj), img.affine), img.affine, img.header
+    )
+
+
+def centre_extent_volume(img) -> float:
+    """Volume (mm^3) of the box between the centres of the corner voxels.
+
+    torchreg maps normalised coordinates with ``align_corners=True``, where
+    -1 and +1 are those centres; the Jacobian of an affine in mm is therefore
+    det(A) times the ratio of these boxes of the two grids.  The voxel sizes
+    come from the affine's columns, so they belong to the data axes whatever
+    pixdim says, and the product needs no reorientation.
+    """
+    shape = np.asarray(img.shape[:3], dtype=np.float64)
+    zooms = np.sqrt((np.asarray(img.affine, dtype=np.float64)[:3, :3] ** 2).sum(axis=0))
+    return float(np.prod((shape - 1) * zooms))
+
+
 def get_ras(aff, dim):
     """
     Determines the RAS axes order and directions for an affine matrix.
