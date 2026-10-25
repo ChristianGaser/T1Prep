@@ -19,6 +19,7 @@
 - [Running T1Prep](#running-t1prep)
 - [Tools](#tools)
 - [Documentation](#documentation)
+- [Telemetry](#telemetry)
 - [Support](#support)
 - [License](#license)
 
@@ -127,6 +128,14 @@ from a script. See **[docs/viewers.md](docs/viewers.md)** for them and
 | [scripts/README.md](scripts/README.md) | The scripts in a source checkout |
 | [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) | The bundled virtual environment |
 | [Agents.md](Agents.md) | Contributing: layout, style, tests |
+
+## Telemetry
+Unless you opt out, T1Prep tells its developers how many files a run
+processed and how many failed, and where in the code a segmentation crashed.
+File names, paths, images and host names are never sent. `--no-track`,
+`track=0` in the defaults file, or `T1PREP_NO_TRACK=1` / `DO_NOT_TRACK=1` in
+the environment switch it off; details in
+[docs/usage.md](docs/usage.md#telemetry).
 
 ## Support
 For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).

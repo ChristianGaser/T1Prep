@@ -119,6 +119,9 @@ Robustness:
 - `--retry`: retry a failed processing step once. By default, if segmentation or surface
   estimation fails for a subject it is reported as an error straight away.
 
+Telemetry:
+- `--no-track`: do not send telemetry (see [Telemetry](#telemetry)).
+
 ## Python API
 You can also call the full pipeline from Python without shelling out manually:
 
@@ -136,6 +139,32 @@ run_t1prep([
    wp=True, p=True, csf=True, lesions=True, gz=True, stream_output=True,
    log_file="/results/T1Prep_run.log")
 ```
+
+`track=False` switches off the crash report (see [Telemetry](#telemetry)).
+
+## Telemetry
+Unless you opt out, T1Prep reports two things to its developers (Sentry,
+EU region):
+
+- one event per `T1Prep` call (with `--multi`, one per file and processing
+  step): the T1Prep version, the operating system and CPU architecture, and
+  the number of files that succeeded and failed;
+- a crash of the segmentation: the exception type and the module, function
+  and line of each stack frame.
+
+Nothing else is sent: no file names or paths, no images, no exception
+messages (they usually contain the input path), no local variables, no
+command line and no host name. Paths in neuroimaging routinely carry subject
+identifiers, so they never leave the machine.
+
+Any one of these switches telemetry off:
+
+| Where | How |
+|-------|-----|
+| `T1Prep`, `t1prep-run`, web UI | `--no-track`, or the *No telemetry* switch |
+| Defaults file | `track=0` |
+| Environment (every entry point, also Docker) | `T1PREP_NO_TRACK=1` or `DO_NOT_TRACK=1`, e.g. `docker run -e T1PREP_NO_TRACK=1 ...` |
+| Python API | `run_t1prep(..., track=False)` |
 
 ## Output Folder Structure and Naming Conventions
 

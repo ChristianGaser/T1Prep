@@ -126,6 +126,7 @@ run_t1prep(
 | `amap` | `bool` | Use AMAP segmentation (CAT12-style) |
 | `skullstrip_only` | `bool` | Only run skull stripping then exit |
 | `skip_skullstrip` | `bool` | Skip skull stripping (pre-stripped input) |
+| `track` | `bool` | Report a crash of the segmentation (default: `True`) |
 
 ---
 
@@ -136,6 +137,17 @@ with CAT12-compatible filenames (e.g., `mwp1sub-01.nii`, `lh.thickness.sub-01`).
 
 **BIDS** (with `bids=True`): BIDS derivatives layout
 `<out_dir>/derivatives/T1Prep-v<version>/sub-XX/ses-YY/anat/`.
+
+---
+
+## Telemetry
+
+Unless you opt out, T1Prep tells its developers how many files a run
+processed and how many failed, and where in the code a segmentation crashed.
+File names, paths, images and host names are never sent. `--no-track`,
+`run_t1prep(..., track=False)`, or `T1PREP_NO_TRACK=1` / `DO_NOT_TRACK=1` in
+the environment switch it off; details in
+[docs/usage.md](https://github.com/ChristianGaser/T1Prep/blob/main/docs/usage.md#telemetry).
 
 ---
 
