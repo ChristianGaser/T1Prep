@@ -1583,16 +1583,30 @@ def save_results(
         )
 
 
+def setup_determinism(seed: int) -> None:
+    """Seed every generator and make PyTorch deterministic where it can be.
+
+    Strict ``use_deterministic_algorithms(True)`` made CUDA runs abort: cuBLAS
+    is only reproducible with a fixed workspace (``CUBLAS_WORKSPACE_CONFIG``,
+    read at its first call), and the backward of ``grid_sample`` and
+    ``interpolate`` -- torchreg's affine registration -- has no deterministic
+    CUDA kernel and raises.  With ``warn_only`` every deterministic kernel is
+    still chosen and those few ops warn instead.  CPU and MPS are unaffected.
+    """
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.backends.cudnn.benchmark = False
+
+
 def run_segment():
     """Run the full segmentation workflow."""
 
     args = parse_arguments()
-
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-    torch.use_deterministic_algorithms(True)
+    setup_determinism(args.seed)
 
     # Output locations and the optional outputs to write
     opts = OutputOptions.from_args(args)
