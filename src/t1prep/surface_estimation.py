@@ -932,4 +932,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    # Quiet logs for the pipeline step; never at import, where the filter
+    # would silence the warnings of the whole host process
+    import warnings
+
+    warnings.filterwarnings("ignore")
     sys.exit(main())

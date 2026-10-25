@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
-import warnings
 import nibabel as nib
 import numpy as np
-
-# Suppress warnings
-warnings.filterwarnings("ignore")
 
 # Import deep learning and image processing utilities
 from deepbet.utils import reoriented_nifti

@@ -44,9 +44,6 @@ import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 
-# Suppress warnings
-warnings.filterwarnings("ignore")
-
 # Import deep learning and image processing utilities
 from deepbet.utils import reoriented_nifti
 from deepmriprep.segment import BrainSegmentation
@@ -1858,4 +1855,7 @@ def run_segment():
 
 
 if __name__ == "__main__":
+    # Quiet logs for the pipeline step; never at import, where the filter
+    # would silence the warnings of the whole host process
+    warnings.filterwarnings("ignore")
     run_segment()
