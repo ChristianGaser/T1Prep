@@ -272,6 +272,7 @@ def build_command(
     add_flag("--csf")
     add_flag("--lesions")
     add_flag("--retry")
+    add_flag("--no-track")
     if atlas_override:
         cmd.extend(["--atlas", atlas_override])
     else:
@@ -461,6 +462,7 @@ def index():
         "p": _to_int(defaults.get("save_p", "0"), 0) == 1,
         "csf": _to_int(defaults.get("save_csf", "0"), 0) == 1,
         "lesions": _to_int(defaults.get("save_lesions", "0"), 0) == 1,
+        "no_track": _to_int(defaults.get("track", "1"), 1) == 0,
         "atlas": defaults.get("atlas_vol", ""),
         "atlas_surf": defaults.get("atlas_surf", ""),
         "atlas_names": atlas_names,
