@@ -1256,6 +1256,10 @@ def _save_fmriprep_extras(
     dseg_value[ind_CSF] = 3
     dseg_value[ind_GM] = 1
     dseg_value[ind_WM] = 2
+    # Labels are sampled at the nearest 0.5 mm voxel and saved as integers:
+    # interpolated, 1 (CSF) and 3 (WM) met through 2 at the pial surface, and
+    # the uint8 header scaled the values, so no voxel was exactly 1, 2 or 3
+    # and the mask was never exactly 1 -- fMRIPrep compares them by value
     dseg_large = nib.Nifti1Image(dseg_value, p0_large.affine, p0_large.header)
     dseg_name = native.get("dseg_volume", "")
     resample_and_save_nifti(
@@ -1264,18 +1268,23 @@ def _save_fmriprep_extras(
         mask.affine,
         mask.header,
         f"{mri_dir}/{dseg_name}",
-        clip=[0, 4],
+        nearest=True,
+        dtype=np.uint8,
     )
 
-    # simply use the clipped dseg image as mask image
+    # The brain mask: every labelled voxel
+    mask_large = nib.Nifti1Image(
+        (dseg_value > 0).astype(np.float32), p0_large.affine, p0_large.header
+    )
     mask_name = native.get("mask_volume", "")
     resample_and_save_nifti(
-        dseg_large,
+        mask_large,
         grid_native,
         mask.affine,
         mask.header,
         f"{mri_dir}/{mask_name}",
-        clip=[0, 1],
+        nearest=True,
+        dtype=np.uint8,
     )
 
     # BIDS bookkeeping.  PyBIDS ignores a derivatives tree without a
@@ -1401,6 +1410,7 @@ def _save_hemispheres(
             mask.header,
             f"{mri_dir}/{ribbon_name}",
             round=True,
+            dtype=np.uint8,
         )
         write_sidecar(f"{mri_dir}/{ribbon_name}", Type="ROI")
 

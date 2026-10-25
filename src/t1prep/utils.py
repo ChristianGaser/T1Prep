@@ -692,7 +692,7 @@ def bspline_grid_sample(im, grid, align_corners=False, prefilter=True, mask_valu
 
 def resample_and_save_nifti(
     nifti_obj, grid, affine, header, out_name, align=False, crop=False, round=False,
-    clip=None, bspline=False, clip_overshoot=False,
+    clip=None, bspline=False, clip_overshoot=False, nearest=False, dtype=None,
 ):
     """
     Resamples and saves a NIfTI object.
@@ -731,6 +731,14 @@ def resample_and_save_nifti(
                                  whose background is not 0 is the consistent
                                  value anyway.  Applied before ``round`` and
                                  ``clip``.  Defaults to False.
+        nearest (bool, optional): Sample the nearest voxel instead of
+                                 interpolating, for label maps.  Defaults to
+                                 False.
+        dtype (numpy dtype, optional): Save the values cast to this integer
+                                 type with slope 1, so that labels and masks
+                                 read back exactly; float data saved through a
+                                 uint8 header are scaled (1 came back as
+                                 1.00000006).  Defaults to None (as sampled).
     """
     import torch
     import torch.nn.functional as F
@@ -758,7 +766,10 @@ def resample_and_save_nifti(
         return sampled
 
     def sample_linear(sample_grid):
-        return F.grid_sample(source, sample_grid, align_corners=align_corners)[0, 0]
+        mode = "nearest" if nearest else "bilinear"
+        return F.grid_sample(
+            source, sample_grid, mode=mode, align_corners=align_corners
+        )[0, 0]
 
     def sample_spline(sample_grid):
         return bspline_grid_sample(
@@ -790,6 +801,11 @@ def resample_and_save_nifti(
             tensor[box] = sample_spline(grid[(slice(None),) + box])
 
     tensor = limit_values(tensor)
+    if dtype is not None:
+        tensor = tensor.cpu().numpy().astype(dtype)
+        header = header.copy()
+        header.set_data_dtype(dtype)
+        header.set_slope_inter(1, 0)
 
     # Step 3: Reorient and save as NIfTI
     if align:
