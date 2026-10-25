@@ -969,6 +969,9 @@ def _build_parser() -> ArgumentParser:
                          "(default 3)")
     g3.add_argument("--no-correct-folding", action="store_true",
                     help="Disable folding-based thickness correction")
+    g3.add_argument("--pial-white", dest="pial_white", action="store_true",
+                    default=True,
+                    help="Estimate pial and white matter surfaces (default)")
     g3.add_argument("--no-pial-white", dest="pial_white",
                     action="store_false", default=True,
                     help="Skip pial and white matter surface estimation")

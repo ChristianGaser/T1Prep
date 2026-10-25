@@ -115,20 +115,50 @@ main()
 # Check arguments and files
 # ----------------------------------------------------------------------
 
+takes_value()
+{
+  # Usage: takes_value <option>
+  # Succeeds for the options that are followed by a value; keep in sync with
+  # the case labels in parse_args.
+  case "$1" in
+    --defaults | --default | --python | --out-dir | --outdir | --out | \
+    --pre-fwhm | --median-filter | --no-overwrite | --thickness-method | \
+    --multi | --seed | --atlas | --atlas-surf | --min-memory | --min-mem | \
+    --initial-surface | --initial-surf | --long-data)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 parse_args()
 {
   local optname optarg
-  
-  # Check default-file first and load it before any other options
-    for ((i=1;i<=$#;i++)); do
-      case "${!i}" in
-        --default*)
-        next_index=$((i+1))
-        cfg="${!next_index}"
-        i=$((i+1))
+  local _arg _args=() _k
+
+  # "--opt=value" means "--opt value"
+  for _arg in "$@"; do
+    case "${_arg}" in
+      --*=*) _args+=("${_arg%%=*}" "${_arg#*=}") ;;
+      *) _args+=("${_arg}") ;;
+    esac
+  done
+  set -- ${_args[@]+"${_args[@]}"}
+
+  # Load the defaults file before any other option.  The values of the other
+  # options are skipped: a value that reads "--defaults" must not make us
+  # source the word after it (the web UI passes form values through here).
+  for ((_k = 1; _k <= $#; _k++)); do
+    case "${!_k}" in
+      --defaults | --default)
+        _k=$((_k + 1))
+        cfg="${!_k}"
         ;;
-      esac
-    done
+      *)
+        if takes_value "${!_k}"; then _k=$((_k + 1)); fi
+        ;;
+    esac
+  done
   source "${cfg}"
 
   # Defaults for new skull-strip flags (may be absent in defaults file)
@@ -147,7 +177,7 @@ parse_args()
     optarg="${2:-}"
 
     case "$1" in
-      --default* | --defaults)
+      --defaults | --default)
         exit_if_empty "$optname" "$optarg"
         cfg=$optarg
         shift
@@ -160,7 +190,7 @@ parse_args()
         python=$optarg
         shift
         ;;
-      --out*)
+      --out-dir | --outdir | --out)
         exit_if_empty "$optname" "$optarg"
         outdir=$optarg
         shift
@@ -175,13 +205,13 @@ parse_args()
         median_filter=$optarg
         shift
         ;;
-      --no-vessel*)
+      --no-vessel | --no-vessels)
         vessel=0
         ;;
-      --no-bvc*)
+      --no-bvc)
         vessel=0
         ;;
-      --no-overwrite*)
+      --no-overwrite)
         exit_if_empty "$optname" "$optarg"
         no_overwrite=$optarg
         shift
@@ -191,7 +221,7 @@ parse_args()
         thickness_method=$optarg
         shift
         ;;
-      --multi*)
+      --multi)
         exit_if_empty "$optname" "$optarg"
         multi=$optarg
         shift
@@ -211,12 +241,12 @@ parse_args()
         atlas_surf=$optarg
         shift
         ;;
-      --min-mem*)
+      --min-memory | --min-mem)
         exit_if_empty "$optname" "$optarg"
         min_memory=$optarg
         shift
         ;;
-      --initial-surf*)
+      --initial-surface | --initial-surf)
         exit_if_empty "$optname" "$optarg"
         initial_surface=$optarg
         shift
@@ -226,7 +256,7 @@ parse_args()
         long_data=$optarg
         shift
         ;;
-      --save-h5*)
+      --save-h5)
         save_h5=1
         ;;
       --fmriprep)
@@ -243,7 +273,7 @@ parse_args()
       --gz)
         nii_ext='nii.gz'
         ;;
-      --hemi*)
+      --hemi | --hemisphere | --hemispheres)
         save_hemi=1
         ;;
       --no-surf)
@@ -255,34 +285,37 @@ parse_args()
       --no-skullstrip | --skip-skullstrip)
         skip_skullstrip=1
         ;;
-      --no-seg*)
+      --no-seg | --no-segmentation)
         estimate_seg=0
         ;;
-      --no-sphere*)
+      --no-sphere-reg | --no-sphere)
         estimate_spherereg=0
         ;;
-      --no-pial*)
+      --pial-white)
+        save_pial_white=1
+        ;;
+      --no-pial-white | --no-pial)
         save_pial_white=0
         ;;
-      --lesion*)
+      --lesions | --lesion)
         save_lesions=1
         ;;
-      --no-mwp* | --no-warped-seg*)
+      --no-mwp | --no-warped-seg)
         save_mwp=0
         ;;
-      --no-atlas*)
+      --no-atlas)
         atlas_vol=""
         ;;
-      --wp* | --warped-seg-nomod)
+      --wp | --warped-seg-nomod)
         save_wp=1
         ;;
-      --rp* | --affine-seg)
+      --rp | --affine-seg)
         save_rp=1
         ;;
-      --p* | --native-seg)
+      --p | --native-seg)
         save_p=1
         ;;
-      --csf*)
+      --csf)
         save_csf=1
         ;;
       --amap)
@@ -437,7 +470,9 @@ process()
   if [[ "$multi" -ne 0 && "$multi" -gt -2 ]]; then
 
     # Filter arguments before recursion
-    filtered_args=($(filter_arguments "$@")) # Use an array to handle filtered arguments
+    filter_arguments "$@"
+    # shellcheck disable=SC2153  # FILTERED_ARGS is set by filter_arguments
+    filtered_args=(${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"})
 
     # Get number of processes (NUM_JOBS) for defined memory limit
     # Ensure min_memory sane before calculating
@@ -631,8 +666,8 @@ process()
     pattern=$(get_pattern "$code" "$name_columns")
     # Create dynamic variables for filenames
     value=$(substitute_pattern "$pattern" "" "" "" "")
-    # Use eval to assign the result to a variable named after the code
-    eval "${code}=\"\$value\""
+    # Assign the result to a variable named after the code
+    printf -v "${code}" '%s' "${value}"
 
     # Save all output in log-file
     report_log=${report_dir}/${Log_file}
@@ -727,44 +762,49 @@ process()
       if [ "${T1PREP_INSTALLED:-0}" -ne 1 ]; then
         export PYTHONPATH="${root_dir}/src:${PYTHONPATH}"
       fi
-      cmd="${python} -m t1prep.segment"
+      # An argument list, not a string for eval: a file name with $(...) or
+      # backticks in it has to stay a file name.  The interpreter is split
+      # into words as before.
+      read -r -a cmd <<< "${python}"
+      cmd+=(-m t1prep.segment)
       
       # Append options conditionally
-      [ "${use_amap}" -eq 1 ] && cmd+=" --amap"
-      [ "${save_mwp}" -eq 1 ] && cmd+=" --mwp"
-      [ "${save_wp}" -eq 1 ] && cmd+=" --wp"
-      [ "${save_rp}" -eq 1 ] && cmd+=" --rp"
-      [ "${save_p}" -eq 1 ] && cmd+=" --p"
-      [ "${nii_ext}" == "nii.gz" ] && cmd+=" --gz"
-      [ "${fmriprep}" -eq 1 ] && cmd+=" --save-fmriprep"
-      [ "${save_h5:-0}" -eq 1 ] && cmd+=" --save-h5"
-      [ "${save_lesions}" -eq 1 ] && cmd+=" --lesions"
-      [ "${use_bids_naming}" -eq 1 ] && cmd+=" --bids"
-      [ "${multi}" -ne -2 ] && cmd+=" --verbose"
-      [ "${debug}" -eq 1 ] && cmd+=" --debug"
+      [ "${use_amap}" -eq 1 ] && cmd+=(--amap)
+      [ "${save_mwp}" -eq 1 ] && cmd+=(--mwp)
+      [ "${save_wp}" -eq 1 ] && cmd+=(--wp)
+      [ "${save_rp}" -eq 1 ] && cmd+=(--rp)
+      [ "${save_p}" -eq 1 ] && cmd+=(--p)
+      [ "${nii_ext}" == "nii.gz" ] && cmd+=(--gz)
+      [ "${fmriprep}" -eq 1 ] && cmd+=(--save-fmriprep)
+      [ "${save_h5:-0}" -eq 1 ] && cmd+=(--save-h5)
+      [ "${save_lesions}" -eq 1 ] && cmd+=(--lesions)
+      [ "${use_bids_naming}" -eq 1 ] && cmd+=(--bids)
+      [ "${multi}" -ne -2 ] && cmd+=(--verbose)
+      [ "${debug}" -eq 1 ] && cmd+=(--debug)
       # --surf writes the hemisphere label maps, which only the surfaces and
       # --hemi use; warped and atlas outputs come without it (needs_warp)
-      { [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ]; } && cmd+=" --surf"
-      [ "${save_csf}" -eq 1 ] && cmd+=" --csf"
-      [ "${skullstrip_only}" -eq 1 ] && cmd+=" --skullstrip-only"
-      [ "${skip_skullstrip}" -eq 1 ] && cmd+=" --skip-skullstrip"
+      { [ "${estimate_surf}" -eq 1 ] || [ "${save_hemi}" -eq 1 ]; } && cmd+=(--surf)
+      [ "${save_csf}" -eq 1 ] && cmd+=(--csf)
+      [ "${skullstrip_only}" -eq 1 ] && cmd+=(--skullstrip-only)
+      [ "${skip_skullstrip}" -eq 1 ] && cmd+=(--skip-skullstrip)
 
-      cmd+=" --seed ${seed} --vessel \"${vessel}\" --label-dir \"${label_dir}\""
-      cmd+=" --input \"${input}\" --mri-dir \"${mri_dir}\""
-      cmd+=" --report-dir \"${report_dir}\" --atlas \"${atlas_vol}\" --count ${end_count}"
+      cmd+=(--seed "${seed}" --vessel "${vessel}" --label-dir "${label_dir}")
+      cmd+=(--input "${input}" --mri-dir "${mri_dir}")
+      cmd+=(--report-dir "${report_dir}" --atlas "${atlas_vol}" --count "${end_count}")
       
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
-        echo "${cmd}" >> "${report_log}" 
+        printf '%q ' "${cmd[@]}" >> "${report_log}"
+        echo >> "${report_log}"
         # Take the status inside each branch: after a pipeline `$?` is the
         # status of `tee`, which practically never fails, so a segmentation
         # that died (e.g. on a signal) was recorded as a success and the
         # retry below never fired.
         if [[ "$multi" -ne -2 ]]; then
-          eval "${cmd}"
+          "${cmd[@]}"
           seg_status=$?
         else
-          eval "${cmd}" 2>&1 | tee -a "${report_log}"
+          "${cmd[@]}" 2>&1 | tee -a "${report_log}"
           seg_status=${PIPESTATUS[0]}
         fi
 
@@ -773,11 +813,11 @@ process()
           echo "Retrying segmentation for ${input}..." >> "${report_log}"
           if [[ "$multi" -ne -2 ]]; then
             echo "${YELLOW}Segmentation failed — retrying ${input}...${NC}"
-            eval "${cmd}"
+            "${cmd[@]}"
             seg_status=$?
           else
             echo "--- Retrying: ${input} ---" 2>&1 | tee -a "${report_log}"
-            eval "${cmd}" 2>&1 | tee -a "${report_log}"
+            "${cmd[@]}" 2>&1 | tee -a "${report_log}"
             seg_status=${PIPESTATUS[0]}
           fi
         fi
@@ -1188,8 +1228,9 @@ ${BOLD}${GREEN}Save Options:${NC}
   --no-atlas                
       Skip estimation of volumetric atlases.
 
-  --no-pial-white                
-      Skip estimating pial and white matter surfaces during surface processing.
+  --pial-white, --no-pial-white
+      Estimate (the default) or skip the pial and white matter surfaces
+      during surface processing.
 
   --hemi, --hemisphere
       Save hemispheric (lh/rh) partitions of the segmentation.
@@ -1349,8 +1390,10 @@ fi
 }
 
 # ----------------------------------------------------------------------
-# call main program
+# call main program (only when run, not when sourced, e.g. by the tests)
 # ----------------------------------------------------------------------
 
-main "${@}"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "${@}"
+fi
   

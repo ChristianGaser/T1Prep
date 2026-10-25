@@ -55,7 +55,14 @@ t1prep-ui --no-browser
 ```
 
 Uploaded files are stored under `webui_uploads/` (in the current working
-directory) and per-job logs under `webui_jobs/`.
+directory) and per-job logs under `/tmp/webui_jobs/`.
+
+The UI listens on 127.0.0.1 only, answers only requests addressed to
+`127.0.0.1` or `localhost`, and accepts a job only with the token embedded
+in its own form. Other web pages open in your browser therefore cannot
+start jobs (cross-site requests, DNS rebinding). Option values may not start
+with `-` (negative numbers excepted), so a form field cannot smuggle in an
+option.
 
 In addition to `T1Prep`, the following commands — all installed into the
 environment's `bin/` — provide convenient entry points for the Web UI and

@@ -18,6 +18,7 @@
     </header>
 
     <form id="t1prep-form" action="/submit" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div id="user-error-message" class="user-error-message" style="display:none;color:#f55;margin-bottom:1em;"></div>
     <fieldset>
       <legend>Inputs</legend>

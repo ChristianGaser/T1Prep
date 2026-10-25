@@ -324,7 +324,9 @@ do_parallelize ()
       i=0
       
       for file in "${ARRAY[@]}"; do
-          eval "$COMMAND \"$file\""  # Use eval to handle complex commands
+          # eval splits the command string; the file name is quoted with %q
+          # so that $(...) or backticks in it are never executed
+          eval "$COMMAND $(printf '%q' "$file")"
           exit_code=$?
           ((i++))
           
@@ -406,8 +408,9 @@ do_parallelize ()
           k_count=$((k_count+1))
           # Log which file is being processed so errors can be traced
           echo "--- Processing: $k ---" >> "${LOG_FILE}"
-          # Execute the command with the current item; use eval to expand the command string
-          eval "$COMMAND" "\"$k\"" >> "${LOG_FILE}" 2>&1
+          # Execute the command with the current item: eval splits the command
+          # string, the item is quoted with %q so that $(...) in it never runs
+          eval "$COMMAND $(printf "%q" "$k")" >> "${LOG_FILE}" 2>&1
           exit_code=$?
           if [ $exit_code -ne 0 ]; then
             status=1

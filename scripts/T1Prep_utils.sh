@@ -388,7 +388,8 @@ cleanup() {
 }
 
 # ----------------------------------------------------------------------
-# filter arguments so that filenames are removed 
+# filter arguments so that filenames are removed; the result is returned in
+# the array FILTERED_ARGS
 # ----------------------------------------------------------------------
 
 filter_arguments() {
@@ -410,7 +411,10 @@ filter_arguments() {
     fi
   done
 
-  echo "${filtered[@]}"  # Return the filtered arguments
+  # An array, not echo: the caller's $(...) would split arguments that hold
+  # spaces or quotes, e.g. --atlas "'neuromorphometrics', 'suit'"
+  # shellcheck disable=SC2034  # read by the caller
+  FILTERED_ARGS=(${filtered[@]+"${filtered[@]}"})
 }
 
 # ----------------------------------------------------------------------

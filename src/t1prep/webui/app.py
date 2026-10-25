@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import glob
 import os
+import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -12,7 +14,7 @@ from pathlib import Path, PurePath
 from typing import Dict, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
 # Layout-independent paths.  This module lives at ``t1prep/webui/app.py``;
 # ``_PKG_DIR`` is the installed ``t1prep`` package directory.  ``_REPO_ROOT`` is
@@ -65,6 +67,33 @@ DEFAULT_UPLOAD_ROOT = BASE_DIR / "webui_uploads"
 DEFAULT_JOB_ROOT = Path("/tmp") / "webui_jobs"
 
 app = Flask(__name__)
+
+# The UI binds to 127.0.0.1, but a web page in the user's browser can still
+# reach it: through DNS rebinding (a foreign Host header) or with a cross-site
+# form POST.  Either would start T1Prep with arguments of the page's choosing,
+# so only local host names are served and a POST has to carry the token that
+# the form got from this process.
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+CSRF_TOKEN = secrets.token_urlsafe(32)
+
+
+def _host_name(host: str) -> str:
+    """Return the host part of a Host header (``[::1]:5050`` -> ``::1``)."""
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if ":" in host else host
+
+
+@app.before_request
+def _refuse_foreign_requests():
+    """Serve local host names only, and POSTs only with the form's token."""
+    if _host_name(request.host or "") not in LOCAL_HOSTS:
+        abort(403)
+    if request.method == "POST" and not secrets.compare_digest(
+        request.form.get("csrf_token", ""), CSRF_TOKEN
+    ):
+        abort(403)
+
 
 scheduler = BackgroundScheduler()
 scheduler.start()
@@ -214,9 +243,23 @@ def resolve_folder_pattern_inputs(form: dict) -> list[Path]:
     if not root.exists() or not root.is_dir():
         return []
 
+    # The pattern is matched below root: no absolute paths and no "..", and a
+    # match has to stay inside the sandbox once symlinks are resolved
+    pure_pattern = PurePath(pattern)
+    if pure_pattern.is_absolute() or ".." in pure_pattern.parts:
+        return []
     matches = [p for p in root.glob(pattern) if p.is_file()]
-    filtered = [p for p in matches if p.name.endswith((".nii", ".nii.gz"))]
+    filtered = [
+        p for p in matches
+        if p.name.endswith((".nii", ".nii.gz"))
+        and p.resolve().is_relative_to(safe_root)
+    ]
     return sorted(filtered)
+
+
+# Values may be negative numbers (--multi -1 is "auto"); any other value that
+# starts with "-" would be taken by T1Prep for an option
+_NUMBER = re.compile(r"-?\d+(\.\d+)?$")
 
 
 def build_command(
@@ -225,18 +268,24 @@ def build_command(
     out_dir: Optional[Path] = None,
     atlas_override: Optional[str] = None,
     surface_atlas_override: Optional[str] = None,
-    remove_input: bool = False,
 ) -> list[str]:
+    """Return the T1Prep argument list for a submitted form.
+
+    Raises ``ValueError`` for a value that T1Prep would read as an option.
+    """
     cmd = [T1PREP_CMD]
 
     def add_flag(name: str) -> None:
         if form.get(name):
             cmd.append(name)
 
-    def add_value(name: str) -> None:
-        value = form.get(name)
-        if value:
-            cmd.extend([name, value])
+    def add_value(name: str, value: Optional[str] = None) -> None:
+        value = form.get(name) if value is None else value
+        if not value:
+            return
+        if value.startswith("-") and not _NUMBER.match(value):
+            raise ValueError(f"{name}: a value may not start with '-'")
+        cmd.extend([name, value])
 
     add_value("--multi")
     add_value("--min-memory")
@@ -264,7 +313,10 @@ def build_command(
             cmd.append("--no-mwp")
 
     add_flag("--no-atlas")
-    add_flag("--pial-white")
+    # Explicit both ways, so that the box overrides the defaults file in either
+    # direction (it used to send --pial-white, which T1Prep read as --p)
+    cmd.append("--pial-white" if form.get("--pial-white") else "--no-pial-white")
+    add_flag("--no-vessel")
     add_flag("--hemi")
     add_flag("--wp")
     add_flag("--rp")
@@ -273,18 +325,8 @@ def build_command(
     add_flag("--lesions")
     add_flag("--retry")
     add_flag("--no-track")
-    if atlas_override:
-        cmd.extend(["--atlas", atlas_override])
-    else:
-        add_value("--atlas")
-    if surface_atlas_override:
-        cmd.extend(["--atlas-surf", surface_atlas_override])
-    else:
-        add_value("--atlas-surf")
-
-    # Remove input files after successful processing (WebUI copies files to upload dir)
-    if remove_input:
-        cmd.append("--remove-input")
+    add_value("--atlas", atlas_override)
+    add_value("--atlas-surf", surface_atlas_override)
 
     cmd.extend([str(path) for path in input_files])
     return cmd
@@ -462,6 +504,7 @@ def index():
         "p": _to_int(defaults.get("save_p", "0"), 0) == 1,
         "csf": _to_int(defaults.get("save_csf", "0"), 0) == 1,
         "lesions": _to_int(defaults.get("save_lesions", "0"), 0) == 1,
+        "retry": _to_int(defaults.get("retry", "0"), 0) == 1,
         "no_track": _to_int(defaults.get("track", "1"), 1) == 0,
         "atlas": defaults.get("atlas_vol", ""),
         "atlas_surf": defaults.get("atlas_surf", ""),
@@ -469,6 +512,7 @@ def index():
         "atlas_selected": atlas_selected,
         "surface_atlas_names": surface_atlas_names,
         "surface_atlas_selected": surface_atlas_selected,
+        "csrf_token": CSRF_TOKEN,
     }
 
     return render_template("index.html", **context)
@@ -488,6 +532,9 @@ def atlas_help():
         for suffix in (".annot", ".txt"):
             if core_name.endswith(suffix):
                 core_name = core_name[: -len(suffix)]
+        # Only shipped atlases: the name ends up in a file path
+        if core_name not in list_surface_atlas_names():
+            return jsonify({"error": "Unknown atlas."}), 404
         txt_candidates = [
             SURFACE_ATLAS_DIR / f"{core_name}.txt",
             SURFACE_ATLAS_DIR / f"lh.{core_name}.txt",
@@ -533,7 +580,10 @@ def submit():
     ensure_dirs()
 
     input_files = request.files.getlist("inputs")
-    all_inputs = [file for file in input_files if file and file.filename]
+    all_inputs = [
+        file for file in input_files
+        if file and file.filename and file.filename.endswith((".nii", ".nii.gz"))
+    ]
     pattern_files = resolve_folder_pattern_inputs(request.form)
     removed_pattern = set(
         p for p in request.form.get("removed_pattern_files", "").split("||") if p
@@ -592,8 +642,10 @@ def submit():
         deduped_paths.append(path)
     saved_paths = deduped_paths
 
-    atlas_items = []
-    atlas_items.extend(request.form.getlist("atlas_choice"))
+    known_atlases = set(list_atlas_names())
+    atlas_items = [
+        name for name in request.form.getlist("atlas_choice") if name in known_atlases
+    ]
 
     atlas_files = request.files.getlist("atlas_file")
     for atlas_file in atlas_files:
@@ -616,8 +668,11 @@ def submit():
 
     atlas_arg = build_atlas_arg(deduped)
 
-    surface_items = []
-    surface_items.extend(request.form.getlist("surface_atlas_choice"))
+    known_surface_atlases = set(list_surface_atlas_names())
+    surface_items = [
+        name for name in request.form.getlist("surface_atlas_choice")
+        if name in known_surface_atlases
+    ]
 
     surface_files = request.files.getlist("surface_atlas_file")
     for surface_file in surface_files:
@@ -640,14 +695,16 @@ def submit():
 
     surface_atlas_arg = build_atlas_arg(surface_deduped)
 
-    cmd = build_command(
-        request.form,
-        saved_paths,
-        out_dir=out_dir,
-        atlas_override=atlas_arg,
-        surface_atlas_override=surface_atlas_arg,
-        remove_input=False,  # Don't use --remove-input, we'll clean up after job completes
-    )
+    try:
+        cmd = build_command(
+            request.form,
+            saved_paths,
+            out_dir=out_dir,
+            atlas_override=atlas_arg,
+            surface_atlas_override=surface_atlas_arg,
+        )
+    except ValueError as exc:
+        return str(exc), 400
     job_info = {
         "id": job_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -1024,7 +1081,7 @@ def _build_parser():
         "--port is the spelling to prefer",
     )
     parser.add_argument(
-        "--port", type=int, default=5000, help="port to serve on"
+        "--port", type=int, default=5050, help="port to serve on (default 5050)"
     )
     parser.add_argument(
         "--no-browser", action="store_true",
