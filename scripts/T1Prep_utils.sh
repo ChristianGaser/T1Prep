@@ -361,6 +361,37 @@ get_no_processes () {
   fi
 }
 
+# ----------------------------------------------------------------------
+# get # of parallel jobs for the surface estimation
+# ----------------------------------------------------------------------
+# Every job runs its two hemispheres at once, so 2/3 of the logical
+# processors as hemisphere processes means a third of them as jobs (rounded
+# to the nearest job, at least one).  The rest is left for the threads of
+# the surface tools.
+
+get_no_surface_jobs () {
+
+  local ARCH n_cpus
+  ARCH=`uname`
+  if [ "$ARCH" == "Darwin" ]; then
+    n_cpus=$(sysctl -n hw.logicalcpu 2>/dev/null)
+  elif [ "$ARCH" == "Linux" ]; then
+    n_cpus=$(grep -c ^processor /proc/cpuinfo 2>/dev/null)
+  elif [[ "$ARCH" == CYGWIN_NT* || "$ARCH" == MSYS_NT* || "$ARCH" == MINGW* ]]; then
+    n_cpus=${NUMBER_OF_PROCESSORS:-}
+  fi
+  if ! [[ "$n_cpus" =~ ^[0-9]+$ ]]; then
+    n_cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+  fi
+  if ! [[ "$n_cpus" =~ ^[0-9]+$ ]] || [ "$n_cpus" -lt 1 ]; then
+    n_cpus=1
+  fi
+
+  NUM_SURF_JOBS=$(( (2 * n_cpus + 3) / 6 ))
+  if [ "$NUM_SURF_JOBS" -lt 1 ]; then
+    NUM_SURF_JOBS=1
+  fi
+}
 
 # ----------------------------------------------------------------------
 # Cleanup function
