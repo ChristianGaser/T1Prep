@@ -62,11 +62,13 @@ vertices that discriminate between registrations.
 
 | arm | `loo` | `atlas` | inflation |
 |---|---|---|---|
-| T1Prep volume | 0.7289 | 0.7404 | **+0.0115** [+0.0113, +0.0117] |
+| T1Prep volume (geodesic shooting) | 0.7696 | 0.7794 | **+0.0097** [+0.0096, +0.0098] |
+| T1Prep ≤ 0.8.1 volume (deepmriprep's warp) | 0.7289 | 0.7404 | **+0.0115** [+0.0113, +0.0117] |
 | T1Prep surface | 0.8488 | 0.8580 | **+0.0092** [+0.0090, +0.0094] |
 
-That bias is larger than most of the differences this benchmark resolves —
-CAT12 beats T1Prep by +0.0120 and T1Prep beats ANTs by +0.0156 under `loo`.
+That bias is as large as the differences between neighbouring methods here —
+CAT12 is ahead of T1Prep's earlier deepmriprep warp by +0.0120, and that warp
+ahead of ANTs by +0.0156, under `loo`.
 It inflates every arm by a similar amount, so it would not reorder them, but
 it would make the absolute numbers incomparable with published leave-one-out
 figures.  The effect is ~1/N of the vote, so it shrinks with larger cohorts
@@ -191,7 +193,8 @@ tools/eval_mindboggle.py project --space fsLR --out-space newmsm \
 ```
 
 ```bash
-# 1. process the cohort with T1Prep
+# 1. process the cohort with T1Prep: its y_ is the geodesic shooting arm
+#    (T1Prep <= 0.8.1, which ran deepmriprep's warp network, gives that arm)
 for s in <mindboggle>/data/*/; do
     T1Prep --out-dir "$s" "$s/t1weighted.nii.gz"
 done
@@ -201,6 +204,11 @@ tools/run_cat12.sh   <mindboggle>/data <work>/cat12
 tools/run_ants_batch.sh                     # antsRegistration, fMRIPrep config
 tools/make_affine_baseline.py --mindboggle <mindboggle>/data \
     --reference <mindboggle>/data/<subj>/mri/y_*.nii --out <work>/affine
+# other settings of T1Prep's shooting (the settings table), e.g. CAT12's own
+tools/run_volshoot.py prepare --mindboggle <mindboggle>/data --work <work>/vs \
+    --subject-file data/subset20.txt --jobs 2
+tools/run_volshoot.py shoot --work <work>/vs --arm cat12 \
+    --set regstr=0.5 --set reg_scale=1
 
 # 3. score every arm through the same protocol
 tools/eval_mindboggle.py project-volume --mindboggle <mindboggle>/data \
@@ -224,6 +232,7 @@ normalisation can be dropped into the same comparison.
 | `run_ants_batch.sh` + `ants_fmriprep.sh` | `antsRegistration` with fMRIPrep's exact JSON |
 | `run_ants_antspy.py` | ANTsPy arms (note: its default `SyN` uses `reg_iterations=(40,20,0)` — no iterations at the finest level) |
 | `run_cat12.sh` | CAT12 geodesic shooting |
+| `run_volshoot.py` | other settings of T1Prep's geodesic shooting on its own tissue maps, composed into `y_` |
 | `gen_sulc.py` | `?h.sulc` from an existing run, without `--fmriprep` |
 | `gen_fslr_msm_spheres.py` | fsLR and msmsulc spheres from an existing run |
 | `build_newmsm.sh` | build FSL newMSM on macOS |

@@ -28,6 +28,10 @@ import numpy as np
 BLUE, ORANGE, AQUA, MAGENTA, GREEN, VIOLET = (
     "#2a78d6", "#eb6834", "#1baf7a", "#e87ba4", "#008300", "#4a3aa7")
 GREY = "#8a8f98"          # the affine reference, not a competing method
+# T1Prep's registration up to 0.8.1 in a lighter step (300) of T1Prep's own
+# blue, so the two T1Prep arms read as one method family; between orange and
+# aqua it clears the CVD (dE 15.7) and normal-vision (19.2) floors.
+BLUE_EARLIER = "#6da7ec"
 
 INK, MUTED, GRID = "#1c1e21", "#5c6169", "#dcdfe4"
 
@@ -37,8 +41,9 @@ VOLUME = [
     ("d20_affine15", "Affine only", GREY),
     ("d20_ants_syn100", "ANTs SyN (MI)", VIOLET),
     ("d20_ants_fmriprep", "ANTs\n(fMRIPrep config)", ORANGE),
-    ("d20_mni", "T1Prep", BLUE),
+    ("d20_mni", "T1Prep ≤ 0.8.1\n(deepmriprep warp)", BLUE_EARLIER),
     ("d20_cat12", "CAT12\n(geodesic shooting)", AQUA),
+    ("d20_t1prep_shoot", "T1Prep\n(geodesic shooting)", BLUE),
 ]
 SURFACE = [
     ("d19_newmsm", "FSL newMSM\n(fMRIPrep config)", MAGENTA),
@@ -97,8 +102,8 @@ def main() -> int:
     a = ap.parse_args()
     results = Path(a.results)
 
-    fig, axes = plt.subplots(2, 2, figsize=(12.5, 8.4),
-                             gridspec_kw=dict(width_ratios=[5, 3.2],
+    fig, axes = plt.subplots(2, 2, figsize=(13.6, 8.4),
+                             gridspec_kw=dict(width_ratios=[6, 3.2],
                                               hspace=0.42, wspace=0.18))
     fig.patch.set_facecolor("white")
     for row, protocol in enumerate(("loo", "pairs")):

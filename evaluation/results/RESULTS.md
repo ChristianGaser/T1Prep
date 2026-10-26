@@ -31,8 +31,74 @@ Stratified subset (`../data/subset20.txt`), MNI152NLin2009cAsym, identical
 | Affine only (Mindboggle's own) | 0.5173 | 0.3317 | — |
 | ANTs SyN, Mattes MI 100×70×50×20 | 0.6972 | 0.5672 | ~1 min |
 | **ANTs — fMRIPrep's exact config** | 0.7133 | 0.5854 | ~9 min |
-| **T1Prep** | 0.7289 | 0.6085 | ~1 min |
-| **CAT12 — geodesic shooting** | **0.7410** | **0.6249** | 5-15 min |
+| T1Prep ≤ 0.8.1 — deepmriprep's warp network | 0.7289 | 0.6085 | ~40 s |
+| **CAT12 — geodesic shooting** | 0.7410 | 0.6249 | 5-15 min |
+| **T1Prep — geodesic shooting** | **0.7696** | **0.6663** | ~75 s |
+
+T1Prep registers by geodesic shooting from the release after 0.8.1; up to
+0.8.1 it ran deepmriprep's warp network.  Paired differences, with 95 %
+intervals from a subject-level bootstrap (4000 resamples, a pair weighted by
+both its subjects):
+
+| | Δ LOO | Δ pairs | better |
+|---|---|---|---|
+| T1Prep's shooting − its deepmriprep warp | +0.041 [+0.037, +0.045] | +0.058 [+0.052, +0.063] | 20/20 subjects, 190/190 pairs |
+| T1Prep's shooting − CAT12 | +0.029 [+0.025, +0.032] | +0.042 [+0.036, +0.046] | 20/20 subjects, 189/190 pairs |
+| T1Prep's shooting − ANTs (fMRIPrep config) | +0.056 [+0.050, +0.063] | +0.081 [+0.073, +0.089] | 20/20 subjects, 190/190 pairs |
+
+T1Prep's times are its whole volume pipeline on an M2 Ultra with MPS; the
+shooting takes 36 s of it on libCAT's default four threads (29 s on eight),
+deepmriprep's network took 8 s on MPS and 22 s on the CPU.
+
+### Geodesic shooting
+
+T1Prep's registration is CAT12's optimised geodesic shooting (`run_Shooting`
+in CAT26's `cat_main_registration.m`, on SPM's shooting primitives), ported to
+C in CAT-Surface (`cat_surf.vol_shoot`); on these 20 subjects the port
+reproduces CAT26's deformations to 7.6e-5 voxels.  It registers T1Prep's own
+affine-registered GM and WM maps — what the deepmriprep network received —
+onto CAT12's 1.5 mm shooting templates (`Template_0..4_GS`), and T1Prep
+composes the field with its affine into `y_`.
+
+**The gap to CAT12 was the registration, not the segmentation.**  With
+CAT12's own settings, the shooting on T1Prep's maps scores 0.7421 / 0.6274,
+level with CAT12's whole pipeline (+0.001 [−0.004, +0.006] LOO, 14 of 20
+subjects better).  deepmriprep's network was trained to imitate CAT12's
+deformations and fell short of them by 0.013.
+
+**T1Prep does not run CAT12's settings.**  It runs every scheduled
+Gauss-Newton iteration with half of CAT12's regularisation, the setting with
+the best label accuracy among these (same 20 subjects, same scoring):
+
+| shooting settings | LOO | pairs | det J, 1st–99th percentile | median \|log det J\| | time |
+|---|---|---|---|---|---|
+| CAT12's: `regstr` 0.5, CAT12's regularisation | 0.7421 | 0.6274 | 0.61–1.31 | 0.120 | 13 s |
+| every scheduled iteration (`regstr` 1) | 0.7512 | 0.6394 | 0.61–1.33 | 0.124 | 30 s |
+| half the regularisation | 0.7596 | 0.6529 | 0.54–1.45 | 0.143 | 13 s |
+| **both (T1Prep)** | **0.7696** | **0.6663** | 0.54–1.45 | 0.146 | 30 s |
+| a quarter of the regularisation | 0.7690 | 0.6657 | 0.48–1.60 | 0.167 | 10 s |
+
+CAT12's `regstr` 0.5 moves on to the next resolution level after about three
+Gauss-Newton iterations; running every scheduled one adds +0.009 at nearly
+unchanged regularity, halving the regularisation +0.018, both together +0.028
+(20 of 20 subjects better).  A quarter of the regularisation adds nothing
+more and costs regularity.  The Jacobian determinants are taken inside the
+brain (the template's GM + WM above 0.5) and are medians over the subjects; no
+setting folds a voxel.  Times are the shooting alone, 8 threads on an M2
+Ultra.
+
+* **The gain costs regularity.**  The Jacobians spread from 0.61–1.31 to
+  0.54–1.45.  Cortical-label Dice rewards flexible deformations, while CAT12's
+  regularisation was tuned for VBM, where the modulated maps carry the
+  Jacobian; whether half of it is right for `mwp` is not measured here.
+* **CAT12's 1 mm templates add +0.003, at three times the time.**  The
+  matching term sums over the template's voxels, the regulariser integrates
+  over space, so the regulariser has to be weighted per 1.5 mm voxel on the
+  1 mm templates too, as cat-surf does: then the 1 mm series is as regular
+  as the 1.5 mm one (Jacobians 0.50–1.52) and scores 0.7730 / 0.6716
+  (+0.003 [+0.003, +0.004], 20 of 20 subjects), at ~90 s.  Weighted per 1 mm
+  voxel it was under-regularised (0.38–1.80, the only setting with folded
+  voxels) and scored 0.008 lower.  T1Prep keeps the 1.5 mm templates.
 
 ### For replacing ANTs in fMRIPrep
 
@@ -44,18 +110,20 @@ fMRIPrep normalises with `antsRegistration` via
 reproduces that command line field for field, run with the real ANTs binaries
 (2.6.5).
 
-T1Prep is **more accurate than that configuration** (+0.016 LOO, +0.023 pairs)
-at a fraction of the runtime — a forward pass versus ~9 minutes of CC-metric
-optimisation. Anatomical normalisation is a dominant cost in fMRIPrep, so the
-runtime argument is at least as strong as the accuracy one.
+T1Prep is **more accurate than that configuration** (+0.056 LOO, +0.081 pairs)
+at a fraction of the runtime — ~35 s of shooting versus ~9 minutes
+of CC-metric optimisation. Anatomical normalisation is a dominant cost in
+fMRIPrep, so the runtime argument is at least as strong as the accuracy one.
+deepmriprep's network, which T1Prep ran up to 0.8.1, was ahead of it by
++0.016 / +0.023.
 
 Two caveats:
 
-* T1Prep's warp comes from a network trained to map into
-  MNI152NLin2009cAsym, and the fixed image here was T1Prep's own template.
-  ANTs solves the problem from scratch with no learned prior. That is a real
-  property of learned registration, not a rigged comparison, but the result
-  will not automatically transfer to a template T1Prep was not trained on.
+* The shooting matches T1Prep's GM and WM maps to CAT12's tissue templates,
+  ANTs the T1w intensities to a T1w template, so T1Prep's comparison includes
+  its segmentation.  Both optimise every subject from scratch; deepmriprep's
+  network instead mapped with a prior learned for MNI152NLin2009cAsym, which
+  does not transfer to a template it was not trained on.
 * DKT31 is cortical parcels only. Nothing here measures subcortical alignment,
   which fMRIPrep users also depend on.
 
@@ -352,10 +420,12 @@ the same box (pairwise IQR 0.099 and 0.104, lower whiskers 0.59 for both,
 reaches a little lower (0.58, 2.6 %).  The wide newMSM box shown here before
 (IQR 0.199, whisker 0.27, 17.3 % below 0.5) was the `sulc` bug.
 
-**The volume arms overlap heavily.** ANTs, T1Prep and CAT12 have visually
-similar boxes, consistent with paired differences of 0.012-0.028.  Their
-ordering is reliable - the paired intervals exclude zero - but no visible
-difference should be expected on any one subject.
+**The volume arms overlap heavily.** ANTs, deepmriprep's warp and CAT12
+have visually similar boxes, consistent with paired differences of
+0.012-0.016; T1Prep's geodesic shooting sits higher, but its lead (0.029 over
+CAT12) is still small against the spread.  The ordering is reliable - the
+paired intervals exclude zero - but no visible difference should be expected
+on any one region.
 
 Regenerate with `tools/plot_dice.py`.
 
@@ -379,10 +449,11 @@ Improvement over affine is the most defensible cross-study quantity:
 | Ashburner & Friston 2011 | IBSR18 | 0.40 | GS2 0.590 | +0.19 |
 | Ashburner & Friston 2011 | LPBA40 | 0.60 | GS2 0.751 | +0.15 |
 | Klein 2009 (SyN/ART) | IBSR18 | 0.40 | ~0.55 | +0.15 |
-| this work (pairs) | Mindboggle-101 | 0.33 | CAT12 0.625 | +0.29 |
+| this work (pairs) | Mindboggle-101 | 0.33 | T1Prep shooting 0.666 | +0.33 |
 
-That CAT12's shooting leads here is consistent with Ashburner & Friston
-reporting shooting ahead of DARTEL and of Klein 2009's best on both datasets.
+That geodesic shooting leads here -- CAT12's and T1Prep's -- is consistent
+with Ashburner & Friston reporting shooting ahead of DARTEL and of Klein
+2009's best on both datasets.
 
 ---
 
@@ -399,6 +470,11 @@ reporting shooting ahead of DARTEL and of Klein 2009's best on both datasets.
   `tools/build_newmsm.sh`.
 * T1Prep deformations are the SPM-format `y_*.nii` (5-D, native mm, affine and
   non-linear composed).
+* T1Prep's geodesic shooting arm (`d20_t1prep_shoot.csv`): T1Prep after 0.8.1
+  (registration by `cat_surf.vol_shoot`, which needs cat-surf 1.1.6), run on
+  the CPU; the shooting settings table re-runs the shooting on the same maps
+  (`tools/run_volshoot.py`).  The deepmriprep arm (`d20_mni.csv`) is T1Prep's
+  run of 2026-09-04; T1Prep 0.8.1 reproduces it to 0.0001.
 * T1Prep surface arms (`d20_surf_*`, `d19_t1p_*`): T1Prep 0.8.1 with
   cat-surf 1.1.5 plus CAT-Surface #34 (Spherical Demons applies its global
   rotation to the sphere), the sphere computed with `relax=True` as the next
