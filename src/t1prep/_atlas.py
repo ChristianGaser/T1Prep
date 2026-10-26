@@ -205,38 +205,17 @@ def get_atlas(
             affine, warps[shape].to(atlas_register.device), atlas, t1.shape
         )
 
-    # Resizing onto the target dimensions silently assumes both grids cover
-    # the same field of view.  That holds after the warp above -- deepmriprep
-    # returns the atlas on WARP_TEMPLATE, which shares the working field of
-    # view -- and for templates already on the working grid such as cat_wmh.
-    # It does not hold for the 1 mm atlases (IBSR, Neuromorphometrics), whose
-    # field of view is 161x197x161 mm against the working 169.5x205.5x169.5:
-    # a plain resize stretches them by 5% and displaces structures by up to
-    # 4.2 mm at the edges.  So the affines decide, and the fast path is taken
-    # only when they genuinely agree.
-    src_fov = np.asarray(atlas.shape[:3]) * np.sqrt(
-        (np.asarray(atlas.affine)[:3, :3] ** 2).sum(axis=0)
+    # The affines decide where the atlas goes.  A plain resize onto the
+    # target dimensions would assume that both grids cover the same field of
+    # view, and none does on the working grid (168.5x204.5x168.5 mm voxel
+    # edge to edge): the 1 mm atlases span 161x197x161 mm, the warped ones
+    # 169x205x169 mm and the 1.5 mm ones such as cat_wmh 169.5x205.5x169.5 mm.
+    # Resized, the 1 mm atlases were stretched by 5% and displaced by up to
+    # 4.2 mm at the edges.
+    atlas_np = resample_to(
+        atlas, np.asarray(transform, dtype=float), dim, device=device,
+        nearest=is_label_atlas,
     )
-    tgt_affine = np.asarray(transform, dtype=float)
-    tgt_fov = np.asarray(dim) * np.sqrt((tgt_affine[:3, :3] ** 2).sum(axis=0))
-    src_origin = np.asarray(atlas.affine)[:3, 3]
-    aligned = np.allclose(src_fov, tgt_fov, atol=1e-3) and np.allclose(
-        src_origin, tgt_affine[:3, 3], atol=1e-3
-    )
-
-    if aligned:
-        atlas_tensor = nifti_to_tensor(atlas)[None, None].to(device)
-        if is_label_atlas:
-            atlas_np = F.interpolate(atlas_tensor, dim, mode="nearest")[0, 0]
-        else:
-            atlas_np = F.interpolate(
-                atlas_tensor, dim, mode="trilinear", align_corners=False
-            )[0, 0]
-        atlas_np = atlas_np.cpu().numpy()
-    else:
-        atlas_np = resample_to(
-            atlas, tgt_affine, dim, device=device, nearest=is_label_atlas
-        )
 
     if is_label_atlas:
         atlas_np = np.round(atlas_np)

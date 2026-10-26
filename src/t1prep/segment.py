@@ -232,6 +232,32 @@ def _spline_resize_via_libcat():
         dmp_preprocess.sr = original
 
 
+def _working_grid_template(affine_template, warp_template):
+    """deepmriprep's 0.5 mm affine template, with the geometry of its content.
+
+    ``Template_05mm_bet`` is the 1.5 mm warp template upsampled three times
+    with the corner voxel centres aligned, so its 339x411x339 voxels span the
+    warp template's 168x204x168 mm between those centres -- not the
+    169x205x169 mm its 0.5 mm header claims.  Registration, warp and
+    ``_to_template_space`` work in normalised coordinates and follow the
+    content, but millimetres read from the header were 0.6% too large: atlases
+    and priors placed through the affine landed up to 1 mm off, and every
+    voxel size handed to a filter or a size threshold was overstated.  Volumes
+    were right either way, because ``wj_affine`` divides by the same box.
+
+    The returned image shares the file's data; only its affine and header
+    change (voxel size 168/338, 204/410, 168/338 mm).
+    """
+    template = nib.as_closest_canonical(affine_template)
+    warp = nib.as_closest_canonical(warp_template)
+    first = warp.affine[:3, 3]
+    last = warp.affine[:3, :3] @ (np.asarray(warp.shape[:3]) - 1.0) + first
+    mat = np.eye(4)
+    mat[:3, :3] = np.diag((last - first) / (np.asarray(template.shape[:3]) - 1.0))
+    mat[:3, 3] = first
+    return nib.Nifti1Image(template.dataobj, mat, template.header)
+
+
 class CustomPreprocess(Preprocess):
     """
     Custom class to override Preprocess
@@ -255,6 +281,14 @@ class CustomPreprocess(Preprocess):
         #
         # Together, measured on the CPU: 1.46 -> 0.72 s and +920 -> +480 MB
         # resident (+1090 -> +560 MB peak) for setting up the models.
+        #
+        # The working grid itself comes from _working_grid_template, so that
+        # every *_large image carries the geometry of its content.
+        if len(args) < 2 and "affine_template" not in kwargs:
+            kwargs["affine_template"] = _working_grid_template(
+                dmp_preprocess.AFFINE_TEMPLATE,
+                kwargs.get("warp_template", dmp_preprocess.WARP_TEMPLATE),
+            )
         swaps = {
             "BrainSegmentation": CustomBrainSegmentation,
             "NoGMSegmentation": lambda *a, **k: None,
@@ -1475,7 +1509,6 @@ def save_results(
     header_resamp,
     warp_template: nib.Nifti1Image,
     wj_affine: pd.Series,
-    wj_warp: pd.Series,
     device,
     verbose: bool,
     count: int,
@@ -1483,8 +1516,8 @@ def save_results(
 ) -> None:
     """Save segmentation and atlas results to disk.
 
-    ``wj_affine`` turns volumes on the 0.5 mm working grid into native ones,
-    ``wj_warp`` modulates the maps warped on the 1.5 mm template grid.
+    ``wj_affine`` turns volumes on the 0.5 mm working grid into native ones
+    and modulates the maps warped on the 1.5 mm template grid.
 
     Writes the affine-registered tissue maps, the native-space outputs and the
     volume/QA report.  If any requested output needs the non-linear
@@ -1531,7 +1564,7 @@ def save_results(
     # the whole run.  Slab it: same result, roughly a quarter of the memory.
     with chunked_conv3d():
         output_reg = prep.run_warp_register(
-            p0_large, p1_affine, p2_affine, wj_warp
+            p0_large, p1_affine, p2_affine, wj_affine
         )
     release_cache(device)
     warp_yx = output_reg["warp_yx"]
@@ -1768,18 +1801,15 @@ def run_segment():
     # Native volume per template volume.  The affine maps normalised
     # coordinates of the 0.5 mm affine template (align_corners: -1 and +1 are
     # the corner voxel centres).  deepmriprep's nifti_volume used the
-    # edge-to-edge box and the 1.5 mm warp template instead: +0.3 to +1.8% on
-    # every absolute volume and ROI, depending on the matrix size.
-    det_affine = np.linalg.det(affine.values)
+    # edge-to-edge box instead: +0.3 to +1.8% on every absolute volume and
+    # ROI, depending on the matrix size.  The working grid and the 1.5 mm
+    # warp grid share their corner centres (_working_grid_template), so the
+    # same factor converts the volumes on the working grid and modulates the
+    # maps warped on the template grid.
     wj_affine = (
-        det_affine * centre_extent_volume(t1) / centre_extent_volume(prep.affine_template)
-    )
-    # The maps that are warped and modulated reach the 1.5 mm warp grid
-    # corner centre to corner centre (_to_template_space, align_corners), so
-    # that grid's box is the reference for mwp: with wj_affine, sum(mwp1)
-    # came out 1.6% below the native GM volume
-    wj_warp = (
-        det_affine * centre_extent_volume(t1) / centre_extent_volume(warp_template)
+        np.linalg.det(affine.values)
+        * centre_extent_volume(t1)
+        / centre_extent_volume(prep.affine_template)
     )
 
     if use_amap:
@@ -1837,7 +1867,6 @@ def run_segment():
         discrepancy_large = None
 
     wj_affine = pd.Series([wj_affine])
-    wj_warp = pd.Series([wj_warp])
 
     # Rebuild the label from the (possibly lesion-corrected) tissue maps.
     gm, wm, csf = normalize_to_sum1(
@@ -1893,7 +1922,6 @@ def run_segment():
         header_resamp=header_resamp,
         warp_template=warp_template,
         wj_affine=wj_affine,
-        wj_warp=wj_warp,
         device=device,
         verbose=verbose,
         count=count,
