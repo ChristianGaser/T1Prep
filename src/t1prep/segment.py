@@ -99,6 +99,7 @@ from .vessels import (
 from ._models import prepare_model_files
 from ._telemetry import init_crash_reporting
 from ._conv_chunk import chunked_conv3d
+from ._shoot import shoot_register
 from .nogm import run_segment_nogm_conventional
 from .dura import remove_dura
 from ._device import (
@@ -106,8 +107,6 @@ from ._device import (
     release_cache,
     resolve_device,
     route_deepmriprep,
-    stage_device,
-    stage_target_device,
 )
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
@@ -267,7 +266,7 @@ class CustomPreprocess(Preprocess):
 
     def __init__(self, *args, **kwargs):
         # Upstream's __init__ builds every model it might need, by looking the
-        # classes up in its own module.  Swap two of them while it runs:
+        # classes up in its own module.  Swap four of them while it runs:
         #
         # - BrainSegmentation becomes CustomBrainSegmentation (linear instead
         #   of B-spline interpolation for p0, and MPS support).  Replacing it
@@ -278,9 +277,17 @@ class CustomPreprocess(Preprocess):
         #   run_segment_nogm.  ``nogm_segment`` is None as a result; a caller
         #   that does want the UNet (scripts/mem_probe.py) has to attach its
         #   own ``NoGMSegmentation``.
+        # - WarpRegistration becomes a no-op as well: T1Prep registers by
+        #   geodesic shooting (``run_warp_register``, t1prep._shoot), so
+        #   deepmriprep's warp network is never loaded.  ``warp_register`` is
+        #   None.
+        # - download_missing_models becomes a no-op: prepare_model_files has
+        #   fetched every weight T1Prep runs, and upstream's own downloader
+        #   would fetch the unused warp network.
         #
-        # Together, measured on the CPU: 1.46 -> 0.72 s and +920 -> +480 MB
-        # resident (+1090 -> +560 MB peak) for setting up the models.
+        # The first two together, measured on the CPU: 1.46 -> 0.72 s and
+        # +920 -> +480 MB resident (+1090 -> +560 MB peak) for setting up the
+        # models.
         #
         # The working grid itself comes from _working_grid_template, so that
         # every *_large image carries the geometry of its content.
@@ -292,6 +299,8 @@ class CustomPreprocess(Preprocess):
         swaps = {
             "BrainSegmentation": CustomBrainSegmentation,
             "NoGMSegmentation": lambda *a, **k: None,
+            "WarpRegistration": lambda *a, **k: None,
+            "download_missing_models": lambda *a, **k: None,
         }
         originals = {name: getattr(dmp_preprocess, name) for name in swaps}
         for name, cls in swaps.items():
@@ -358,21 +367,13 @@ class CustomPreprocess(Preprocess):
         }
 
     def run_warp_register(self, p0_large, p1_affine, p2_affine, wj_affine):
-        """Warp registration, on the accelerator when this stage opted in.
+        """Non-linear registration by geodesic shooting, not deepmriprep's network.
 
-        This is the one deepmriprep stage that can move to MPS as-is: it never
-        calls ``spline_resize.grid_sample``, whose 27-tap gather over
-        47-million-voxel volumes is what exhausts unified memory in the affine,
-        brain and nogm stages.  Everything here happens at the 113x137x113 warp
-        grid, so the stage gets both faster and smaller — measured 21.6 s /
-        3.13 GB on CPU against 7.5 s / 2.28 GB on MPS.  Outputs are CPU-side
-        NIfTIs either way; only floating-point rounding differs.
+        Returns the keys deepmriprep's warp returned and T1Prep reads, in the
+        same convention (see :func:`t1prep._shoot.shoot_register`).
+        ``p0_large`` is not used: the shooting registers GM and WM only.
         """
-        target = stage_target_device("warp", self.device)
-        with stage_device(self, target):
-            return super().run_warp_register(
-                p0_large, p1_affine, p2_affine, wj_affine
-            )
+        return shoot_register(p1_affine, p2_affine, wj_affine)
 
     def run_atlas_register(
         self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
@@ -1558,15 +1559,8 @@ def save_results(
 
     if verbose:
         count = shell_progress(count, end_count,
-            "Warping                      ")
-    # The warp model's 32-channel layer at the template grid would ask for
-    # an 8 GB im2col buffer in one allocation on CPU, which is the peak of
-    # the whole run.  Slab it: same result, roughly a quarter of the memory.
-    with chunked_conv3d():
-        output_reg = prep.run_warp_register(
-            p0_large, p1_affine, p2_affine, wj_affine
-        )
-    release_cache(device)
+            "Geodesic shooting            ")
+    output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
     warp_yx = output_reg["warp_yx"]
     warp_xy = output_reg["warp_xy"]
 

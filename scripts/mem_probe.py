@@ -304,11 +304,8 @@ def _instrument(prep, stage):
                 SAMPLER.stage = back
         setattr(owner, name, wrapped)
 
-    if stage == "warp":
-        reg = prep.warp_register
-        tag(reg, "model", "  warp.model", "  warp.run")
-        tag(reg.syn, "apply_flows", "  warp.apply_flows", "  warp.run")
-    elif stage == "brain":
+    # "warp" is geodesic shooting in libCAT: no Python sub-steps to label
+    if stage == "brain":
         seg = prep.brain_segment
         tag(seg, "run_model", "  brain.model", "  brain.run")
         tag(seg, "run_patch_models", "  brain.patches", "  brain.run")
@@ -540,7 +537,7 @@ def main():
         "--chunk-conv",
         action="store_true",
         help="split oversized CPU conv3d into slabs (t1prep._conv_chunk), which "
-        "is what the pipeline does for the segmentation and warp stages",
+        "is what the pipeline does for the segmentation stage",
     )
     ap.add_argument(
         "--verify",
@@ -723,7 +720,6 @@ def main():
         s.model = _AC(s.model)
         s.patch_models = [_AC(m) for m in s.patch_models]
         prep.nogm_segment.model = _AC(prep.nogm_segment.model)
-        prep.warp_register.model = _AC(prep.warp_register.model)
 
     # Wrap each pipeline stage.
     for m, label in [
@@ -751,8 +747,8 @@ def main():
     from t1prep._conv_chunk import chunked_conv3d
 
     try:
-        # The pipeline wraps its segmentation and warp calls individually; here
-        # one context covers the whole run, which is equivalent for measurement.
+        # The pipeline wraps its segmentation call individually; here one
+        # context covers the whole run, which is equivalent for measurement.
         with chunked_conv3d(enabled=args.chunk_conv) as cc:
             if args.free:
                 run_with_freeing(prep, in_path)

@@ -13,7 +13,7 @@ T1Prep is a Python pipeline for preprocessing and segmenting T1-weighted MRI dat
 - Brain extraction (skull stripping)
 - Tissue segmentation (GM, WM, CSF)
 - Cortical surface reconstruction and thickness estimation
-- Non-linear spatial registration to MNI152 space
+- Non-linear spatial registration to MNI152 space (CAT12's geodesic shooting)
 - Atlas-based ROI extraction
 - White matter hyperintensity (WMH/lesion) detection
 - BIDS derivatives output naming

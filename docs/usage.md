@@ -105,6 +105,15 @@ Segmentation refinement:
   (GM - CSF) / (WM - CSF) below 0.35, against 0.48-0.54 on the test data.
 
 Deformation fields:
+
+The non-linear registration to MNI152NLin2009cAsym is CAT12's optimised
+geodesic shooting, ported to C in CAT-Surface (`cat_surf.vol_shoot`): the
+affine-registered GM and WM maps are registered onto CAT12's 1.5 mm shooting
+templates (`Template_0..4_GS`), running every scheduled Gauss-Newton iteration
+with half of CAT12's regularisation — the setting with the best label accuracy
+in [the evaluation](../evaluation/results/RESULTS.md). It replaces
+deepmriprep's warp network, which T1Prep used up to 0.8.1.
+
 - `--save-h5`: additionally save the T1w↔MNI152NLin2009cAsym deformations as
   ANTs/ITK composite HDF5 files (`y_*.h5`, `iy_*.h5`), next to the NIfTI `y_`
   field. The composites are what `antsApplyTransforms` and `nitransforms`
