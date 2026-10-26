@@ -75,12 +75,14 @@ and newMSM register T1Prep's surfaces; FreeSurfer registers its own, so its
 row measures surface reconstruction and spherical registration together, and
 the two cannot be separated because each pipeline's sphere is tied to its own
 mesh.  T1Prep is 0.8.1 with the relaxed input sphere (`CAT_Surf2Sphere
--relax`, cat-surf 1.1.5), as the next release runs it.
+-relax`, cat-surf 1.1.5) and with Spherical Demons applying its global
+rotation to the sphere instead of the warp (CAT-Surface #34), as the next
+release runs it.
 
 | arm | registration | target | LOO | pairs | time / hemisphere |
 |---|---|---|---|---|---|
-| **T1Prep** | **relaxed sphere, Spherical Demons → fsaverage** | fsaverage 164k | **0.8463** | **0.7824** | ~50 s |
-| FSL newMSM | fMRIPrep's MSMSulc config, from T1Prep's sphere and `sulc` | fs_LR 164k | 0.8354 | 0.7692 | +4 min |
+| **T1Prep** | **relaxed sphere, Spherical Demons → fsaverage** | fsaverage 164k | **0.8507** | **0.7892** | ~50 s |
+| FSL newMSM | fMRIPrep's MSMSulc config, from T1Prep's sphere and `sulc` | fs_LR 164k | 0.8391 | 0.7751 | +4 min |
 | **FreeSurfer 8.1** | **recon-all: `mris_sphere`, `mris_register` → fsaverage** | fsaverage 164k | **0.8516** | **0.7906** | ~12 min |
 
 Paired differences, with 95 % intervals from a subject-level bootstrap (4000
@@ -88,17 +90,29 @@ resamples, a pair weighted by both its subjects):
 
 | | Δ LOO | Δ pairs | subjects better (LOO) |
 |---|---|---|---|
-| T1Prep − FreeSurfer | −0.005 [−0.016, +0.006] | −0.008 [−0.025, +0.011] | 7/19 |
-| T1Prep − newMSM | +0.011 [+0.008, +0.013] | +0.013 [+0.009, +0.017] | 18/19 |
-| newMSM − FreeSurfer | −0.016 [−0.027, −0.004] | −0.022 [−0.038, −0.002] | 1/19 |
+| T1Prep − FreeSurfer | −0.001 [−0.009, +0.011] | −0.001 [−0.017, +0.018] | 9/19 |
+| T1Prep − newMSM | +0.012 [+0.009, +0.014] | +0.014 [+0.009, +0.019] | 18/19 |
+| newMSM − FreeSurfer | −0.012 [−0.020, −0.002] | −0.016 [−0.028, +0.002] | 1/19 |
 
 T1Prep and FreeSurfer are level within the noise of 19 subjects: the right
-hemisphere is level (−0.001 / −0.001), the left trails (−0.009 / −0.016).  The
+hemisphere is ahead (+0.004 / +0.008), the left trails (−0.006 / −0.011).  The
 pial attachment gives the same picture (FreeSurfer 0.8197 / 0.7425, T1Prep
-0.8126 / 0.7331).  newMSM is below both.  On all 20 subjects T1Prep scores
-0.8473 / 0.7834 (0.8445 / 0.7845 on fsaverage 32k with its cortex mask) and
-newMSM 0.8366 / 0.7705; T1Prep's fs_LR sphere for fMRIPrep (`desc-msmsulc`,
-Spherical Demons onto fs_LR) reaches 0.8546 / 0.7936.
+0.8164 / 0.7389).  newMSM is below both.  On all 20 subjects T1Prep scores
+0.8515 / 0.7903 (0.8488 / 0.7914 on fsaverage 32k with its cortex mask) and
+newMSM 0.8400 / 0.7763; T1Prep's fs_LR sphere for fMRIPrep (`desc-msmsulc`,
+Spherical Demons onto fs_LR) reaches 0.8536 / 0.7926.
+
+CAT-Surface #34 adds +0.004 [+0.002, +0.008] (LOO) and +0.007 [+0.002,
++0.013] (pairs) to T1Prep's registration on all 20 subjects, with 17 of 20
+subjects and 157 of 190 pairs better: Spherical Demons used to fold its
+global rotation into the warp, whose elastic prior undid it wherever the data
+term is weak.  newMSM gains +0.003 / +0.006 through it (intervals just above
+zero), because its affine start is regressed onto T1Prep's fs_LR sphere.  The
+`desc-msmsulc` sphere is the exception (−0.001 / −0.001): T1Prep's
+`write_msm_sphere()` runs the global rotation search a second time on a start
+it has already aligned rigidly, that search lands a median 5° off (up to
+13°), and before #34 the warp partly shrank that rotation back.  Without the
+second search it is 0.8546 / 0.7942.
 
 Times are per hemisphere.  T1Prep's is the sphere (19 s) plus Spherical
 Demons (30 s) on an M2 Ultra, one process; T1Prep runs the two hemispheres in
@@ -120,7 +134,7 @@ identical across arms:
 
 | pipeline | mid − pial (LOO) | mid − pial (pairs) |
 |---|---|---|
-| T1Prep | +0.0337 | +0.0493 |
+| T1Prep | +0.0344 | +0.0503 |
 | FreeSurfer | +0.0318 | +0.0481 |
 
 Mindboggle's labelled surfaces sit on the **pial**, so the pial gives the
@@ -177,10 +191,10 @@ Spearman 0.00-0.02.  MSMSulc was registering a map without folding
 information, and that, not MSM, made most of the 0.08-0.10 lead T1Prep held
 here before.
 
-With correct inputs T1Prep stays ahead, by much less: +0.011 / +0.013 on the
-19 subjects above, and +0.018 [+0.014, +0.023] / +0.023 [+0.017, +0.029] for
+With correct inputs T1Prep stays ahead, by much less: +0.012 / +0.014 on the
+19 subjects above, and +0.014 [+0.010, +0.017] / +0.016 [+0.011, +0.021] for
 T1Prep's own fs_LR sphere, the one fMRIPrep uses instead of running MSMSulc
-(20 subjects; 19 of 20 subjects and 188 of 190 pairs better).  Both the
+(20 subjects; 18 of 20 subjects and 176 of 190 pairs better).  Both the
 ordering and its size match the literature: 0.786 vs 0.766 for Spherical
 Demons and MSM in Zhao's pediatric comparison, 0.881 vs 0.872 in the
 SphereMorph table.  MSMSulc is a deliberately conservative,
@@ -216,14 +230,16 @@ removal** (on by default) re-embeds the triangles the inflation folds.
 T1Prep 0.8.1 gets the fold removal through that default; `-relax` is on from
 the next release.
 
-Same T1Prep 0.8.1 central surfaces, the same Spherical Demons call and the
-same scoring; only the sphere differs:
+Same T1Prep 0.8.1 central surfaces and the same scoring; only the sphere
+differs, and in the last row Spherical Demons as well (CAT-Surface #34: the
+global rotation applied to the sphere, not to the warp):
 
 | sphere | LOO | pairs | Δ LOO [95 % CI] | Δ pairs [95 % CI] | better |
 |---|---|---|---|---|---|
 | inflation only (T1Prep ≤ 0.8.0) | 0.8120 | 0.7454 | | | |
 | + fold removal (T1Prep 0.8.1) | 0.8119 | 0.7454 | −0.0000 | +0.0000 | |
-| **+ `-relax`** (next release) | **0.8445** | **0.7845** | **+0.0326** [+0.0273, +0.0375] | **+0.0391** [+0.0315, +0.0460] | 20/20 subjects, 187/190 pairs |
+| + `-relax` (cat-surf 1.1.5) | 0.8445 | 0.7845 | +0.0326 [+0.0273, +0.0375] | +0.0391 [+0.0315, +0.0460] | 20/20 subjects, 187/190 pairs |
+| **+ `-relax`, #34** (next release) | **0.8488** | **0.7914** | **+0.0368** [+0.0323, +0.0412] | **+0.0460** [+0.0396, +0.0517] | 20/20 subjects, 190/190 pairs |
 
 Δ against inflation only, scored at fsaverage 32k; the intervals come from a
 subject-level bootstrap (4000 resamples, a pair weighted by both its
@@ -240,22 +256,29 @@ central surface, both normalised to their totals; medians over the 40
 hemispheres.  Time: one hemisphere, one process, M2 Ultra; Spherical Demons
 adds ~30 s either way.
 
-* **The gain is systematic.**  Every subject improves under LOO (+0.005 to
-  +0.051), the right hemisphere twice as much as the left (+0.042 vs
-  +0.023).  It is concentrated in the right lateral temporal lobe: middle
-  temporal +0.229 (median 0.64 → 0.88, every subject better), inferior
-  temporal +0.176, transverse temporal +0.089, then postcentral +0.080.  That
-  matches the whole-fold slip (~14°) of the right inferior temporal gyrus
-  which comparing T1Prep's registration with recon-all's had traced to the
-  inflated sphere.
-* **It is not free of local failures.**  The two registrations differ by 2°
-  (median per hemisphere; 95th percentile 8°), and in a few hemispheres by a
-  whole fold.  Mostly that is the correction above, but in two of the 40 it
-  goes the wrong way: OASIS-TRT-20-16 rh loses its parahippocampal and
+* **The gain is systematic.**  Every subject improves under LOO (+0.021 to
+  +0.056 with #34, +0.005 to +0.051 without), the right hemisphere about
+  twice as much as the left (+0.047 vs +0.026).  It is concentrated in the
+  right lateral temporal lobe: middle temporal +0.229 (median 0.64 → 0.87,
+  every subject better), inferior temporal +0.179, transverse temporal
+  +0.091, then postcentral +0.080.  That matches the whole-fold slip (~14°)
+  of the right inferior temporal gyrus which comparing T1Prep's registration
+  with recon-all's had traced to the inflated sphere.
+* **One local failure is left.**  The two registrations differ by 2° (median
+  per hemisphere; 95th percentile 8°), and in a few hemispheres by a whole
+  fold.  Mostly that is the correction above, but with cat-surf 1.1.5 two of
+  the 40 went the wrong way: OASIS-TRT-20-16 rh lost its parahippocampal and
   entorhinal labels (LOO 0.72 → 0.00 and 0.68 → 0.15), MMRR-3T7T-2-2 lh its
-  pre- and postcentral (0.84 → 0.32 and 0.61 → 0.23).  Both subjects still
-  improve on average, and these are the only regions whose mean drops by
-  more than 0.003 (rh parahippocampal −0.019, lh precentral −0.010).
+  pre- and postcentral (0.84 → 0.32 and 0.61 → 0.23).  The first was a defect
+  in Spherical Demons, not in the sphere: it folded its global rotation into
+  the warp, whose elastic prior undid the rotation wherever the data term is
+  weak, and the relaxed sphere happened to start that gyrus 13° into the
+  template's medial wall.  With #34 it is 0.77 and 0.64.  MMRR-3T7T-2-2 lh
+  stays (0.54 and 0.31): its central and postcentral sulci are equally deep,
+  on FreeSurfer's pial surface as well, so it is registered correctly only
+  from starts at most 2-6° anterior of the right position (other hemispheres
+  recover from 19°), and the relaxed sphere starts it 11° anterior.  No
+  region's mean drops any more: the lowest is rh pericalcarine at −0.001.
 * **Fold removal alone changes no Dice** (no region's mean by more than
   0.002).  Its value is a valid map, and even that does not survive
   registration without `-relax`: Spherical Demons folds two of the 40 spheres
@@ -265,8 +288,9 @@ adds ~30 s either way.
   `-relax` none is folded.
 * **The fs_LR spheres for fMRIPrep gain as much.**  `fsLR` (`desc-reg`, the
   fsaverage registration carried into fs_LR) goes from 0.8167 / 0.7452 to
-  0.8480 / 0.7839, `msm` (`desc-msmsulc`, the sphere fMRIPrep resamples to
-  fs_LR with) from 0.8211 / 0.7519 to 0.8546 / 0.7936, every pair better.
+  0.8515 / 0.7906, `msm` (`desc-msmsulc`, the sphere fMRIPrep resamples to
+  fs_LR with) from 0.8211 / 0.7519 to 0.8536 / 0.7926, every pair better
+  (0.8480 / 0.7839 and 0.8546 / 0.7936 with cat-surf 1.1.5).
 * **Nothing else moved.**  T1Prep 0.8.1 without `-relax` reproduces the 0.7.x
   run shown here before (fsaverage LOO −0.003, pairs ±0.000; 164k ±0.001),
   so the gain is the sphere's alone.
@@ -278,12 +302,14 @@ adds ~30 s either way.
 | `sulc` from cat-surf < 1.1.1, sphere without `-relax` (shown until October 2026) | 0.7317 | 0.6405 |
 | correct `sulc`, sphere without `-relax` | 0.7998 | 0.7256 |
 | correct `sulc`, relaxed sphere | 0.8366 | 0.7705 |
+| correct `sulc`, relaxed sphere, affine start from the #34 fs_LR sphere | 0.8400 | 0.7763 |
 
 Correcting the map gains +0.068 (LOO) and +0.085 (pairs), with every subject
 and every pair better; T1Prep's own registrations moved by no more than 0.004
 between the two T1Prep versions involved, so the gain is the map's.  The
 relaxed sphere then adds +0.037 [+0.032, +0.042] and +0.045 [+0.038, +0.052],
-as much as it gives Spherical Demons.
+as much as it gives Spherical Demons, and #34 another +0.003 / +0.006 through
+the fs_LR sphere newMSM's affine start is regressed onto.
 
 #### FreeSurfer against T1Prep without `-relax` (19 subjects, 164k)
 
@@ -308,7 +334,7 @@ change how several of them should be read.
 
 **The spread within a method dwarfs the differences between methods.** Every
 non-linear volume arm has an interquartile range about 0.10 wide (LOO) or
-0.13 (pairs), the surface arms about 0.08 and 0.10-0.12, while the means
+0.13 (pairs), the surface arms about 0.08 and 0.10-0.11, while the means
 separate by 0.01-0.03.  Which region is being measured
 matters far more than which of these methods produced the registration - the
 ranking is a statement about averages over many regions, not a prediction for
@@ -321,9 +347,9 @@ ANTs.  69 % of its pairwise values fall below 0.5, versus 10-19 % for the
 non-linear methods.  That is the gap the non-linear step actually closes.
 
 **The three surface arms differ little.** T1Prep and FreeSurfer have nearly
-the same box (pairwise IQR 0.103 and 0.104, lower whiskers 0.57 and 0.59,
-3.0 % and 2.6 % of values below 0.5); newMSM's is slightly wider (0.115) and
-reaches a little lower (0.56, 3.3 %).  The wide newMSM box shown here before
+the same box (pairwise IQR 0.099 and 0.104, lower whiskers 0.59 for both,
+2.2 % and 2.6 % of values below 0.5); newMSM's is slightly wider (0.110) and
+reaches a little lower (0.58, 2.6 %).  The wide newMSM box shown here before
 (IQR 0.199, whisker 0.27, 17.3 % below 0.5) was the `sulc` bug.
 
 **The volume arms overlap heavily.** ANTs, T1Prep and CAT12 have visually
@@ -374,12 +400,14 @@ reporting shooting ahead of DARTEL and of Klein 2009's best on both datasets.
 * T1Prep deformations are the SPM-format `y_*.nii` (5-D, native mm, affine and
   non-linear composed).
 * T1Prep surface arms (`d20_surf_*`, `d19_t1p_*`): T1Prep 0.8.1 with
-  cat-surf 1.1.5, the sphere computed with `relax=True` as the next release
-  does it; an end-to-end run with that change gives bit-identical spheres.
-  The `fsLR` and `msm` spheres are written as `--fmriprep` writes them.
-* newMSM (`d20_surf_newmsm.csv`, `d19_newmsm.csv`) starts from those spheres,
-  with `?h.sulc` from cat-surf 1.1.5 (`tools/gen_sulc.py`), 2 OpenMP threads
-  per hemisphere.
+  cat-surf 1.1.5 plus CAT-Surface #34 (Spherical Demons applies its global
+  rotation to the sphere), the sphere computed with `relax=True` as the next
+  release does it; an end-to-end run with that change gives bit-identical
+  spheres.  The `fsLR` and `msm` spheres are written as `--fmriprep` writes
+  them.  The `*_norelax.csv` arms are 0.8.1's own output with cat-surf 1.1.5.
+* newMSM (`d20_surf_newmsm.csv`, `d19_newmsm.csv`) starts from those spheres
+  (its affine is regressed onto the `fsLR` sphere above), with `?h.sulc` from
+  cat-surf 1.1.5 (`tools/gen_sulc.py`), 2 OpenMP threads per hemisphere.
 * FreeSurfer 8.1 (`d19_fs81*.csv`): recon-all, scored through its own
   `?h.sphere.reg`, with the labels attached to the midthickness
   (`tools/prepare_fs_midthickness.py`) and `--reference-glob none`.

@@ -63,7 +63,7 @@ vertices that discriminate between registrations.
 | arm | `loo` | `atlas` | inflation |
 |---|---|---|---|
 | T1Prep volume | 0.7289 | 0.7404 | **+0.0115** [+0.0113, +0.0117] |
-| T1Prep surface | 0.8445 | 0.8538 | **+0.0093** [+0.0091, +0.0095] |
+| T1Prep surface | 0.8488 | 0.8580 | **+0.0092** [+0.0090, +0.0094] |
 
 That bias is larger than most of the differences this benchmark resolves —
 CAT12 beats T1Prep by +0.0120 and T1Prep beats ANTs by +0.0156 under `loo`.
