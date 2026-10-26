@@ -63,15 +63,27 @@ vertices that discriminate between registrations.
 | arm | `loo` | `atlas` | inflation |
 |---|---|---|---|
 | T1Prep volume | 0.7289 | 0.7404 | **+0.0115** [+0.0113, +0.0117] |
-| T1Prep surface | 0.8154 | 0.8272 | **+0.0118** [+0.0114, +0.0123] |
+| T1Prep surface | 0.8445 | 0.8538 | **+0.0093** [+0.0091, +0.0095] |
 
 That bias is larger than most of the differences this benchmark resolves —
 CAT12 beats T1Prep by +0.0120 and T1Prep beats ANTs by +0.0156 under `loo`.
-It inflates every arm by roughly the same amount, so it would not reorder
-them, but it would make the absolute numbers incomparable with published
-leave-one-out figures.  The effect is ~1/N of the vote, so it shrinks with
-larger cohorts and grows sharply with smaller ones; it is not a constant that
-can be subtracted.  `loo` is therefore the default.
+It inflates every arm by a similar amount, so it would not reorder them, but
+it would make the absolute numbers incomparable with published leave-one-out
+figures.  The effect is ~1/N of the vote, so it shrinks with larger cohorts
+and grows sharply with smaller ones; it is not a constant that can be
+subtracted.  `loo` is therefore the default.
+
+<!---
+Not shown, kept for later reading: T1Prep's surface registration without the
+relaxed sphere (T1Prep <= 0.8.1).
+
+| T1Prep surface, sphere without `-relax` | 0.8119 | 0.8241 | **+0.0122** [+0.0118, +0.0127] |
+
+The inflation depends on the registration, too: with the relaxed sphere fewer
+vertices are split between labels (winner below 75 % of the votes at 18.9 %
+of the cortex instead of 24.5 %), so a subject's own vote flips fewer of
+them, and `atlas` understates what the relaxation gains by ~0.003.
+-->
 
 See [`results/RESULTS.md`](results/RESULTS.md) for the numbers each protocol
 produces, and `results/dice_boxplots.png` for the distributions behind them.
@@ -114,9 +126,10 @@ Both roots are needed for the surface route: the labels come from `surfaces/`
 and `--reference-glob` finds `t1weighted.nii.gz` under `data/` to convert the
 labelled surfaces out of FreeSurfer tkrRAS into scanner space.
 
-The surface evaluation uses all 101 subjects; the volume comparison uses the
+The tools can score all 101 subjects; the comparisons in `results/` use the
 stratified 20 in `data/subset20.txt` (4 per cohort, seed 20240903), because
-ANTs and CAT12 cost 9-15 minutes per subject.
+ANTs and CAT12 cost 9-15 minutes per subject, and the surface comparison
+with FreeSurfer the 19 of them in `data/subset19_fs81.txt`.
 
 ## Reproducing
 
@@ -135,7 +148,6 @@ tools/run_newmsm.py --t1prep <mb>/data --work <work>/msm \
     --subject-file data/subset20.txt --jobs 4           # FSL newMSM
 ```
 
-<!---
 ### FreeSurfer
 
 FreeSurfer needs no T1Prep outputs at all -- its own surfaces and
@@ -169,7 +181,7 @@ tools/eval_mindboggle.py project --space fsaverage --out-space fs81 \
     --template-sphere 'src/t1prep/data/templates_surfaces_164k/{fshemi}.sphere.freesurfer.gii' \
     --reference-glob none
 ```
--->
+
 An external registration is scored by pointing at its sphere and its target:
 
 ```bash

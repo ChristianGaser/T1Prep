@@ -22,30 +22,33 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Categorical slots 1, 2, 3, 5, 7 of the reference palette (light mode).
+# Categorical slots 1, 2, 3, 5, 6, 7 of the reference palette (light mode).
 # Slot 4 (yellow) is deliberately unused: beside slot 2 (orange) it fails the
 # normal-vision separation floor, and the two ANTs arms would sit adjacent.
-BLUE, ORANGE, AQUA, MAGENTA, VIOLET = (
-    "#2a78d6", "#eb6834", "#1baf7a", "#e87ba4", "#4a3aa7")
+BLUE, ORANGE, AQUA, MAGENTA, GREEN, VIOLET = (
+    "#2a78d6", "#eb6834", "#1baf7a", "#e87ba4", "#008300", "#4a3aa7")
 GREY = "#8a8f98"          # the affine reference, not a competing method
 
 INK, MUTED, GRID = "#1c1e21", "#5c6169", "#dcdfe4"
 
+# (csv stem, label, colour).  The surface arms are the 19 subjects FreeSurfer
+# processed, so that all three are scored on the same ones.
 VOLUME = [
-    ("affine15", "Affine only", GREY),
-    ("ants_syn100", "ANTs SyN (MI)", VIOLET),
-    ("ants_fmriprep", "ANTs\n(fMRIPrep config)", ORANGE),
-    ("mni", "T1Prep", BLUE),
-    ("cat12", "CAT12\n(geodesic shooting)", AQUA),
+    ("d20_affine15", "Affine only", GREY),
+    ("d20_ants_syn100", "ANTs SyN (MI)", VIOLET),
+    ("d20_ants_fmriprep", "ANTs\n(fMRIPrep config)", ORANGE),
+    ("d20_mni", "T1Prep", BLUE),
+    ("d20_cat12", "CAT12\n(geodesic shooting)", AQUA),
 ]
 SURFACE = [
-    ("surf_newmsm", "FSL newMSM\n(fMRIPrep config)", MAGENTA),
-    ("surf_fsavg164k", "T1Prep", BLUE),
+    ("d19_newmsm", "FSL newMSM\n(fMRIPrep config)", MAGENTA),
+    ("d19_t1p_central", "T1Prep", BLUE),
+    ("d19_fs81_mid", "FreeSurfer 8.1\n(recon-all)", GREEN),
 ]
 
 
 def load(results: Path, name: str, protocol: str) -> np.ndarray:
-    with open(results / f"d20_{name}.csv") as fh:
+    with open(results / f"{name}.csv") as fh:
         return np.array([float(r["dice"]) for r in csv.DictReader(fh)
                          if r["protocol"] == protocol])
 
@@ -95,18 +98,18 @@ def main() -> int:
     results = Path(a.results)
 
     fig, axes = plt.subplots(2, 2, figsize=(12.5, 8.4),
-                             gridspec_kw=dict(width_ratios=[5, 2.2],
+                             gridspec_kw=dict(width_ratios=[5, 3.2],
                                               hspace=0.42, wspace=0.18))
     fig.patch.set_facecolor("white")
     for row, protocol in enumerate(("loo", "pairs")):
         panel(axes[row][0], results, VOLUME, protocol,
-              f"Volume registration - {protocol}")
+              f"Volume registration - {protocol} (20 subjects)")
         panel(axes[row][1], results, SURFACE, protocol,
-              f"Surface registration - {protocol}")
+              f"Surface registration - {protocol} (19 subjects)")
         axes[row][0].set_ylabel("Dice", fontsize=9.5, color=MUTED)
 
-    fig.suptitle("Dice per region and comparison, 20 Mindboggle-101 subjects, "
-                 "manual DKT31 labels", fontsize=12.5, color=INK, x=0.037,
+    fig.suptitle("Dice per region and comparison, Mindboggle-101, manual "
+                 "DKT31 labels", fontsize=12.5, color=INK, x=0.037,
                  ha="left", y=0.975)
     fig.text(0.037, 0.932,
              "Box = interquartile range, whiskers 5th-95th percentile, white "
