@@ -179,6 +179,15 @@ def _fix_self_intersect(vertices, faces, reference=None, verbose=False):
         return cat_surf.fix_self_intersect(vertices, faces, verbose=verbose)
 
 
+def _euler_characteristic(vertices, faces) -> int:
+    """Euler characteristic of a closed triangle mesh: 2 for genus 0.
+
+    Every edge of a closed mesh borders two triangles (E = 3F/2), so
+    V - E + F = V - F/2, and every handle lowers it by 2.
+    """
+    return len(vertices) - len(faces) // 2
+
+
 def _pbt_input(hemi_vol: str, vessel: int):
     """Load a hemisphere label map the way PBT receives it.
 
@@ -528,6 +537,14 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
                 verbose=verbose,
             )
             cat_surf.write_surface(p(surf, "Mid_surface"), v, fcs)
+        # Up to cat-surf 1.1.6 the genus-0 correction can stop with handles
+        # left (lh of 2 of 120 subjects in ds000228/ds005270) and says so only
+        # in verbose mode.  Every later step keeps them, and the sphere folds
+        # around each.
+        euler = _euler_characteristic(v, fcs)
+        if euler != 2:
+            log.warning("Central surface is not genus 0: Euler characteristic "
+                        "%d (%d handles)", euler, (2 - euler) // 2)
         if topochange:
             log.info("Topochange volume output skipped (not surfaced)")
 
@@ -695,8 +712,18 @@ def _run(*, log, report_log, bname, side, mri, surf, estimate_spherereg,
             # subject better and the right middle/inferior temporal gyri
             # most (+0.23/+0.18), for ~9 s more per hemisphere.
             v, fcs = cat_surf.read_surface(p(surf, "Mid_surface"))
-            sv, sf = cat_surf.surf_to_sphere(v, fcs, stop_at=6, relax=True,
-                                             verbose=verbose)
+            try:
+                sv, sf = cat_surf.surf_to_sphere(v, fcs, stop_at=6, relax=True,
+                                                 verbose=verbose)
+            except RuntimeError as exc:
+                # The fold removal of cat-surf <= 1.1.6 aborts on the first
+                # patch around a handle (see the genus-0 check above) instead
+                # of leaving its folds.  Folds are what the registration
+                # unfolds anyway, so keep them rather than lose the hemisphere.
+                log.warning("%s: the sphere keeps its folds", exc)
+                sv, sf = cat_surf.surf_to_sphere(v, fcs, stop_at=6, relax=True,
+                                                 remove_folds=False,
+                                                 verbose=verbose)
             cat_surf.write_surface(p(surf, "Sphere_surface"), sv, sf)
 
         bar.step("Spherical registration")
