@@ -458,8 +458,9 @@ serial scans a velocity field and a true geodesic agree to high order, so
 geodesic shooting would add cost without adding accuracy here.
 
 Per time point it writes `<stem>_desc-longLogJacobian.nii[.gz]`: the per-voxel
-log volume ratio against the subject average, which is the map longitudinal VBM
-runs statistics on. Note that the membrane prior shrinks the estimate towards
+log volume ratio against the subject average, which the Jacobian modulation
+below turns into the maps longitudinal VBM runs statistics on (the pipeline then
+removes it; see there). Note that the membrane prior shrinks the estimate towards
 zero, so the map is better read as a spatial pattern than as a calibrated
 absolute rate.
 
@@ -531,6 +532,9 @@ non-linear-only modulation does.
 
 `--long-model ageing` and `both` add `--p` to the T1Prep calls automatically,
 since the modulation needs the native segmentations and they are off by default.
+Once the modulation has run, the warp stage's `<stem>_desc-longLogJacobian` and
+`<stem>_desc-longDisplacement` have served their purpose and are removed;
+`--debug` keeps them, and a run that fails keeps them as well.
 
 **Input layout.** The time points must sit in a plain folder. A BIDS `anat/`
 layout is not yet supported by the longitudinal pipeline and is refused up

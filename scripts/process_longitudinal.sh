@@ -98,11 +98,13 @@ Longitudinal models (CAT12 naming):
                 unchanged between scans -- appropriate for short intervals.
     ageing      Rigid realignment, then a small low-dimensional diffeomorphic
                 deformation of each time point towards an unbiased subject
-                average. Writes '<stem>_desc-longLogJacobian.nii[.gz]' per time
-                point -- the log volume ratio against the average -- plus
-                'longitudinal_average.nii[.gz]', and the modulated maps
-                'mwmwp1r<name>' (modulated twice: longitudinal Jacobian, then
-                spatial normalisation). Adds a few seconds per subject.
+                average. Writes 'longitudinal_average.nii[.gz]' and the
+                modulated maps 'mwmwp1r<name>' (modulated twice: longitudinal
+                Jacobian, then spatial normalisation). The per-time-point
+                '<stem>_desc-longLogJacobian' (log volume ratio against the
+                average) and '<stem>_desc-longDisplacement' only feed the
+                modulation and are removed after it unless --debug is given.
+                Adds a few seconds per subject.
     both        Save both models, as CAT12's "detect both models" option does:
                 'mwmwp1r<name>' for ageing and 'mwp1r<name>' for plasticity,
                 using CAT12's own names. The 'r' marks the realigned input, which
@@ -494,6 +496,21 @@ process_subjects() {
                     --out-dir "./" --out-subfolders "${modulate_dirs[@]}" \
                     "${MODULATE_ARGS[@]+"${MODULATE_ARGS[@]}"}"
             done
+
+            # The displacement and log Jacobian only carry the warp stage's
+            # result to the modulation, which has now used them.  --debug keeps
+            # them, and so does a failed run, which stops before this point.
+            if (( ! DEBUG )); then
+                for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
+                    local stem
+                    stem=$(basename "${subject_tp_paths[$tp_idx]}")
+                    stem="${stem%.nii.gz}"
+                    stem="${stem%.nii}"
+                    local long_stem="${realign_subfolders[$tp_idx]}/${stem}_desc-long"
+                    run_step rm -f "${long_stem}LogJacobian".nii{,.gz} \
+                        "${long_stem}Displacement".nii{,.gz}
+                done
+            fi
         fi
     done
 }
