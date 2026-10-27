@@ -3,10 +3,15 @@
 > For full contributor documentation see [Agents.md](Agents.md).
 
 ## Sub-Agent Routing Rules
-- **Always sequential:** All tasks (security, performance, style, refactoring) must be processed sequentially.
-- **No parallelization:** Only one sub-agent or one check may be active at a time.
-- **Workflow:** First execute `security`, then `performance`, then `style`. Wait for each step to complete.
-- **Dependencies:** B tasks must wait for the output of A tasks.
+
+- **Use sub-agents freely:** delegate self-contained work (exploration, research, porting or
+  reviewing separate modules, long validation runs) to sub-agents, and run independent ones
+  in parallel.
+- **Dependencies:** a task that needs another task's output waits for it.
+- **Reviews:** `security`, `performance` and `style` checks are independent and may run in
+  parallel; merge their findings before changing code.
+- **No shared state:** parallel agents never edit the same files or share a build directory --
+  give each its own files (or a git worktree) and its own build/scratch directory.
 
 ## Background Execution Rules
  

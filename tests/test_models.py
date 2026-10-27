@@ -2,7 +2,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 # Allow running tests without installing the package (repo checkout / editable dev)
 _ROOT = Path(__file__).resolve().parents[1]
@@ -55,16 +54,6 @@ class TestRedirectDeepmriprepPaths(unittest.TestCase):
             self.assertIn(f"deepmriprep.{name}", bound)
         for name, module in bound.items():
             self.assertEqual(module.DATA_PATH, str(self.data), name)
-
-    def test_warp_model_is_loaded_from_the_model_dir(self):
-        # Regression: deepmriprep.register kept the default DATA_PATH, so
-        # T1PREP_MODEL_DIR died with "warp_model.pt does not exist".
-        _models._redirect_deepmriprep_paths()
-        with mock.patch.object(_register, "load_model") as load_model:
-            _register.WarpRegistration(no_gpu=True)
-        self.assertEqual(
-            load_model.call_args[0][0], str(self.data / "models" / "warp_model.pt")
-        )
 
     def test_default_location_is_left_alone(self):
         _models.MODEL_DIR = _models._DEEPMRIPREP_MODELS

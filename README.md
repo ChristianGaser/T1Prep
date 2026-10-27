@@ -34,6 +34,8 @@ Lukas Fisch et al., "deepmriprep: Voxel-based Morphometry (VBM) Preprocessing vi
 
 An alternative approach uses DeepMriPrep for bias field correction, lesion detection, and also serves as an initial estimate for the subsequent AMAP segmentation from CAT12. 
 
+The non-linear registration to MNI152NLin2009cAsym is not deepmriprep's warp network but CAT12's optimised geodesic shooting, ported to C in [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (`cat_surf.vol_shoot`): it carries manual cortical labels between subjects more accurately than both the network and CAT12 itself (see [the evaluation](evaluation/results/RESULTS.md)).
+
 Cortical surface reconstruction and thickness estimation use the algorithms from [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (a core component of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12)) via the [`cat-surf`](https://pypi.org/project/cat-surf/) Python package, which provides pure Python bindings to the CAT-Surface C library — no platform-specific compiled binaries are required.
 
 It is designed for both single-subject and batch processing, with optional parallelization and flexible output naming conventions. The naming patterns are compatible with both 
@@ -47,7 +49,8 @@ CAT12 folder structures and the BIDS derivatives standard.
 ## Main Differences to CAT12
 - Implemented entirely in Python, eliminating the need for a Matlab license or platform-specific compiled binaries.
 - Newly developed pipeline to estimate cortical surface and thickness.
-- Skull-stripping, segmentation and non-linear spatial registration uses DeepMriPrep
+- Skull-stripping and segmentation use DeepMriPrep
+- Non-linear spatial registration is CAT12's geodesic shooting (ported to C), run with every scheduled iteration and half of CAT12's regularisation
 - Longitudinal processing implements CAT12's `plasticity`, `ageing` and `both`
   models and writes CAT12's own `mwp1r*` / `mwmwp1r*` outputs, but it is
   experimental: the subject average is not segmented, there is no joint bias

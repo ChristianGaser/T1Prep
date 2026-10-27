@@ -5,8 +5,8 @@
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 so on Apple Silicon every stage it owns — affine registration, nogm
-segmentation, warping, atlas registration — pins itself to the CPU no matter
-what T1Prep selects.  There is no argument or environment variable upstream to
+segmentation, atlas registration — pins itself to the CPU no matter what
+T1Prep selects.  There is no argument or environment variable upstream to
 change that: each class does ``torch.device('cpu' if no_gpu else DEVICE)`` in
 its ``__init__``.
 
@@ -14,8 +14,8 @@ The models themselves are TorchScript archives loaded through
 ``deepbet.utils.load_model``, and their graphs follow the *input* tensor's
 device rather than the module's registered parameters.  Routing the inputs is
 therefore all that is needed, and it is worth doing: measured on torch 2.13 the
-same forward pass takes 15.65 s on CPU and 2.62 s on MPS (nogm), 19.58 s vs
-3.59 s (brain), 15.32 s vs 5.33 s (warp).
+same forward pass takes 15.65 s on CPU and 2.62 s on MPS (nogm) and 19.58 s
+vs 3.59 s (brain).
 
 ``DEVICE`` is imported by value into several deepmriprep submodules, so each
 binding has to be rebound individually — patching ``deepmriprep.utils`` alone
@@ -30,8 +30,7 @@ back to the CPU automatically because ``segment.py`` sets
 
 import importlib
 import os
-from contextlib import contextmanager
-from typing import Iterator, List, Set, Tuple
+from typing import List, Tuple
 
 import torch
 
@@ -40,8 +39,6 @@ __all__ = [
     "route_deepmriprep",
     "release_cache",
     "mps_routing_requested",
-    "stage_target_device",
-    "stage_device",
 ]
 
 #: deepmriprep submodules that bind ``DEVICE`` at import time.
@@ -99,69 +96,6 @@ def mps_routing_requested() -> bool:
     MPS, the deepmriprep stages on CPU.
     """
     return os.environ.get(_DEVICE_ENV, "auto").strip().lower() == "mps"
-
-
-#: Stages moved to the accelerator individually, as a comma-separated list.
-#: Only ``warp`` is safe today: the affine, brain and nogm stages push
-#: ``spline_resize``'s 27-tap gather over 47-million-voxel volumes, which is
-#: what exhausts unified memory (see :func:`mps_routing_requested`), while
-#: ``run_warp_register`` works entirely at the 113x137x113 warp grid.
-_STAGES_ENV = "T1PREP_MPS_STAGES"
-_DEFAULT_MPS_STAGES = "warp"
-
-
-def _requested_stages() -> Set[str]:
-    raw = os.environ.get(_STAGES_ENV, _DEFAULT_MPS_STAGES)
-    return {s.strip().lower() for s in raw.split(",") if s.strip()}
-
-
-def stage_target_device(stage: str, fallback: torch.device) -> torch.device:
-    """Device that *stage* should run on.
-
-    Args:
-        stage: Stage name, matched against ``T1PREP_MPS_STAGES``.
-        fallback: Device to use when the stage is not selected for the
-            accelerator (normally the ``Preprocess`` device).
-
-    Returns:
-        The accelerator when this stage opted in and one is available,
-        otherwise *fallback*.
-    """
-    if stage.lower() not in _requested_stages():
-        return fallback
-    device, _ = resolve_device()
-    return device if device.type != "cpu" else fallback
-
-
-@contextmanager
-def stage_device(prep, device: torch.device) -> Iterator[None]:
-    """Run one ``Preprocess`` stage on *device*, restoring the old one after.
-
-    deepmriprep moves every stage's inputs to a single ``Preprocess.device``,
-    so a stage can only be relocated by swapping that attribute around the
-    call.  All ``run_*`` methods return CPU-side NIfTIs, so nothing device
-    specific escapes the context.
-
-    Args:
-        prep: The ``Preprocess`` instance to retarget.
-        device: Device to run the enclosed stage on.
-    """
-    previous = prep.device
-    if torch.device(device) == torch.device(previous):
-        yield
-        return
-    prep.device = torch.device(device)
-    # SyNBase builds its identity grid lazily and caches it on the instance,
-    # on whichever device the first call used; a stale one would be added to
-    # flows living on the new device.
-    syn = getattr(getattr(prep, "warp_register", None), "syn", None)
-    stale_grid = syn is not None and getattr(syn, "_grid", None) is not None
-    if stale_grid and syn._grid.device != prep.device:
-        syn._grid = None
-    try:
-        yield
-    finally:
-        prep.device = previous
 
 
 def release_cache(device: torch.device) -> None:

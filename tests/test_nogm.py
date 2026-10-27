@@ -203,6 +203,8 @@ class CustomPreprocessTests(unittest.TestCase):
         prepare_model_files(verbose=False)
         prep = self.segment.CustomPreprocess(no_gpu=True)
         self.assertIsNone(prep.nogm_segment)
+        # registration is geodesic shooting: deepmriprep's warp network stays unloaded
+        self.assertIsNone(prep.warp_register)
         self.assertIsInstance(
             prep.brain_segment, self.segment.CustomBrainSegmentation
         )
@@ -212,6 +214,7 @@ class CustomPreprocessTests(unittest.TestCase):
 
         upstream = self.segment.dmp_preprocess
         brain, nogm_unet = upstream.BrainSegmentation, upstream.NoGMSegmentation
+        warp, download = upstream.WarpRegistration, upstream.download_missing_models
         failing = mock.patch.object(
             self.segment.Preprocess, "__init__", side_effect=RuntimeError
         )
@@ -219,6 +222,8 @@ class CustomPreprocessTests(unittest.TestCase):
             self.segment.CustomPreprocess(no_gpu=True)
         self.assertIs(upstream.BrainSegmentation, brain)
         self.assertIs(upstream.NoGMSegmentation, nogm_unet)
+        self.assertIs(upstream.WarpRegistration, warp)
+        self.assertIs(upstream.download_missing_models, download)
 
 
 if __name__ == "__main__":

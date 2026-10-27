@@ -29,6 +29,8 @@ from deepmriprep.utils import DATA_PATH
 # ---------------------------------------------------------------------------
 
 #: All model filenames that must be present for the pipeline to run.
+#: deepmriprep's warp network (``warp_model.pt``) is not among them: T1Prep
+#: registers by geodesic shooting (``t1prep._shoot``).
 MODEL_FILES: list[str] = (
     [
         "brain_extraction_bbox_model.pt",
@@ -36,7 +38,7 @@ MODEL_FILES: list[str] = (
         "segmentation_nogm_model.pt",
     ]
     + [f"segmentation_patch_{i}_model.pt" for i in range(18)]
-    + ["segmentation_model.pt", "warp_model.pt"]
+    + ["segmentation_model.pt"]
 )
 
 #: deepmriprep's default model directory.  Existing installs already have
@@ -144,9 +146,8 @@ def _redirect_deepmriprep_paths() -> None:
     No-op when :data:`MODEL_DIR` is already deepmriprep's default location.
     Otherwise patches the module-level ``DATA_PATH`` and ``BET_MODEL_PATHS``
     that ``deepmriprep`` reads at construction time (e.g. inside
-    ``Preprocess.__init__``, ``BrainSegmentation.__init__``,
-    ``WarpRegistration.__init__``), after mirroring the non-model data entries
-    so those lookups still resolve.
+    ``Preprocess.__init__``, ``BrainSegmentation.__init__``), after mirroring
+    the non-model data entries so those lookups still resolve.
     """
     if MODEL_DIR == _DEEPMRIPREP_MODELS:
         return

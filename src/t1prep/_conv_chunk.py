@@ -2,10 +2,10 @@
 
 PyTorch's CPU ``conv3d`` lowers to an im2col matrix multiplication and
 materialises the column buffer for the *whole* volume in a single allocation of
-``C_in * prod(kernel) * prod(output_shape)`` elements.  At the 1.5 mm warp
-template grid (padded to 128x144x128) the 32-channel layer of the warp model
-therefore asks for ``32 * 27 * 2.36e6 * 4 B`` = 8.2 GB, which dominates the peak
-resident memory of the whole warping stage.
+``C_in * prod(kernel) * prod(output_shape)`` elements.  On the 0.5 mm working
+grid the widest layer of deepmriprep's segmentation model therefore asks for a
+single 20.7 GB buffer, which would dominate the peak resident memory of the
+whole run.
 
 Splitting the output into slabs along the slowest spatial axis splits only the
 N dimension of the underlying gemm: every output element is still accumulated
@@ -16,20 +16,21 @@ faster in practice, because the smaller buffers stay closer to cache.
 In floating point the equivalence is not guaranteed to the last bit, because
 the CPU kernel chooses its blocking from the tensor size and the accumulation
 order can therefore differ; on small test volumes the two paths disagree by
-about two ulp (~2e-7 relative).  On the shapes this is deployed for — the warp
-model at the 1.5 mm template grid — the split result was verified *bitwise*
+about two ulp (~2e-7 relative).  On the shapes it was first deployed for —
+deepmriprep's warp network at the 1.5 mm template grid, which T1Prep ran before
+it registered by geodesic shooting — the split result was verified *bitwise*
 identical to the one-shot result at every budget from 64 MB to 1 GB.
 
 The split is installed as a ``TorchDispatchMode`` rather than a module patch so
-it also applies inside TorchScript-traced models such as ``warp_model.pt``,
-whose convolutions never pass through Python.
+it also applies inside TorchScript-traced models such as deepmriprep's
+segmentation models, whose convolutions never pass through Python.
 
 Usage::
 
     from t1prep._conv_chunk import chunked_conv3d
 
     with chunked_conv3d():
-        out = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
+        out = prep.run_segment_brain(brain_large, mask, affine, mask_large)
 """
 
 from contextlib import contextmanager
@@ -40,9 +41,9 @@ from torch.utils._python_dispatch import TorchDispatchMode
 
 __all__ = ["ChunkedConv3d", "chunked_conv3d"]
 
-#: Column-buffer ceiling per convolution.  Measured on the warp model at the
-#: 1.5 mm grid, the peak keeps falling until ~256 MB (14.3 GB -> 3.5 GB) and
-#: flattens out below it.  96 rather than 256 MB: macOS libmalloc keeps freed
+#: Column-buffer ceiling per convolution.  Measured on deepmriprep's warp
+#: network (see above) at the 1.5 mm grid, the peak keeps falling until
+#: ~256 MB (14.3 GB -> 3.5 GB) and flattens out below it.  96 rather than 256 MB: macOS libmalloc keeps freed
 #: blocks of up to 128 MB for reuse, larger ones go back to the kernel, so every
 #: 256 MB slab faulted in all its pages again (34 M faults in the NN stage on an
 #: M2; 96 MB saves ~9 s per subject with identical outputs).
