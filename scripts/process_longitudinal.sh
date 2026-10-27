@@ -98,13 +98,15 @@ Longitudinal models (CAT12 naming):
                 unchanged between scans -- appropriate for short intervals.
     ageing      Rigid realignment, then a small low-dimensional diffeomorphic
                 deformation of each time point towards an unbiased subject
-                average. Writes 'longitudinal_average.nii[.gz]' and the
-                modulated maps 'mwmwp1r<name>' (modulated twice: longitudinal
-                Jacobian, then spatial normalisation). The per-time-point
+                average. Writes the modulated maps 'mwmwp1r<name>' (modulated
+                twice: longitudinal Jacobian, then spatial normalisation).
+                What only feeds them is removed after the modulation unless
+                --debug is given: the per-time-point
                 '<stem>_desc-longLogJacobian' (log volume ratio against the
-                average) and '<stem>_desc-longDisplacement' only feed the
-                modulation and are removed after it unless --debug is given.
-                Adds a few seconds per subject.
+                average) and '<stem>_desc-longDisplacement', and the native
+                segmentations 'p1<name>'/'p2<name>' unless T1Prep is asked for
+                them (--p). 'longitudinal_average.nii[.gz]' is written only
+                with --debug. Adds a few seconds per subject.
     both        Save both models, as CAT12's "detect both models" option does:
                 'mwmwp1r<name>' for ageing and 'mwp1r<name>' for plasticity,
                 using CAT12's own names. The 'r' marks the realigned input, which
@@ -284,6 +286,19 @@ run_step() {
     fi
 }
 
+# True if the T1Prep arguments ask for the native segmentations themselves:
+# --p, its alias --native-seg, or --fmriprep, which implies it.  Otherwise the
+# modulation is the only reason they are written.
+t1prep_args_save_p() {
+    local arg
+    for arg in "${T1PREP_ARGS[@]+"${T1PREP_ARGS[@]}"}"; do
+        case "$arg" in
+            --p|--native-seg|--fmriprep) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 # The T1Prep step runs the orchestrator sitting next to this script, so the
 # whole family stays on one version.  In source-tree mode that orchestrator
 # needs the project-managed venv at <repo>/env and asks an interactive Y/N
@@ -402,8 +417,15 @@ process_subjects() {
             for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
                 realigned_paths+=("${realign_subfolders[$tp_idx]}/$(basename "${subject_tp_paths[$tp_idx]}")")
             done
+            # Nothing downstream reads the subject average, so only --debug
+            # writes it (into the working directory, which is --out-dir here).
+            local -a warp_debug=()
+            if (( DEBUG )); then
+                warp_debug+=(--save-template)
+            fi
             run_step "${WARP_SCRIPT}" --inputs "${realigned_paths[@]}" --out-dir "./" \
-                --out-subfolders "${realign_subfolders[@]}" --save-template \
+                --out-subfolders "${realign_subfolders[@]}" \
+                "${warp_debug[@]+"${warp_debug[@]}"}" \
                 --save-displacement --use-skullstrip \
                 "${WARP_ARGS[@]+"${WARP_ARGS[@]}"}"
         fi
@@ -433,7 +455,7 @@ process_subjects() {
             fi
             # save_p is off by default, but the modulation stage needs the
             # native segmentation of every time point.
-            if [[ "$LONG_MODEL" != "plasticity" ]] && [[ ! " ${T1PREP_ARGS[*]-} " == *" --p "* ]]; then
+            if [[ "$LONG_MODEL" != "plasticity" ]] && ! t1prep_args_save_p; then
                 t1prep_cmd+=(--p)
             fi
             if (( ${#T1PREP_ARGS[@]} )); then
@@ -498,8 +520,10 @@ process_subjects() {
             done
 
             # The displacement and log Jacobian only carry the warp stage's
-            # result to the modulation, which has now used them.  --debug keeps
-            # them, and so does a failed run, which stops before this point.
+            # result to the modulation, which has now used them, and so do the
+            # native segmentations unless T1Prep was asked for them.  --debug
+            # keeps them, and so does a failed run, which stops before this
+            # point.
             if (( ! DEBUG )); then
                 for tp_idx in "${!TIMEPOINT_ORDER[@]}"; do
                     local stem
@@ -509,6 +533,13 @@ process_subjects() {
                     local long_stem="${realign_subfolders[$tp_idx]}/${stem}_desc-long"
                     run_step rm -f "${long_stem}LogJacobian".nii{,.gz} \
                         "${long_stem}Displacement".nii{,.gz}
+                    if ! t1prep_args_save_p; then
+                        # p3 as well: --csf adds it to whatever --p writes
+                        local native="${modulate_dirs[$tp_idx]}"
+                        local name="${modulate_names[$tp_idx]}"
+                        run_step rm -f "${native}/p"{1,2,3}"${name}".nii{,.gz} \
+                            "${native}/${name}_label-"{GM,WM,CSF}_probseg.nii{,.gz}
+                    fi
                 done
             fi
         fi

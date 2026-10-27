@@ -166,7 +166,7 @@ Batch helper for longitudinal studies. Groups time-point scans by subject, runs 
 | model | what it does |
 |---|---|
 | `plasticity` (default) | Rigid realignment only. Assumes the anatomy itself is unchanged between scans; appropriate for short intervals. |
-| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average, then Jacobian modulation into MNI (`mwmwp1r<name>`). Adds a few seconds per subject, and forces `--p` so the native segmentations exist. The warp stage's `<stem>_desc-longLogJacobian` and `<stem>_desc-longDisplacement` are removed after the modulation unless `--debug` is given. |
+| `ageing` | Rigid realignment, then one small low-dimensional diffeomorphic deformation per time point towards an unbiased subject average, then Jacobian modulation into MNI (`mwmwp1r<name>`). Adds a few seconds per subject, and forces `--p` so the native segmentations exist. After the modulation, the warp stage's `<stem>_desc-longLogJacobian` and `<stem>_desc-longDisplacement` and the forced `p1`/`p2` maps are removed unless `--debug` is given, which also writes `longitudinal_average.nii[.gz]`. |
 | `both` | Saves both models, as CAT12's "detect both models" option does: `mwmwp1r<name>` for ageing and `mwp1r<name>` for plasticity, using CAT12's own names. The `r` marks the realigned input, which keeps both distinct from T1Prep's cross-sectional `mwp1<name>` in the same folder. |
 
 ```bash

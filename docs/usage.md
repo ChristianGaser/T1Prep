@@ -532,9 +532,11 @@ non-linear-only modulation does.
 
 `--long-model ageing` and `both` add `--p` to the T1Prep calls automatically,
 since the modulation needs the native segmentations and they are off by default.
-Once the modulation has run, the warp stage's `<stem>_desc-longLogJacobian` and
-`<stem>_desc-longDisplacement` have served their purpose and are removed;
-`--debug` keeps them, and a run that fails keeps them as well.
+Once the modulation has run, what only fed it is removed: the warp stage's
+`<stem>_desc-longLogJacobian` and `<stem>_desc-longDisplacement`, and the native
+`p1`/`p2` maps unless you ask for them with `--t1prep-arg --p`. `--debug` keeps
+all of them and also writes the subject average `longitudinal_average.nii[.gz]`
+(into the working directory); a run that fails keeps them as well.
 
 **Input layout.** The time points must sit in a plain folder. A BIDS `anat/`
 layout is not yet supported by the longitudinal pipeline and is refused up
