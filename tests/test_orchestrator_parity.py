@@ -136,5 +136,54 @@ class TestLongData(_InATempDir):
                                str(self.tmp / "missing.nii")])
 
 
+class TestHemisphereMapsAfterTheSurfaces(_InATempDir):
+    """The hemisphere label maps are the input of the surfaces and were left
+    behind by every run.  They are kept only with --hemi or --debug, and
+    after a failure."""
+
+    def run_surfaces(self, names, *, surf_status=0, bids=False, **kw):
+        """Run the surface stage with both hemispheres returning *surf_status*;
+        return which of *names*, put into the mri folder first, still exist."""
+        from t1prep import __version__
+
+        t1 = self.tmp / "x.nii"
+        t1.write_bytes(b"")
+        out = self.tmp / "out"
+        outdir0, use_subfolder, _ = orchestrator._resolve_output_dirs(
+            str(t1), str(out), __version__
+        )
+        mri = outdir0 if (bids or not use_subfolder) else outdir0 / "mri"
+        mri.mkdir(parents=True)
+        for name in names:
+            (mri / name).write_bytes(b"")
+        proc = mock.Mock()
+        proc.wait.return_value = surf_status
+        with mock.patch.object(orchestrator.subprocess, "Popen", return_value=proc):
+            orchestrator._process_single(
+                str(t1), out_dir=str(out), estimate_seg=False,
+                estimate_surf=True, bids=bids, verbose=False, **kw,
+            )
+        return [name for name in names if (mri / name).exists()]
+
+    def test_removed_by_default(self):
+        self.assertEqual(self.run_surfaces(["lh.seg.x.nii", "rh.seg.x.nii"]), [])
+
+    def test_removed_with_bids_names(self):
+        names = ["x_hemi-L_seg.nii.gz", "x_hemi-R_seg.nii.gz"]
+        self.assertEqual(self.run_surfaces(names, bids=True, gz=True), [])
+
+    def test_kept_with_hemi(self):
+        names = ["lh.seg.x.nii", "rh.seg.x.nii"]
+        self.assertEqual(self.run_surfaces(names, hemisphere=True), names)
+
+    def test_kept_with_debug(self):
+        names = ["lh.seg.x.nii", "rh.seg.x.nii"]
+        self.assertEqual(self.run_surfaces(names, debug=True), names)
+
+    def test_kept_when_the_surfaces_failed(self):
+        names = ["lh.seg.x.nii", "rh.seg.x.nii"]
+        self.assertEqual(self.run_surfaces(names, surf_status=1), names)
+
+
 if __name__ == "__main__":
     unittest.main()

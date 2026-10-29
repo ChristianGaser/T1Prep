@@ -409,7 +409,10 @@ parse_args()
     save_hemi=0
   fi
 
-  # We always need hemispheric maps for surface estimation
+  # We always need hemispheric maps for surface estimation; keep_hemi
+  # remembers whether they were asked for (--hemi), as the surface pipeline
+  # removes them otherwise
+  keep_hemi=${save_hemi:-0}
   if [ "$estimate_surf" -eq 1 ]; then
     save_hemi=1
   fi
@@ -898,6 +901,21 @@ process()
       # both have finished by now, so the file has done its job.
       [ "${debug}" -eq 1 ] || rm -f "${_surf_count_file}"
 
+      # The hemisphere label maps were only the input of the surfaces: keep
+      # them with --hemi or --debug.  Removed here, not by surface_estimation,
+      # because each hemisphere reads the other one's map and a retry needs
+      # both.  After a failure they stay for a --no-seg rerun.
+      if [[ "$surf_status" -eq 0 && "${keep_hemi}" -eq 0 && "${debug}" -eq 0 ]]; then
+        hemi_pattern=$(get_pattern "Hemi_volume" "$name_columns")
+        hemis=(lh rh)
+        [ "${use_bids_naming}" -eq 1 ] && hemis=(L R)
+        if [ -n "${hemi_pattern}" ]; then
+          for hemi in "${hemis[@]}"; do
+            rm -f "${mri_dir}/$(substitute_pattern "$hemi_pattern" "$hemi" "" "" "")"
+          done
+        fi
+      fi
+
       if [ "$surf_status" -ne 0 ]; then
         if [[ "$multi" -ne -2 ]]; then
           # Use 1/1 so the single job bar renders without relying on end_count
@@ -1236,9 +1254,9 @@ ${BOLD}${GREEN}Save Options:${NC}
 
   --hemi, --hemisphere
       Save hemispheric (lh/rh) partitions of the segmentation.
-      Note: these partitions are created automatically when surface estimation is enabled (default)
-      and also when non-linear outputs are requested (e.g., --wp/--mwp or --atlas). Use this mainly
-      together with --no-surf.
+      Note: surface estimation (default) creates these partitions as its input
+      and removes them afterwards unless --hemi or --debug is given. Use this
+      together with --no-surf to run the surfaces later with --no-seg.
 
   --wp                        
       Additionally save warped segmentations.

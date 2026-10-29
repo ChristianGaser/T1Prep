@@ -23,7 +23,7 @@ estimate_spherereg=1  # Run spherical surface registration
 save_pial_white=1     # Additionally estimate pial and white matter surface 
                       # during surface estimatio
 save_lesions=0        # Additionally save WMH lesions
-save_hemi=0           # Additionally save hemispheric partitions of the segmentation
+save_hemi=0           # Keep hemispheric partitions of the segmentation (removed after surfaces otherwise)
 save_csf=0            # Additionally save CSF segmentations
 save_mwp=1            # Estimate modulated and warped segmentations
 save_wp=0             # Additionally save warped segmentations

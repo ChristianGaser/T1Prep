@@ -24,7 +24,7 @@ _PARALLELIZE = _ROOT / "scripts" / "parallelize"
 # Sourcing T1Prep defines its functions; main only runs when it is executed
 _SHOW = (
     'source "$T1PREP" && parse_args "$@" && '
-    'for v in save_p save_pial_white outdir multi python save_hemi '
+    'for v in save_p save_pial_white outdir multi python save_hemi keep_hemi '
     'save_lesions min_memory initial_surface atlas_surf seed long_data; do '
     'printf "%s=%s\\n" "$v" "${!v}"; done && '
     'printf "file=%s\\n" "${ARRAY[@]}"'
@@ -79,6 +79,19 @@ class TestOptionsMatchExactly(_InATempDir):
             (v["save_hemi"], v["save_lesions"], v["min_memory"], v["initial_surface"]),
             ("1", "1", "8", "s.gii"),
         )
+
+
+class TestHemisphereMaps(_InATempDir):
+    """Surfaces always need the hemisphere maps (save_hemi); only --hemi
+    keeps them afterwards (keep_hemi)."""
+
+    def test_surfaces_write_but_do_not_keep_them(self):
+        _, v, _ = self.parse("f.nii")
+        self.assertEqual((v["save_hemi"], v["keep_hemi"]), ("1", "0"))
+
+    def test_hemi_keeps_them(self):
+        _, v, _ = self.parse("--hemi", "f.nii")
+        self.assertEqual((v["save_hemi"], v["keep_hemi"]), ("1", "1"))
 
 
 class TestTheDefaultsFile(_InATempDir):

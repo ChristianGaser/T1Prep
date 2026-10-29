@@ -1025,7 +1025,10 @@ def run(
     if device:
         env["T1PREP_DEVICE"] = device
 
-    cmd = [t1prep, "--out-dir", str(work / "t1prep"), "--lesions", *extra, str(t1_path)]
+    # --hemi: score_hemispheres and build_gt_hemispheres read the hemisphere
+    # label maps, which the surfaces remove otherwise
+    cmd = [t1prep, "--out-dir", str(work / "t1prep"), "--lesions", "--hemi", *extra,
+           str(t1_path)]
     print("running:", " ".join(cmd), flush=True)
     t0 = time.perf_counter()
     with open(work / "t1prep.log", "w") as log:

@@ -64,6 +64,7 @@ Longitudinal / advanced flags:
 - `--initial-surf <FILE>`: use an initial surface estimate for longitudinal processing.
 - `--long-data <FILE>`: process `<FILE>`, the longitudinally realigned copy of the input (as `process_longitudinal.sh` passes it), instead of the input, while output folders and names still follow the input file. Takes exactly one input file.
 - `--no-atlas`: disable atlas labeling (overrides any defaults file atlas selection).
+- `--hemi`: keep the hemispheric partitions of the label map (`mri/lh.seg.*`, `mri/rh.seg.*`; with `--bids` `*_hemi-L_seg.*`, `*_hemi-R_seg.*`). Surface estimation creates them as its input and removes them afterwards unless `--hemi` or `--debug` is given; after a failed surface estimation they stay. To run the surfaces later with `--no-seg`, write them with `--no-surf --hemi` first.
 
 Segmentation refinement:
 - `--no-vessel`: disable the blood-vessel correction.

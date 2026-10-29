@@ -423,6 +423,24 @@ def _merge_glued_sulci_qa(report_dir: str, bname: str) -> None:
             pass
 
 
+def _remove_hemi_volumes(mri_dir: str, bname: str, bids: bool, gz: bool) -> None:
+    """Remove the hemisphere label maps surface estimation started from.
+
+    Mirrors the clean-up after the surfaces in ``scripts/T1Prep``.
+    """
+    from .utils import get_filenames
+
+    ext = "nii.gz" if gz else "nii"
+    for side in ("left", "right"):
+        name = get_filenames(bids, bname, side, "", "", ext).get("Hemi_volume")
+        if not name:
+            continue
+        try:
+            os.remove(os.path.join(mri_dir, name))
+        except OSError:
+            pass
+
+
 def _process_single(
     input_file: str,
     *,
@@ -628,6 +646,13 @@ def _process_single(
 
         _merge_glued_sulci_qa(str(report_dir), bname)
 
+        # The hemisphere label maps were only the input of the surfaces:
+        # kept with --hemi or --debug.  Removed here, not by
+        # surface_estimation, because each hemisphere reads the other one's
+        # map and a retry needs both.
+        if not (hemisphere or debug):
+            _remove_hemi_volumes(str(mri_dir), bname, bids, gz)
+
     # ------------------------------------------------------------------ timing
     elapsed = time.perf_counter() - start
     if verbose:
@@ -772,7 +797,9 @@ def run_t1prep(
     csf:
         Save CSF tissue maps in addition to GM/WM.
     hemisphere:
-        Save hemispheric (lh/rh) partitions of the label map.
+        Save hemispheric (lh/rh) partitions of the label map.  Surface
+        estimation creates them as its input and removes them afterwards
+        unless this or *debug* is set.
     lesions:
         Save WMH lesion maps (``p4``): the WMH probability inside the
         detected lesions, 0 elsewhere.
@@ -952,7 +979,8 @@ def _build_parser() -> ArgumentParser:
                    help="Include CSF in tissue map outputs")
     g.add_argument("--hemi", "--hemisphere", dest="hemisphere",
                    action="store_true",
-                   help="Save hemispheric (lh/rh) partitions of the label map")
+                   help="Save hemispheric (lh/rh) partitions of the label map "
+                        "(removed after the surfaces otherwise)")
     g.add_argument("--lesions", action="store_true",
                    help="Save WMH lesion maps")
     g.add_argument("--save-h5", action="store_true",
