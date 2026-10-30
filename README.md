@@ -50,7 +50,7 @@ CAT12 folder structures and the BIDS derivatives standard.
 - Implemented entirely in Python, eliminating the need for a Matlab license or platform-specific compiled binaries.
 - Newly developed pipeline to estimate cortical surface and thickness.
 - Skull-stripping and segmentation use DeepMriPrep
-- Non-linear spatial registration is CAT12's geodesic shooting (ported to C), run with every scheduled iteration and half of CAT12's regularisation
+- Non-linear spatial registration is CAT12's geodesic shooting (ported to C), run with CAT12's own setting; `--fmriprep` runs every scheduled iteration with half of CAT12's regularisation, which aligns labels better but is not meant for VBM
 - Longitudinal processing implements CAT12's `plasticity`, `ageing` and `both`
   models and writes CAT12's own `mwp1r*` / `mwmwp1r*` outputs, but it is
   experimental: the subject average is not segmented, there is no joint bias

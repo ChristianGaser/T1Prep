@@ -110,10 +110,13 @@ Deformation fields:
 The non-linear registration to MNI152NLin2009cAsym is CAT12's optimised
 geodesic shooting, ported to C in CAT-Surface (`cat_surf.vol_shoot`): the
 affine-registered GM and WM maps are registered onto CAT12's 1.5 mm shooting
-templates (`Template_0..4_GS`), running every scheduled Gauss-Newton iteration
-with half of CAT12's regularisation — the setting with the best label accuracy
-in [the evaluation](../evaluation/results/RESULTS.md). It replaces
-deepmriprep's warp network, which T1Prep used up to 0.8.1.
+templates (`Template_0..4_GS`) with CAT12's own setting, the one for VBM. It
+replaces deepmriprep's warp network, which T1Prep used up to 0.8.1.
+`--fmriprep` registers with a more flexible setting instead, every scheduled
+Gauss-Newton iteration with half of CAT12's regularisation: it has the better
+label accuracy in [the evaluation](../evaluation/results/RESULTS.md), but its
+Jacobians vary more between subjects, which costs sensitivity in VBM of the
+modulated maps; `--fmriprep` writes none.
 
 - `--save-h5`: additionally save the T1w↔MNI152NLin2009cAsym deformations as
   ANTs/ITK composite HDF5 files (`y_*.h5`, `iy_*.h5`), next to the NIfTI `y_`
@@ -385,7 +388,9 @@ available processors.
 With `--fmriprep`, T1Prep writes its results under the names sMRIPrep and
 fMRIPrep look for in `--derivatives`, and they then skip the anatomical steps
 those results replace: brain extraction, segmentation and spatial
-normalization.  They skip FreeSurfer's surface reconstruction as well once
+normalization.  The normalization uses the registration setting for fMRIPrep,
+which aligns anatomical labels better than T1Prep's default (see Deformation
+fields above).  They skip FreeSurfer's surface reconstruction as well once
 nipreps/smriprep#588 and the matching fMRIPrep change are released; until
 then, `--fs-no-reconall` avoids it, at the price of the surface outputs.
 

@@ -1,8 +1,16 @@
-# Registration accuracy on Mindboggle-101
+# Registration accuracy on Mindboggle-101 and Neuromorphometrics
 
-All numbers are Dice between manual DKT31 cortical labels carried into a
-common space by the transform under test. One protocol for every arm: nothing
-but the registration differs.
+All numbers are Dice between manual labels carried into a common space by the
+transform under test. One protocol for every arm: nothing but the registration
+differs. Two label sets:
+
+* **Mindboggle-101** — the DKT31 cortical parcels, for volume and surface
+  registration.
+* **Neuromorphometrics** — whole-brain labels (cortical parcels, subcortical
+  nuclei, ventricles, white matter, cerebellum, brainstem), for volume
+  registration.
+
+Two protocols, and a third that is not used:
 
 * **`pairs`** — every two subjects compared directly. No atlas is involved, so
   this isolates registration alone. Comparable to the numbers surface
@@ -11,44 +19,58 @@ but the registration differs.
   subjects, applied to the held-out subject. The FreeSurfer-style protocol;
   measures registration *and* the atlas the group forms.
 * **`atlas`** — the same, but with the subject left *in* the atlas. Inflates
-  every arm by 0.009-0.012, about the CAT12-vs-T1Prep gap, because each subject
-  votes for the answer it is scored against. Not used for any number below;
-  see [How the protocols are built](../README.md#protocols) for the
-  construction and the measured bias.
+  every arm by 0.009-0.012, about CAT12's lead over deepmriprep's warp or
+  ANTs, because each subject votes for the answer it is scored against. Not
+  used for any number below; see [How the protocols are
+  built](../README.md#protocols) for the construction and the measured bias.
 
 Ground truth never passes through a second registration: labels are attached
 to each subject's own anatomy geometrically, and only then moved.
 
 ---
 
-## Volume registration — 20 subjects
+## Volume registration — Mindboggle-101, 20 subjects
 
 Stratified subset (`../data/subset20.txt`), MNI152NLin2009cAsym, identical
-1.5 mm grid, identical brain-extracted inputs, identical scoring.
+brain-extracted inputs, scored on an identical 1.5 mm grid.
 
 | method | LOO | pairs | time / subject |
 |---|---|---|---|
 | Affine only (Mindboggle's own) | 0.5173 | 0.3317 | — |
 | ANTs SyN, Mattes MI 100×70×50×20 | 0.6972 | 0.5672 | ~1 min |
-| **ANTs — fMRIPrep's exact config** | 0.7133 | 0.5854 | ~9 min |
+| **ANTs — as sMRIPrep runs it (1 mm)** | 0.7294 | 0.6073 | ~10 min |
 | T1Prep ≤ 0.8.1 — deepmriprep's warp network | 0.7289 | 0.6085 | ~40 s |
 | **CAT12 — geodesic shooting** | 0.7410 | 0.6249 | 5-15 min |
-| **T1Prep — geodesic shooting** | **0.7696** | **0.6663** | ~75 s |
+| **T1Prep — geodesic shooting, default (for VBM)** | 0.7421 | 0.6274 | ~55 s |
+| **T1Prep — geodesic shooting, `--fmriprep`** | **0.7696** | **0.6663** | ~75 s |
 
 T1Prep registers by geodesic shooting from the release after 0.8.1; up to
-0.8.1 it ran deepmriprep's warp network.  Paired differences, with 95 %
-intervals from a subject-level bootstrap (4000 resamples, a pair weighted by
-both its subjects):
+0.8.1 it ran deepmriprep's warp network.  It has two settings: by default
+CAT12's own, the one for VBM, and with `--fmriprep` a more flexible one that
+aligns labels better but is not meant for VBM ([why](#geodesic-shooting)).
+Paired differences, with 95 % intervals from a subject-level bootstrap (4000
+resamples, a pair weighted by both its subjects):
 
 | | Δ LOO | Δ pairs | better |
 |---|---|---|---|
-| T1Prep's shooting − its deepmriprep warp | +0.041 [+0.037, +0.045] | +0.058 [+0.052, +0.063] | 20/20 subjects, 190/190 pairs |
-| T1Prep's shooting − CAT12 | +0.029 [+0.025, +0.032] | +0.042 [+0.036, +0.046] | 20/20 subjects, 189/190 pairs |
-| T1Prep's shooting − ANTs (fMRIPrep config) | +0.056 [+0.050, +0.063] | +0.081 [+0.073, +0.089] | 20/20 subjects, 190/190 pairs |
+| T1Prep default − ANTs as sMRIPrep runs it | +0.013 [+0.008, +0.018] | +0.020 [+0.014, +0.026] | 17/20 subjects, 187/190 pairs |
+| T1Prep default − its deepmriprep warp | +0.013 [+0.011, +0.016] | +0.019 [+0.015, +0.023] | 20/20 subjects, 190/190 pairs |
+| T1Prep default − CAT12 | +0.001 [−0.005, +0.006] | +0.003 [−0.004, +0.009] | 14/20 subjects, 132/190 pairs |
+| T1Prep `--fmriprep` − ANTs as sMRIPrep runs it | +0.040 [+0.036, +0.045] | +0.059 [+0.053, +0.065] | 20/20 subjects, 190/190 pairs |
+| T1Prep `--fmriprep` − T1Prep default | +0.028 [+0.025, +0.030] | +0.039 [+0.037, +0.041] | 20/20 subjects, 189/190 pairs |
 
-T1Prep's times are its whole volume pipeline on an M2 Ultra with MPS; the
-shooting takes 36 s of it on libCAT's default four threads (29 s on eight),
-deepmriprep's network took 8 s on MPS and 22 s on the CPU.
+T1Prep's times are its whole volume pipeline on an M2 Ultra with MPS.  The
+shooting takes 15 s of it with the default and 37 s with `--fmriprep`'s
+setting, on libCAT's default four threads (13 s and 30 s on eight); the
+default's ~55 s is the 75 s measured with `--fmriprep`'s setting less that
+difference.  deepmriprep's network took 8 s on MPS and 22 s on the CPU.
+ANTs' time is its registration alone, `antsAffineInitializer` and
+`antsRegistration` against the 1 mm template, on the eight threads fMRIPrep
+gives it, one subject at a time on the same, otherwise idle machine: 589-599
+s for three subjects, 28 s of it the initialiser.  How ANTs is run is spelled
+out [below](#for-replacing-ants-in-fmriprep); it ties with deepmriprep's
+network (deepmriprep − ANTs: −0.0005 [−0.0050, +0.0040] LOO, +0.0012
+[−0.0039, +0.0067] pairs, 10 of 20 subjects better).
 
 ### Geodesic shooting
 
@@ -60,22 +82,21 @@ affine-registered GM and WM maps — what the deepmriprep network received —
 onto CAT12's 1.5 mm shooting templates (`Template_0..4_GS`), and T1Prep
 composes the field with its affine into `y_`.
 
-**The gap to CAT12 was the registration, not the segmentation.**  With
-CAT12's own settings, the shooting on T1Prep's maps scores 0.7421 / 0.6274,
-level with CAT12's whole pipeline (+0.001 [−0.004, +0.006] LOO, 14 of 20
-subjects better).  deepmriprep's network was trained to imitate CAT12's
+**The gap to CAT12 was the registration, not the segmentation.**  T1Prep's
+default is CAT12's own setting, and on T1Prep's maps it scores 0.7421 /
+0.6274, level with CAT12's whole pipeline (+0.001 [−0.005, +0.006] LOO, 14 of
+20 subjects better).  deepmriprep's network was trained to imitate CAT12's
 deformations and fell short of them by 0.013.
 
-**T1Prep does not run CAT12's settings.**  It runs every scheduled
-Gauss-Newton iteration with half of CAT12's regularisation, the setting with
-the best label accuracy among these (same 20 subjects, same scoring):
+**More flexible settings align labels better** (same 20 subjects, same
+scoring):
 
 | shooting settings | LOO | pairs | det J, 1st–99th percentile | median \|log det J\| | time |
 |---|---|---|---|---|---|
-| CAT12's: `regstr` 0.5, CAT12's regularisation | 0.7421 | 0.6274 | 0.61–1.31 | 0.120 | 13 s |
+| **CAT12's, T1Prep's default (for VBM):** `regstr` 0.5, CAT12's regularisation | 0.7421 | 0.6274 | 0.61–1.31 | 0.120 | 13 s |
 | every scheduled iteration (`regstr` 1) | 0.7512 | 0.6394 | 0.61–1.33 | 0.124 | 30 s |
 | half the regularisation | 0.7596 | 0.6529 | 0.54–1.45 | 0.143 | 13 s |
-| **both (T1Prep)** | **0.7696** | **0.6663** | 0.54–1.45 | 0.146 | 30 s |
+| **both, `--fmriprep`'s setting** | 0.7696 | 0.6663 | 0.54–1.45 | 0.146 | 30 s |
 | a quarter of the regularisation | 0.7690 | 0.6657 | 0.48–1.60 | 0.167 | 10 s |
 
 CAT12's `regstr` 0.5 moves on to the next resolution level after about three
@@ -87,11 +108,36 @@ brain (the template's GM + WM above 0.5) and are medians over the subjects; no
 setting folds a voxel.  Times are the shooting alone, 8 threads on an M2
 Ultra.
 
-* **The gain costs regularity.**  The Jacobians spread from 0.61–1.31 to
-  0.54–1.45.  Cortical-label Dice rewards flexible deformations, while CAT12's
-  regularisation was tuned for VBM, where the modulated maps carry the
-  Jacobian; whether half of it is right for `mwp` is not measured here.
-* **CAT12's 1 mm templates add +0.003, at three times the time.**  The
+**`--fmriprep`'s setting is not for VBM.**  Labels measure where the
+deformation moves each point, not how much it expands or compresses the
+tissue, which is what modulated VBM reads out.  With half the regularisation
+the Jacobians spread from 0.61–1.31 to 0.54–1.45 and vary more between
+subjects, and the modulated maps inherit that variance.  Measured on 60
+children (OpenNeuro ds000228, 3.5–12 years) and 60 adults (ds005270, 23–85
+years), smoothed modulated GM (`s6mwp1`) regressed on age with TIV as a
+covariate, `--fmriprep`'s setting against the default:
+
+| | children | adults |
+|---|---|---|
+| residual variance of the unmodulated warped GM | −41 % | −35 % |
+| residual variance of the smoothed Jacobian | +80 % | +60 % |
+| residual variance (ResMS) of `s6mwp1` | +29 % | +20 % |
+| mean T for age | −12 % | −9 % |
+| voxels above the family-wise error threshold (p < 0.05) | 28 vs 63 | 37,315 vs 44,340 |
+
+The flexible field aligns tissue better and leaves the age effect itself
+unchanged (the mean contrast moves by less than 1 %), but every subject's
+modulated map gains a regional-scale component independent of its residual
+under the default: the residual smoothness rises from 10.6 to 12.3 mm FWHM
+(children) and from 10.4 to 11.9 mm (adults), and the loss grows with the
+smoothing kernel instead of shrinking.  CAT12 shows the same: CAT26 with half
+the regularisation raises ResMS by 17 % / 14 % and lowers the mean T by 8 % /
+6 %.  Whether that variance is registration noise or regional anatomy only
+the flexible field follows would take rescans to tell; either way it costs
+sensitivity to age effects.  `--fmriprep` writes no modulated maps.
+
+* **CAT12's 1 mm templates add +0.003, at three times the time** (measured
+  with `--fmriprep`'s setting).  The
   matching term sums over the template's voxels, the regulariser integrates
   over space, so the regulariser has to be weighted per 1.5 mm voxel on the
   1 mm templates too, as cat-surf does: then the 1 mm series is as regular
@@ -100,32 +146,181 @@ Ultra.
   voxel it was under-regularised (0.38–1.80, the only setting with folded
   voxels) and scored 0.008 lower.  T1Prep keeps the 1.5 mm templates.
 
-### For replacing ANTs in fMRIPrep
+---
 
-fMRIPrep normalises with `antsRegistration` via
-`niworkflows.interfaces.norm.SpatialNormalization`, parameterised by
-`niworkflows/data/t1w-mni_registration_precise_000.json`: Rigid + Affine
-(Mattes, 56 bins, 25 % regular sampling, 100×100) then **SyN with CC radius 4,
-100×70×50×20**, transform parameters `[0.1, 3.0, 0.0]`. `tools/ants_fmriprep.sh`
-reproduces that command line field for field, run with the real ANTs binaries
-(2.6.5).
+## Volume registration — Neuromorphometrics, 35 subjects
+
+The 35 OASIS brains of the MICCAI 2012 Multi-Atlas Labeling challenge (15
+training + 20 testing), labelled by Neuromorphometrics, Inc.  Unlike DKT31
+the labels cover the whole brain:
+
+* 98 cortical regions, grey matter only.
+* 18 subcortical: accumbens, amygdala, basal forebrain, caudate,
+  hippocampus, pallidum, putamen, thalamus and ventral DC, each side.
+* 16 others: the lateral, inferior lateral, third and fourth ventricles;
+  cerebral and cerebellar white matter; cerebellar cortex; three vermal
+  lobule groups; brainstem.
+
+The four non-tissue labels (CSF, two vessel labels, optic chiasm) are left out
+of every mean, which leaves 132.  The protocol is the Mindboggle volume
+route: each subject's labels go through the arm's transform onto the same
+1.5 mm grid (nearest neighbour), voxels labelled in more than half the
+subjects are scored, and `loo` and `pairs` are built as above.  Because the
+label set is whole-brain, both hemispheres are scored together.  All arms
+start from the same bias-corrected, brain-extracted image, T1Prep 0.8.2's.
+
+Each cell is LOO / pairs:
+
+| regions | ANTs as sMRIPrep runs it (1 mm) | T1Prep default (for VBM) | T1Prep `--fmriprep` |
+|---|---|---|---|
+| all 132 | 0.7105 / 0.6106 | 0.7203 / 0.6233 | **0.7355 / 0.6422** |
+| cortical (98) | 0.6773 / 0.5639 | 0.6898 / 0.5810 | **0.7085 / 0.6042** |
+| subcortical (18) | 0.8063 / 0.7426 | **0.8128 / 0.7473** | 0.8116 / 0.7455 |
+| other (16) | 0.8064 / 0.7484 | 0.8030 / 0.7429 | **0.8154 / 0.7583** |
+
+Paired differences T1Prep − ANTs, with the number of the 35 subjects for
+which T1Prep is better:
+
+| regions | default, Δ LOO | default, Δ pairs | `--fmriprep`, Δ LOO | `--fmriprep`, Δ pairs |
+|---|---|---|---|---|
+| all 132 | +0.010 [+0.006, +0.014], 31 | +0.013 [+0.009, +0.017] | +0.025 [+0.022, +0.029], 35 | +0.032 [+0.028, +0.035] |
+| cortical (98) | +0.013 [+0.008, +0.017], 31 | +0.017 [+0.013, +0.022] | +0.031 [+0.027, +0.036], 35 | +0.040 [+0.036, +0.045] |
+| subcortical (18) | +0.007 [+0.003, +0.010], 23 | +0.005 [+0.0005, +0.009] | +0.005 [+0.001, +0.009], 22 | +0.003 [−0.002, +0.007] |
+| other (16) | −0.003 [−0.006, −0.001], 8 | −0.006 [−0.009, −0.002] | +0.009 [+0.006, +0.012], 29 | +0.010 [+0.006, +0.014] |
+
+T1Prep's default is ahead of ANTs in the cortex (+0.013, 31 of 35 subjects)
+and in the subcortical nuclei (+0.007), and behind it in the ventricles,
+white matter, cerebellum and brainstem (−0.003 LOO, −0.006 pairs, 8 of 35
+subjects better).  `--fmriprep`'s setting is ahead everywhere: by +0.031 /
++0.040 in the cortex, every subject (+0.040 / +0.059 on Mindboggle's DKT31),
+by +0.009 / +0.010 in the other structures, and in the subcortical nuclei by
++0.005 LOO, which is not significant in pairs.
+
+**The shooting settings rank as on Mindboggle, except in the subcortical
+nuclei** (same maps, only the shooting re-run):
+
+| shooting settings | LOO | pairs | cortical LOO | subcortical LOO | other LOO |
+|---|---|---|---|---|---|
+| **CAT12's, T1Prep's default (for VBM):** `regstr` 0.5, CAT12's regularisation | 0.7203 | 0.6233 | 0.6898 | 0.8128 | 0.8030 |
+| every scheduled iteration (`regstr` 1) | 0.7253 | 0.6295 | 0.6960 | 0.8129 | 0.8067 |
+| half the regularisation | 0.7309 | 0.6367 | 0.7026 | 0.8123 | 0.8125 |
+| **both, `--fmriprep`'s setting** | 0.7355 | 0.6422 | 0.7085 | 0.8116 | 0.8154 |
+
+`--fmriprep`'s setting scores +0.015 [+0.014, +0.016] LOO above the default,
+35 of 35 subjects (+0.019 cortically, +0.012 in the other structures).  Every
+scheduled iteration adds +0.005, half the regularisation +0.010, and the two
+do not interact.  Over all labels that is about half the gain on Mindboggle's
+DKT31 (+0.028), in the cortex about two thirds.  Subcortically the four
+settings lie within 0.0013 of each other, with the default nominally ahead:
+`--fmriprep` − default −0.0012 [−0.0027, +0.0002] LOO, 14 of 35 subjects.
+
+---
+
+## For replacing ANTs in fMRIPrep
+
+sMRIPrep's `init_register_template_wf` normalises with niworkflows'
+`SpatialNormalization`, flavour `precise`.  The arms labelled "ANTs as
+sMRIPrep runs it" above run exactly that:
+
+1. **Fixed image:** `tpl-MNI152NLin2009cAsym_res-01_T1w`, set to 0 outside
+   `res-01_desc-brain_mask` (explicit masking).  sMRIPrep hands over only the
+   template's name, so niworkflows takes the 1 mm default of `precise`,
+   whatever output resolution was asked for.
+2. **Moving image:** the bias-corrected T1w through `ImageMath
+   TruncateImageIntensity 0.01 0.999 256`, then set to 0 outside the brain
+   mask.
+3. **Start:** `antsAffineInitializer 3 fixed moving transform.mat 15 0.1 0 10`
+   on the masked pair, handed on as `--initial-moving-transform
+   [transform.mat,0]`.
+4. **Registration:** `t1w-mni_registration_precise_000.json`.  Rigid + Affine
+   (Mattes, 56 bins, 25 % regular sampling, 100×100), then SyN `[0.1, 3.0,
+   0.0]` with CC radius 4, 100×70×50×20, histogram matching, single precision
+   (`--float 1`).
+5. **Threads:** fMRIPrep's `omp_nthreads`, at most 8.
+
+`tools/ants_fmriprep.sh` runs steps 3 and 4 on the two masked images.  The
+moving image is T1Prep's bias-corrected image and brain mask, so both
+pipelines start from the same input.  Feeding ANTs sMRIPrep's own N4 and
+`antsBrainExtraction` output instead would fold their quality into the
+comparison.
+
+With `--fmriprep`, T1Prep registers with its flexible setting.  Each cell is
+LOO / pairs:
+
+| | Mindboggle-101, 20 subjects | Neuromorphometrics, 35 subjects |
+|---|---|---|
+| ANTs as sMRIPrep runs it (1 mm) | 0.7294 / 0.6073 | 0.7105 / 0.6106 |
+| T1Prep, `--fmriprep` | **0.7696 / 0.6663** | **0.7355 / 0.6422** |
+| T1Prep `--fmriprep` − ANTs, LOO | +0.040 [+0.036, +0.045] | +0.025 [+0.022, +0.029] |
+| T1Prep `--fmriprep` − ANTs, pairs | +0.059 [+0.053, +0.065] | +0.032 [+0.028, +0.035] |
+| T1Prep `--fmriprep` better | 20/20 subjects, 190/190 pairs | 35/35 subjects, 591/595 pairs |
+| T1Prep default (for VBM) | 0.7421 / 0.6274 | 0.7203 / 0.6233 |
+| T1Prep default − ANTs, LOO | +0.013 [+0.008, +0.018] | +0.010 [+0.006, +0.014] |
+
+With `--fmriprep`, T1Prep's shooting is the more accurate of the two on both
+label sets, for every subject, and behind in no region group: its lead is
+cortical, and in the subcortical nuclei it is small and not significant in
+pairs.  T1Prep's default leads as well, by a third to two fifths as much,
+but trails ANTs in the ventricles, white matter, cerebellum and brainstem.
+ANTs' registration against the 1 mm template takes about 10 min per subject
+on fMRIPrep's eight threads (589-599 s, 28 s of it `antsAffineInitializer`);
+T1Prep's shooting with `--fmriprep`'s setting takes 30 s on the same eight
+(13 s with the default), and its whole volume pipeline, segmentation
+included, ~75 s with MPS.
+
+**This corrects an earlier version of this page.**  That version compared
+against fMRIPrep's `antsRegistration` command line without sMRIPrep's
+preparation: on the 1.5 mm evaluation grid, with `Template_05mm_bet` sampled
+onto it, no truncation, a centre-of-mass start and double precision.  It
+reported a lead of +0.056 / +0.081.  Run as sMRIPrep runs it, ANTs gains
++0.016 / +0.022 on Mindboggle (20 of 20 subjects), and the lead of
+`--fmriprep`'s setting, T1Prep's default at the time, shrinks to +0.040 /
++0.059.  Nearly all of the gain is the template's resolution.  On
+Neuromorphometrics, where the two parts were also run separately, registering
+to TemplateFlow's 1 mm template instead of the same template resampled onto
+the 1.5 mm grid gains +0.0192 [+0.0179, +0.0205] LOO, 35 of 35 subjects.
+Everything else sMRIPrep does differently (truncation, initialiser, single
+precision, masking the full-head template rather than taking TemplateFlow's
+brain-extracted one) adds +0.0003 together, 17 of 35 subjects better.
+
+Two caveats.  The shooting matches T1Prep's GM and WM maps to CAT12's tissue
+templates, while ANTs matches the T1w intensities to a T1w template, so
+T1Prep's comparison includes its segmentation.  Both optimise every subject
+from scratch.  deepmriprep's network instead mapped with a prior learned for
+MNI152NLin2009cAsym, which does not transfer to a template it was not trained
+on.
+
+And most of the lead is the grey-matter sheet, not the placement of parcels
+along it.  Over Neuromorphometrics' 98 cortical labels the pooled Dice is
+exactly the product of the overlap of the merged cortex masks and the
+agreement of parcel labels where both are cortex.  `--fmriprep`'s setting
+raises the first by 8.6 % over ANTs and the second by 0.9 % (468 of 595
+pairs); the default places parcels no better than ANTs (−0.4 %, not
+significant).  With every label smoothed by 6 mm FWHM before scoring, the
+lead of `--fmriprep`'s setting is +0.016 (2.3 %, 573 of 595 pairs) instead of
++0.040 (7.3 %): at the smoothing of a typical fMRI analysis the difference
+is much smaller than unsmoothed Dice suggests.
+
+<!---
+Superseded on 2026-10-30, kept for later reading
+(`d20_ants_fmriprep_grid15.csv`).  ANTs ran fMRIPrep's command line on the
+1.5 mm evaluation grid: fixed image Template_05mm_bet, nearest-neighbour
+sampled onto it; no truncation, centre-of-mass start, double precision;
+ANTs 2.6.5 binaries.  That fixed image matters at 1.5 mm: TemplateFlow's
+template resampled onto the same grid by cubic interpolation is less sharp
+and scores 0.011 lower (0.7024 LOO).
+
+| **ANTs — fMRIPrep's exact config** | 0.7133 | 0.5854 | ~9 min |
+| T1Prep's shooting − ANTs (fMRIPrep config) | +0.056 [+0.050, +0.063] | +0.081 [+0.073, +0.089] | 20/20 subjects, 190/190 pairs |
 
 T1Prep is **more accurate than that configuration** (+0.056 LOO, +0.081 pairs)
-at a fraction of the runtime — ~35 s of shooting versus ~9 minutes
-of CC-metric optimisation. Anatomical normalisation is a dominant cost in
-fMRIPrep, so the runtime argument is at least as strong as the accuracy one.
-deepmriprep's network, which T1Prep ran up to 0.8.1, was ahead of it by
-+0.016 / +0.023.
+at a fraction of the runtime: ~35 s of shooting versus ~9 minutes
+of CC-metric optimisation.  deepmriprep's network, which T1Prep ran up to
+0.8.1, was ahead of it by +0.016 / +0.023.
 
-Two caveats:
-
-* The shooting matches T1Prep's GM and WM maps to CAT12's tissue templates,
-  ANTs the T1w intensities to a T1w template, so T1Prep's comparison includes
-  its segmentation.  Both optimise every subject from scratch; deepmriprep's
-  network instead mapped with a prior learned for MNI152NLin2009cAsym, which
-  does not transfer to a template it was not trained on.
 * DKT31 is cortical parcels only. Nothing here measures subcortical alignment,
   which fMRIPrep users also depend on.
+-->
 
 ---
 
@@ -401,18 +596,20 @@ The means in the tables above summarise wide distributions, and the boxplots
 change how several of them should be read.
 
 **The spread within a method dwarfs the differences between methods.** Every
-non-linear volume arm has an interquartile range about 0.10 wide (LOO) or
-0.13 (pairs), the surface arms about 0.08 and 0.10-0.11, while the means
-separate by 0.01-0.03.  Which region is being measured
+non-linear volume arm on Mindboggle has an interquartile range about 0.09-0.11
+wide (LOO) or 0.12-0.14 (pairs), the surface arms about 0.08 and 0.10-0.11,
+while the means separate by 0.01-0.04.  Which region is being measured
 matters far more than which of these methods produced the registration - the
 ranking is a statement about averages over many regions, not a prediction for
 any single parcel.
 
 **Affine is not merely lower, it is a different kind of distribution.** Its
 pairwise IQR spans 0.000-0.526 - more than a quarter of region-pairs get
-essentially *no* overlap from an affine alignment - against 0.52-0.66 for
-ANTs.  69 % of its pairwise values fall below 0.5, versus 10-19 % for the
-non-linear methods.  That is the gap the non-linear step actually closes.
+essentially *no* overlap from an affine alignment - against 0.54-0.68 for
+ANTs as sMRIPrep runs it.  69 % of its pairwise values fall below 0.5, versus
+5 % (T1Prep with `--fmriprep`), 10 % (T1Prep's default) to 24 % (ANTs SyN
+with MI) for the non-linear methods.  That is the gap the non-linear step
+actually closes.
 
 **The three surface arms differ little.** T1Prep and FreeSurfer have nearly
 the same box (pairwise IQR 0.099 and 0.104, lower whiskers 0.59 for both,
@@ -420,12 +617,26 @@ the same box (pairwise IQR 0.099 and 0.104, lower whiskers 0.59 for both,
 reaches a little lower (0.58, 2.6 %).  The wide newMSM box shown here before
 (IQR 0.199, whisker 0.27, 17.3 % below 0.5) was the `sulc` bug.
 
-**The volume arms overlap heavily.** ANTs, deepmriprep's warp and CAT12
-have visually similar boxes, consistent with paired differences of
-0.012-0.016; T1Prep's geodesic shooting sits higher, but its lead (0.029 over
-CAT12) is still small against the spread.  The ordering is reliable - the
-paired intervals exclude zero - but no visible difference should be expected
+**The volume arms overlap heavily.** ANTs as sMRIPrep runs it and
+deepmriprep's warp have practically the same box (paired difference 0.001);
+CAT12's and T1Prep's default sit 0.012-0.013 higher and are level with each
+other (0.001).  T1Prep with `--fmriprep` sits highest, but its lead (0.028
+over the default, 0.040 over ANTs) is small against the spread.  Every paired
+interval shown excludes zero except ANTs against deepmriprep's warp and
+T1Prep's default against CAT12 - but no visible difference should be expected
 on any one region.
+
+**On Neuromorphometrics the boxes are wider, and the gain sits in their lower
+half.**  The label set mixes large structures (white matter, ventricles,
+cerebellum) with 98 small cortical parcels, so the interquartile ranges are
+0.14-0.16 (LOO) and 0.18-0.21 (pairs).  T1Prep's boxes are the narrower
+ones: in pairs the lower quartile lies 0.020 (default) and 0.047
+(`--fmriprep`) above ANTs' (0.536 and 0.563 against 0.516), the upper
+quartile 0.006 and 0.019 (0.730 and 0.743 against 0.724), and 19 % and 15 %
+of the values fall below 0.5 against 22 % for ANTs.  On Mindboggle it is the
+same pattern: +0.026 / +0.071 at the lower quartile, +0.019 / +0.054 at the
+upper, 10 % / 5 % below 0.5 against 13 %.  The shooting gains most on the
+poorly overlapping region-pairs.
 
 Regenerate with `tools/plot_dice.py`.
 
@@ -449,7 +660,7 @@ Improvement over affine is the most defensible cross-study quantity:
 | Ashburner & Friston 2011 | IBSR18 | 0.40 | GS2 0.590 | +0.19 |
 | Ashburner & Friston 2011 | LPBA40 | 0.60 | GS2 0.751 | +0.15 |
 | Klein 2009 (SyN/ART) | IBSR18 | 0.40 | ~0.55 | +0.15 |
-| this work (pairs) | Mindboggle-101 | 0.33 | T1Prep shooting 0.666 | +0.33 |
+| this work (pairs) | Mindboggle-101 | 0.33 | T1Prep shooting 0.627 (default), 0.666 (`--fmriprep`) | +0.30 / +0.33 |
 
 That geodesic shooting leads here -- CAT12's and T1Prep's -- is consistent
 with Ashburner & Friston reporting shooting ahead of DARTEL and of Klein
@@ -459,8 +670,31 @@ with Ashburner & Friston reporting shooting ahead of DARTEL and of Klein
 
 ## Provenance
 
-* Data: Mindboggle-101, CC-BY (Klein & Tourville 2012).
-* ANTs 2.6.5 (macOS ARM64 binaries), `antsRegistration` + `antsApplyTransforms`.
+* Data: Mindboggle-101, CC-BY (Klein & Tourville 2012).  Neuromorphometrics:
+  the labelled OASIS images of the MICCAI 2012 Grand Challenge and Workshop
+  on Multi-Atlas Labeling (Landman & Warfield 2012).  Their qform lies 128 mm
+  from their sform.  nibabel reads the sform and ITK the qform, so images and
+  labels are rewritten with qform = sform before ANTs reads them.
+* ANTs as sMRIPrep runs it (`d20_ants_fmriprep.csv`,
+  `n35_ants_fmriprep.csv.gz`): ANTsPy 0.6.3's bindings of
+  `antsAffineInitializer`, `antsRegistration` and `antsApplyTransforms`,
+  given the argument lists of steps 3-4 above, 4 threads per subject.  The
+  time in the Mindboggle table is the median of three subjects run at 8
+  threads, one at a time on an otherwise idle machine (589-599 s, 28 s of it
+  the initialiser).  ITK's results depend slightly on the thread count:
+  swapping those three 8-thread runs in moves the Mindboggle means by
+  −0.0001.  ANTsPy
+  0.6.3 compiles ANTs at b53aad3 (2.6.5 plus seven commits outside
+  registration) against ITK 5.4.5.  Its `--version` says 2.5.1, read from a
+  header ANTsPy keeps static.  fMRIPrep pins ANTs 2.6 (2.6.2 with ITK 5.4.4
+  in its lock file).  Run through ANTsPy, the superseded 1.5 mm arm, made
+  with the 2.6.5 binaries, reproduces to 0.0000 [−0.0011, +0.0011].  The
+  truncation (step 2) is `TruncateImageIntensity` re-implemented in NumPy
+  from ANTs' source: 256 bins over the positive voxels, ITK's interpolated
+  quantiles, every voxel clamped.  On T1Prep's brain-extracted image it
+  clamps about 0.1 % of the brain.  The labels are resampled by
+  nearest neighbour onto the evaluation grid.
+* ANTs SyN with MI (`d20_ants_syn100.csv`): ANTsPy (`tools/run_ants_antspy.py`).
 * CAT12 via `cat_batch_cat.sh -ns -p 4` (geodesic shooting, surfaces skipped).
 * FSL newMSM built against FSL 6.0.7.23; config and reference surfaces copied
   verbatim from sMRIPrep (`tools/msm_data/`).  On macOS the build needs
@@ -470,11 +704,25 @@ with Ashburner & Friston reporting shooting ahead of DARTEL and of Klein
   `tools/build_newmsm.sh`.
 * T1Prep deformations are the SPM-format `y_*.nii` (5-D, native mm, affine and
   non-linear composed).
-* T1Prep's geodesic shooting arm (`d20_t1prep_shoot.csv`): T1Prep after 0.8.1
-  (registration by `cat_surf.vol_shoot`, which needs cat-surf 1.1.6), run on
-  the CPU; the shooting settings table re-runs the shooting on the same maps
-  (`tools/run_volshoot.py`).  The deepmriprep arm (`d20_mni.csv`) is T1Prep's
-  run of 2026-09-04; T1Prep 0.8.1 reproduces it to 0.0001.
+* T1Prep's geodesic shooting arms: `d20_t1prep_shoot_fmriprep.csv` is T1Prep
+  after 0.8.1 (registration by `cat_surf.vol_shoot`, which needs cat-surf
+  1.1.6) run on the CPU with `--fmriprep`'s setting, its default at the time.
+  The default arm (`d20_t1prep_shoot.csv`) and the shooting settings table
+  re-run the shooting on the same maps (`tools/run_volshoot.py`); the re-run
+  reproduces T1Prep's own `--fmriprep` arm to 2e-4 per region and 1e-6 in the
+  mean.  The deepmriprep arm (`d20_mni.csv`) is T1Prep's run of 2026-09-04;
+  T1Prep 0.8.1 reproduces it to 0.0001.
+* VBM comparison of the two settings: OpenNeuro ds000228 (60 children,
+  3.5-12.3 years; Richardson et al. 2018) and ds005270 (60 adults, 23-85
+  years), each processed with T1Prep 0.8.2 under every shooting setting.
+  `s6mwp1` regressed on age with TIV as a covariate in SPM12 (CAT12's
+  factorial design, absolute threshold 0.1, implicit mask); family-wise
+  error thresholds by random field theory from each analysis' own
+  smoothness.  The Jacobians and the unmodulated warped GM are computed from
+  each run's `y_` and `p0`.  The
+  CAT26 comparison is r3486 with half the regularisation against rc4 r3393;
+  two rc4 builds differ from each other by less than 1 % in ResMS.  The
+  analysis is not part of this repository.
 * T1Prep surface arms (`d20_surf_*`, `d19_t1p_*`): T1Prep 0.8.1 with
   cat-surf 1.1.5 plus CAT-Surface #34 (Spherical Demons applies its global
   rotation to the sphere), the sphere computed with `relax=True` as the next
@@ -487,5 +735,14 @@ with Ashburner & Friston reporting shooting ahead of DARTEL and of Klein
 * FreeSurfer 8.1 (`d19_fs81*.csv`): recon-all, scored through its own
   `?h.sphere.reg`, with the labels attached to the midthickness
   (`tools/prepare_fs_midthickness.py`) and `--reference-glob none`.
+* T1Prep on Neuromorphometrics (`n35_t1prep_shoot.csv.gz`,
+  `n35_t1prep_shoot_fmriprep.csv.gz`): T1Prep 0.8.2 with cat-surf 1.1.8 on
+  the CPU, through `tools/run_volshoot.py prepare`, which writes the
+  `--fmriprep` arm (0.8.2's default).  The default and the other settings
+  re-run the shooting on the same maps (`run_volshoot.py shoot`).  The
+  grey-matter sheet and parcel agreement split, and the Dice of labels
+  smoothed by 6 mm FWHM, are computed on the whole 1.5 mm grid from the same
+  projected labels, pairs only.
 * Per-region, per-comparison Dice for every arm is in `d20_*.csv` (20
-  subjects) and `d19_*.csv` (the 19 with FreeSurfer output).
+  subjects), `d19_*.csv` (the 19 with FreeSurfer output) and
+  `n35_*.csv.gz` (Neuromorphometrics; the 132 tissue labels, gzipped).

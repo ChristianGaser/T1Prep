@@ -62,13 +62,14 @@ vertices that discriminate between registrations.
 
 | arm | `loo` | `atlas` | inflation |
 |---|---|---|---|
-| T1Prep volume (geodesic shooting) | 0.7696 | 0.7794 | **+0.0097** [+0.0096, +0.0098] |
+| T1Prep volume (geodesic shooting), default | 0.7421 | 0.7532 | **+0.0110** [+0.0108, +0.0112] |
+| T1Prep volume (geodesic shooting), `--fmriprep` | 0.7696 | 0.7794 | **+0.0097** [+0.0096, +0.0098] |
 | T1Prep ≤ 0.8.1 volume (deepmriprep's warp) | 0.7289 | 0.7404 | **+0.0115** [+0.0113, +0.0117] |
 | T1Prep surface | 0.8488 | 0.8580 | **+0.0092** [+0.0090, +0.0094] |
 
 That bias is as large as the differences between neighbouring methods here —
-CAT12 is ahead of T1Prep's earlier deepmriprep warp by +0.0120, and that warp
-ahead of ANTs by +0.0156, under `loo`.
+CAT12 is ahead of T1Prep's earlier deepmriprep warp by +0.0120 and of ANTs as
+sMRIPrep runs it by +0.0116, under `loo`.
 It inflates every arm by a similar amount, so it would not reorder them, but
 it would make the absolute numbers incomparable with published leave-one-out
 figures.  The effect is ~1/N of the vote, so it shrinks with larger cohorts
@@ -130,7 +131,8 @@ labelled surfaces out of FreeSurfer tkrRAS into scanner space.
 
 The tools can score all 101 subjects; the comparisons in `results/` use the
 stratified 20 in `data/subset20.txt` (4 per cohort, seed 20240903), because
-ANTs and CAT12 cost 9-15 minutes per subject, and the surface comparison
+ANTs (about 10 minutes per subject at 1 mm on eight threads) and CAT12 (5-15
+minutes) are slow, and the surface comparison
 with FreeSurfer the 19 of them in `data/subset19_fs81.txt`.
 
 ## Reproducing
@@ -139,7 +141,8 @@ with FreeSurfer the 19 of them in `data/subset19_fs81.txt`.
 
 A plain T1Prep run does not write everything the surface comparison needs, and
 `--fmriprep` is the wrong way to get it -- that flag also switches the run to
-BIDS naming *and* to AMAP segmentation, so the surfaces would no longer match.
+BIDS naming *and* to the registration setting for fMRIPrep, so the run would
+no longer be the evaluated one.
 Two helpers derive the missing pieces from a plain run instead:
 
 ```bash
@@ -193,7 +196,7 @@ tools/eval_mindboggle.py project --space fsLR --out-space newmsm \
 ```
 
 ```bash
-# 1. process the cohort with T1Prep: its y_ is the geodesic shooting arm
+# 1. process the cohort with T1Prep: its y_ is the default shooting arm
 #    (T1Prep <= 0.8.1, which ran deepmriprep's warp network, gives that arm)
 for s in <mindboggle>/data/*/; do
     T1Prep --out-dir "$s" "$s/t1weighted.nii.gz"
@@ -204,11 +207,11 @@ tools/run_cat12.sh   <mindboggle>/data <work>/cat12
 tools/run_ants_batch.sh                     # antsRegistration, fMRIPrep config
 tools/make_affine_baseline.py --mindboggle <mindboggle>/data \
     --reference <mindboggle>/data/<subj>/mri/y_*.nii --out <work>/affine
-# other settings of T1Prep's shooting (the settings table), e.g. CAT12's own
+# other settings of T1Prep's shooting (the settings table), e.g. --fmriprep's
 tools/run_volshoot.py prepare --mindboggle <mindboggle>/data --work <work>/vs \
     --subject-file data/subset20.txt --jobs 2
-tools/run_volshoot.py shoot --work <work>/vs --arm cat12 \
-    --set regstr=0.5 --set reg_scale=1
+tools/run_volshoot.py shoot --work <work>/vs --arm fmriprep \
+    --set regstr=1 --set reg_scale=0.5
 
 # 3. score every arm through the same protocol
 tools/eval_mindboggle.py project-volume --mindboggle <mindboggle>/data \
