@@ -28,7 +28,6 @@ import numpy as np
 # normal-vision separation floor, and the two ANTs arms would sit adjacent.
 BLUE, ORANGE, AQUA, MAGENTA, GREEN, VIOLET = (
     "#2a78d6", "#eb6834", "#1baf7a", "#e87ba4", "#008300", "#4a3aa7")
-GREY = "#8a8f98"          # the affine reference, not a competing method
 # T1Prep's registration up to 0.8.1 in a lighter step (300) of T1Prep's own
 # blue, so the two T1Prep arms read as one method family; between orange and
 # aqua it clears the CVD (dE 15.7) and normal-vision (19.2) floors.
@@ -41,7 +40,6 @@ INK, MUTED, GRID = "#1c1e21", "#5c6169", "#dcdfe4"
 # T1Prep's --fmriprep setting is hatched in T1Prep's own blue: the same method
 # with another setting, not another method, so it gets no hue of its own.
 VOLUME = [
-    ("d20_affine15", "Affine only", GREY),
     ("d20_ants_syn100", "ANTs SyN (MI)", VIOLET),
     ("d20_ants_fmriprep", "ANTs\n(as in sMRIPrep)", ORANGE),
     ("d20_mni", "T1Prep ≤ 0.8.1\n(deepmriprep warp)", BLUE_EARLIER),
@@ -123,8 +121,8 @@ def main() -> int:
     a = ap.parse_args()
     results = Path(a.results)
 
-    fig, axes = plt.subplots(2, 3, figsize=(19.2, 8.8),
-                             gridspec_kw=dict(width_ratios=[7, 3.2, 3.2],
+    fig, axes = plt.subplots(2, 3, figsize=(18.2, 8.8),
+                             gridspec_kw=dict(width_ratios=[6, 3.2, 3.2],
                                               hspace=0.5, wspace=0.16))
     fig.patch.set_facecolor("white")
     for row, protocol in enumerate(("loo", "pairs")):

@@ -66,7 +66,7 @@ T1Prep/
 │   ├── data/subset20.txt           # subjects used for the volume comparison
 │   ├── data/phantom/               # 14 simulated T1w + ground-truth labels (mri_simulate)
 │   ├── PHANTOM.md                  # phantom metrics, the thickness reference, pinning
-│   └── results/                    # RESULTS.md, phantom_pinned.json, bug write-ups
+│   └── results/                    # README.md (results), RESULTS_long.md, phantom_pinned.json, bug write-ups
 │   ├── process_longitudinal.sh     # Batch longitudinal processing
 │   ├── realign_longitudinal.sh     # Longitudinal rigid realignment
 │   ├── warp_longitudinal.sh       # Longitudinal low-dimensional non-linear registration

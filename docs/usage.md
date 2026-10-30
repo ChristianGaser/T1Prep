@@ -114,7 +114,7 @@ templates (`Template_0..4_GS`) with CAT12's own setting, the one for VBM. It
 replaces deepmriprep's warp network, which T1Prep used up to 0.8.1.
 `--fmriprep` registers with a more flexible setting instead, every scheduled
 Gauss-Newton iteration with half of CAT12's regularisation: it has the better
-label accuracy in [the evaluation](../evaluation/results/RESULTS.md), but its
+label accuracy in [the evaluation](../evaluation/results/README.md), but its
 Jacobians vary more between subjects, which costs sensitivity in VBM of the
 modulated maps; `--fmriprep` writes none.
 

@@ -6,9 +6,10 @@ registered onto CAT12's shooting templates (``Template_0..4_GS``) by
 shooting (``run_Shooting`` in ``cat_main_registration.m``, on SPM's shooting
 primitives).  It replaces deepmriprep's warp network, which imitated CAT12's
 deformations and fell short of them: on Mindboggle-101 the shooting carries
-manual cortical labels between subjects with a Dice of 0.770 (leave-one-out)
-against the network's 0.729, ahead of CAT12's own pipeline (0.741); see
-``evaluation/results/RESULTS.md``.
+manual cortical labels between subjects with a Dice of 0.742 (leave-one-out)
+with the default setting and 0.770 with ``--fmriprep``'s, against the
+network's 0.729 and CAT12's own pipeline's 0.741; see
+``evaluation/results/README.md``.
 
 The deformations are handed on in the form the rest of T1Prep consumes, which
 is deepmriprep's: ``grid_sample`` grids on the template grid, in normalised

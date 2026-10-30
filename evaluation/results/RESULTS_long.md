@@ -1,5 +1,8 @@
 # Registration accuracy on Mindboggle-101 and Neuromorphometrics
 
+The long version of [README.md](README.md): the same numbers and figure,
+with the derivations and side results.
+
 All numbers are Dice between manual labels carried into a common space by the
 transform under test. One protocol for every arm: nothing but the registration
 differs. Two label sets:
@@ -36,13 +39,12 @@ brain-extracted inputs, scored on an identical 1.5 mm grid.
 
 | method | LOO | pairs | time / subject |
 |---|---|---|---|
-| Affine only (Mindboggle's own) | 0.5173 | 0.3317 | — |
 | ANTs SyN, Mattes MI 100×70×50×20 | 0.6972 | 0.5672 | ~1 min |
 | **ANTs — as sMRIPrep runs it (1 mm)** | 0.7294 | 0.6073 | ~10 min |
 | T1Prep ≤ 0.8.1 — deepmriprep's warp network | 0.7289 | 0.6085 | ~40 s |
 | **CAT12 — geodesic shooting** | 0.7410 | 0.6249 | 5-15 min |
-| **T1Prep — geodesic shooting, default (for VBM)** | 0.7421 | 0.6274 | ~55 s |
-| **T1Prep — geodesic shooting, `--fmriprep`** | **0.7696** | **0.6663** | ~75 s |
+| **T1Prep — geodesic shooting, default (for VBM)** | 0.7421 | 0.6274 | ~56 s |
+| **T1Prep — geodesic shooting, `--fmriprep`** | **0.7696** | **0.6663** | ~77 s |
 
 T1Prep registers by geodesic shooting from the release after 0.8.1; up to
 0.8.1 it ran deepmriprep's warp network.  It has two settings: by default
@@ -59,11 +61,13 @@ resamples, a pair weighted by both its subjects):
 | T1Prep `--fmriprep` − ANTs as sMRIPrep runs it | +0.040 [+0.036, +0.045] | +0.059 [+0.053, +0.065] | 20/20 subjects, 190/190 pairs |
 | T1Prep `--fmriprep` − T1Prep default | +0.028 [+0.025, +0.030] | +0.039 [+0.037, +0.041] | 20/20 subjects, 189/190 pairs |
 
-T1Prep's times are its whole volume pipeline on an M2 Ultra with MPS.  The
+T1Prep's times are its whole volume pipeline on an M2 Ultra with MPS,
+segmentation, `mwp` maps and two atlases included, one subject at a time on
+an otherwise idle machine (three subjects each: 54-56 s and 76-77 s); with
+eight subjects processed at a time, each takes about 75 s or 98 s.  The
 shooting takes 15 s of it with the default and 37 s with `--fmriprep`'s
-setting, on libCAT's default four threads (13 s and 30 s on eight); the
-default's ~55 s is the 75 s measured with `--fmriprep`'s setting less that
-difference.  deepmriprep's network took 8 s on MPS and 22 s on the CPU.
+setting, on libCAT's default four threads (13 s and 30 s on eight).
+deepmriprep's network took 8 s on MPS and 22 s on the CPU.
 ANTs' time is its registration alone, `antsAffineInitializer` and
 `antsRegistration` against the 1 mm template, on the eight threads fMRIPrep
 gives it, one subject at a time on the same, otherwise idle machine: 589-599
@@ -266,7 +270,7 @@ ANTs' registration against the 1 mm template takes about 10 min per subject
 on fMRIPrep's eight threads (589-599 s, 28 s of it `antsAffineInitializer`);
 T1Prep's shooting with `--fmriprep`'s setting takes 30 s on the same eight
 (13 s with the default), and its whole volume pipeline, segmentation
-included, ~75 s with MPS.
+included, ~77 s with MPS.
 
 **This corrects an earlier version of this page.**  That version compared
 against fMRIPrep's `antsRegistration` command line without sMRIPrep's
@@ -596,20 +600,12 @@ The means in the tables above summarise wide distributions, and the boxplots
 change how several of them should be read.
 
 **The spread within a method dwarfs the differences between methods.** Every
-non-linear volume arm on Mindboggle has an interquartile range about 0.09-0.11
+volume arm on Mindboggle has an interquartile range about 0.09-0.11
 wide (LOO) or 0.12-0.14 (pairs), the surface arms about 0.08 and 0.10-0.11,
 while the means separate by 0.01-0.04.  Which region is being measured
 matters far more than which of these methods produced the registration - the
 ranking is a statement about averages over many regions, not a prediction for
 any single parcel.
-
-**Affine is not merely lower, it is a different kind of distribution.** Its
-pairwise IQR spans 0.000-0.526 - more than a quarter of region-pairs get
-essentially *no* overlap from an affine alignment - against 0.54-0.68 for
-ANTs as sMRIPrep runs it.  69 % of its pairwise values fall below 0.5, versus
-5 % (T1Prep with `--fmriprep`), 10 % (T1Prep's default) to 24 % (ANTs SyN
-with MI) for the non-linear methods.  That is the gap the non-linear step
-actually closes.
 
 **The three surface arms differ little.** T1Prep and FreeSurfer have nearly
 the same box (pairwise IQR 0.099 and 0.104, lower whiskers 0.59 for both,

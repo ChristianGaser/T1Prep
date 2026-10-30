@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Other settings of T1Prep's geodesic shooting, on T1Prep's own tissue maps.
 
-The settings table of ``results/RESULTS.md``.  T1Prep registers its
+The settings table of ``results/RESULTS_long.md``.  T1Prep registers its
 affine-registered GM and WM maps by geodesic shooting
 (``t1prep._shoot.shoot_register``, CAT-Surface's ``cat_surf.vol_shoot``) with
 its default setting, CAT12's own; this tool repeats the shooting with others

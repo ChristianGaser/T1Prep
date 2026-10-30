@@ -88,7 +88,7 @@ of the cortex instead of 24.5 %), so a subject's own vote flips fewer of
 them, and `atlas` understates what the relaxation gains by ~0.003.
 -->
 
-See [`results/RESULTS.md`](results/RESULTS.md) for the numbers each protocol
+See [`results/README.md`](results/README.md) for the numbers each protocol
 produces, and `results/dice_boxplots.png` for the distributions behind them.
 
 ## Layout
@@ -98,7 +98,8 @@ produces, and `results/dice_boxplots.png` for the distributions behind them.
 | `data/subset20.txt` | the 20 subjects used for the volume comparison |
 | `data/subset19_fs81.txt` | the 19 of those with FreeSurfer 8.1 output |
 | `tools/` | the exact scripts used to run each competing method |
-| `results/RESULTS.md` | the numbers, the protocol, and the caveats |
+| `results/README.md` | the numbers, the protocol, and the caveats |
+| `results/RESULTS_long.md` | the same with the derivations and side results |
 | `results/*.csv` | per-region, per-comparison Dice for every arm |
 | `data/phantom/` | 14 simulated T1w of one anatomy + their ground-truth labels, for [`PHANTOM.md`](PHANTOM.md) |
 | `results/phantom_pinned.json` | the pinned scalars `eval_phantom.py check` compares with |
@@ -164,7 +165,7 @@ both are load-bearing:
   tkrRAS-to-scanner shift the other arms need would break this one (141 mm off
   on subjects whose `c_ras` is non-zero).
 * **midthickness, not pial or white**, as the surface labels attach to -- see
-  `prepare_fs_midthickness.py` for why, and `results/RESULTS.md` for what it
+  `prepare_fs_midthickness.py` for why, and `results/README.md` for what it
   costs to get wrong.
 
 T1Prep is scored the same way, with its **central** surface (already a

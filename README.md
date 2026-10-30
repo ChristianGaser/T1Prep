@@ -34,7 +34,7 @@ Lukas Fisch et al., "deepmriprep: Voxel-based Morphometry (VBM) Preprocessing vi
 
 An alternative approach uses DeepMriPrep for bias field correction, lesion detection, and also serves as an initial estimate for the subsequent AMAP segmentation from CAT12. 
 
-The non-linear registration to MNI152NLin2009cAsym is not deepmriprep's warp network but CAT12's optimised geodesic shooting, ported to C in [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (`cat_surf.vol_shoot`): it carries manual cortical labels between subjects more accurately than both the network and CAT12 itself (see [the evaluation](evaluation/results/RESULTS.md)).
+The non-linear registration to MNI152NLin2009cAsym is not deepmriprep's warp network but CAT12's optimised geodesic shooting, ported to C in [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (`cat_surf.vol_shoot`). It carries manual cortical labels between subjects more accurately than the network: with CAT12's own setting, the default, as accurately as CAT12 itself, and with the more flexible setting of `--fmriprep` more accurately than CAT12 (see [the evaluation](evaluation/results/README.md)).
 
 Cortical surface reconstruction and thickness estimation use the algorithms from [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (a core component of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12)) via the [`cat-surf`](https://pypi.org/project/cat-surf/) Python package, which provides pure Python bindings to the CAT-Surface C library — no platform-specific compiled binaries are required.
 
