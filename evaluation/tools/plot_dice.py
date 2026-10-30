@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 from pathlib import Path
 
 import matplotlib
@@ -35,15 +36,25 @@ BLUE_EARLIER = "#6da7ec"
 
 INK, MUTED, GRID = "#1c1e21", "#5c6169", "#dcdfe4"
 
-# (csv stem, label, colour).  The surface arms are the 19 subjects FreeSurfer
-# processed, so that all three are scored on the same ones.
+# (csv stem, label, colour[, hatched]).  The surface arms are the 19 subjects
+# FreeSurfer processed, so that all three are scored on the same ones.
+# T1Prep's --fmriprep setting is hatched in T1Prep's own blue: the same method
+# with another setting, not another method, so it gets no hue of its own.
 VOLUME = [
     ("d20_affine15", "Affine only", GREY),
     ("d20_ants_syn100", "ANTs SyN (MI)", VIOLET),
-    ("d20_ants_fmriprep", "ANTs\n(fMRIPrep config)", ORANGE),
+    ("d20_ants_fmriprep", "ANTs\n(as in sMRIPrep)", ORANGE),
     ("d20_mni", "T1Prep ≤ 0.8.1\n(deepmriprep warp)", BLUE_EARLIER),
     ("d20_cat12", "CAT12\n(geodesic shooting)", AQUA),
-    ("d20_t1prep_shoot", "T1Prep\n(geodesic shooting)", BLUE),
+    ("d20_t1prep_shoot", "T1Prep default\n(for VBM)", BLUE),
+    ("d20_t1prep_shoot_fmriprep", "T1Prep\n(--fmriprep)", BLUE, True),
+]
+# Neuromorphometrics, 35 subjects, every tissue label; gzipped, since 595
+# pairs x 132 labels make each file eight times a Mindboggle one.
+NMM = [
+    ("n35_ants_fmriprep", "ANTs\n(as in sMRIPrep)", ORANGE),
+    ("n35_t1prep_shoot", "T1Prep default\n(for VBM)", BLUE),
+    ("n35_t1prep_shoot_fmriprep", "T1Prep\n(--fmriprep)", BLUE, True),
 ]
 SURFACE = [
     ("d19_newmsm", "FSL newMSM\n(fMRIPrep config)", MAGENTA),
@@ -53,23 +64,34 @@ SURFACE = [
 
 
 def load(results: Path, name: str, protocol: str) -> np.ndarray:
-    with open(results / f"{name}.csv") as fh:
+    path = results / f"{name}.csv"
+    if not path.exists():
+        path = results / f"{name}.csv.gz"
+    with (gzip.open if path.suffix == ".gz" else open)(path, "rt") as fh:
         return np.array([float(r["dice"]) for r in csv.DictReader(fh)
                          if r["protocol"] == protocol])
 
 
 def panel(ax, results: Path, arms, protocol: str, title: str) -> None:
-    data = [load(results, code, protocol) for code, _, _ in arms]
+    data = [load(results, arm[0], protocol) for arm in arms]
     pos = np.arange(len(arms))
     bp = ax.boxplot(data, positions=pos, widths=0.55, patch_artist=True,
                     showfliers=False, whis=(5, 95),
                     medianprops=dict(color="white", linewidth=2),
                     whiskerprops=dict(color=MUTED, linewidth=1),
                     capprops=dict(color=MUTED, linewidth=1))
-    for patch, (_, _, colour) in zip(bp["boxes"], arms):
-        patch.set_facecolor(colour)
-        patch.set_edgecolor("white")      # 2px surface gap between fills
-        patch.set_linewidth(2)
+    for patch, median, arm in zip(bp["boxes"], bp["medians"], arms):
+        colour, hatched = arm[2], len(arm) > 3 and arm[3]
+        if hatched:
+            patch.set_facecolor("white")
+            patch.set_edgecolor(colour)   # the hatch takes the edge colour
+            patch.set_hatch("////")
+            patch.set_linewidth(1.5)
+            median.set_color(colour)
+        else:
+            patch.set_facecolor(colour)
+            patch.set_edgecolor("white")  # 2px surface gap between fills
+            patch.set_linewidth(2)
     # The mean is what the tables report; mark it so the box explains them.
     ax.scatter(pos, [d.mean() for d in data], marker="D", s=26,
                facecolor="white", edgecolor=INK, linewidth=1.4, zorder=5)
@@ -81,8 +103,7 @@ def panel(ax, results: Path, arms, protocol: str, title: str) -> None:
                     fontsize=9, color=INK, fontweight="medium")
 
     ax.set_xticks(pos)
-    ax.set_xticklabels([label for _, label, _ in arms], fontsize=8.5,
-                       color=MUTED)
+    ax.set_xticklabels([arm[1] for arm in arms], fontsize=8.5, color=MUTED)
     ax.set_title(title, fontsize=10.5, color=INK, loc="left", pad=8)
     ax.set_ylim(0, 1.0)
     ax.set_yticks(np.arange(0, 1.01, 0.1))
@@ -102,26 +123,29 @@ def main() -> int:
     a = ap.parse_args()
     results = Path(a.results)
 
-    fig, axes = plt.subplots(2, 2, figsize=(13.6, 8.4),
-                             gridspec_kw=dict(width_ratios=[6, 3.2],
-                                              hspace=0.42, wspace=0.18))
+    fig, axes = plt.subplots(2, 3, figsize=(19.2, 8.8),
+                             gridspec_kw=dict(width_ratios=[7, 3.2, 3.2],
+                                              hspace=0.5, wspace=0.16))
     fig.patch.set_facecolor("white")
     for row, protocol in enumerate(("loo", "pairs")):
         panel(axes[row][0], results, VOLUME, protocol,
-              f"Volume registration - {protocol} (20 subjects)")
-        panel(axes[row][1], results, SURFACE, protocol,
-              f"Surface registration - {protocol} (19 subjects)")
+              f"Mindboggle-101, volume registration\n{protocol} (20 subjects)")
+        panel(axes[row][1], results, NMM, protocol,
+              f"Neuromorphometrics, volume\n{protocol} (35 subjects)")
+        panel(axes[row][2], results, SURFACE, protocol,
+              f"Mindboggle-101, surface registration\n{protocol} (19 subjects)")
         axes[row][0].set_ylabel("Dice", fontsize=9.5, color=MUTED)
 
-    fig.suptitle("Dice per region and comparison, Mindboggle-101, manual "
-                 "DKT31 labels", fontsize=12.5, color=INK, x=0.037,
-                 ha="left", y=0.975)
-    fig.text(0.037, 0.932,
-             "Box = interquartile range, whiskers 5th-95th percentile, white "
-             "line = median, white diamond = mean (the value reported in the "
-             "tables).",
+    fig.suptitle("Dice per region and comparison: Mindboggle-101 (manual "
+                 "DKT31 labels) and Neuromorphometrics (manual whole-brain "
+                 "labels)", fontsize=12.5, color=INK, x=0.031, ha="left",
+                 y=0.975)
+    fig.text(0.031, 0.932,
+             "Box = interquartile range, whiskers 5th-95th percentile, line = "
+             "median, white diamond = mean (the value reported in the tables); "
+             "hatched = T1Prep's --fmriprep setting.",
              fontsize=8.8, color=MUTED, ha="left")
-    fig.subplots_adjust(top=0.88, bottom=0.07, left=0.062, right=0.985)
+    fig.subplots_adjust(top=0.855, bottom=0.07, left=0.05, right=0.988)
     fig.savefig(a.out, dpi=200, facecolor="white")
     print(f"wrote {a.out}")
     return 0

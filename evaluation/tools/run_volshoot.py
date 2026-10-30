@@ -4,10 +4,10 @@
 The settings table of ``results/RESULTS.md``.  T1Prep registers its
 affine-registered GM and WM maps by geodesic shooting
 (``t1prep._shoot.shoot_register``, CAT-Surface's ``cat_surf.vol_shoot``) with
-one fixed setting; this tool repeats the shooting with others -- CAT12's own
-``regstr`` 0.5 and full regularisation, for instance -- on exactly the maps
-the pipeline registered, and composes each field into a ``y_`` the way
-T1Prep composes its own.
+its default setting, CAT12's own; this tool repeats the shooting with others
+-- ``--fmriprep``'s, every scheduled iteration with half the regularisation,
+for instance -- on exactly the maps the pipeline registered, and composes
+each field into a ``y_`` the way T1Prep composes its own.
 
 ``prepare``  T1Prep's segmentation for every subject, keeping the shooting's
              inputs: ``rp1``/``rp2`` on the 1.5 mm template grid, the affine
@@ -20,11 +20,11 @@ T1Prep composes its own.
 
     python evaluation/tools/run_volshoot.py prepare --mindboggle <mb>/data \\
         --work <work> --subject-file evaluation/data/subset20.txt
-    python evaluation/tools/run_volshoot.py shoot --work <work> --arm cat12 \\
-        --set regstr=0.5 --set reg_scale=1
+    python evaluation/tools/run_volshoot.py shoot --work <work> --arm fmriprep \\
+        --set regstr=1 --set reg_scale=0.5
     python evaluation/tools/eval_mindboggle.py project-volume \\
-        --mindboggle <mb>/data --t1prep <work>/cat12 --work <work>/eval \\
-        --out-space cat12 --subject-file evaluation/data/subset20.txt
+        --mindboggle <mb>/data --t1prep <work>/fmriprep --work <work>/eval \\
+        --out-space fmriprep --subject-file evaluation/data/subset20.txt
 """
 
 from __future__ import annotations
