@@ -806,7 +806,10 @@ def run_t1prep(
     amap:
         Use AMAP instead of DeepMRIPrep for segmentation.
     fmriprep:
-        Save fMRIPrep-compatible outputs (deformation fields, dseg, etc.).
+        Save fMRIPrep-compatible outputs (deformation fields, dseg, etc.),
+        registered with the setting for fMRIPrep: every scheduled
+        Gauss-Newton iteration and half of CAT12's regularisation, more
+        accurate for moving data and labels but not meant for VBM.
     fast:
         Fast mode: skip spherical registration, pial/white surfaces,
         modulated warped maps, and atlas labelling.

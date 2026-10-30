@@ -31,12 +31,18 @@ from ._atlas import resolve_template_file
 #: CAT12's shooting templates for MNI152NLin2009cAsym, coarse to fine.
 SHOOT_TEMPLATES = tuple(f"Template_{k}_GS" for k in range(5))
 
-#: The setting with the best label accuracy in T1Prep's evaluation: every
-#: scheduled Gauss-Newton iteration (CAT12 runs ``regstr`` 0.5, which moves on
-#: to the next resolution after about three) and half of CAT12's
-#: regularisation.  Spelled out rather than left to cat-surf's defaults, so
-#: that the registration stays the evaluated one.
-SHOOT_SETTINGS = {"regstr": 1.0, "reg_scale": 0.5}
+#: T1Prep's default, CAT12's own setting: ``regstr`` 0.5 (on to the next
+#: resolution after about three Gauss-Newton iterations) with CAT12's
+#: regularisation, the setting for VBM.  Spelled out rather than left to
+#: cat-surf's defaults, so that the registration stays the evaluated one.
+SHOOT_SETTINGS = {"regstr": 0.5, "reg_scale": 1.0}
+
+#: The setting ``--fmriprep`` runs: every scheduled iteration with half of
+#: CAT12's regularisation, the best label accuracy in T1Prep's evaluation
+#: (+0.028 Dice over the default on Mindboggle-101).  Not for VBM: its
+#: Jacobians vary more between subjects, which the modulated maps inherit
+#: (in 60 children and 60 adults the mean T for age fell by 12 % and 9 %).
+SHOOT_SETTINGS_FMRIPREP = {"regstr": 1.0, "reg_scale": 0.5}
 
 
 def shooting_templates():

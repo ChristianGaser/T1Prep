@@ -99,7 +99,7 @@ from .vessels import (
 from ._models import prepare_model_files
 from ._telemetry import init_crash_reporting
 from ._conv_chunk import chunked_conv3d
-from ._shoot import shoot_register
+from ._shoot import SHOOT_SETTINGS_FMRIPREP, shoot_register
 from .nogm import run_segment_nogm_conventional
 from .dura import remove_dura
 from ._device import (
@@ -366,14 +366,15 @@ class CustomPreprocess(Preprocess):
             )
         }
 
-    def run_warp_register(self, p0_large, p1_affine, p2_affine, wj_affine):
+    def run_warp_register(self, p0_large, p1_affine, p2_affine, wj_affine, **options):
         """Non-linear registration by geodesic shooting, not deepmriprep's network.
 
         Returns the keys deepmriprep's warp returned and T1Prep reads, in the
         same convention (see :func:`t1prep._shoot.shoot_register`).
         ``p0_large`` is not used: the shooting registers GM and WM only.
+        *options* replace the shooting's settings, as in ``shoot_register``.
         """
-        return shoot_register(p1_affine, p2_affine, wj_affine)
+        return shoot_register(p1_affine, p2_affine, wj_affine, **options)
 
     def run_atlas_register(
         self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
@@ -1560,7 +1561,12 @@ def save_results(
     if verbose:
         count = shell_progress(count, end_count,
             "Geodesic shooting            ")
-    output_reg = prep.run_warp_register(p0_large, p1_affine, p2_affine, wj_affine)
+    # fMRIPrep moves data and labels with the deformation and does not
+    # modulate with it: the setting with the better label accuracy
+    shoot_options = SHOOT_SETTINGS_FMRIPREP if opts.save_fmriprep else {}
+    output_reg = prep.run_warp_register(
+        p0_large, p1_affine, p2_affine, wj_affine, **shoot_options
+    )
     warp_yx = output_reg["warp_yx"]
     warp_xy = output_reg["warp_xy"]
 
@@ -1657,7 +1663,7 @@ def run_segment():
         save_skullstrip_only_outputs(brain, opts.use_bids, mri_dir, out_name, ext)
         return
 
-    # Step 2: Initial bias-correction that is benefitial for strong signal
+    # Step 2: Initial bias-correction that is beneficial for strong signal
     # inhomogeneities (i.e. 7T data).  The fit subsamples every 5th voxel and
     # median-filters with an even size, so it is run in RAS storage order as
     # well: otherwise the storage order of the scan changed the result.

@@ -1209,6 +1209,9 @@ ${BOLD}${GREEN}Save Options:${NC}
         Save BIDS dataset_description.json and JSON sidecars, without which
           fMRIPrep cannot see any of the above
         Save spatially registered data with 2mm voxel size
+        Register with every scheduled iteration and half of CAT12's
+          regularisation: more accurate for moving data and labels, but
+          not meant for VBM (no modulated maps are saved)
       Use t1prep-bbreg afterwards to replace fMRIPrep's bbregister step.
       
   --no-track

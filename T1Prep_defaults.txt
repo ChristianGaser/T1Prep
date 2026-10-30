@@ -16,7 +16,7 @@ retry=0               # Retry failed processing once (1=on, 0=off)
 # ------------------------------------------------------------------------------
 nii_ext='nii'         # Define extension (nii.gz or nii)
 save_h5=0             # Additionally save deformations as ANTs/ITK .h5
-fmriprep=0            # Additionally save fMRIPrep-compatible results
+fmriprep=0            # Additionally save fMRIPrep-compatible results (registered with the fMRIPrep setting)
 estimate_surf=1       # Run surface and thickness estimation
 estimate_seg=1        # Run segmentation processing
 estimate_spherereg=1  # Run spherical surface registration
