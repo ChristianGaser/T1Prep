@@ -95,7 +95,7 @@ from ._telemetry import init_crash_reporting
 from ._shoot import SHOOT_SETTINGS_FMRIPREP
 from .nogm import run_segment_nogm_conventional
 from .dura import remove_dura
-from ._device import resolve_device
+from ._device import interpolate, resolve_device
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
@@ -593,7 +593,7 @@ def _output_names(opts: OutputOptions) -> _OutputNames:
 
 def _to_template_space(img: nib.Nifti1Image, warp_template: nib.Nifti1Image):
     """Downsample a working-grid map by 3 onto the warp template grid."""
-    data = F.interpolate(
+    data = interpolate(
         nifti_to_tensor(img)[None, None], scale_factor=1 / 3, **INTERP_KWARGS
     )[0, 0]
     return reoriented_nifti(data, warp_template.affine, warp_template.header)
@@ -1242,7 +1242,17 @@ def setup_determinism(seed: int) -> None:
     read at its first call), and the backward of ``grid_sample`` and
     ``interpolate`` -- torchreg's affine registration -- has no deterministic
     CUDA kernel and raises.  With ``warn_only`` every deterministic kernel is
-    still chosen and those few ops warn instead.  CPU and MPS are unaffected.
+    still chosen and those few ops warn instead.
+
+    On the CPU, and on MPS with the registrations on the CPU (the default),
+    the setting changes no output: IXI199 runs with and without it are
+    byte-identical (torch 2.15).  It does cost time in two places, both
+    undone here.  Linear interpolation on an accelerator goes through a slow
+    decomposition, which :func:`_device.interpolate` avoids; only torchreg's
+    own calls keep it, on MPS when ``T1PREP_DEVICE=mps`` asks for that.  And
+    every ``torch.empty`` is first filled with NaN, which made the CPU
+    segmentation ~15 s slower.  T1Prep reads no uninitialized memory -- the
+    NaN would have reached the outputs -- so that fill is switched off.
     """
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     random.seed(seed)
@@ -1250,6 +1260,7 @@ def setup_determinism(seed: int) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.utils.deterministic.fill_uninitialized_memory = False
     torch.backends.cudnn.benchmark = False
 
 

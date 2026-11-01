@@ -14,7 +14,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-from ._device import stage_device
+from ._device import interpolate, stage_device
 from .utils import TEMPLATE_PATH_T1PREP, nifti_to_tensor
 
 
@@ -187,7 +187,7 @@ def resample_to(img, target_affine, target_shape, device="cpu", channel=None,
     )
     mode = "nearest" if nearest else "trilinear"
     kwargs = {} if nearest else {"align_corners": False}
-    out = F.interpolate(
+    out = interpolate(
         out, size=tuple(int(v) for v in target_shape), mode=mode, **kwargs
     )
     return out[0, 0].cpu().numpy()
@@ -254,7 +254,7 @@ def get_atlas(
         warp_yx = nib.as_closest_canonical(warp_yx)
         yx = nifti_to_tensor(warp_yx)[None].to(device)
         shape = tuple(shape_from_to(atlas, warp_yx))
-        scaled_yx = F.interpolate(
+        scaled_yx = interpolate(
             yx.permute(0, 4, 1, 2, 3), shape, mode="trilinear", align_corners=False
         )
         atlas = warp_atlas(atlas, scaled_yx.permute(0, 2, 3, 4, 1), stage_device())
@@ -362,7 +362,7 @@ def roi_tissue_volumes(atlas, p1, p2, p3, roi_ids, chunk=1 << 23) -> np.ndarray:
     id is looked up; an id without voxels gets zeros.  Sums are accumulated
     in float64, chunk by chunk.
     """
-    labels = F.interpolate(atlas[None, None].float(), tuple(p1.shape), mode="nearest")
+    labels = interpolate(atlas[None, None].float(), tuple(p1.shape), mode="nearest")
     labels = labels.flatten().to(torch.int32).cpu().numpy()
     probs = [p.flatten().float().cpu().numpy() for p in (p1, p2, p3)]
     roi_ids = np.asarray(roi_ids, dtype=np.int64)
