@@ -183,8 +183,7 @@ class ProgressBar:
                 cur = 1
                 Path(count_file).write_text(str(cur))
             subprocess.run(
-                [bar_script, "1", "", str(cur), str(self.end_count),
-                 f"{label:<31}", "40"],
+                [bar_script, "1", "", str(cur), str(self.end_count), label, "40"],
                 check=False,
             )
         else:
@@ -471,7 +470,13 @@ def progress_bar(elapsed, total, name, *, width=40, failed=False):
             s = int(remaining_time % 60)
             eta = f"ETA {h:02d}:{m:02d}:{s:02d}"
 
-    line = f"[{color}{bar}{reset}] {percent:3d}% {name.rstrip()} {eta}"
+    label = name.rstrip()
+    if is_tty:
+        # Padded as in progress_bar_multi.sh and cleared to the end of the
+        # line, so it covers the previous step's line.
+        line = f"[{color}{bar}{reset}] {percent:3d}% {label:<31} {eta:<12}\033[K"
+    else:
+        line = f"[{bar}] {percent:3d}% {label} {eta}"
     print(line, end="\r" if is_tty else "\n", flush=True)
 
     if elapsed >= total:

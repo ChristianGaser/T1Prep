@@ -36,10 +36,16 @@ if [ -t 1 ] && [ -n "$TERM" ] && command -v tput >/dev/null 2>&1; then
   NC=$(tput sgr0) # Reset all attributes
   DEFAULT_COLOR=$(tput setaf 2)   # green
   FAIL_COLOR=$(tput setaf 1)      # red
+  CLEAR_EOL=$(tput el)            # clear to the end of the line
   move_up() { tput cuu "$1"; }
 else
   move_up() { :; }
 fi
+
+# Labels are padded to the longest one ("Estimate pial and white surface") and
+# the ETA to its 12 characters, so a step's line covers the previous one and
+# the ETA keeps its column.
+LABEL_WIDTH=31
 
 REFRESH_INTERVAL=1.0
 JOB_ID="jobrun_$(date +%s%N)"
@@ -97,7 +103,8 @@ single_job_bar() {
   bar+=$(printf "%${empty}s")
 
   if [ -t 1 ]; then
-    printf "|${COLOR}%-${width}s${NC}| %3d%% %s %s\r" "$bar" "$percent" "$label" "$eta"
+    printf "|${COLOR}%-${width}s${NC}| %3d%% %-${LABEL_WIDTH}s %-12s${CLEAR_EOL}\r" \
+      "$bar" "$percent" "$label" "$eta"
     if [ "$current" -eq "$total" ]; then
       rm -f "$state_file"
       echo ""  # newline at end
