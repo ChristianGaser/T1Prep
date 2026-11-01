@@ -101,10 +101,12 @@
     // force: one more fetch after the job ended, or for a page opened then
     async function refreshLog(force = false) {
       if (isFinished && !force) return;
+      const wasFinished = isFinished;
       try {
         const response = await fetch(window.location.href, { headers: { "X-Requested-With": "fetch" } });
         if (!response.ok) return;
         const text = await response.text();
+        if (!wasFinished && isFinished) return;
         const parser = new DOMParser();
         const doc = parser.parseFromString(text, "text/html");
         const updated = doc.getElementById("log-output");
@@ -137,10 +139,12 @@
 
     async function refreshProgress(force = false) {
       if (isFinished && !force) return;
+      const wasFinished = isFinished;
       try {
         const response = await fetch(`${window.location.pathname}/progress`);
         if (!response.ok) return;
         const data = await response.json();
+        if (!wasFinished && isFinished) return;
         if (!data.available) {
           return;
         }
