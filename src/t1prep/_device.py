@@ -16,14 +16,20 @@ One op T1Prep exercises still has no MPS kernel as of torch 2.13,
 ``_adaptive_avg_pool3d`` (``interpolate(mode="area")``); it falls back to the
 CPU automatically because ``segment.py`` sets ``PYTORCH_ENABLE_MPS_FALLBACK=1``
 on macOS.
+
+The deterministic algorithms ``segment.py`` enables slow down one op on an
+accelerator for nothing T1Prep uses, linear interpolation;
+:func:`interpolate` gives it its own kernel back.
 """
 
 import os
 from typing import Tuple
 
 import torch
+import torch.nn.functional as F
 
 __all__ = [
+    "interpolate",
     "mps_routing_requested",
     "release_cache",
     "resolve_device",
@@ -101,3 +107,32 @@ def release_cache(device: torch.device) -> None:
         torch.cuda.empty_cache()
     elif device.type == "mps" and hasattr(torch, "mps"):
         torch.mps.empty_cache()
+
+
+def interpolate(input: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+    """``torch.nn.functional.interpolate``, with its kernel on an accelerator.
+
+    Under deterministic algorithms torch computes (bi/tri)linear and bicubic
+    interpolation on CUDA and MPS with a Python decomposition, so that its
+    *backward* is deterministic.  The forward kernels are deterministic
+    already; the decomposition only costs.  Measured on an M2 (torch 2.15) it
+    took 0.7 s instead of 14 ms to upsample onto the working grid, and an
+    IXI199 run 6 s longer and 3 GB higher in peak memory.  A call that records
+    no gradient therefore runs with deterministic algorithms lifted.  On the
+    CPU, or when a gradient is recorded, this is ``F.interpolate`` unchanged.
+
+    T1Prep calls this instead of ``F.interpolate`` (``tests/test_device.py``
+    checks that).
+    """
+    if (
+        input.is_cpu
+        or not torch.are_deterministic_algorithms_enabled()
+        or (input.requires_grad and torch.is_grad_enabled())
+    ):
+        return F.interpolate(input, *args, **kwargs)
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    torch.use_deterministic_algorithms(False)
+    try:
+        return F.interpolate(input, *args, **kwargs)
+    finally:
+        torch.use_deterministic_algorithms(True, warn_only=warn_only)

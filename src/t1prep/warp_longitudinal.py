@@ -71,6 +71,7 @@ import torch
 import torch.nn.functional as F
 from nibabel.processing import resample_from_to
 
+from ._device import interpolate
 from .realign_longitudinal import _split_nifti_name
 
 __all__ = [
@@ -324,7 +325,7 @@ def _resize(volume: torch.Tensor, shape: Sequence[int]) -> torch.Tensor:
     """Trilinearly resample ``(N, C, *)`` onto ``shape``."""
     if tuple(volume.shape[2:]) == tuple(shape):
         return volume
-    return F.interpolate(volume, size=tuple(int(s) for s in shape), mode="trilinear", align_corners=True)
+    return interpolate(volume, size=tuple(int(s) for s in shape), mode="trilinear", align_corners=True)
 
 
 # --------------------------------------------------------------------------- #

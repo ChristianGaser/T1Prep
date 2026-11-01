@@ -180,6 +180,9 @@ and keeps any old single-dash spelling only as a hidden alias.
   via `_partition._octagon_dilation`)
 - B-spline resampling: `utils.bspline_grid_sample` instead of `spline_resize.grid_sample`
   (libCAT `cat_surf.vol_bspline_sample` for a CPU float32 volume: 13-18x, more accurate)
+- Resizing: `_device.interpolate` instead of `F.interpolate` -- under the deterministic
+  algorithms `segment.py` enables, torch runs linear modes on CUDA/MPS through a slow
+  decomposition (50x on MPS); `tests/test_device.py` fails on a direct call
 
 ## Commit Conventions
 

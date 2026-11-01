@@ -40,7 +40,6 @@ import fill_voids
 import nibabel as nib
 import numpy as np
 import torch
-import torch.nn.functional as F
 from scipy.ndimage import (
     binary_dilation,
     binary_opening,
@@ -48,6 +47,8 @@ from scipy.ndimage import (
     generate_binary_structure,
     label as _connected_components,
 )
+
+from ._device import interpolate
 
 __all__ = ["dura_mask", "remove_dura"]
 
@@ -114,7 +115,7 @@ def _upsample(vol, factors, shape):
     """Trilinear inverse of :func:`_block_mean`, cropped to *shape*."""
     size = [n * f for n, f in zip(vol.shape, factors)]
     tensor = torch.from_numpy(np.ascontiguousarray(vol, dtype=np.float32))
-    up = F.interpolate(
+    up = interpolate(
         tensor[None, None], size=size, mode="trilinear", align_corners=False
     )[0, 0].numpy()
     return up[: shape[0], : shape[1], : shape[2]]

@@ -87,7 +87,6 @@ from __future__ import annotations
 import nibabel as nib
 import numpy as np
 import torch
-import torch.nn.functional as F
 from scipy.ndimage import (
     gaussian_filter,
     generate_binary_structure,
@@ -97,6 +96,7 @@ from scipy.ndimage import (
 )
 
 from .utils import box_close, box_dilate, box_erode
+from ._device import interpolate
 from ._atlas import (
     get_regions_mask,
     resample_to,
@@ -317,7 +317,7 @@ def _as_tensor(vol, device):
 def _resize(tensor, shape, mode="trilinear"):
     """Field-of-view preserving resize of a 5-D tensor."""
     kwargs = {} if mode == "nearest" else {"align_corners": False}
-    return F.interpolate(
+    return interpolate(
         tensor, size=tuple(int(s) for s in shape), mode=mode, **kwargs
     )
 

@@ -33,7 +33,7 @@ from .._atlas import (
     shape_from_to,
     warp_atlas,
 )
-from .._device import release_cache, stage_device
+from .._device import interpolate, release_cache, stage_device
 from .._shoot import shoot_register
 from ..utils import bspline_grid_sample, nifti_to_tensor, reoriented_nifti, smart_round
 from .segmentation import BrainSegmentation
@@ -255,7 +255,7 @@ class Preprocess:
             header = atlas.header
             shape = tuple(shape_from_to(atlas, warp_yx))
             if shape not in warps:
-                scaled = F.interpolate(
+                scaled = interpolate(
                     yx.permute(0, 4, 1, 2, 3),
                     shape,
                     mode="trilinear",
