@@ -24,6 +24,8 @@ import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
+from urllib.request import urlretrieve
 
 __all__ = [
     "MODEL_DIR",
@@ -262,7 +264,24 @@ def _download_with_progress(url: str, dest: Path) -> None:
                 f"\r  [{bar}] {pct:3d}% ({mb_done}/{mb_total} MB)", end="", flush=True
             )
 
-    with requests.get(url, stream=True, timeout=60) as response:
+    if urlsplit(url).scheme.lower() not in ("http", "https"):
+        urlretrieve(
+            url,
+            dest,
+            reporthook=lambda blocks, block_size, total: _report(
+                blocks * block_size, total
+            ),
+        )
+        print()
+        return
+
+    verify = (
+        _os.environ.get("REQUESTS_CA_BUNDLE")
+        or _os.environ.get("CURL_CA_BUNDLE")
+        or _os.environ.get("SSL_CERT_FILE")
+        or True
+    )
+    with requests.get(url, stream=True, timeout=60, verify=verify) as response:
         response.raise_for_status()
         total_size = int(response.headers.get("Content-Length", 0))
         downloaded = 0

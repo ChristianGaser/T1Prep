@@ -22,6 +22,7 @@ accelerator for nothing T1Prep uses, linear interpolation;
 :func:`interpolate` gives it its own kernel back.
 """
 
+import math
 import os
 from typing import Tuple
 
@@ -112,14 +113,10 @@ def release_cache(device: torch.device) -> None:
 def interpolate(input: torch.Tensor, *args, **kwargs) -> torch.Tensor:
     """``torch.nn.functional.interpolate``, with its kernel on an accelerator.
 
-    Under deterministic algorithms torch computes (bi/tri)linear and bicubic
-    interpolation on CUDA and MPS with a Python decomposition, so that its
-    *backward* is deterministic.  The forward kernels are deterministic
-    already; the decomposition only costs.  Measured on an M2 (torch 2.15) it
-    took 0.7 s instead of 14 ms to upsample onto the working grid, and an
-    IXI199 run 6 s longer and 3 GB higher in peak memory.  A call that records
-    no gradient therefore runs with deterministic algorithms lifted.  On the
-    CPU, or when a gradient is recorded, this is ``F.interpolate`` unchanged.
+    For 5D trilinear interpolation with deterministic algorithms enabled and no
+    gradient, dispatch directly to the native operator. On the CPU, when a
+    gradient is recorded, or for other interpolation modes, this is
+    ``F.interpolate`` unchanged.
 
     T1Prep calls this instead of ``F.interpolate`` (``tests/test_device.py``
     checks that).
@@ -128,11 +125,53 @@ def interpolate(input: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         input.is_cpu
         or not torch.are_deterministic_algorithms_enabled()
         or (input.requires_grad and torch.is_grad_enabled())
+        or input.ndim != 5
+        or args
+        or set(kwargs)
+        - {
+            "size",
+            "scale_factor",
+            "mode",
+            "align_corners",
+            "recompute_scale_factor",
+            "antialias",
+        }
+        or kwargs.get("mode", "nearest") != "trilinear"
+        or kwargs.get("antialias", False)
     ):
         return F.interpolate(input, *args, **kwargs)
-    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
-    torch.use_deterministic_algorithms(False)
-    try:
+
+    size = kwargs.get("size")
+    scale_factor = kwargs.get("scale_factor")
+    if (size is None) == (scale_factor is None):
         return F.interpolate(input, *args, **kwargs)
-    finally:
-        torch.use_deterministic_algorithms(True, warn_only=warn_only)
+    if size is not None and kwargs.get("recompute_scale_factor") is not None:
+        return F.interpolate(input, *args, **kwargs)
+
+    if size is not None:
+        output_size = (size,) * 3 if isinstance(size, int) else tuple(size)
+        if len(output_size) != 3:
+            return F.interpolate(input, *args, **kwargs)
+        scales = (None, None, None)
+    else:
+        factors = (
+            (scale_factor,) * 3
+            if isinstance(scale_factor, (int, float))
+            else tuple(scale_factor)
+        )
+        if len(factors) != 3:
+            return F.interpolate(input, *args, **kwargs)
+        output_size = tuple(
+            math.floor(input.shape[i + 2] * factors[i]) for i in range(3)
+        )
+        if kwargs.get("recompute_scale_factor") is False:
+            scales = factors
+        else:
+            scales = (None, None, None)
+
+    return torch.ops.aten.upsample_trilinear3d.default(
+        input,
+        output_size,
+        kwargs.get("align_corners") is True,
+        *scales,
+    )

@@ -317,5 +317,61 @@ class TestModelFiles(unittest.TestCase):
         self.assertEqual(made, ["brain_extraction_model.safetensors"])
 
 
+class TestModelDownloads(unittest.TestCase):
+    def setUp(self):
+        self.dir = _tmpdir(self)
+
+    def test_non_http_url_uses_urllib(self):
+        source = self.dir / "models.zip"
+        dest = self.dir / "download.zip"
+        source.write_bytes(b"model archive")
+
+        models._download_with_progress(source.as_uri(), dest)
+
+        self.assertEqual(dest.read_bytes(), b"model archive")
+
+    def test_ssl_cert_file_is_a_fallback_ca_bundle(self):
+        response = mock.MagicMock()
+        response.headers = {"Content-Length": "3"}
+        response.iter_content.return_value = [b"zip"]
+        response.__enter__.return_value = response
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"SSL_CERT_FILE": "/custom/ca.pem"},
+                clear=True,
+            ),
+            mock.patch("requests.get", return_value=response) as get,
+        ):
+            models._download_with_progress(
+                "https://example.test/models.zip", self.dir / "m.zip"
+            )
+
+        self.assertEqual(get.call_args.kwargs["verify"], "/custom/ca.pem")
+
+    def test_requests_ca_override_takes_precedence(self):
+        for variable in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+            response = mock.MagicMock()
+            response.headers = {"Content-Length": "0"}
+            response.iter_content.return_value = []
+            response.__enter__.return_value = response
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        variable: "/requests/ca.pem",
+                        "SSL_CERT_FILE": "/openssl/ca.pem",
+                    },
+                    clear=True,
+                ),
+                mock.patch("requests.get", return_value=response) as get,
+            ):
+                models._download_with_progress(
+                    "https://example.test/models.zip", self.dir / "m.zip"
+                )
+
+            self.assertEqual(get.call_args.kwargs["verify"], "/requests/ca.pem")
+
+
 if __name__ == "__main__":
     unittest.main()
