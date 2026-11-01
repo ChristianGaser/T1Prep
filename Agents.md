@@ -287,7 +287,8 @@ When adding atlas files to `src/t1prep/data/`:
 (skull-strip) and deepmriprep's Unet3d (one coarse and 18 patch segmentation
 models). Each architecture is written once, against the operation table of a
 backend; the weights are safetensors files, made once from deepmriprep's
-TorchScript archives (`models.prepare_model_files`). `T1PREP_NN_BACKEND`
+TorchScript archives (`models.prepare_model_files`) and kept in the user
+cache, in a folder named after `models.MODEL_RELEASE`. `T1PREP_NN_BACKEND`
 (`torch`, default, or `tinygrad`) selects the backend; the device follows
 `T1PREP_DEVICE`. The package docstring (`nn/__init__.py`) is the map.
 
@@ -307,6 +308,12 @@ stages free of framework details.
 - **Retrained model**: export the `state_dict` with
   `nn.convert.save_state_dict` (or `python -m t1prep.nn.convert model.pth`),
   not with `torch.jit.trace`, and give the file its name from `nn.models.NETWORKS`.
+  Ship new weights as the asset of a new GitHub release, set
+  `nn.models.MODEL_RELEASE` to its tag (installs then fetch them into a
+  folder of their own instead of keeping the old weights, and stop
+  converting deepmriprep's archives), and replace the archives in
+  `src/t1prep/data/models`, which a source checkout converts before any
+  download.
   New weights change every output: re-pin the phantom (`make phantom-pin`).
 - **Invariant**: the torch backend must stay bit-identical to the archives
   on CPU and MPS (`tests/test_nn.py::TestAgainstTheArchives`), and the stages

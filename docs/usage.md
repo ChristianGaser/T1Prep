@@ -212,7 +212,8 @@ T1PREP_NN_BACKEND=tinygrad T1Prep --out-dir out sub-01_T1w.nii.gz
 
 A retrained network is exported with
 `python -m t1prep.nn.convert model.pth --out-dir DIR` (a saved `state_dict`
-or a TorchScript archive) and placed in the model folder under its name in
+or a TorchScript archive) and placed in the model folder
+(`t1prep-download-models` prints it) under its name in
 `t1prep.nn.models.NETWORKS`.
 
 ## Output Folder Structure and Naming Conventions
