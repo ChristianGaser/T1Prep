@@ -96,19 +96,19 @@ class TestInterpolate(unittest.TestCase):
         )
         torch.use_deterministic_algorithms(True, warn_only=True)
 
-    def _deterministic_inside(self, x, **kwargs):
-        """Whether deterministic algorithms were on when F.interpolate ran."""
+    def _functional_interpolate_called(self, x, **kwargs):
+        """Whether the wrapper delegated to F.interpolate."""
         from unittest import mock
 
-        seen, real = [], torch.nn.functional.interpolate
+        calls, real = [], torch.nn.functional.interpolate
 
         def spy(*args, **kw):
-            seen.append(torch.are_deterministic_algorithms_enabled())
+            calls.append(True)
             return real(*args, **kw)
 
         with mock.patch.object(torch.nn.functional, "interpolate", spy):
             _device.interpolate(x, **{**self.SIZE, **kwargs})
-        return seen[0]
+        return bool(calls)
 
     def _state(self):
         return (
@@ -116,30 +116,45 @@ class TestInterpolate(unittest.TestCase):
             torch.is_deterministic_algorithms_warn_only_enabled(),
         )
 
-    def test_an_accelerator_call_lifts_the_setting_and_restores_it(self):
+    def test_accelerator_uses_native_operator_without_changing_setting(self):
+        from unittest import mock
+
         x = torch.empty(1, 1, 2, 2, 2, device="meta")
         for warn_only in (True, False):
             torch.use_deterministic_algorithms(True, warn_only=warn_only)
-            self.assertFalse(self._deterministic_inside(x))
+            with mock.patch.object(
+                torch.nn.functional, "interpolate", side_effect=AssertionError
+            ):
+                result = _device.interpolate(
+                    x, size=(4, 4, 4), mode="trilinear", align_corners=False
+                )
+            self.assertEqual(result.shape, (1, 1, 4, 4, 4))
             self.assertEqual(self._state(), (True, warn_only))
 
-    def test_the_setting_is_restored_when_interpolate_raises(self):
+    def test_scale_factor_uses_native_operator(self):
+        x = torch.empty(1, 1, 2, 3, 4, device="meta")
+        result = _device.interpolate(x, scale_factor=2, mode="trilinear")
+        self.assertEqual(result.shape, (1, 1, 4, 6, 8))
+
+    def test_fallback_errors_do_not_change_the_setting(self):
         x = torch.empty(1, 1, 2, 2, 2, device="meta")
         with self.assertRaises(Exception):
             _device.interpolate(x, size=(4, 4, 4), mode="no-such-mode")
         self.assertEqual(self._state(), (True, True))
 
     def test_cpu_and_gradient_calls_are_left_alone(self):
-        self.assertTrue(self._deterministic_inside(torch.rand(1, 1, 2, 2, 2)))
+        self.assertTrue(
+            self._functional_interpolate_called(torch.rand(1, 1, 2, 2, 2))
+        )
         x = torch.empty(1, 1, 2, 2, 2, device="meta", requires_grad=True)
-        self.assertTrue(self._deterministic_inside(x))
-        with torch.no_grad():
-            self.assertFalse(self._deterministic_inside(x))
+        self.assertTrue(self._functional_interpolate_called(x))
 
     def test_without_deterministic_algorithms_nothing_changes(self):
         torch.use_deterministic_algorithms(False)
-        self.assertFalse(
-            self._deterministic_inside(torch.empty(1, 1, 2, 2, 2, device="meta"))
+        self.assertTrue(
+            self._functional_interpolate_called(
+                torch.empty(1, 1, 2, 2, 2, device="meta")
+            )
         )
         self.assertFalse(torch.are_deterministic_algorithms_enabled())
 
