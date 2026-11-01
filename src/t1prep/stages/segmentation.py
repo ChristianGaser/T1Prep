@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from torchreg.utils import INTERP_KWARGS
 
 from .._conv_chunk import chunked_conv3d
-from .._device import resolve_device
+from .._device import interpolate, resolve_device
 from .._intensity import scale_intensity
 from ..nn.backends import backend_name
 from ..nn.models import load_network
@@ -150,9 +150,9 @@ class BrainSegmentation:
     def coarse(self, x, scale_factor=1.5):
         """The coarse model's ``p0``, computed at 1/*scale_factor* resolution and resized back."""
         p0 = self.coarse_model(
-            F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS)
+            interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS)
         )
-        return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
+        return interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
 
     def refine(self, x, p0):
         """``p0`` refined patch by patch from the image and the coarse ``p0``."""

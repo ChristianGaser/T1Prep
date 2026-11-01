@@ -20,7 +20,6 @@ import os as _os
 import shutil
 import sys
 import tempfile
-import urllib.request
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -226,17 +225,23 @@ def _convert_missing(verbose: bool) -> None:
 
 
 def _download_with_progress(url: str, dest: Path) -> None:
-    """Download *url* to *dest*, printing a simple progress indicator."""
+    """Download *url* to *dest*, printing a simple progress indicator.
 
-    def _reporthook(count: int, block_size: int, total_size: int) -> None:
+    Uses requests, which verifies against certifi's CA bundle: python.org's
+    macOS Python ships an OpenSSL without one until its "Install
+    Certificates.command" has run, so urllib fails there with
+    CERTIFICATE_VERIFY_FAILED.
+    """
+    import requests
+
+    def _report(downloaded: int, total_size: int) -> None:
         if total_size <= 0:
             print(
-                f"\r  Downloaded {count * block_size // 1_048_576} MB ...",
+                f"\r  Downloaded {downloaded // 1_048_576} MB ...",
                 end="",
                 flush=True,
             )
         else:
-            downloaded = count * block_size
             pct = min(100, int(100 * downloaded / total_size))
             bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
             mb_done = downloaded // 1_048_576
@@ -245,7 +250,15 @@ def _download_with_progress(url: str, dest: Path) -> None:
                 f"\r  [{bar}] {pct:3d}% ({mb_done}/{mb_total} MB)", end="", flush=True
             )
 
-    urllib.request.urlretrieve(url, str(dest), reporthook=_reporthook)
+    with requests.get(url, stream=True, timeout=60) as response:
+        response.raise_for_status()
+        total_size = int(response.headers.get("Content-Length", 0))
+        downloaded = 0
+        with open(dest, "wb") as out:
+            for chunk in response.iter_content(chunk_size=1_048_576):
+                out.write(chunk)
+                downloaded += len(chunk)
+                _report(downloaded, total_size)
     print()  # newline after progress bar
 
 

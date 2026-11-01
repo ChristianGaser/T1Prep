@@ -17,10 +17,9 @@ import fill_voids
 import nibabel as nib
 import numpy as np
 import torch
-import torch.nn.functional as F
 from scipy import ndimage
 
-from .._device import resolve_device
+from .._device import interpolate, resolve_device
 from ..nn.backends import backend_name
 from ..nn.models import load_network
 from ..utils import reoriented_nifti
@@ -122,14 +121,14 @@ class BrainExtraction:
         """
         x = torch.nan_to_num(torch.from_numpy(x).to(self.device))
         probability = torch.zeros_like(x)
-        x_small = F.interpolate(x[None, None], small_shape, mode="nearest-exact")[0, 0]
+        x_small = interpolate(x[None, None], small_shape, mode="nearest-exact")[0, 0]
         low, high = x_small.quantile(0.005), x_small.quantile(0.995)
         head = self.bbox_model(normalize(x_small, low, high)[None, None])[0, 1]
         head = keep_largest_connected_component((head > 0.5).float().cpu().numpy())
         bbox = _bounding_box(torch.from_numpy(head).to(self.device), x.shape, margin)
-        x_box = F.interpolate(x[bbox][None, None], shape, mode="nearest-exact")[0, 0]
+        x_box = interpolate(x[bbox][None, None], shape, mode="nearest-exact")[0, 0]
         brain = self.model(normalize(x_box, low, high)[None, None])[0, 1]
-        probability[bbox] = F.interpolate(
+        probability[bbox] = interpolate(
             brain[None, None], probability[bbox].shape, mode="nearest-exact"
         )[0, 0]
         return probability.cpu().numpy(), bbox
