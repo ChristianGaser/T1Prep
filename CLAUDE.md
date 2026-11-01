@@ -82,11 +82,6 @@ make phantom-check PHANTOM_DIR=DIR
 make phantom-pin                 # re-pin after an intended change (two devices, ~30 min)
 make phantom-wmh                 # WMH over the 14 simulations in evaluation/data/phantom (~1 h)
 python evaluation/tools/fit_wmh_calibration.py fit --work DIR  # refit WMH_CALIBRATION (after dump)
-
-# Linting / formatting
-black src scripts
-flake8 src scripts       # or: ruff check src scripts
-shellcheck scripts/*.sh
 ```
 
 ## Environment
@@ -169,10 +164,10 @@ and keeps any old single-dash spelling only as a hidden alias.
 
 ## Coding Style
 
-- Python 3.9–3.14, PEP 8, 4-space indentation
 - Docstrings for all public functions and classes
 - Format with `black`, lint with `flake8`/`ruff`, check shell scripts with `shellcheck`
-- For compute-heavy voxel-wise operations consider PyTorch or Numba; optimize only after measuring
+- For compute-heavy voxel-wise operations consider PyTorch or libCAT (`cat_surf`; numba was
+  evaluated and rejected); optimize only after measuring
 - Morphology on the working grid: `utils.box_dilate/box_erode/box_close/box_open` instead
   of `binary_dilation/erosion/closing/opening` with `generate_binary_structure(3, 3)`
   (libCAT `cat_surf.vol_box_morph`, cat-surf >= 1.0.32: ~25x, identical result).
@@ -193,15 +188,6 @@ Body wrapped at 80 chars. Reference issues when relevant.
 ```
 
 Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`
-
-## PR Checklist
-
-- [ ] `python -m compileall src` passes
-- [ ] `shellcheck scripts/*.sh` passes (shell changes)
-- [ ] `flake8 src` / `ruff check src` passes
-- [ ] `requirements.txt` ↔ `pyproject.toml` in sync
-- [ ] Documentation updated for user-facing changes (`docs/usage.md`, `docs/viewers.md`, `docs/tools.md`)
-- [ ] Docstrings added for new public functions
 
 ## Ignore Rules
 
