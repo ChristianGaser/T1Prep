@@ -46,16 +46,20 @@ class _Terminal(io.StringIO):
 
 
 class TestPythonBar(unittest.TestCase):
-    def test_a_step_covers_the_previous_line(self):
+    def test_a_step_covers_the_previous_line_at_80_columns(self):
         out = _Terminal()
         with (
             mock.patch("sys.stdout", out),
             mock.patch("time.time", side_effect=[100.0, 110.0, 120.0]),
+            mock.patch(
+                "shutil.get_terminal_size", return_value=os.terminal_size((80, 24))
+            ),
         ):
             for step, label in enumerate(LABELS, 1):
                 progress_bar(step, len(LABELS) + 1, label)
         frames = _frames(out.getvalue())
         self.assertEqual(len(frames), 3)
+        self.assertTrue(all(len(frame) <= 80 for frame in frames), frames)
         self.assertEqual(len({len(f) for f in frames}), 1, frames)
         self.assertEqual(frames[1].index("ETA"), frames[2].index("ETA"))
         self.assertEqual(out.getvalue().count("\x1b[K\r"), 3)
@@ -71,10 +75,15 @@ class TestPythonBar(unittest.TestCase):
     pty is None or shutil.which("bash") is None, "needs bash and a pseudo-terminal"
 )
 class TestShellBar(unittest.TestCase):
-    def test_a_step_covers_the_previous_line(self):
+    def test_a_step_covers_the_previous_line_at_80_columns(self):
         master, slave = pty.openpty()
         self.addCleanup(os.close, master)
         self.addCleanup(os.close, slave)
+        import fcntl
+        import struct
+        import termios
+
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
         env = dict(os.environ, TERM="xterm-256color")
         output = b""
         for step, label in enumerate(LABELS, 1):
@@ -94,6 +103,7 @@ class TestShellBar(unittest.TestCase):
                 output += os.read(master, 4096)
         frames = _frames(output.decode("utf-8"))
         self.assertEqual(len(frames), 3)
+        self.assertTrue(all(len(frame) <= 80 for frame in frames), frames)
         self.assertEqual(len({len(f) for f in frames}), 1, frames)
 
 

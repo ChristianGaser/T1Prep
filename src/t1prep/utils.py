@@ -443,6 +443,7 @@ def progress_bar(elapsed, total, name, *, width=40, failed=False):
     """
     import sys
     import time
+    import shutil
 
     if elapsed <= 1 or not hasattr(progress_bar, "_start_time"):
         progress_bar._start_time = time.time()
@@ -472,9 +473,21 @@ def progress_bar(elapsed, total, name, *, width=40, failed=False):
 
     label = name.rstrip()
     if is_tty:
+        terminal_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+        available = max(1, terminal_width - 9)
+        eta_width = min(12, max(0, available - 2))
+        label_width = min(31, max(0, available - 1 - eta_width))
+        bar_width = max(1, min(width, available - label_width - eta_width))
+        label = label[:label_width]
+        eta = eta[:eta_width]
+        bar = "█" * int(bar_width * elapsed / total)
+        bar += " " * (bar_width - len(bar))
         # Padded as in progress_bar_multi.sh and cleared to the end of the
         # line, so it covers the previous step's line.
-        line = f"[{color}{bar}{reset}] {percent:3d}% {label:<31} {eta:<12}\033[K"
+        line = (
+            f"[{color}{bar}{reset}] {percent:3d}% "
+            f"{label:<{label_width}} {eta:<{eta_width}}\033[K"
+        )
     else:
         line = f"[{bar}] {percent:3d}% {label} {eta}"
     print(line, end="\r" if is_tty else "\n", flush=True)
