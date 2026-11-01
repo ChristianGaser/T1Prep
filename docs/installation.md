@@ -56,9 +56,16 @@ see [Neural networks](usage.md#neural-networks) for when it pays off.
 Model weights are not bundled with the wheel. On the first run (or ahead of
 time with `t1prep-download-models`) T1Prep fetches the TorchScript archives of
 deepmriprep's networks from its GitHub release, unless an installed
-deepmriprep already has them, and converts them once into its own
-safetensors files: in that deepmriprep's model folder when it is writable,
-otherwise in your user cache (`T1PREP_MODEL_DIR` overrides both).
+deepmriprep or an earlier T1Prep already has them, and converts them once into
+its own safetensors files (about 120 MB, plus 120 MB for downloaded archives).
+They go to your user cache, into a folder named after the model release
+(currently `v0.2.0-beta`): `~/Library/Caches/t1prep/models/<release>` on
+macOS, `~/.cache/t1prep/models/<release>` on Linux (under `$XDG_CACHE_HOME`
+when set), `%LOCALAPPDATA%\t1prep\Cache\models\<release>` on Windows. Every
+environment shares that folder, and uninstalling T1Prep leaves it in place:
+delete it to free the space. Weights an earlier version kept in deepmriprep's
+model folder are no longer used. `T1PREP_MODEL_DIR` points T1Prep at a folder
+of your choice, e.g. a shared one on a cluster.
 
 Use it from Python:
 

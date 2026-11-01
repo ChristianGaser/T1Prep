@@ -1,11 +1,12 @@
 """The networks T1Prep ships: names, where their files live, how they are made.
 
 Each network is one safetensors file, ``<name>.safetensors`` in
-:data:`MODEL_DIR`.  The files are made once, from the TorchScript archives
-deepmriprep ships: those already on disk (deepmriprep's own ``data/models``,
-a source checkout's ``data/models``) or those in the GitHub release asset,
-which is downloaded when there are none.  The weights are not bundled in the
-PyPI wheel (they exceed the 100 MB limit).
+:data:`MODEL_DIR`, a folder of the user cache named after the model release.
+The files are made once, from the TorchScript archives deepmriprep ships:
+those already on disk (deepmriprep's own ``data/models``, the model folder of
+an earlier T1Prep, a source checkout's ``data/models``) or those in the GitHub
+release asset, which is downloaded when there are none.  The weights are not
+bundled in the PyPI wheel (they exceed the 100 MB limit).
 
 The preparation can be triggered:
 - automatically at first use (called by ``segment.py``)
@@ -23,10 +24,13 @@ import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
+from urllib.request import urlretrieve
 
 __all__ = [
     "MODEL_DIR",
     "MODEL_FILES",
+    "MODEL_RELEASE",
     "NETWORKS",
     "all_models_present",
     "download_models",
@@ -86,37 +90,49 @@ def _user_cache_dir() -> Path:
     return Path(xdg) / "t1prep" if xdg else Path.home() / ".cache" / "t1prep"
 
 
+#: The GitHub release whose archive holds the weights.  They are kept in a
+#: folder named after it, so the weights of another release never mix with
+#: them or pass for them.
+MODEL_RELEASE: str = "v0.2.0-beta"
+
+#: The release that holds deepmriprep's own networks, whose TorchScript
+#: archives an installed deepmriprep or an earlier T1Prep may have on disk.
+_DEEPMRIPREP_RELEASE = "v0.2.0-beta"
+
+
 def _resolve_model_dir() -> Path:
     """Decide where T1Prep stores its model weights.
 
-    Resolution order:
+    ``T1PREP_MODEL_DIR`` when set, otherwise a folder named after
+    :data:`MODEL_RELEASE` in the user cache:
+    ``~/Library/Caches/t1prep/models/<release>`` on macOS,
+    ``$XDG_CACHE_HOME/t1prep/models/<release>`` or
+    ``~/.cache/t1prep/models/<release>`` on Linux,
+    ``%LOCALAPPDATA%\\t1prep\\Cache\\models\\<release>`` on Windows.
 
-    1. ``T1PREP_MODEL_DIR`` environment variable (explicit override).
-    2. ``deepmriprep``'s ``data/models``, when it already contains the full
-       set of weights — existing installs keep working with no migration.
-    3. ``deepmriprep``'s ``data/models``, when writable, so the network files
-       sit next to the archives they are converted from.
-    4. Platform user cache (``~/Library/Caches/t1prep/models`` on macOS,
-       ``$XDG_CACHE_HOME/t1prep/models`` or ``~/.cache/t1prep/models`` on
-       Linux, ``%LOCALAPPDATA%\\t1prep\\Cache\\models`` on Windows).
+    Not a package folder: pip leaves files written there after the install
+    behind on upgrade and uninstall, a read-only install cannot take them,
+    and every environment would hold a copy of its own.
     """
     override = _os.environ.get("T1PREP_MODEL_DIR")
     if override:
         return Path(override)
+    return _user_cache_dir() / "models" / MODEL_RELEASE
 
-    if _DEEPMRIPREP_MODELS is not None:
-        if all((_DEEPMRIPREP_MODELS / f).is_file() for f in MODEL_FILES):
-            return _DEEPMRIPREP_MODELS
-        try:
-            _DEEPMRIPREP_MODELS.mkdir(parents=True, exist_ok=True)
-            probe = _DEEPMRIPREP_MODELS / ".t1prep_writable"
-            probe.touch()
-            probe.unlink()
-            return _DEEPMRIPREP_MODELS
-        except (OSError, PermissionError):
-            pass
 
-    return _user_cache_dir() / "models"
+def _legacy_model_dirs() -> list:
+    """Folders where this release's TorchScript archives may already be.
+
+    deepmriprep's ``data/models`` (its own archives, or an earlier T1Prep's
+    download into it) and the user cache folder an earlier T1Prep used.  Their
+    archives are converted instead of downloaded again -- but only for the
+    release they are from.
+    """
+    if MODEL_RELEASE != _DEEPMRIPREP_RELEASE:
+        return []
+    return [
+        d for d in (_DEEPMRIPREP_MODELS, _user_cache_dir() / "models") if d is not None
+    ]
 
 
 #: Directory where model weight files are stored at runtime.
@@ -126,7 +142,7 @@ MODEL_DIR: Path = _resolve_model_dir()
 #: Override with the ``T1PREP_MODEL_ZIP_URL`` environment variable if needed.
 _DEFAULT_MODEL_ZIP_URL = (
     "https://github.com/ChristianGaser/T1Prep/releases/download/"
-    "v0.2.0-beta/T1Prep_Models.zip"
+    f"{MODEL_RELEASE}/T1Prep_Models.zip"
 )
 MODEL_ZIP_URL: str = _os.environ.get("T1PREP_MODEL_ZIP_URL", _DEFAULT_MODEL_ZIP_URL)
 
@@ -195,14 +211,12 @@ def _convert_missing(verbose: bool) -> None:
     """Make every missing network file from what is already on disk.
 
     A ready network file in the source tree is copied; otherwise the first
-    TorchScript archive found -- in :data:`MODEL_DIR`, deepmriprep's
-    ``data/models`` or the source tree -- is converted.
+    TorchScript archive found -- in :data:`MODEL_DIR`, the folders of
+    :func:`_legacy_model_dirs` or the source tree -- is converted.
     """
     from .convert import convert_model
 
-    folders = [
-        d for d in (MODEL_DIR, _DEEPMRIPREP_MODELS, _DEV_MODEL_DIR) if d is not None
-    ]
+    folders = [MODEL_DIR, *_legacy_model_dirs(), _DEV_MODEL_DIR]
     made = 0
     for name in NETWORKS:
         dst = model_path(name)
@@ -250,7 +264,24 @@ def _download_with_progress(url: str, dest: Path) -> None:
                 f"\r  [{bar}] {pct:3d}% ({mb_done}/{mb_total} MB)", end="", flush=True
             )
 
-    with requests.get(url, stream=True, timeout=60) as response:
+    if urlsplit(url).scheme.lower() not in ("http", "https"):
+        urlretrieve(
+            url,
+            dest,
+            reporthook=lambda blocks, block_size, total: _report(
+                blocks * block_size, total
+            ),
+        )
+        print()
+        return
+
+    verify = (
+        _os.environ.get("REQUESTS_CA_BUNDLE")
+        or _os.environ.get("CURL_CA_BUNDLE")
+        or _os.environ.get("SSL_CERT_FILE")
+        or True
+    )
+    with requests.get(url, stream=True, timeout=60, verify=verify) as response:
         response.raise_for_status()
         total_size = int(response.headers.get("Content-Length", 0))
         downloaded = 0
@@ -316,8 +347,8 @@ def prepare_model_files(verbose: bool = True) -> None:
     Strategy (in order):
     1. If all files already exist in :data:`MODEL_DIR` → nothing to do.
     2. Convert the TorchScript archives already on disk (deepmriprep's
-       ``data/models``, a source checkout's ``data/models``) — no network
-       round-trip.
+       ``data/models``, an earlier T1Prep's model folder, a source
+       checkout's ``data/models``) — no network round-trip.
     3. Download the model archive from GitHub, extract it to
        :data:`MODEL_DIR` and convert what it brought.
 

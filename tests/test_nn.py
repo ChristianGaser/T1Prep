@@ -230,13 +230,48 @@ class TestConvert(unittest.TestCase):
         self.assertEqual(stop.exception.code, 1)
 
 
+class TestModelDir(unittest.TestCase):
+    def test_the_weights_live_in_a_cache_folder_named_after_the_release(self):
+        cache = _tmpdir(self)
+        with (
+            mock.patch.dict(os.environ),
+            mock.patch.object(models, "_user_cache_dir", return_value=cache),
+        ):
+            os.environ.pop("T1PREP_MODEL_DIR", None)
+            self.assertEqual(
+                models._resolve_model_dir(), cache / "models" / models.MODEL_RELEASE
+            )
+
+    def test_T1PREP_MODEL_DIR_is_taken_as_it_is(self):
+        with mock.patch.dict(os.environ, {"T1PREP_MODEL_DIR": "/opt/t1prep/models"}):
+            self.assertEqual(models._resolve_model_dir(), Path("/opt/t1prep/models"))
+
+    def test_the_release_names_the_download(self):
+        self.assertIn(f"/{models.MODEL_RELEASE}/", models._DEFAULT_MODEL_ZIP_URL)
+
+    def test_earlier_folders_serve_only_their_own_release(self):
+        cache, deepmriprep = _tmpdir(self), _tmpdir(self)
+        with (
+            mock.patch.object(models, "_user_cache_dir", return_value=cache),
+            mock.patch.object(models, "_DEEPMRIPREP_MODELS", deepmriprep),
+        ):
+            self.assertEqual(
+                models._legacy_model_dirs(), [deepmriprep, cache / "models"]
+            )
+            with mock.patch.object(models, "MODEL_RELEASE", "v9.9.9"):
+                self.assertEqual(models._legacy_model_dirs(), [])
+
+
 class TestModelFiles(unittest.TestCase):
     def setUp(self):
         self.dir = _tmpdir(self)
-        for name, value in (("MODEL_DIR", self.dir), ("_DEEPMRIPREP_MODELS", None)):
+        for name, value in (("MODEL_DIR", self.dir), ("_DEV_MODEL_DIR", _tmpdir(self))):
             patcher = mock.patch.object(models, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(models, "_legacy_model_dirs", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_one_file_per_network(self):
         self.assertEqual(len(models.NETWORKS), 21)
@@ -267,6 +302,75 @@ class TestModelFiles(unittest.TestCase):
             nn.Network(models.model_path("segmentation_model")).architecture.name,
             "unet3d",
         )
+
+    @unittest.skipIf(
+        ARCHIVE_DIR is None, "deepmriprep's TorchScript archives not on disk"
+    )
+    def test_an_earlier_model_folder_is_converted_without_a_download(self):
+        earlier = _tmpdir(self)
+        (earlier / "brain_extraction_model.pt").symlink_to(
+            ARCHIVE_DIR / "brain_extraction_model.pt"
+        )
+        with mock.patch.object(models, "_legacy_model_dirs", return_value=[earlier]):
+            models._convert_missing(verbose=False)
+        made = sorted(p.name for p in self.dir.iterdir())
+        self.assertEqual(made, ["brain_extraction_model.safetensors"])
+
+
+class TestModelDownloads(unittest.TestCase):
+    def setUp(self):
+        self.dir = _tmpdir(self)
+
+    def test_non_http_url_uses_urllib(self):
+        source = self.dir / "models.zip"
+        dest = self.dir / "download.zip"
+        source.write_bytes(b"model archive")
+
+        models._download_with_progress(source.as_uri(), dest)
+
+        self.assertEqual(dest.read_bytes(), b"model archive")
+
+    def test_ssl_cert_file_is_a_fallback_ca_bundle(self):
+        response = mock.MagicMock()
+        response.headers = {"Content-Length": "3"}
+        response.iter_content.return_value = [b"zip"]
+        response.__enter__.return_value = response
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"SSL_CERT_FILE": "/custom/ca.pem"},
+                clear=True,
+            ),
+            mock.patch("requests.get", return_value=response) as get,
+        ):
+            models._download_with_progress(
+                "https://example.test/models.zip", self.dir / "m.zip"
+            )
+
+        self.assertEqual(get.call_args.kwargs["verify"], "/custom/ca.pem")
+
+    def test_requests_ca_override_takes_precedence(self):
+        for variable in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+            response = mock.MagicMock()
+            response.headers = {"Content-Length": "0"}
+            response.iter_content.return_value = []
+            response.__enter__.return_value = response
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        variable: "/requests/ca.pem",
+                        "SSL_CERT_FILE": "/openssl/ca.pem",
+                    },
+                    clear=True,
+                ),
+                mock.patch("requests.get", return_value=response) as get,
+            ):
+                models._download_with_progress(
+                    "https://example.test/models.zip", self.dir / "m.zip"
+                )
+
+            self.assertEqual(get.call_args.kwargs["verify"], "/requests/ca.pem")
 
 
 if __name__ == "__main__":

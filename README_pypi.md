@@ -60,14 +60,15 @@ following commands are available:
 
 ### Download model weights
 
-Model weights are not bundled in the wheel (they are ~500 MB). Download them after installation:
+Model weights are not bundled in the wheel (about 250 MB once downloaded). Download them after installation:
 
 ```bash
 t1prep-download-models
 ```
 
-Models are stored alongside the `deepmriprep` package data and are downloaded automatically
-on first pipeline use if this step is skipped.
+Models are stored in your user cache (`~/Library/Caches/t1prep/models` on macOS,
+`~/.cache/t1prep/models` on Linux; `T1PREP_MODEL_DIR` overrides it) and are downloaded
+automatically on first pipeline use if this step is skipped.
 
 ---
 
@@ -77,7 +78,7 @@ on first pipeline use if this step is skipped.
   kernels that give a measurable speed-up on Apple Silicon (2:39 min vs 3:02 min
   per subject); a Python 3.9 install is pinned to PyTorch 2.8 and falls back to
   the CPU for those kernels. On Linux/CUDA/CPU both stacks perform the same.
-- ~2 GB disk space for model weights (downloaded separately, see above)
+- ~250 MB disk space for model weights (downloaded separately, see above)
 - For GPU acceleration: CUDA-capable GPU or Apple Silicon (MPS)
 
 ---

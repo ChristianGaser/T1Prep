@@ -36,10 +36,16 @@ if [ -t 1 ] && [ -n "$TERM" ] && command -v tput >/dev/null 2>&1; then
   NC=$(tput sgr0) # Reset all attributes
   DEFAULT_COLOR=$(tput setaf 2)   # green
   FAIL_COLOR=$(tput setaf 1)      # red
+  CLEAR_EOL=$(tput el)            # clear to the end of the line
   move_up() { tput cuu "$1"; }
 else
   move_up() { :; }
 fi
+
+# Labels are padded to the longest one ("Estimate pial and white surface") and
+# the ETA to its 12 characters, so a step's line covers the previous one and
+# the ETA keeps its column.
+LABEL_WIDTH=31
 
 REFRESH_INTERVAL=1.0
 JOB_ID="jobrun_$(date +%s%N)"
@@ -52,6 +58,24 @@ single_job_bar() {
   [ -z "$label" ] && label="Progress"
   [ -z "$width" ] && width=40
   [ -z "$failed" ] && failed=0
+  local label_width=$LABEL_WIDTH eta_width=12
+
+  if [ -t 1 ]; then
+    local terminal_width available max_bar_width
+    terminal_width=$(tput cols 2>/dev/null)
+    [[ "$terminal_width" =~ ^[0-9]+$ ]] || terminal_width=${COLUMNS:-80}
+    available=$((terminal_width - 9))
+    (( available < 1 )) && available=1
+    eta_width=$((available - 2))
+    (( eta_width > 12 )) && eta_width=12
+    (( eta_width < 0 )) && eta_width=0
+    label_width=$((available - 1 - eta_width))
+    (( label_width > LABEL_WIDTH )) && label_width=$LABEL_WIDTH
+    (( label_width < 0 )) && label_width=0
+    max_bar_width=$((available - label_width - eta_width))
+    (( max_bar_width < 1 )) && max_bar_width=1
+    (( width > max_bar_width )) && width=$max_bar_width
+  fi
 
   # Track elapsed time across separate script invocations to estimate ETA.
   local state_dir="/tmp/t1prep_progress_single"
@@ -97,7 +121,8 @@ single_job_bar() {
   bar+=$(printf "%${empty}s")
 
   if [ -t 1 ]; then
-    printf "|${COLOR}%-${width}s${NC}| %3d%% %s %s\r" "$bar" "$percent" "$label" "$eta"
+    printf "|${COLOR}%-${width}s${NC}| %3d%% %-${label_width}s %-${eta_width}s${CLEAR_EOL}\r" \
+      "$bar" "$percent" "${label:0:label_width}" "${eta:0:eta_width}"
     if [ "$current" -eq "$total" ]; then
       rm -f "$state_file"
       echo ""  # newline at end

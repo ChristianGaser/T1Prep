@@ -22,6 +22,7 @@ accelerator for nothing T1Prep uses, linear interpolation;
 :func:`interpolate` gives it its own kernel back.
 """
 
+import math
 import os
 from typing import Tuple
 
@@ -130,6 +131,19 @@ def interpolate(input: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         input.is_cpu
         or not torch.are_deterministic_algorithms_enabled()
         or (input.requires_grad and torch.is_grad_enabled())
+        or input.ndim != 5
+        or args
+        or set(kwargs)
+        - {
+            "size",
+            "scale_factor",
+            "mode",
+            "align_corners",
+            "recompute_scale_factor",
+            "antialias",
+        }
+        or kwargs.get("mode", "nearest") != "trilinear"
+        or kwargs.get("antialias", False)
     ):
         return F.interpolate(input, *args, **kwargs)
 
