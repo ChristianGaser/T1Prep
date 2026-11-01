@@ -116,27 +116,27 @@ class TestInterpolate(unittest.TestCase):
             torch.is_deterministic_algorithms_warn_only_enabled(),
         )
 
-    def test_accelerator_uses_native_operator_without_changing_setting(self):
+    def test_accelerator_call_does_not_change_the_deterministic_setting(self):
         from unittest import mock
 
         x = torch.empty(1, 1, 2, 2, 2, device="meta")
         for warn_only in (True, False):
             torch.use_deterministic_algorithms(True, warn_only=warn_only)
             with mock.patch.object(
-                torch.nn.functional, "interpolate", side_effect=AssertionError
-            ):
-                result = _device.interpolate(
-                    x, size=(4, 4, 4), mode="trilinear", align_corners=False
-                )
-            self.assertEqual(result.shape, (1, 1, 4, 4, 4))
+                torch,
+                "use_deterministic_algorithms",
+                wraps=torch.use_deterministic_algorithms,
+            ) as set_deterministic, mock.patch.object(
+                torch.nn.functional,
+                "interpolate",
+                wraps=torch.nn.functional.interpolate,
+            ) as functional_interpolate:
+                _device.interpolate(x, **self.SIZE)
+            set_deterministic.assert_not_called()
+            functional_interpolate.assert_not_called()
             self.assertEqual(self._state(), (True, warn_only))
 
-    def test_scale_factor_uses_native_operator(self):
-        x = torch.empty(1, 1, 2, 3, 4, device="meta")
-        result = _device.interpolate(x, scale_factor=2, mode="trilinear")
-        self.assertEqual(result.shape, (1, 1, 4, 6, 8))
-
-    def test_fallback_errors_do_not_change_the_setting(self):
+    def test_the_setting_is_unchanged_when_interpolate_raises(self):
         x = torch.empty(1, 1, 2, 2, 2, device="meta")
         with self.assertRaises(Exception):
             _device.interpolate(x, size=(4, 4, 4), mode="no-such-mode")

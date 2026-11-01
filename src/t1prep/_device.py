@@ -113,10 +113,16 @@ def release_cache(device: torch.device) -> None:
 def interpolate(input: torch.Tensor, *args, **kwargs) -> torch.Tensor:
     """``torch.nn.functional.interpolate``, with its kernel on an accelerator.
 
-    For 5D trilinear interpolation with deterministic algorithms enabled and no
-    gradient, dispatch directly to the native operator. On the CPU, when a
-    gradient is recorded, or for other interpolation modes, this is
-    ``F.interpolate`` unchanged.
+    Under deterministic algorithms torch computes (bi/tri)linear and bicubic
+    interpolation on CUDA and MPS with a Python decomposition, so that its
+    *backward* is deterministic.  The forward kernels are deterministic
+    already; the decomposition only costs.  Measured on an M2 (torch 2.15) it
+    took 0.7 s instead of 14 ms to upsample onto the working grid, and an
+    IXI199 run 6 s longer and 3 GB higher in peak memory.  A call that records
+    no gradient therefore dispatches directly to the native interpolation
+    operator, without changing the process-wide deterministic setting.  On
+    the CPU, or when a gradient is recorded, this is ``F.interpolate``
+    unchanged.
 
     T1Prep calls this instead of ``F.interpolate`` (``tests/test_device.py``
     checks that).
@@ -141,37 +147,77 @@ def interpolate(input: torch.Tensor, *args, **kwargs) -> torch.Tensor:
     ):
         return F.interpolate(input, *args, **kwargs)
 
-    size = kwargs.get("size")
-    scale_factor = kwargs.get("scale_factor")
-    if (size is None) == (scale_factor is None):
+    names = (
+        "size",
+        "scale_factor",
+        "mode",
+        "align_corners",
+        "recompute_scale_factor",
+        "antialias",
+    )
+    if len(args) > len(names) or any(name in kwargs for name in names[: len(args)]):
         return F.interpolate(input, *args, **kwargs)
-    if size is not None and kwargs.get("recompute_scale_factor") is not None:
+    options = dict(zip(names, args))
+    options.update(kwargs)
+    if set(options) - set(names):
+        return F.interpolate(input, *args, **kwargs)
+    options = {
+        "size": None,
+        "scale_factor": None,
+        "mode": "nearest",
+        "align_corners": None,
+        "recompute_scale_factor": None,
+        "antialias": False,
+        **options,
+    }
+
+    dimensions = {
+        ("linear", 3): "upsample_linear1d",
+        ("bilinear", 4): "upsample_bilinear2d",
+        ("bicubic", 4): "upsample_bicubic2d",
+        ("trilinear", 5): "upsample_trilinear3d",
+    }
+    mode = options["mode"]
+    if not isinstance(mode, str):
+        return F.interpolate(input, *args, **kwargs)
+    operator = dimensions.get((mode, input.dim()))
+    if operator is None or options["antialias"]:
         return F.interpolate(input, *args, **kwargs)
 
+    size = options["size"]
+    scale_factor = options["scale_factor"]
+    recompute = options["recompute_scale_factor"]
+    spatial_dims = input.dim() - 2
+    if size is not None and recompute is not None:
+        return F.interpolate(input, *args, **kwargs)
+    if size is not None and scale_factor is not None:
+        return F.interpolate(input, *args, **kwargs)
     if size is not None:
-        output_size = (size,) * 3 if isinstance(size, int) else tuple(size)
-        if len(output_size) != 3:
+        output_size = (size,) * spatial_dims if isinstance(size, int) else tuple(size)
+        if len(output_size) != spatial_dims:
             return F.interpolate(input, *args, **kwargs)
-        scales = (None, None, None)
-    else:
-        factors = (
-            (scale_factor,) * 3
+        scales = (None,) * spatial_dims
+    elif scale_factor is not None:
+        scales = (
+            (scale_factor,) * spatial_dims
             if isinstance(scale_factor, (int, float))
             else tuple(scale_factor)
         )
-        if len(factors) != 3:
+        if len(scales) != spatial_dims:
             return F.interpolate(input, *args, **kwargs)
-        output_size = tuple(
-            math.floor(input.shape[i + 2] * factors[i]) for i in range(3)
-        )
-        if kwargs.get("recompute_scale_factor") is False:
-            scales = factors
+        if recompute:
+            output_size = tuple(
+                int(input.shape[i + 2] * scales[i]) for i in range(spatial_dims)
+            )
+            scales = (None,) * spatial_dims
         else:
-            scales = (None, None, None)
+            output_size = None
+    else:
+        return F.interpolate(input, *args, **kwargs)
 
-    return torch.ops.aten.upsample_trilinear3d.default(
-        input,
-        output_size,
-        kwargs.get("align_corners") is True,
-        *scales,
+    align_corners = options["align_corners"]
+    if align_corners is None:
+        align_corners = False
+    return getattr(torch.ops.aten, operator).default(
+        input, output_size, align_corners, *scales
     )
