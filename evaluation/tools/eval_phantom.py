@@ -644,7 +644,7 @@ def _model_hash() -> str | None:
     """SHA-256 over the model weights, so a pin is tied to its models."""
     try:
         sys.path.insert(0, str(REPO / "src"))
-        from t1prep._models import MODEL_DIR, MODEL_FILES
+        from t1prep.nn.models import MODEL_DIR, MODEL_FILES
     except ImportError:
         return None
     h = hashlib.sha256()
