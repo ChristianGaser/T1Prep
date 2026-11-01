@@ -24,10 +24,10 @@ import nibabel as nib
 import numpy as np
 import torch
 import torch.nn.functional as F
-from deepbet.utils import reoriented_nifti
 from scipy.ndimage import distance_transform_edt
 
 from ._atlas import resolve_template_file
+from .utils import reoriented_nifti
 
 #: CAT12's shooting templates for MNI152NLin2009cAsym, coarse to fine.
 SHOOT_TEMPLATES = tuple(f"Template_{k}_GS" for k in range(5))

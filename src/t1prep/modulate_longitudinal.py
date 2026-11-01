@@ -246,7 +246,7 @@ _LEGACY_CLASSES = {"1": "GM", "2": "WM", "3": "CSF"}
 def _template_affine() -> Optional[np.ndarray]:
     """Affine of the grid T1Prep writes its other MNI-space volumes on.
 
-    ``mwp1``/``mwp2`` land on deepmriprep's ``Template_4_GS`` grid, whose first
+    ``mwp1``/``mwp2`` land on CAT12's ``Template_4_GS`` grid, whose first
     axis is stored reversed relative to the RAS-canonical ``y_`` field this
     stage computes on (``save_deformation_spm`` canonicalises it).  Both
     describe the same physical lattice, so writing on the ``y_`` grid is
@@ -259,9 +259,9 @@ def _template_affine() -> Optional[np.ndarray]:
         which case the caller keeps the ``y_`` grid.
     """
     try:
-        from deepmriprep.utils import DATA_PATH
+        from .utils import TEMPLATE_PATH_T1PREP
 
-        path = os.path.join(str(DATA_PATH), "templates", "Template_4_GS.nii.gz")
+        path = os.path.join(str(TEMPLATE_PATH_T1PREP), "Template_4_GS.nii.gz")
         return np.asarray(nib.load(path).affine, dtype=np.float64)
     except Exception:
         return None

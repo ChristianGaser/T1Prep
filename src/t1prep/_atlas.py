@@ -5,6 +5,7 @@ label atlas into region masks.  Shared by the segmentation, the vessel
 correction and the non-cortical GM rule.
 """
 
+import functools
 import os
 
 import nibabel as nib
@@ -12,10 +13,9 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from deepmriprep.atlas import AtlasRegistration, shape_from_to
-from deepmriprep.utils import nifti_to_tensor
 
-from .utils import TEMPLATE_PATH_T1PREP
+from ._device import stage_device
+from .utils import TEMPLATE_PATH_T1PREP, nifti_to_tensor
 
 
 def resolve_template_file(name: str, ext: str) -> str:
@@ -57,6 +57,68 @@ def resolve_template_file(name: str, ext: str) -> str:
     raise FileNotFoundError(
         f"Template file '{name}{ext}' not found in {TEMPLATE_PATH_T1PREP}"
     )
+
+
+def resolve_atlas(name: str) -> tuple:
+    """The label atlas *name* and its region table: ``(nifti_path, csv_path)``.
+
+    An existing absolute path is used as given, with the table beside it
+    (``atlas.nii.gz`` -> ``atlas.csv``); any other name is looked up in
+    T1Prep's template folder, ignoring case.
+    """
+    if os.path.isabs(name) and os.path.exists(name):
+        path = name
+    else:
+        path = resolve_template_file(name, ".nii.gz")
+    stem = path[: -len(".nii.gz")] if path.endswith(".nii.gz") else os.path.splitext(path)[0]
+    return path, stem + ".csv"
+
+
+@functools.lru_cache(maxsize=1)
+def _warp_template() -> nib.Nifti1Image:
+    """The 1.5 mm template grid the deformations are defined on, in RAS."""
+    return nib.as_closest_canonical(nib.load(resolve_template_file("Template_4_GS", ".nii.gz")))
+
+
+def shape_from_to(from_img, to_vox_map) -> np.ndarray:
+    """Grid size spanning *to_vox_map*'s extent at *from_img*'s voxel size (deepmriprep, MIT)."""
+    scale = to_vox_map.affine[np.diag_indices(3)] / from_img.affine[np.diag_indices(3)]
+    shape = scale * (np.array(to_vox_map.shape[:3]) - 1) + 1
+    return shape.astype(int)
+
+
+def pad_from_to(from_img, to_vox_map) -> nib.Nifti1Image:
+    """*from_img* padded or cropped to *to_vox_map*'s extent, at its own voxel size (deepmriprep, MIT)."""
+    shape = shape_from_to(from_img, to_vox_map)
+    from_x = from_img.get_fdata(dtype=np.float32)
+    x = np.zeros(shape, dtype=np.float32)
+    offset = from_img.affine[:3, 3] - to_vox_map.affine[:3, 3]
+    offset /= from_img.affine[np.diag_indices(3)]
+    crop = -offset.clip(max=0).astype(int)
+    pad = offset.clip(min=0).astype(int)
+    from_x = from_x[crop[0]:, crop[1]:, crop[2]:]
+    x[
+        pad[0] : pad[0] + from_x.shape[0],
+        pad[1] : pad[1] + from_x.shape[1],
+        pad[2] : pad[2] + from_x.shape[2],
+    ] = from_x
+    affine = np.concatenate([from_img.affine[:, :3], to_vox_map.affine[:, 3:]], 1)
+    return nib.Nifti1Image(x, affine, from_img.header)
+
+
+def warp_atlas(atlas: nib.Nifti1Image, warp_yx: torch.Tensor, device) -> nib.Nifti1Image:
+    """Label *atlas* pulled into template space through the deformation *warp_yx*.
+
+    deepmriprep's ``AtlasRegistration`` (MIT): the atlas is laid onto the
+    1.5 mm template's extent at its own resolution and sampled at the
+    deformation's positions by nearest neighbour.  *warp_yx* is a
+    ``grid_sample`` grid of that size (see :func:`shape_from_to`).
+    """
+    atlas = pad_from_to(atlas, _warp_template())
+    affine, header = atlas.affine, atlas.header
+    data = nifti_to_tensor(atlas)[None, None].to(device)
+    data = F.grid_sample(data, warp_yx.to(device), mode="nearest", align_corners=True)[0, 0]
+    return nib.Nifti1Image(data.cpu().numpy(), affine, header)
 
 
 def resample_to(img, target_affine, target_shape, device="cpu", channel=None,
@@ -187,7 +249,6 @@ def get_atlas(
     atlas = nib.as_closest_canonical(
         nib.load(resolve_template_file(atlas_name, ".nii.gz"))
     )
-    atlas_register = AtlasRegistration()
 
     if warp_yx is not None:
         warp_yx = nib.as_closest_canonical(warp_yx)
@@ -196,14 +257,7 @@ def get_atlas(
         scaled_yx = F.interpolate(
             yx.permute(0, 4, 1, 2, 3), shape, mode="trilinear", align_corners=False
         )
-        warps = {shape: scaled_yx.permute(0, 2, 3, 4, 1)}
-        # AtlasRegistration internally pins its tensors to its own (CPU)
-        # device.  When ``device`` here is MPS/CUDA, the warp would be on a
-        # different device than the atlas tensor, triggering grid_sample's
-        # "input and grid to be on same device" error.  Align them.
-        atlas = atlas_register(
-            affine, warps[shape].to(atlas_register.device), atlas, t1.shape
-        )
+        atlas = warp_atlas(atlas, scaled_yx.permute(0, 2, 3, 4, 1), stage_device())
 
     # The affines decide where the atlas goes.  A plain resize onto the
     # target dimensions would assume that both grids cover the same field of
