@@ -34,9 +34,9 @@ RUN apt-get update \
       libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 
-# Install T1Prep from PyPI.  The weights are fetched further down, at build
-# time and still as root, so they land in deepmriprep's own data/models and
-# the image needs no network on first run — see t1prep._models._resolve_model_dir().
+# Install T1Prep from PyPI.  The weights are fetched and converted further
+# down, at build time, into T1PREP_MODEL_DIR, so the image needs no network on
+# first run and any uid can read them — see t1prep.nn.models._resolve_model_dir().
 RUN set -eux; \
     if [ -n "${T1PREP_VERSION}" ]; then \
         pip install --no-cache-dir "T1Prep==${T1PREP_VERSION}"; \
@@ -54,7 +54,9 @@ RUN useradd -m -u 1000 -s /bin/bash t1prep \
  && mkdir -p /data \
  && chown -R t1prep:t1prep /data \
  && chmod 755 /home/t1prep
-RUN t1prep-download-models
+ENV T1PREP_MODEL_DIR=/opt/t1prep/models
+RUN t1prep-download-models \
+ && chmod -R a+rX /opt/t1prep
 USER t1prep
 WORKDIR /data
 VOLUME ["/data"]
@@ -71,8 +73,9 @@ VOLUME ["/data"]
 #   # drop into an interactive Python REPL with t1prep already importable
 #   docker run --rm -it --entrypoint python t1prep
 #
-#   # pre-download model weights (otherwise fetched on first run)
-#   docker run --rm -v t1prep-models:/home/t1prep/.cache/t1prep t1prep \
-#       --entrypoint t1prep-download-models
+#   # an image built without the t1prep-download-models step: keep the
+#   # weights in a volume so they are fetched only once
+#   docker run --rm -v t1prep-models:/opt/t1prep/models \
+#       --entrypoint t1prep-download-models t1prep
 ENTRYPOINT ["python", "-m", "t1prep.t1prep"]
 CMD ["--help"]
