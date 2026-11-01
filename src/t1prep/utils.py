@@ -4,10 +4,9 @@ import os
 import subprocess
 import nibabel as nib
 import numpy as np
+import torch
 
 # Import deep learning and image processing utilities
-from deepbet.utils import reoriented_nifti
-from deepmriprep.utils import nifti_to_tensor
 from torchreg.utils import INTERP_KWARGS
 from spline_resize import grid_sample as spline_grid_sample
 from scipy.ndimage import label
@@ -43,6 +42,28 @@ DATA_PATH_T1PREP: Path = (
     or (Path(__file__).resolve().parent / "data")
 )
 TEMPLATE_PATH_T1PREP = DATA_PATH_T1PREP / "templates_MNI152NLin2009cAsym"
+
+
+def nifti_to_tensor(nifti: nib.Nifti1Image) -> torch.Tensor:
+    """*nifti*'s data in RAS orientation as a float32 tensor (deepmriprep, MIT).
+
+    Like deepmriprep's, it leaves a float32 copy of the data in the image's
+    cache; ``uncache()`` the image when that copy is not needed again.
+    """
+    return torch.from_numpy(nib.as_closest_canonical(nifti).get_fdata(dtype=np.float32).copy())
+
+
+def reoriented_nifti(array: np.ndarray, affine: np.ndarray, header) -> nib.Nifti1Image:
+    """A RAS-ordered *array* stored back in the orientation of *affine* (deepbet, MIT).
+
+    The inverse of :func:`nifti_to_tensor`: results computed on the canonical
+    grid are written with the input's own affine and header.
+    """
+    ornt_ras = [[0, 1], [1, 1], [2, 1]]
+    ornt = nib.io_orientation(affine)
+    ornt_inv = nib.orientations.ornt_transform(ornt_ras, ornt)
+    out_header = header if isinstance(header, nib.Nifti1Header) else None
+    return nib.Nifti1Image(nib.apply_orientation(array, ornt_inv), affine, out_header)
 
 # Prefer packaged Names.tsv; fall back to repo root for editable/dev mode
 def _resolve_names_tsv() -> Path:

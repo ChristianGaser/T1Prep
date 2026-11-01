@@ -24,9 +24,9 @@ PROVENANCE_PACKAGES = (
     "scipy",
     "nibabel",
     "torch",
-    "deepmriprep",
-    "deepbet",
+    "tinygrad",
     "torchreg",
+    "fill-voids",
     "spline-resize",
     "SplineSmooth3D",
     "nxbc",
@@ -57,17 +57,16 @@ def _sha256(path: Path, block: int = 1 << 20) -> str:
 
 @functools.lru_cache(maxsize=1)
 def model_provenance() -> dict:
-    """Where the model weights were loaded from and what they were.
+    """Which network weights ran, where they were loaded from, on which backend.
 
-    The weights are only checked for presence by file name, and
-    ``_resolve_model_dir`` prefers deepmriprep's own model directory whenever
-    it holds a complete set, so the weights in use can change with a
-    deepmriprep update.  The SHA-256 of every file and a fingerprint over all
-    of them make that visible in each subject's report.  Hashed once per
-    process (about 210 MB).
+    The weights are checked for presence by file name only, so the SHA-256 of
+    every file and a fingerprint over all of them record the weights in use
+    in each subject's report, together with the backend
+    (``T1PREP_NN_BACKEND``), whose results differ slightly.  Hashed once per
+    process (about 120 MB).
     """
     try:
-        from ._models import MODEL_DIR, MODEL_FILES
+        from .nn.models import MODEL_DIR, MODEL_FILES
     except Exception as exc:  # report must never fail because of provenance
         return {"error": f"model directory unavailable: {exc}"}
 
@@ -76,7 +75,14 @@ def model_provenance() -> dict:
         path = Path(MODEL_DIR) / name
         files[name] = _sha256(path) if path.is_file() else None
     joined = "\n".join(f"{n}:{h}" for n, h in files.items())
+    try:
+        from .nn.backends import backend_name
+
+        backend = backend_name()
+    except Exception as exc:  # report must never fail because of provenance
+        backend = f"unavailable: {exc}"
     return {
+        "backend": backend,
         "dir": str(MODEL_DIR),
         "fingerprint": hashlib.sha256(joined.encode()).hexdigest(),
         "complete": all(files.values()),

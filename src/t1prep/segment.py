@@ -36,7 +36,6 @@ import json
 import random
 import time
 import subprocess
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import NamedTuple, Optional
 import nibabel as nib
@@ -45,12 +44,6 @@ import numpy as np
 import pandas as pd
 
 # Import deep learning and image processing utilities
-from deepbet.utils import reoriented_nifti
-from deepmriprep.segment import BrainSegmentation
-import deepmriprep.preprocess as dmp_preprocess
-from deepmriprep.preprocess import Preprocess
-from deepmriprep.utils import DATA_PATH, nifti_to_tensor
-from deepmriprep.atlas import shape_from_to
 from torchreg.utils import INTERP_KWARGS
 from pathlib import Path
 from .report import write_t1prep_report
@@ -66,7 +59,8 @@ from .bids_derivatives import (
     write_sidecar,
 )
 from .utils import (
-    bspline_grid_sample,
+    nifti_to_tensor,
+    reoriented_nifti,
     smart_round,
     remove_file,
     resample_and_save_nifti,
@@ -81,12 +75,11 @@ from .utils import (
     to_ras_storage,
     TEMPLATE_PATH_T1PREP,
 )
-from ._atlas import get_atlas, roi_table, roi_tissue_volumes
+from ._atlas import get_atlas
 from ._intensity import (
     apply_LAS,
     correct_bias_field,
     correct_label_map,
-    scale_intensity,
 )
 from ._lesions import handle_lesions
 from ._partition import compute_euler_number, get_partition
@@ -96,18 +89,13 @@ from .vessels import (
     blood_vessel_prior,
     protected_regions,
 )
-from ._models import prepare_model_files
+from .nn.models import prepare_model_files
+from .stages import Preprocess
 from ._telemetry import init_crash_reporting
-from ._conv_chunk import chunked_conv3d
-from ._shoot import SHOOT_SETTINGS_FMRIPREP, shoot_register
+from ._shoot import SHOOT_SETTINGS_FMRIPREP
 from .nogm import run_segment_nogm_conventional
 from .dura import remove_dura
-from ._device import (
-    mps_routing_requested,
-    release_cache,
-    resolve_device,
-    route_deepmriprep,
-)
+from ._device import resolve_device
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 TMP_PATH = ROOT_PATH / "tmp_models/"
@@ -148,329 +136,6 @@ def shell_progress(count, end_count, label, failed=0):
         [str(script), "1", "", str(count), str(end_count), label, "40", str(failed)],
         check=False)
     return count + 1
-
-class CustomBrainSegmentation(BrainSegmentation):
-    """
-    Custom class to override BrainSegmentation
-    Furthermore use run_model function with linear interpolation for p0, which
-    prevents negative values due to B-spline interpolation
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Follow the device T1Prep selected, not the one deepmriprep pinned
-        # itself to: unless `T1PREP_DEVICE=mps` routes everything, deepmriprep
-        # stays on the CPU while this stage still belongs on the GPU.  Going
-        # through `resolve_device` (rather than hard-coding MPS) is what keeps
-        # `T1PREP_DEVICE=cpu` meaningful for a CPU reference run.
-        requested, _ = resolve_device()
-        self.inference_device = requested if requested.type != "cpu" else self.device
-
-    def __call__(self, x, mask):
-        x = x.to(device=self.inference_device)
-        x = x[:, :, 1:-2, 15:-12, :-3]
-        x = scale_intensity(x)
-        p0 = self.run_model(x)
-        p0 = self.run_patch_models(x, p0)
-        if self.fill_holes:
-            mask_np = p0[0, 0].detach().cpu().numpy() > 0.9
-            mask_filled = fill_voids.fill(mask_np)
-            filled = (mask_np == 0) & (mask_filled == 1)
-            if np.any(filled):
-                filled_t = torch.from_numpy(filled).to(p0.device)
-                p0[0, 0][filled_t] = 1.0
-        # Keep return device aligned with caller tensors used in downstream indexing.
-        return F.pad(p0, (0, 3, 15, 12, 1, 2)).to(mask.device)
-
-    def run_patch_models(self, x, p0):
-        x = x.to(device=self.inference_device)
-        p0 = p0.to(device=self.inference_device)
-        patch_p0 = torch.zeros(
-            x.shape, device=self.inference_device
-        )
-        for i, (patch, weight) in enumerate(zip(self.patch_slices, self.patch_weights)):
-            patch_inp = torch.cat([x[patch], p0[patch]], dim=1)
-            patch_inp = patch_inp.flip(2) if i >= 18 else patch_inp
-            with torch.no_grad():
-                p0_patch = self.patch_models[i % 18](patch_inp)
-            p0_patch = p0_patch.flip(2) if i >= 18 else p0_patch
-            patch_p0[patch] += p0_patch * weight.to(self.inference_device)
-        return patch_p0
-
-    def run_model(self, x, scale_factor=1.5):
-        x = x.to(device=self.inference_device)
-        
-        # Use linear interpolation, since B-spline interpolation caused issues with
-        # negative values in label image and resulted in less accurate segmentations
-        with torch.no_grad():
-            p0 = self.model(
-                F.interpolate(x, scale_factor=1 / scale_factor, **INTERP_KWARGS))
-        return F.interpolate(p0, scale_factor=scale_factor, **INTERP_KWARGS)
-
-
-class _SplineResizeViaLibcat:
-    """``spline_resize`` as deepmriprep sees it, with ``grid_sample`` in libCAT."""
-
-    grid_sample = staticmethod(bspline_grid_sample)
-
-    def __init__(self, module):
-        self._module = module
-
-    def __getattr__(self, name):
-        return getattr(self._module, name)
-
-
-@contextmanager
-def _spline_resize_via_libcat():
-    """Route ``deepmriprep.preprocess``'s ``sr.grid_sample`` to libCAT while active."""
-    original = dmp_preprocess.sr
-    dmp_preprocess.sr = _SplineResizeViaLibcat(original)
-    try:
-        yield
-    finally:
-        dmp_preprocess.sr = original
-
-
-def _working_grid_template(affine_template, warp_template):
-    """deepmriprep's 0.5 mm affine template, with the geometry of its content.
-
-    ``Template_05mm_bet`` is the 1.5 mm warp template upsampled three times
-    with the corner voxel centres aligned, so its 339x411x339 voxels span the
-    warp template's 168x204x168 mm between those centres -- not the
-    169x205x169 mm its 0.5 mm header claims.  Registration, warp and
-    ``_to_template_space`` work in normalised coordinates and follow the
-    content, but millimetres read from the header were 0.6% too large: atlases
-    and priors placed through the affine landed up to 1 mm off, and every
-    voxel size handed to a filter or a size threshold was overstated.  Volumes
-    were right either way, because ``wj_affine`` divides by the same box.
-
-    The returned image shares the file's data; only its affine and header
-    change (voxel size 168/338, 204/410, 168/338 mm).
-    """
-    template = nib.as_closest_canonical(affine_template)
-    warp = nib.as_closest_canonical(warp_template)
-    first = warp.affine[:3, 3]
-    last = warp.affine[:3, :3] @ (np.asarray(warp.shape[:3]) - 1.0) + first
-    mat = np.eye(4)
-    mat[:3, :3] = np.diag((last - first) / (np.asarray(template.shape[:3]) - 1.0))
-    mat[:3, 3] = first
-    return nib.Nifti1Image(template.dataobj, mat, template.header)
-
-
-class CustomPreprocess(Preprocess):
-    """
-    Custom class to override Preprocess
-    Use linear interpolation for p0, which prevents negative values due to
-    B-spline interpolation
-    """
-
-    def __init__(self, *args, **kwargs):
-        # Upstream's __init__ builds every model it might need, by looking the
-        # classes up in its own module.  Swap four of them while it runs:
-        #
-        # - BrainSegmentation becomes CustomBrainSegmentation (linear instead
-        #   of B-spline interpolation for p0, and MPS support).  Replacing it
-        #   afterwards instead would load the 19 brain models twice, and the
-        #   discarded copy is not handed back to the OS.
-        # - NoGMSegmentation becomes a no-op: T1Prep removes non-cortical grey
-        #   matter with the rule in t1prep.nogm and never calls
-        #   run_segment_nogm.  ``nogm_segment`` is None as a result; a caller
-        #   that does want the UNet (scripts/mem_probe.py) has to attach its
-        #   own ``NoGMSegmentation``.
-        # - WarpRegistration becomes a no-op as well: T1Prep registers by
-        #   geodesic shooting (``run_warp_register``, t1prep._shoot), so
-        #   deepmriprep's warp network is never loaded.  ``warp_register`` is
-        #   None.
-        # - download_missing_models becomes a no-op: prepare_model_files has
-        #   fetched every weight T1Prep runs, and upstream's own downloader
-        #   would fetch the unused warp network.
-        #
-        # The first two together, measured on the CPU: 1.46 -> 0.72 s and
-        # +920 -> +480 MB resident (+1090 -> +560 MB peak) for setting up the
-        # models.
-        #
-        # The working grid itself comes from _working_grid_template, so that
-        # every *_large image carries the geometry of its content.
-        if len(args) < 2 and "affine_template" not in kwargs:
-            kwargs["affine_template"] = _working_grid_template(
-                dmp_preprocess.AFFINE_TEMPLATE,
-                kwargs.get("warp_template", dmp_preprocess.WARP_TEMPLATE),
-            )
-        swaps = {
-            "BrainSegmentation": CustomBrainSegmentation,
-            "NoGMSegmentation": lambda *a, **k: None,
-            "WarpRegistration": lambda *a, **k: None,
-            "download_missing_models": lambda *a, **k: None,
-        }
-        originals = {name: getattr(dmp_preprocess, name) for name in swaps}
-        for name, cls in swaps.items():
-            setattr(dmp_preprocess, name, cls)
-        try:
-            super().__init__(*args, **kwargs)
-        finally:
-            for name, cls in originals.items():
-                setattr(dmp_preprocess, name, cls)
-        # deepbet picks its own device (it does support MPS) and moves inputs to
-        # wherever its weights live, so the skull-strip needs no help from us.
-        # This used to force it onto the CPU because the traced bbox model hit
-        # `max_pool3d_with_indices`, which had no MPS kernel; that op is native
-        # from torch 2.9 on, and on older builds the PYTORCH_ENABLE_MPS_FALLBACK
-        # set at the top of this module covers it — verified on 2.8 and 2.13.
-        # The branch was dead code anyway until `_device` started routing
-        # deepmriprep to MPS, at which point it would have *demoted* the
-        # skull-strip from MPS to CPU.
-
-    def run_affine_register(self, brain_nifti, mask_nifti):
-        """Affine registration, with its B-spline resampling done in libCAT.
-
-        Upstream resamples the brain onto the 0.5 mm working grid with
-        ``spline_resize.grid_sample``, whose 27-tap torch gather takes ~6 s on
-        the CPU.  While it runs, ``deepmriprep.preprocess`` sees a
-        ``spline_resize`` whose ``grid_sample`` is
-        :func:`t1prep.utils.bspline_grid_sample` -- the same samples in ~0.4 s,
-        and more accurate -- so upstream's code is otherwise untouched.  On an
-        accelerator the call still goes to ``spline_resize``.
-        """
-        with _spline_resize_via_libcat():
-            out = super().run_affine_register(brain_nifti, mask_nifti)
-        # nifti_to_tensor() cached a float32 copy of the 0.5 mm template
-        # (180 MB) in the template image; it is never read again.
-        template = getattr(self, "affine_template", None)
-        if template is not None:
-            template.uncache()
-        return out
-
-    def run_segment_brain(self, brain_large, mask, affine, mask_large):
-        """Brain segmentation without deepmriprep's unused native-space ``p0``.
-
-        Upstream additionally resamples ``p0_large`` back to native space with a
-        quadratic B-spline, which costs ~4 s at 0.5 mm — over a tenth of the whole
-        volume pipeline.  T1Prep never reads that output: the native label map
-        is written later by ``resample_and_save_nifti`` with linear
-        interpolation, which avoids the negative overshoot spline sampling
-        produces on a label image.  ``p0_large`` is computed exactly as upstream
-        does, so every downstream result is unchanged.
-        """
-        brain_large = nifti_to_tensor(brain_large)
-        mask_large = nifti_to_tensor(mask_large)
-        p0_large = self.brain_segment(
-            brain_large[None, None].to(self.device),
-            mask_large[None, None].to(self.device),
-        )[0, 0]
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
-        p0_large[mask_large == 0.0] = 0.0
-        return {
-            "p0_large": reoriented_nifti(
-                p0_large.cpu().numpy(), **self.affine_template_metadata
-            )
-        }
-
-    def run_warp_register(self, p0_large, p1_affine, p2_affine, wj_affine, **options):
-        """Non-linear registration by geodesic shooting, not deepmriprep's network.
-
-        Returns the keys deepmriprep's warp returned and T1Prep reads, in the
-        same convention (see :func:`t1prep._shoot.shoot_register`).
-        ``p0_large`` is not used: the shooting registers GM and WM only.
-        *options* replace the shooting's settings, as in ``shoot_register``.
-        """
-        return shoot_register(p1_affine, p2_affine, wj_affine, **options)
-
-    def run_atlas_register(
-        self, t1, affine, warp_yx, p1_large, p2_large, p3_large, atlas_list, wj_affine
-    ):
-        voxel_vol = np.prod(p1_large.affine[np.diag_indices(3)])
-        p1_large, p2_large, p3_large = [
-            nifti_to_tensor(p).to(self.device) for p in [p1_large, p2_large, p3_large]
-        ]
-        inv_affine = torch.linalg.inv(
-            torch.from_numpy(affine.values).float().to(self.device)
-        )
-        grid = F.affine_grid(
-            inv_affine[None, :3],
-            [1, 3, *t1.shape[:3]],
-            align_corners=INTERP_KWARGS["align_corners"],
-        )
-        warp_yx = nib.as_closest_canonical(warp_yx)
-        yx = nifti_to_tensor(warp_yx)[None].to(self.device)
-        atlases, warps = {}, {}
-
-        atl_list = [
-            "_".join(a.split("_")[:-1]) if a.endswith(("_affine", "_volumes")) else a
-            for a in atlas_list
-        ]
-        for atl in atl_list:
-            # Use absolute path for external atlas if exists
-            if os.path.isabs(atl) and os.path.exists(atl):
-                atlas_path = atl
-                base_atl = os.path.splitext(os.path.basename(atl))[0]
-            else:
-                atlas_path = f"{TEMPLATE_PATH_T1PREP}/{atl}.nii.gz"
-                base_atl = atl
-                # Case-insensitive fallback: scan the template directory when
-                # the exact filename is not found (e.g. "neuromorphometrics"
-                # vs the on-disk "Neuromorphometrics.nii.gz").
-                if not os.path.exists(atlas_path):
-                    atl_lower = atl.lower()
-                    for fname in os.listdir(TEMPLATE_PATH_T1PREP):
-                        if fname.lower() == f"{atl_lower}.nii.gz":
-                            atlas_path = os.path.join(TEMPLATE_PATH_T1PREP, fname)
-                            base_atl = os.path.splitext(os.path.splitext(fname)[0])[0]
-                            break
-            atlas = nib.as_closest_canonical(nib.load(atlas_path))
-            template_ids = np.unique(np.asarray(atlas.dataobj)).astype(np.int64)
-            header = atlas.header
-            shape = tuple(shape_from_to(atlas, warp_yx))
-            if shape not in warps:
-                scaled_yx = F.interpolate(
-                    yx.permute(0, 4, 1, 2, 3),
-                    shape,
-                    mode="trilinear",
-                    align_corners=False,
-                )
-                warps[shape] = scaled_yx.permute(0, 2, 3, 4, 1)
-            # AtlasRegistration pins tensors to its own (CPU) device; if
-            # ``self.device`` is MPS/CUDA the warp would land on a different
-            # device than the atlas tensor and grid_sample would error out.
-            atlas = self.atlas_register(
-                affine, warps[shape].to(self.atlas_register.device), atlas, t1.shape
-            )
-            if f"{atl}_affine" in atlas_list:
-                atlases[f"{atl}_affine"] = atlas
-            atlas_tensor = nifti_to_tensor(atlas).to(self.device)
-            if f"{atl}_volumes" in atlas_list:
-                # Region names from the atlas CSV (Region_<id> without one)
-                csv_path = (
-                    f"{TEMPLATE_PATH_T1PREP}/{base_atl}.csv"
-                    if not os.path.isabs(atl)
-                    else os.path.splitext(atl)[0] + ".csv"
-                )
-                # One row per label of the template, looked up by id; the
-                # CSV used to be matched to the present labels by position
-                rois = roi_table(csv_path, template_ids)
-                volumes = voxel_vol * roi_tissue_volumes(
-                    atlas_tensor, p1_large, p2_large, p3_large, rois["ROIid"]
-                )
-                volumes *= wj_affine[0] / 1000
-                # Smart rounding
-                volumes = np.vectorize(smart_round)(volumes)
-                volumes = pd.DataFrame(
-                    volumes, columns=["gmv_cm3", "wmv_cm3", "csfv_cm3", "region_cm3"]
-                )
-                atlases[f"{atl}_volumes"] = pd.concat([rois, volumes], axis=1)
-            if atl in atlas_list:
-                sample_kwargs = {
-                    "mode": "nearest",
-                    "align_corners": INTERP_KWARGS["align_corners"],
-                }
-                sampled_atlas = F.grid_sample(
-                    atlas_tensor[None, None], grid, **sample_kwargs
-                )[0, 0]
-                atlases[atl] = reoriented_nifti(
-                    sampled_atlas.cpu().numpy(), t1.affine, header
-                )
-        return atlases
-
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments for the segmentation pipeline."""
@@ -595,24 +260,6 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def setup_device() -> tuple[torch.device, bool]:
-    """Return the torch device and ``no_gpu`` flag.
-
-    Also routes deepmriprep's stages to the same device.  Left alone,
-    deepmriprep pins itself to ``'cuda' if cuda else 'cpu'`` at import, so on
-    Apple Silicon its affine/nogm/warp/atlas stages would stay on the CPU while
-    T1Prep believes it selected the GPU — see :mod:`t1prep._device`.  This runs
-    before any model is constructed, which is when the device is read.
-    """
-    device, no_gpu = resolve_device()
-    # MPS-everywhere is opt-in (T1PREP_DEVICE=mps): it is faster per stage but
-    # currently exhausts unified memory on a full run — see `_device`.  Any
-    # other resolved device (CPU, CUDA) is safe to route unconditionally.
-    if device.type != "mps" or mps_routing_requested():
-        route_deepmriprep(device)
-    return device, no_gpu
-
-
 def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
     """Denoise and align the input volume and create the preprocessing object.
 
@@ -631,7 +278,7 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
         vol, t1.affine, t1.header, np.eye(4), do_flip=0
     )
     t1 = nib.Nifti1Image(vol, affine_resamp, header_resamp)
-    prep = CustomPreprocess(no_gpu=no_gpu)
+    prep = Preprocess(no_gpu=no_gpu)
 
     # SANLM works on the stored voxel lattice: a flipped copy of the same scan
     # gave different values in 69% of the voxels.  Denoise in RAS storage
@@ -649,7 +296,7 @@ def preprocess_input(t1: nib.Nifti1Image, no_gpu: bool, use_amap: bool):
 
 
 def skull_strip(
-    prep: CustomPreprocess,
+    prep: Preprocess,
     t1: nib.Nifti1Image,
     verbose: bool,
     count: int,
@@ -696,7 +343,7 @@ def save_skullstrip_only_outputs(
 
 
 def affine_register(
-    prep: CustomPreprocess,
+    prep: Preprocess,
     brain: nib.Nifti1Image,
     mask: nib.Nifti1Image,
     verbose: bool,
@@ -1167,7 +814,7 @@ def _write_volume_report(
 
 
 def _save_atlas_rois(
-    prep: CustomPreprocess,
+    prep: Preprocess,
     opts: OutputOptions,
     names: _OutputNames,
     t1: nib.Nifti1Image,
@@ -1491,7 +1138,7 @@ def _save_hemispheres(
 
 
 def save_results(
-    prep: CustomPreprocess,
+    prep: Preprocess,
     opts: OutputOptions,
     *,
     t1: nib.Nifti1Image,
@@ -1564,9 +1211,7 @@ def save_results(
     # fMRIPrep moves data and labels with the deformation and does not
     # modulate with it: the setting with the better label accuracy
     shoot_options = SHOOT_SETTINGS_FMRIPREP if opts.save_fmriprep else {}
-    output_reg = prep.run_warp_register(
-        p0_large, p1_affine, p2_affine, wj_affine, **shoot_options
-    )
+    output_reg = prep.run_warp_register(p1_affine, p2_affine, wj_affine, **shoot_options)
     warp_yx = output_reg["warp_yx"]
     warp_xy = output_reg["warp_xy"]
 
@@ -1628,7 +1273,7 @@ def run_segment():
     skip_skullstrip = args.skip_skullstrip
 
     # Check for GPU support
-    device, no_gpu = setup_device()
+    device, no_gpu = resolve_device()
 
     # Report a crash of this run, unless telemetry is switched off: the
     # exception type and code location only, no paths (see _telemetry)
@@ -1688,11 +1333,7 @@ def run_segment():
     if verbose:
         count = shell_progress(
             count, end_count, "DeepMriPrep segmentation     ")
-    # Unsplit, the widest layer of the segmentation model asks for a single
-    # 20.7 GB im2col buffer at this grid — the largest allocation in the run.
-    with chunked_conv3d():
-        output_seg = prep.run_segment_brain(brain_large, mask, affine, mask_large)
-    release_cache(device)
+    output_seg = prep.run_segment_brain(brain_large, mask_large)
     p0_large = output_seg["p0_large"]
     del output_seg, mask_large
 
@@ -1811,7 +1452,7 @@ def run_segment():
     # Hoisted above the segmentation branch: the default nogm rule needs
     # it to express its volumes in native space, and nothing here depends on
     # the tissue maps it is computed alongside.
-    warp_template = nib.load(f"{DATA_PATH}/templates/Template_4_GS.nii.gz")
+    warp_template = prep.warp_template
     # Native volume per template volume.  The affine maps normalised
     # coordinates of the 0.5 mm affine template (align_corners: -1 and +1 are
     # the corner voxel centres).  deepmriprep's nifti_volume used the
