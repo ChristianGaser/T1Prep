@@ -196,7 +196,7 @@ def interpolate(input: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         output_size = (size,) * spatial_dims if isinstance(size, int) else tuple(size)
         if len(output_size) != spatial_dims:
             return F.interpolate(input, *args, **kwargs)
-        scales = (None,) * spatial_dims
+        scales = None
     elif scale_factor is not None:
         scales = (
             (scale_factor,) * spatial_dims
@@ -209,15 +209,18 @@ def interpolate(input: torch.Tensor, *args, **kwargs) -> torch.Tensor:
             output_size = tuple(
                 int(input.shape[i + 2] * scales[i]) for i in range(spatial_dims)
             )
-            scales = (None,) * spatial_dims
+            scales = None
         else:
             output_size = None
+            scales = list(scales)
     else:
         return F.interpolate(input, *args, **kwargs)
 
     align_corners = options["align_corners"]
     if align_corners is None:
         align_corners = False
-    return getattr(torch.ops.aten, operator).default(
-        input, output_size, align_corners, *scales
+    # The ".vec" overload is the one F.interpolate calls: it takes either an
+    # output size or scale factors, while ".default" requires the size.
+    return getattr(torch.ops.aten, operator).vec(
+        input, output_size, align_corners, scales
     )
