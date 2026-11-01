@@ -172,15 +172,41 @@ class TestInterpolate(unittest.TestCase):
                 )
             )
 
+    # The native operator's ".default" overload needs an output size; handing
+    # it a scale factor failed every MPS run in the brain segmentation.
+    SCALES = (
+        {"scale_factor": 1 / 3},
+        {"scale_factor": 1.5, "align_corners": True},
+        {"scale_factor": (0.5, 0.7, 1.3)},
+        {"scale_factor": 1.5, "recompute_scale_factor": True},
+    )
+
+    def test_a_scale_factor_takes_the_native_kernel_too(self):
+        x = torch.empty(1, 1, 5, 6, 7, device="meta")
+        for kwargs in self.SCALES:
+            with self.subTest(**kwargs):
+                kwargs = {"mode": "trilinear", **kwargs}
+                self.assertFalse(
+                    self._functional_interpolate_called(x, size=None, **kwargs)
+                )
+                self.assertEqual(
+                    _device.interpolate(x, **kwargs).shape,
+                    torch.nn.functional.interpolate(x, **kwargs).shape,
+                )
+
     @unittest.skipUnless(
         torch is not None and torch.backends.mps.is_available(), "no MPS device"
     )
     def test_mps_gets_the_native_kernel(self):
         x = torch.rand(1, 1, 12, 14, 12, device="mps")
-        ours = _device.interpolate(x, size=(37, 41, 37), mode="trilinear")
-        torch.use_deterministic_algorithms(False)
-        native = torch.nn.functional.interpolate(x, size=(37, 41, 37), mode="trilinear")
-        self.assertTrue(torch.equal(ours.cpu(), native.cpu()))
+        for kwargs in ({"size": (37, 41, 37)}, *self.SCALES):
+            with self.subTest(**kwargs):
+                kwargs = {"mode": "trilinear", **kwargs}
+                torch.use_deterministic_algorithms(True, warn_only=True)
+                ours = _device.interpolate(x, **kwargs)
+                torch.use_deterministic_algorithms(False)
+                native = torch.nn.functional.interpolate(x, **kwargs)
+                self.assertTrue(torch.equal(ours.cpu(), native.cpu()))
 
     def test_t1prep_never_calls_f_interpolate_directly(self):
         pattern = re.compile(r"\b(F|functional)\.interpolate\(")
