@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import glob
 import os
 import re
@@ -8,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path, PurePath
@@ -332,18 +334,73 @@ def build_command(
     return cmd
 
 
-def find_parallelize_log() -> Optional[Path]:
-    """Find the most recent parallelize log file from /tmp."""
+def find_parallelize_log(since: Optional[float] = None) -> Optional[Path]:
+    """Find the most recent parallelize log file from /tmp.
+
+    With ``since`` (a ``time.time()`` value) only a log written after it
+    counts, so a job that ran without parallelize gets no other run's log.
+    """
     hostname = socket.gethostname()
     pattern = f"/tmp/parallelize_{hostname}_*.log"
-    candidates = glob.glob(pattern)
+    candidates = [
+        path
+        for path in glob.glob(pattern)
+        if since is None or os.path.getmtime(path) >= since
+    ]
     if not candidates:
         return None
     # Return the most recently modified one
     return Path(max(candidates, key=os.path.getmtime))
 
 
+# A bar line of progress_bar_multi.sh ("|███     |  42% label ETA ...") or of
+# the Python renderer ("[███     ]  42% label")
+_PROGRESS_LINE = re.compile(r"^[|\[][^|\]]*[|\]]\s*(\d{1,3})%")
+
+# The headers T1Prep prints before each phase, in the order the phases run
+_PHASES = (("Volume Segmentation", "volume"), ("Surface Estimation", "surface"))
+_PHASE_ORDER = tuple(name for _, name in _PHASES)
+
+
+def _new_progress() -> dict:
+    """Return the live progress of a job that has printed nothing yet."""
+    return {
+        "phase": None,
+        "since": None,
+        **{
+            name: {"percent": 0, "started": False, "seconds": 0.0}
+            for name in _PHASE_ORDER
+        },
+    }
+
+
+def _stop_clock(live: dict, now: float) -> None:
+    """Add the time since the running phase started to that phase."""
+    if live["phase"] is not None and live["since"] is not None:
+        live[live["phase"]]["seconds"] += now - live["since"]
+    live["since"] = None
+
+
+def _enter_phase(live: dict, phase: str, now: float) -> None:
+    """Start ``phase``; the bar of each phase counts from zero."""
+    _stop_clock(live, now)
+    live["phase"], live["since"] = phase, now
+    live[phase]["started"] = True
+    live[phase]["percent"] = 0
+
+
+def _format_duration(seconds: float) -> str:
+    """Spell a duration as T1Prep's "Finished after" does: ``1hrs 2min 3s``."""
+    hours, rest = divmod(int(round(seconds)), 3600)
+    minutes, secs = divmod(rest, 60)
+    text = f"{hours}hrs " if hours else ""
+    if minutes:
+        text += f"{minutes}min "
+    return f"{text}{secs}s"
+
+
 def run_job(job_id: str) -> None:
+    started = time.time()
     with LOCK:
         job = JOBS[job_id]
         job["status"] = "running"
@@ -359,9 +416,10 @@ def run_job(job_id: str) -> None:
     if progress_dir:
         env["PROGRESS_DIR"] = progress_dir
 
-    # Initialize live progress tracking
+    # Live progress, from the phase headers and bar lines T1Prep prints
+    live = _new_progress()
     with LOCK:
-        JOBS[job_id]["live_progress"] = {"vol_percent": 0, "surf_percent": 0, "current_phase": "volume"}
+        JOBS[job_id]["live_progress"] = live
 
     with log_path.open("w", encoding="utf-8") as log_file:
         log_file.write("Command:\n")
@@ -382,55 +440,36 @@ def run_job(job_id: str) -> None:
             JOBS[job_id]["pid"] = process.pid
 
         assert process.stdout is not None
-        last_progress_line = ""
-        current_phase = "volume"
+        logged_percent = None
         for line in process.stdout:
             stripped = line.strip()
 
-            # Detect phase transitions
-            if "Surface Estimation" in stripped:
-                current_phase = "surface"
+            phase = next((name for header, name in _PHASES if header in stripped), None)
+            match = None if phase else _PROGRESS_LINE.match(stripped)
+            if phase:
                 with LOCK:
-                    JOBS[job_id]["live_progress"]["current_phase"] = "surface"
-                    JOBS[job_id]["live_progress"]["vol_percent"] = 100
-                log_file.write(line)
-                log_file.flush()
-                continue
-
-            # Filter out repetitive progress bar lines (keep only changes)
-            if stripped.startswith("[") and "]" in stripped and "%" in stripped:
-                # Extract percentage from progress bar line
-                import re
-                pct_match = re.search(r"\]\s*(\d{1,3})%", stripped)
-                if pct_match:
-                    pct = int(pct_match.group(1))
-                    with LOCK:
-                        if current_phase == "volume":
-                            JOBS[job_id]["live_progress"]["vol_percent"] = pct
-                        else:
-                            JOBS[job_id]["live_progress"]["surf_percent"] = pct
-
-                # Only log if it changed significantly
-                if stripped != last_progress_line:
-                    last_progress_line = stripped
-                    # Only write 100% completion to log
-                    if "100%" in stripped:
-                        log_file.write(line)
-                        log_file.flush()
-                continue
+                    _enter_phase(live, phase, time.time())
+                logged_percent = None
+            elif match:
+                percent = min(100, int(match.group(1)))
+                with LOCK:
+                    if live["phase"] is None:
+                        _enter_phase(live, _PHASE_ORDER[0], time.time())
+                    live[live["phase"]]["percent"] = percent
+                # The terminal redraws a bar in place: log each step once
+                # (the bar over several subjects repeats every second)
+                if percent == logged_percent:
+                    continue
+                logged_percent = percent
 
             log_file.write(line)
             log_file.flush()
         return_code = process.wait()
-
-        # Mark both phases as 100% when finished successfully
-        if return_code == 0:
-            with LOCK:
-                JOBS[job_id]["live_progress"]["vol_percent"] = 100
-                JOBS[job_id]["live_progress"]["surf_percent"] = 100
+        with LOCK:
+            _stop_clock(live, time.time())
 
         # Append parallelize log if available
-        parallelize_log = find_parallelize_log()
+        parallelize_log = find_parallelize_log(since=started)
         if parallelize_log and parallelize_log.exists():
             log_file.write("\n\n--- Parallelize Log ---\n")
             try:
@@ -752,47 +791,25 @@ def job_detail(job_id: str):
 
 @app.route("/jobs/<job_id>/progress")
 def job_progress(job_id: str):
+    """Return the state of the volume and the surface panel.
+
+    The phases and their percentages come from what T1Prep printed (see
+    ``run_job``); a phase before the running one is complete, the ones
+    after it wait.  A finished job has completed every phase it entered and
+    skipped the others; a failed one failed in the phase it was in.
+    """
     with LOCK:
         job = JOBS.get(job_id)
+        if job:
+            live = copy.deepcopy(job.get("live_progress") or _new_progress())
+            status = job.get("status")
+            return_code = job.get("return_code")
     if not job:
         return jsonify({"error": "Job not found"}), 404
 
     progress_dir = Path(job.get("progress_dir", ""))
-    log_path = Path(job["log_path"])
 
-    # Parse log to determine phases and their completion status
-    vol_complete = False
-    vol_time = ""
-    surf_started = False
-    surf_complete = False
-    surf_time = ""
-
-    if log_path.exists():
-        try:
-            content = log_path.read_text(encoding="utf-8")
-            lines = content.split("\n")
-            for line in lines:
-                if "Volume Segmentation" in line:
-                    pass  # Volume phase started
-                elif "Surface Estimation" in line:
-                    surf_started = True
-                    vol_complete = True  # Volume must be done if surface started
-                elif "Finished after" in line:
-                    # Extract time from "Finished after: Xmin Ys" or "Finished after Xmin Ys"
-                    import re
-                    time_match = re.search(r"Finished after:?\s*(.+)", line)
-                    if time_match:
-                        finish_time = time_match.group(1).strip()
-                        if surf_started and not surf_complete:
-                            surf_complete = True
-                            surf_time = finish_time
-                        elif not vol_complete:
-                            vol_complete = True
-                            vol_time = finish_time
-        except Exception:
-            pass
-
-    # Read current progress from files
+    # parallelize writes done/total and the exit status of each of its jobs
     current_done = 0
     current_total = 0
     failed = False
@@ -818,54 +835,34 @@ def job_progress(job_id: str):
             except Exception:
                 continue
 
-    # Determine current phase progress
-    # First, check live progress from stdout parsing (works for serial/single-job mode)
-    live_progress = job.get("live_progress", {})
-    live_vol_percent = live_progress.get("vol_percent", 0)
-    live_surf_percent = live_progress.get("surf_percent", 0)
-    live_phase = live_progress.get("current_phase", "volume")
+    finished = status in ("finished", "failed")
+    succeeded = finished and return_code == 0
+    failed = failed or (finished and not succeeded)
+    # Before the first header a failure belongs to the first phase
+    current = _PHASE_ORDER.index(live["phase"]) if live["phase"] else 0
 
-    if surf_complete:
-        # Both phases complete
-        vol_percent = 100
-        surf_percent = 100
-    elif surf_started:
-        # Surface estimation in progress
-        vol_percent = 100
-        # Use progress files if available, otherwise use live progress
-        if current_total > 0:
-            surf_percent = int(min(100, max(0, (current_done * 100) // current_total)))
+    phases = {}
+    for index, name in enumerate(_PHASE_ORDER):
+        phase = live[name]
+        if succeeded:
+            complete = phase["started"]
         else:
-            surf_percent = live_surf_percent
-    elif vol_complete:
-        # Volume done, surface not started yet (brief transition)
-        vol_percent = 100
-        surf_percent = 0
-    else:
-        # Volume segmentation in progress
-        # Use progress files if available, otherwise use live progress from stdout
-        if current_total > 0:
-            vol_percent = int(min(100, max(0, (current_done * 100) // current_total)))
-        else:
-            vol_percent = live_vol_percent
-        surf_percent = 0
+            complete = index < current and phase["started"]
+        active = index == current and live["phase"] is not None and not succeeded
+        phases[name] = {
+            "percent": 100 if complete else phase["percent"] if active else 0,
+            "started": phase["started"] and index <= current,
+            "complete": complete,
+            "skipped": not phase["started"] and (succeeded or index < current),
+            "failed": failed and index == current and not succeeded,
+            "time": _format_duration(phase["seconds"]) if complete else "",
+        }
 
     return jsonify(
         {
             "available": True,
-            "volume": {
-                "percent": vol_percent,
-                "complete": vol_complete,
-                "time": vol_time,
-                "failed": failed and not surf_started,
-            },
-            "surface": {
-                "percent": surf_percent,
-                "complete": surf_complete,
-                "time": surf_time,
-                "started": surf_started,
-                "failed": failed and surf_started,
-            },
+            "volume": phases["volume"],
+            "surface": phases["surface"],
             "done": current_done,
             "total": current_total,
             "failed": failed,
@@ -882,11 +879,13 @@ def job_status(job_id: str):
         return jsonify({"error": "Job not found"}), 404
 
     status = job.get("status", "unknown")
-    phase = "Initializing"
+    phase = {"volume": "Volume Segmentation", "surface": "Surface Estimation"}.get(
+        (job.get("live_progress") or {}).get("phase"), "Initializing"
+    )
 
     # Parse phase from log file
     log_path = Path(job["log_path"])
-    if log_path.exists():
+    if phase == "Initializing" and log_path.exists():
         try:
             content = log_path.read_text(encoding="utf-8")
             # Detect phase from log content

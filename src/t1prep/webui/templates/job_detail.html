@@ -98,8 +98,9 @@
     const pollIntervalMs = 2000;
     let isFinished = {{ 'true' if job.status in ('finished', 'failed') else 'false' }};
 
-    async function refreshLog() {
-      if (isFinished) return;
+    // force: one more fetch after the job ended, or for a page opened then
+    async function refreshLog(force = false) {
+      if (isFinished && !force) return;
       try {
         const response = await fetch(window.location.href, { headers: { "X-Requested-With": "fetch" } });
         if (!response.ok) return;
@@ -115,8 +116,27 @@
       }
     }
 
-    async function refreshProgress() {
-      if (isFinished) return;
+    function showPhase(phase, bar, label, percent, time) {
+      const value = phase.percent ?? 0;
+      bar.style.width = `${value}%`;
+      percent.textContent = `${value}%`;
+      bar.classList.toggle("failed", Boolean(phase.failed));
+      if (phase.failed) {
+        label.textContent = "Failed";
+      } else if (phase.complete) {
+        label.textContent = "Complete";
+      } else if (phase.skipped) {
+        label.textContent = "Skipped";
+      } else if (phase.started) {
+        label.textContent = "In progress";
+      } else {
+        label.textContent = "Waiting…";
+      }
+      time.textContent = phase.time || "";
+    }
+
+    async function refreshProgress(force = false) {
+      if (isFinished && !force) return;
       try {
         const response = await fetch(`${window.location.pathname}/progress`);
         if (!response.ok) return;
@@ -124,49 +144,8 @@
         if (!data.available) {
           return;
         }
-        
-        // Update Volume Segmentation progress
-        const vol = data.volume || {};
-        const volPercent = vol.percent ?? 0;
-        volProgressBar.style.width = `${volPercent}%`;
-        volProgressPercent.textContent = `${volPercent}%`;
-        
-        if (vol.failed) {
-          volProgressBar.classList.add("failed");
-          volProgressLabel.textContent = "Failed";
-        } else if (vol.complete) {
-          volProgressBar.classList.remove("failed");
-          volProgressLabel.textContent = "Complete";
-          if (vol.time) {
-            volTime.textContent = vol.time;
-          }
-        } else if (volPercent > 0) {
-          volProgressBar.classList.remove("failed");
-          volProgressLabel.textContent = "In progress";
-        }
-        
-        // Update Surface Estimation progress
-        const surf = data.surface || {};
-        const surfPercent = surf.percent ?? 0;
-        surfProgressBar.style.width = `${surfPercent}%`;
-        surfProgressPercent.textContent = `${surfPercent}%`;
-        
-        if (surf.failed) {
-          surfProgressBar.classList.add("failed");
-          surfProgressLabel.textContent = "Failed";
-        } else if (surf.complete) {
-          surfProgressBar.classList.remove("failed");
-          surfProgressLabel.textContent = "Complete";
-          if (surf.time) {
-            surfTime.textContent = surf.time;
-          }
-        } else if (surf.started) {
-          surfProgressBar.classList.remove("failed");
-          surfProgressLabel.textContent = "In progress";
-        } else {
-          surfProgressLabel.textContent = "Waiting…";
-        }
-        
+        showPhase(data.volume || {}, volProgressBar, volProgressLabel, volProgressPercent, volTime);
+        showPhase(data.surface || {}, surfProgressBar, surfProgressLabel, surfProgressPercent, surfTime);
       } catch (error) {
         // Ignore polling errors.
       }
@@ -180,14 +159,17 @@
 
         if (data.status) {
           jobStatus.textContent = data.status;
+          const ended = data.status === "finished" || data.status === "failed";
+          if (ended && !isFinished) {
+            // Final refresh to get the completion state and the last lines
+            isFinished = true;
+            refreshProgress(true);
+            refreshLog(true);
+          }
           if (data.status === "finished") {
             jobStatus.style.color = "#4caf50";
-            isFinished = true;
-            // Final refresh to get completion state
-            refreshProgress();
           } else if (data.status === "failed") {
             jobStatus.style.color = "#f44336";
-            isFinished = true;
           } else if (data.status === "running") {
             jobStatus.style.color = "#2196f3";
           }
@@ -209,9 +191,9 @@
       }
     }
 
-    // Initial refresh
+    // Initial refresh, also for a job that has already ended
     refreshStatus();
-    refreshProgress();
+    refreshProgress(true);
 
     // Set up polling
     setInterval(refreshLog, pollIntervalMs);

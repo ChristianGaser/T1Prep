@@ -755,8 +755,19 @@ process()
         ((count+=3))
       fi
     fi
-    
-    # 1. Call deepmriprep segmentation 
+
+    # The web UI shows each phase in a panel of its own: there a header names
+    # the phase and its steps count from zero (the terminal keeps one bar).
+    # A step is announced when it starts, so each phase gets one step more,
+    # taken when it has finished: its last step does not read 100 % yet
+    webui_phases=0
+    seg_end_count=${end_count}
+    if [[ -n "${T1PREP_WEBUI:-}" && "$multi" -ne -2 ]]; then
+      webui_phases=1
+      seg_end_count=$((count + 1))
+    fi
+
+    # 1. Call deepmriprep segmentation
     # ----------------------------------------------------------------------
     # Check for outputs from previous step
     if [ -f "${input}" ]; then
@@ -796,10 +807,11 @@ process()
 
       cmd+=(--seed "${seed}" --vessel "${vessel}" --label-dir "${label_dir}")
       cmd+=(--input "${input}" --mri-dir "${mri_dir}")
-      cmd+=(--report-dir "${report_dir}" --atlas "${atlas_vol}" --count "${end_count}")
-      
+      cmd+=(--report-dir "${report_dir}" --atlas "${atlas_vol}" --count "${seg_end_count}")
+
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
+        [ "${webui_phases}" -eq 1 ] && echo "Volume Segmentation"
         printf '%q ' "${cmd[@]}" >> "${report_log}"
         echo >> "${report_log}"
         # Take the status inside each branch: after a pipeline `$?` is the
@@ -841,7 +853,10 @@ process()
         echo "Error in ${input}"
         continue
       fi
-  
+      if [[ "${webui_phases}" -eq 1 && "${estimate_seg}" -eq 1 ]]; then
+        ${progress_bar} 1 "" "${seg_end_count}" "${seg_end_count}" "Volume segmentation finished"
+      fi
+
     else
       echo "${RED}ERROR: ${input} could not be found.${NC}" >&2
       ((i++))
@@ -854,6 +869,12 @@ process()
 
       # Set starting time
       start_surf=$(date +%s)
+
+      if [ "${webui_phases}" -eq 1 ]; then
+        echo "Surface Estimation"
+        end_count=$((end_count - count))
+        count=0
+      fi
 
       # Reset count file before launching hemisphere processes so stale values
       # from previous runs do not corrupt the progress bar percentage.
@@ -932,9 +953,10 @@ process()
 
     fi # estimate_surf
 
+    # The last step: not count + 1, because the hemisphere processes count
+    # their steps in the shared count file, not in this shell's count
     if [ "$multi" -ne -2 ]; then
-      ((count++))
-      ${progress_bar} 1 "" $count $end_count "                     "
+      ${progress_bar} 1 "" "$end_count" "$end_count" "                     "
     fi
 
     # Print execution time per data set
