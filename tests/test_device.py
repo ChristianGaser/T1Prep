@@ -116,14 +116,27 @@ class TestInterpolate(unittest.TestCase):
             torch.is_deterministic_algorithms_warn_only_enabled(),
         )
 
-    def test_an_accelerator_call_lifts_the_setting_and_restores_it(self):
+    def test_accelerator_call_does_not_change_the_deterministic_setting(self):
+        from unittest import mock
+
         x = torch.empty(1, 1, 2, 2, 2, device="meta")
         for warn_only in (True, False):
             torch.use_deterministic_algorithms(True, warn_only=warn_only)
-            self.assertFalse(self._deterministic_inside(x))
+            with mock.patch.object(
+                torch,
+                "use_deterministic_algorithms",
+                wraps=torch.use_deterministic_algorithms,
+            ) as set_deterministic, mock.patch.object(
+                torch.nn.functional,
+                "interpolate",
+                wraps=torch.nn.functional.interpolate,
+            ) as functional_interpolate:
+                _device.interpolate(x, **self.SIZE)
+            set_deterministic.assert_not_called()
+            functional_interpolate.assert_not_called()
             self.assertEqual(self._state(), (True, warn_only))
 
-    def test_the_setting_is_restored_when_interpolate_raises(self):
+    def test_the_setting_is_unchanged_when_interpolate_raises(self):
         x = torch.empty(1, 1, 2, 2, 2, device="meta")
         with self.assertRaises(Exception):
             _device.interpolate(x, size=(4, 4, 4), mode="no-such-mode")
