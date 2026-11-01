@@ -510,7 +510,7 @@ process()
     fi
     cmd=(
       "${script_dir}/parallelize"
-      --logdir "/tmp"
+      --logdir "${T1PREP_LOGDIR:-/tmp}"
       --delay 5
       ${arg_parallelize[@]}
       --command "$(printf '%q ' "$0" "${filtered_args[@]}" "${args[@]}")"
@@ -537,7 +537,7 @@ process()
     fi
     cmd=(
       "${script_dir}/parallelize"
-      --logdir "/tmp"
+      --logdir "${T1PREP_LOGDIR:-/tmp}"
       ${arg_parallelize[@]}
       --command "$(printf '%q ' "$0" "${filtered_args[@]}" --no-seg --multi -2)"
       "${ARRAY[@]}"
@@ -844,7 +844,10 @@ process()
       fi
 
       if [ "$seg_status" -ne 0 ]; then
-        if [[ "$multi" -ne -2 ]]; then
+        if [[ -n "${T1PREP_WEBUI:-}" && "$multi" -ne -2 ]]; then
+          # A plain line: the web UI must not read a 100 % bar as progress
+          echo "Segmentation failed"
+        elif [[ "$multi" -ne -2 ]]; then
           # Use 1/1 so the single job bar renders without relying on end_count
           ${progress_bar} 1 "" 1 1 "Segmentation failed"
         fi
@@ -865,6 +868,7 @@ process()
     fi
     
     # Optionally extract surface
+    surf_status=0
     if [ "${estimate_surf}" -eq 1 ]; then
 
       # Set starting time
@@ -938,7 +942,9 @@ process()
       fi
 
       if [ "$surf_status" -ne 0 ]; then
-        if [[ "$multi" -ne -2 ]]; then
+        if [[ -n "${T1PREP_WEBUI:-}" && "$multi" -ne -2 ]]; then
+          echo "Surface estimation failed"
+        elif [[ "$multi" -ne -2 ]]; then
           # Use 1/1 so the single job bar renders without relying on end_count
           ${progress_bar} 1 "" 1 1 "Surface estimation failed"
         fi
@@ -955,7 +961,7 @@ process()
 
     # The last step: not count + 1, because the hemisphere processes count
     # their steps in the shared count file, not in this shell's count
-    if [ "$multi" -ne -2 ]; then
+    if [[ "$multi" -ne -2 && "${surf_status:-0}" -eq 0 ]]; then
       ${progress_bar} 1 "" "$end_count" "$end_count" "                     "
     fi
 

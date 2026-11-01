@@ -334,23 +334,17 @@ def build_command(
     return cmd
 
 
-def find_parallelize_log(since: Optional[float] = None) -> Optional[Path]:
-    """Find the most recent parallelize log file from /tmp.
+def find_parallelize_logs(log_dir: Optional[str]) -> list[Path]:
+    """Return the parallelize logs written into a job's own log directory.
 
-    With ``since`` (a ``time.time()`` value) only a log written after it
-    counts, so a job that ran without parallelize gets no other run's log.
+    The job hands ``log_dir`` to T1Prep (``T1PREP_LOGDIR``), so no other
+    job's log can be found here.  Oldest first: the order the phases ran.
     """
+    if not log_dir:
+        return []
     hostname = socket.gethostname()
-    pattern = f"/tmp/parallelize_{hostname}_*.log"
-    candidates = [
-        path
-        for path in glob.glob(pattern)
-        if since is None or os.path.getmtime(path) >= since
-    ]
-    if not candidates:
-        return None
-    # Return the most recently modified one
-    return Path(max(candidates, key=os.path.getmtime))
+    pattern = os.path.join(glob.escape(str(log_dir)), f"parallelize_{hostname}_*.log")
+    return [Path(path) for path in sorted(glob.glob(pattern), key=os.path.getmtime)]
 
 
 # A bar line of progress_bar_multi.sh ("|███     |  42% label ETA ...") or of
@@ -368,7 +362,13 @@ def _new_progress() -> dict:
         "phase": None,
         "since": None,
         **{
-            name: {"percent": 0, "started": False, "seconds": 0.0}
+            name: {
+                "percent": 0,
+                "started": False,
+                "seconds": 0.0,
+                "entries": 0,
+                "failed": False,
+            }
             for name in _PHASE_ORDER
         },
     }
@@ -382,11 +382,21 @@ def _stop_clock(live: dict, now: float) -> None:
 
 
 def _enter_phase(live: dict, phase: str, now: float) -> None:
-    """Start ``phase``; the bar of each phase counts from zero."""
+    """Start ``phase`` for one more subject; its bar counts from zero."""
     _stop_clock(live, now)
     live["phase"], live["since"] = phase, now
     live[phase]["started"] = True
+    live[phase]["entries"] += 1
     live[phase]["percent"] = 0
+
+
+def _failed_phase(stripped: str) -> Optional[str]:
+    """Name the phase whose failure notice ``stripped`` is, if it is one."""
+    if "Segmentation failed" in stripped:
+        return "volume"
+    if "Surface estimation failed" in stripped:
+        return "surface"
+    return None
 
 
 def _format_duration(seconds: float) -> str:
@@ -400,7 +410,6 @@ def _format_duration(seconds: float) -> str:
 
 
 def run_job(job_id: str) -> None:
-    started = time.time()
     with LOCK:
         job = JOBS[job_id]
         job["status"] = "running"
@@ -410,6 +419,10 @@ def run_job(job_id: str) -> None:
     cmd = job["command"]
 
     env = os.environ.copy()
+    # parallelize writes its logs here, so they belong to this job alone
+    log_dir = log_path.parent / "parallelize_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    env["T1PREP_LOGDIR"] = str(log_dir)
     env.setdefault("PYTHONUNBUFFERED", "1")
     env["T1PREP_WEBUI"] = "1"  # Enable progress output in non-TTY mode
     progress_dir = job.get("progress_dir")
@@ -445,8 +458,13 @@ def run_job(job_id: str) -> None:
             stripped = line.strip()
 
             phase = next((name for header, name in _PHASES if header in stripped), None)
-            match = None if phase else _PROGRESS_LINE.match(stripped)
-            if phase:
+            failure = _failed_phase(stripped)
+            match = None if phase or failure else _PROGRESS_LINE.match(stripped)
+            if failure:
+                # Kept in the phase where it happened, not read as progress
+                with LOCK:
+                    live[failure]["failed"] = True
+            elif phase:
                 with LOCK:
                     _enter_phase(live, phase, time.time())
                 logged_percent = None
@@ -468,9 +486,8 @@ def run_job(job_id: str) -> None:
         with LOCK:
             _stop_clock(live, time.time())
 
-        # Append parallelize log if available
-        parallelize_log = find_parallelize_log(since=started)
-        if parallelize_log and parallelize_log.exists():
+        # Append this job's parallelize logs, if it wrote any
+        for parallelize_log in find_parallelize_logs(str(log_dir)):
             log_file.write("\n\n--- Parallelize Log ---\n")
             try:
                 log_file.write(parallelize_log.read_text(encoding="utf-8"))
@@ -841,20 +858,32 @@ def job_progress(job_id: str):
     # Before the first header a failure belongs to the first phase
     current = _PHASE_ORDER.index(live["phase"]) if live["phase"] else 0
 
+    # With several subjects each phase runs once per subject: its panel
+    # shows the share of subjects through it, and a failure stays in the
+    # phase where it was printed.  A failure without notice (the job died,
+    # a parallelize job failed) belongs to the phase last entered.
+    subjects = max(len(job.get("inputs") or []), 1)
+    noticed = any(live[name]["failed"] for name in _PHASE_ORDER)
+
     phases = {}
     for index, name in enumerate(_PHASE_ORDER):
         phase = live[name]
-        if succeeded:
-            complete = phase["started"]
-        else:
-            complete = index < current and phase["started"]
-        active = index == current and live["phase"] is not None and not succeeded
+        total = max(subjects, phase["entries"])
+        running = live["phase"] == name and not succeeded
+        done = phase["entries"] - (1 if running else 0)
+        phase_failed = phase["failed"] or (
+            failed and not noticed and index == current and not succeeded
+        )
+        complete = phase["started"] and not phase_failed and (
+            succeeded or done >= total
+        )
+        share = (done + (phase["percent"] / 100 if running else 0)) / total
         phases[name] = {
-            "percent": 100 if complete else phase["percent"] if active else 0,
-            "started": phase["started"] and index <= current,
+            "percent": 100 if complete else min(99, round(share * 100)),
+            "started": phase["started"],
             "complete": complete,
             "skipped": not phase["started"] and (succeeded or index < current),
-            "failed": failed and index == current and not succeeded,
+            "failed": phase_failed,
             "time": _format_duration(phase["seconds"]) if complete else "",
         }
 

@@ -49,9 +49,6 @@ class TestJobProgress(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        patcher = mock.patch.object(webui, "find_parallelize_log", return_value=None)
-        patcher.start()
-        self.addCleanup(patcher.stop)
         self.client = webui.app.test_client()
 
     def start(self, lines, exit_code=0):
@@ -150,6 +147,31 @@ class TestJobProgress(unittest.TestCase):
         self.assertTrue(progress["volume"]["failed"])
         self.assertFalse(progress["surface"]["failed"])
 
+    def test_a_failure_notice_is_not_progress(self):
+        self.start(VOLUME + SURFACE[:3] + ["Surface estimation failed"], exit_code=1)
+        self.release()
+        surface = self.progress()["surface"]
+        self.assertTrue(surface["failed"])
+        self.assertFalse(surface["complete"])
+        self.assertEqual(surface["percent"], 29)
+
+    def test_a_segmentation_failure_stays_in_the_volume_phase(self):
+        self.start(VOLUME[:3] + ["Segmentation failed"] + VOLUME + SURFACE, exit_code=1)
+        self.release()
+        progress = self.progress()
+        self.assertTrue(progress["volume"]["failed"])
+        self.assertFalse(progress["volume"]["complete"])
+        self.assertFalse(progress["surface"]["failed"])
+
+    def test_several_subjects_share_a_panel(self):
+        self.start(VOLUME + SURFACE + VOLUME[:4])
+        with webui.LOCK:
+            webui.JOBS[self.job_id]["inputs"] = ["a", "b"]
+        progress = self.progress()
+        self.assertEqual(progress["volume"]["percent"], 72)
+        self.assertFalse(progress["volume"]["complete"])
+        self.assertEqual(progress["surface"]["percent"], 50)
+
     def test_the_python_renderer_s_bars_count_too(self):
         self.start(["Volume Segmentation", bar(50, "step", style="[")])
         self.assertEqual(self.progress()["volume"]["percent"], 50)
@@ -165,18 +187,18 @@ class TestJobProgress(unittest.TestCase):
 
 @unittest.skipIf(webui is None, "web UI not importable")
 class TestParallelizeLog(unittest.TestCase):
-    def test_a_log_from_before_the_job_is_not_appended(self):
-        logs = {"/tmp/parallelize_h_1.log": 100.0, "/tmp/parallelize_h_2.log": 200.0}
-        with mock.patch.object(webui.glob, "glob", return_value=list(logs)), \
-                mock.patch.object(webui.os.path, "getmtime", logs.get):
-            self.assertEqual(
-                webui.find_parallelize_log(), Path("/tmp/parallelize_h_2.log")
-            )
-            self.assertEqual(
-                webui.find_parallelize_log(since=150.0),
-                Path("/tmp/parallelize_h_2.log"),
-            )
-            self.assertIsNone(webui.find_parallelize_log(since=300.0))
+    def test_only_the_job_s_own_log_directory_is_read(self):
+        with tempfile.TemporaryDirectory() as mine, tempfile.TemporaryDirectory() as other:
+            host = webui.socket.gethostname()
+            first = Path(mine) / f"parallelize_{host}_1.log"
+            second = Path(mine) / f"parallelize_{host}_2.log"
+            (Path(other) / f"parallelize_{host}_3.log").write_text("x")
+            first.write_text("a")
+            second.write_text("b")
+            webui.os.utime(first, (100, 100))
+            webui.os.utime(second, (200, 200))
+            self.assertEqual(webui.find_parallelize_logs(mine), [first, second])
+            self.assertEqual(webui.find_parallelize_logs(None), [])
 
 
 if __name__ == "__main__":
