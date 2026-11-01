@@ -70,7 +70,9 @@ That places every command — `T1Prep` (aka `PyCAT`), `t1prep-ui`, `t1prep-run`,
 `CAT_SurfView`, `CAT_VolView` and the helpers — into the active environment's
 `bin/`. Model
 weights are fetched on the first run (or ahead of time with
-`t1prep-download-models`).
+`t1prep-download-models`). `pip install "T1Prep[tinygrad]"` (Python 3.11+)
+adds tinygrad as a second backend for the networks; see
+[docs/usage.md](docs/usage.md#neural-networks).
 
 A source checkout, Windows via WSL, a manual install and the Docker image are
 described in **[docs/installation.md](docs/installation.md)**.

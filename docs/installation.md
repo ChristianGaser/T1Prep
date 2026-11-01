@@ -34,7 +34,13 @@ python3 -m pip install "T1Prep==0.4.4"
 
 # Optional: pipx keeps T1Prep isolated in its own venv
 pipx install T1Prep
+
+# Optional (Python 3.11+): tinygrad as a second backend for the networks
+python3 -m pip install "T1Prep[tinygrad]"
 ```
+
+The tinygrad backend is selected per run with `T1PREP_NN_BACKEND=tinygrad`;
+see [Neural networks](usage.md#neural-networks) for when it pays off.
 
 > **Multiple Python versions?** Install with the *exact* interpreter you intend
 > to run T1Prep with, e.g. `python3.12 -m pip install T1Prep` (T1Prep requires
@@ -47,9 +53,12 @@ pipx install T1Prep
 > for the whole session (`export T1PREP_PYTHON=/path/to/python`). Using `pipx`
 > or a dedicated venv sidesteps the ambiguity entirely.
 
-Model weights are not bundled with the wheel; they are fetched lazily on
-the first run into your user cache (or downloaded ahead of time with
-`t1prep-download-models`).
+Model weights are not bundled with the wheel. On the first run (or ahead of
+time with `t1prep-download-models`) T1Prep fetches the TorchScript archives of
+deepmriprep's networks from its GitHub release, unless an installed
+deepmriprep already has them, and converts them once into its own
+safetensors files: in that deepmriprep's model folder when it is writable,
+otherwise in your user cache (`T1PREP_MODEL_DIR` overrides both).
 
 Use it from Python:
 

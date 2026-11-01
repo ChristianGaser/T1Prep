@@ -181,6 +181,40 @@ Any one of these switches telemetry off:
 | Environment (every entry point, also Docker) | `T1PREP_NO_TRACK=1` or `DO_NOT_TRACK=1`, e.g. `docker run -e T1PREP_NO_TRACK=1 ...` |
 | Python API | `run_t1prep(..., track=False)` |
 
+## Neural networks
+T1Prep runs two of deepmriprep's networks: deepbet's skull-stripping model
+and deepmriprep's segmentation (a coarse model and 18 patch models). T1Prep
+defines both itself (`t1prep.nn`) and keeps their weights as safetensors
+files, converted once from deepmriprep's TorchScript archives (see
+[Installation](installation.md)).
+
+The networks run on the GPU when there is one (CUDA, else Apple's MPS) and
+on the CPU otherwise; `T1PREP_DEVICE=cpu`, `mps` or `cuda` forces a device
+(`cpu` gives a reference run).
+
+`T1PREP_NN_BACKEND` selects the framework that runs them:
+
+| Backend | Install | Results | Use it |
+|---------|---------|---------|--------|
+| `torch` (default) | included | identical to deepmriprep's archives (CPU, MPS; last bits on CUDA) | always a safe choice |
+| `tinygrad` | `pip install "T1Prep[tinygrad]"` (Python 3.11+) | differ in the last digits; volumes identical as reported | experimental; never without a GPU |
+
+On an M2 MacBook Air (IXI199, whole volume pipeline) tinygrad halved the
+segmentation's memory peak (7.9 instead of 15.3 GB) and shortened it (14.3
+instead of 19.2 s), but skull-stripping took 7.8 instead of 1.1 s, so the
+run took 110 instead of 106 s and its overall peak, set by later stages, stayed
+at 15 GB. Without a GPU, tinygrad's segmentation was about six times slower
+than torch's.
+
+```bash
+T1PREP_NN_BACKEND=tinygrad T1Prep --out-dir out sub-01_T1w.nii.gz
+```
+
+A retrained network is exported with
+`python -m t1prep.nn.convert model.pth --out-dir DIR` (a saved `state_dict`
+or a TorchScript archive) and placed in the model folder under its name in
+`t1prep.nn.models.NETWORKS`.
+
 ## Output Folder Structure and Naming Conventions
 
 T1Prep automatically determines output locations based on the input data structure:
