@@ -19,7 +19,7 @@ def test_package_versions_cover_numerical_dependencies():
 
 
 def test_model_fingerprint_changes_with_the_weights(tmp_path, monkeypatch):
-    import t1prep._models as models
+    import t1prep.nn.models as models
 
     for name in models.MODEL_FILES:
         (tmp_path / name).write_bytes(name.encode())
@@ -41,7 +41,7 @@ def test_model_fingerprint_changes_with_the_weights(tmp_path, monkeypatch):
 
 
 def test_report_contains_provenance(tmp_path, monkeypatch):
-    import t1prep._models as models
+    import t1prep.nn.models as models
 
     for name in models.MODEL_FILES:
         (tmp_path / name).write_bytes(b"w")
@@ -60,7 +60,7 @@ def test_version_and_system_without_the_bash_log(tmp_path, monkeypatch):
     # t1prep-run, the Python API and Docker write no T1Preplog, which used to
     # leave "unknown" in the report
     import t1prep
-    import t1prep._models as models
+    import t1prep.nn.models as models
 
     for name in models.MODEL_FILES:
         (tmp_path / name).write_bytes(b"w")

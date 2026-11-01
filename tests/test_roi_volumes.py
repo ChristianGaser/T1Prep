@@ -30,6 +30,15 @@ from t1prep._atlas import roi_table, roi_tissue_volumes  # noqa: E402
 from t1prep.utils import TEMPLATE_PATH_T1PREP  # noqa: E402
 
 
+def _deepmriprep_get_volumes(case):
+    """deepmriprep's ``get_volumes``, the reference; skips *case* without deepmriprep."""
+    try:
+        from deepmriprep.atlas import get_volumes
+    except ImportError:
+        case.skipTest("deepmriprep not installed")
+    return get_volumes
+
+
 def _maps(shape, seed=0):
     rng = np.random.default_rng(seed)
     return [torch.from_numpy(rng.random(shape).astype(np.float32)) for _ in range(3)]
@@ -51,7 +60,7 @@ class TestTissueVolumesById(unittest.TestCase):
         self.assertTrue(np.all(table[2] == 0))
 
     def test_same_as_deepmriprep_when_every_label_is_present(self):
-        from deepmriprep.atlas import get_volumes
+        get_volumes = _deepmriprep_get_volumes(self)
 
         atlas = np.repeat(np.arange(1, 5, dtype=np.float32), 30).reshape(4, 5, 6)
         p = _maps(atlas.shape, seed=1)
@@ -61,7 +70,7 @@ class TestTissueVolumesById(unittest.TestCase):
 
     def test_deepmriprep_merges_a_one_voxel_region(self):
         # Why it is replaced: labels 1,1,2,3,3 come back as two regions
-        from deepmriprep.atlas import get_volumes
+        get_volumes = _deepmriprep_get_volumes(self)
 
         atlas = torch.tensor([1, 1, 2, 3, 3], dtype=torch.float32).reshape(1, 1, 5)
         ones = torch.ones_like(atlas)

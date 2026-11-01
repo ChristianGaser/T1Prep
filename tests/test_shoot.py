@@ -76,7 +76,7 @@ class TestConventions(unittest.TestCase):
         np.testing.assert_allclose(mwp2, 0.75 * wp2, atol=0.75 / 255 + 1e-6)
 
     def test_grids_are_normalised_with_reversed_channels(self):
-        from deepmriprep.utils import nifti_to_tensor
+        from t1prep.utils import nifti_to_tensor
 
         xy = nifti_to_tensor(self.out["warp_xy"]).numpy()
         yx = nifti_to_tensor(self.out["warp_yx"]).numpy()

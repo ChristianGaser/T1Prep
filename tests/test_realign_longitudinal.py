@@ -140,14 +140,14 @@ class TestSkullstripImport(unittest.TestCase):
             name: getattr(segment, name)
             for name in (
                 "prepare_model_files",
-                "setup_device",
-                "CustomPreprocess",
+                "resolve_device",
+                "Preprocess",
                 "skull_strip",
             )
         }
         segment.prepare_model_files = lambda *a, **k: None
-        segment.setup_device = lambda *a, **k: (None, True)
-        segment.CustomPreprocess = lambda *a, **k: object()
+        segment.resolve_device = lambda *a, **k: (None, True)
+        segment.Preprocess = lambda *a, **k: object()
         segment.skull_strip = lambda prep, img, **k: (img, None, None)
         try:
             images = [

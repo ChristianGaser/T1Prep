@@ -21,10 +21,10 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import deepmriprep.preprocess as dmp_preprocess  # noqa: E402
 from scipy.ndimage import binary_fill_holes, map_coordinates  # noqa: E402
 
-from t1prep import segment  # noqa: E402
+from t1prep.stages import preprocess  # noqa: E402
+from t1prep._atlas import resolve_template_file  # noqa: E402
 from t1prep.utils import centre_extent_volume  # noqa: E402
 
 
@@ -38,9 +38,14 @@ def _corners(img):
 class TestWorkingGridTemplate(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.header = dmp_preprocess.AFFINE_TEMPLATE
-        cls.warp = dmp_preprocess.WARP_TEMPLATE
-        cls.grid = segment._working_grid_template(cls.header, cls.warp)
+        bundled = nib.load(resolve_template_file("Template_05mm_bet", ".nii.gz"))
+        # deepmriprep's copy: the same data, with 0.5 mm voxels in its header
+        claimed = np.array(
+            [[0.5, 0, 0, -84], [0, 0.5, 0, -120], [0, 0, 0.5, -72], [0, 0, 0, 1]]
+        )
+        cls.header = nib.Nifti1Image(bundled.dataobj, claimed, bundled.header)
+        cls.warp = nib.load(resolve_template_file("Template_4_GS", ".nii.gz"))
+        cls.grid = preprocess._working_grid_template(cls.header, cls.warp)
 
     def test_corner_centres_are_the_warp_templates(self):
         for mine, theirs in zip(_corners(self.grid), _corners(self.warp)):
@@ -65,7 +70,7 @@ class TestWorkingGridTemplate(unittest.TestCase):
         )
 
     def test_already_consistent_geometry_is_kept(self):
-        again = segment._working_grid_template(self.grid, self.warp)
+        again = preprocess._working_grid_template(self.grid, self.warp)
         np.testing.assert_allclose(again.affine, self.grid.affine, atol=1e-12)
 
     def test_the_content_sits_where_the_new_geometry_says(self):
@@ -88,14 +93,11 @@ class TestWorkingGridTemplate(unittest.TestCase):
         self.assertGreater(dice(self.grid.affine), dice(self.header.affine) + 0.003)
 
 
-class TestCustomPreprocessGrid(unittest.TestCase):
+class TestPreprocessGrid(unittest.TestCase):
     def _template_passed(self, *args, **kwargs):
-        with mock.patch.object(segment.Preprocess, "__init__", return_value=None) as init:
-            segment.CustomPreprocess(*args, **kwargs)
-        call = init.call_args
-        if len(call.args) > 1:
-            return call.args[1]
-        return call.kwargs.get("affine_template")
+        # the networks are not what is under test here
+        with mock.patch.multiple(preprocess, BrainExtraction=mock.DEFAULT, BrainSegmentation=mock.DEFAULT):
+            return preprocess.Preprocess(*args, **kwargs).affine_template
 
     def test_the_working_grid_replaces_the_header_geometry(self):
         template = self._template_passed(no_gpu=True)

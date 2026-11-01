@@ -8,10 +8,18 @@ instead flips it against its own affine — silently, because the shape is
 unchanged — which is what put white matter in the background on an LPI dataset.
 """
 
+import sys
+from pathlib import Path
+
 import nibabel as nib
 import numpy as np
 import pytest
-from deepbet.utils import reoriented_nifti
+
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from t1prep.utils import reoriented_nifti  # noqa: E402
 
 
 def _affine(axcodes, shape, zooms=(1.0, 1.2, 0.9)):

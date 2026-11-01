@@ -57,6 +57,22 @@ class TestDeviceSelection(unittest.TestCase):
     def test_release_cache_on_cpu_is_noop(self):
         _device.release_cache(torch.device("cpu"))
 
+    def test_registrations_stay_off_mps_unless_asked(self):
+        from unittest import mock
+
+        def resolved(kind):
+            return mock.patch.object(
+                _device, "resolve_device", return_value=(torch.device(kind), kind == "cpu")
+            )
+
+        with resolved("mps"):
+            self.assertEqual(_device.stage_device().type, "cpu")
+            os.environ["T1PREP_DEVICE"] = "mps"
+            self.assertEqual(_device.stage_device().type, "mps")
+        for kind in ("cuda", "cpu"):
+            with resolved(kind):
+                self.assertEqual(_device.stage_device().type, kind)
+
 
 if __name__ == "__main__":
     unittest.main()

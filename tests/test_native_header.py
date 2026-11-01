@@ -22,9 +22,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from deepbet.utils import reoriented_nifti  # noqa: E402
-
-from t1prep.utils import align_brain, get_resampled_header  # noqa: E402
+from t1prep.utils import align_brain, get_resampled_header, reoriented_nifti  # noqa: E402
 
 ZOOMS = np.array([1.2, 0.9375, 0.9375])     # voxel sizes along R-L, P-A, S-I
 
