@@ -323,6 +323,7 @@ stages free of framework details.
 - Keep indentation at four spaces.
 - Provide docstrings for all public functions and classes.
 - Keep code clean and readable.
+- Resize tensors with `t1prep._device.interpolate`, not `F.interpolate`: under the deterministic algorithms `segment.py` enables, torch computes linear interpolation on CUDA and MPS through a slow decomposition (0.7 s instead of 14 ms onto the working grid on an M2). `tests/test_device.py` fails on a direct call.
 
 ## Performance Optimization
 - For compute-heavy voxel-wise operations, consider PyTorch or Numba.
