@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -72,6 +73,110 @@ class TestDeviceSelection(unittest.TestCase):
         for kind in ("cuda", "cpu"):
             with resolved(kind):
                 self.assertEqual(_device.stage_device().type, kind)
+
+
+@unittest.skipIf(torch is None, "PyTorch not installed")
+class TestInterpolate(unittest.TestCase):
+    """``_device.interpolate``: torch's own kernel under deterministic algorithms.
+
+    A tensor on the meta device stands in for an accelerator: like CUDA and
+    MPS it is not ``is_cpu``, which is all torch's choice of the
+    decomposition looks at.
+    """
+
+    SIZE = {"size": (4, 4, 4), "mode": "trilinear", "align_corners": False}
+
+    def setUp(self):
+        before = (
+            torch.are_deterministic_algorithms_enabled(),
+            torch.is_deterministic_algorithms_warn_only_enabled(),
+        )
+        self.addCleanup(
+            lambda: torch.use_deterministic_algorithms(before[0], warn_only=before[1])
+        )
+        torch.use_deterministic_algorithms(True, warn_only=True)
+
+    def _deterministic_inside(self, x, **kwargs):
+        """Whether deterministic algorithms were on when F.interpolate ran."""
+        from unittest import mock
+
+        seen, real = [], torch.nn.functional.interpolate
+
+        def spy(*args, **kw):
+            seen.append(torch.are_deterministic_algorithms_enabled())
+            return real(*args, **kw)
+
+        with mock.patch.object(torch.nn.functional, "interpolate", spy):
+            _device.interpolate(x, **{**self.SIZE, **kwargs})
+        return seen[0]
+
+    def _state(self):
+        return (
+            torch.are_deterministic_algorithms_enabled(),
+            torch.is_deterministic_algorithms_warn_only_enabled(),
+        )
+
+    def test_an_accelerator_call_lifts_the_setting_and_restores_it(self):
+        x = torch.empty(1, 1, 2, 2, 2, device="meta")
+        for warn_only in (True, False):
+            torch.use_deterministic_algorithms(True, warn_only=warn_only)
+            self.assertFalse(self._deterministic_inside(x))
+            self.assertEqual(self._state(), (True, warn_only))
+
+    def test_the_setting_is_restored_when_interpolate_raises(self):
+        x = torch.empty(1, 1, 2, 2, 2, device="meta")
+        with self.assertRaises(Exception):
+            _device.interpolate(x, size=(4, 4, 4), mode="no-such-mode")
+        self.assertEqual(self._state(), (True, True))
+
+    def test_cpu_and_gradient_calls_are_left_alone(self):
+        self.assertTrue(self._deterministic_inside(torch.rand(1, 1, 2, 2, 2)))
+        x = torch.empty(1, 1, 2, 2, 2, device="meta", requires_grad=True)
+        self.assertTrue(self._deterministic_inside(x))
+        with torch.no_grad():
+            self.assertFalse(self._deterministic_inside(x))
+
+    def test_without_deterministic_algorithms_nothing_changes(self):
+        torch.use_deterministic_algorithms(False)
+        self.assertFalse(
+            self._deterministic_inside(torch.empty(1, 1, 2, 2, 2, device="meta"))
+        )
+        self.assertFalse(torch.are_deterministic_algorithms_enabled())
+
+    def test_cpu_results_are_f_interpolate_s(self):
+        x = torch.rand(1, 1, 5, 6, 7)
+        for kwargs in (
+            self.SIZE,
+            {"scale_factor": 1 / 1.5, "mode": "trilinear", "align_corners": True},
+            {"size": (9, 9, 9), "mode": "nearest-exact"},
+        ):
+            self.assertTrue(
+                torch.equal(
+                    _device.interpolate(x, **kwargs),
+                    torch.nn.functional.interpolate(x, **kwargs),
+                )
+            )
+
+    @unittest.skipUnless(
+        torch is not None and torch.backends.mps.is_available(), "no MPS device"
+    )
+    def test_mps_gets_the_native_kernel(self):
+        x = torch.rand(1, 1, 12, 14, 12, device="mps")
+        ours = _device.interpolate(x, size=(37, 41, 37), mode="trilinear")
+        torch.use_deterministic_algorithms(False)
+        native = torch.nn.functional.interpolate(x, size=(37, 41, 37), mode="trilinear")
+        self.assertTrue(torch.equal(ours.cpu(), native.cpu()))
+
+    def test_t1prep_never_calls_f_interpolate_directly(self):
+        pattern = re.compile(r"\b(F|functional)\.interpolate\(")
+        offenders = [
+            f"{path.relative_to(_SRC)}:{n}"
+            for path in sorted((_SRC / "t1prep").rglob("*.py"))
+            if path.name != "_device.py"
+            for n, line in enumerate(path.read_text().splitlines(), 1)
+            if pattern.search(line)
+        ]
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":

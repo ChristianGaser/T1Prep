@@ -30,11 +30,13 @@ class TestSetupDeterminism(unittest.TestCase):
             torch.are_deterministic_algorithms_enabled(),
             torch.is_deterministic_algorithms_warn_only_enabled(),
             torch.backends.cudnn.benchmark,
+            torch.utils.deterministic.fill_uninitialized_memory,
         )
 
         def restore():
             torch.use_deterministic_algorithms(before[0], warn_only=before[1])
             torch.backends.cudnn.benchmark = before[2]
+            torch.utils.deterministic.fill_uninitialized_memory = before[3]
 
         self.addCleanup(restore)
 
@@ -46,6 +48,11 @@ class TestSetupDeterminism(unittest.TestCase):
         self.assertTrue(torch.are_deterministic_algorithms_enabled())
         self.assertTrue(torch.is_deterministic_algorithms_warn_only_enabled())
         self.assertFalse(torch.backends.cudnn.benchmark)
+
+    def test_no_nan_fill_of_uninitialized_memory(self):
+        # the fill made the CPU segmentation ~15 s slower and changed nothing
+        setup_determinism(0)
+        self.assertFalse(torch.utils.deterministic.fill_uninitialized_memory)
 
     def test_a_workspace_set_by_the_user_is_kept(self):
         with mock.patch.dict(os.environ, {"CUBLAS_WORKSPACE_CONFIG": ":16:8"}):
