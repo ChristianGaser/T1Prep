@@ -1,19 +1,32 @@
 #!/usr/bin/env python
-"""Per-stage memory probe for the deepmriprep pipeline as driven by T1Prep.
+"""Per-stage time and memory probe for T1Prep's volume pipeline.
 
-Wraps each ``Preprocess.run_*`` stage (and the segmentation sub-steps) with an
-RSS sampler so we can see which stage drives the peak memory. Uses ``ps`` for
-sampling (no extra dependencies) plus ``resource.getrusage`` as a monotonic
-high-water cross-check.
+Wraps each stage of ``t1prep.segment.run_segment`` (and their sub-steps) with a
+memory sampler so we can see which stage drives the peak. Memory is macOS's
+phys_footprint where available -- what Activity Monitor shows, including
+compressed and MPS memory, which RSS misses (a CPU run peaked at 10.2 GB
+footprint against 4.9 GB max RSS) -- and RSS via ``ps`` elsewhere, plus
+``resource.getrusage`` as a monotonic high-water cross-check.
 
 Usage
 -----
-    ./env/bin/python scripts/mem_probe.py [T1.nii.gz] [--gpu] [--shape 256]
+    PYTHONPATH=src python scripts/mem_probe.py T1.nii.gz [--gpu] [segment.py options]
+    PYTHONPATH=src python scripts/mem_probe.py --stage brain --chunk-conv [--gpu]
+    PYTHONPATH=src python scripts/mem_probe.py --upstream [T1.nii.gz] [--shape 256]
 
-With no input path a brain-like ellipsoid phantom is generated at the given
-cube size (default 256, 1 mm). The heavy stages allocate at the fixed template
-grid, so phantom numbers track a real run's peak closely. Pass a real T1 for
-exact figures. ``--gpu`` allows CUDA/MPS; default forces CPU (the 24 GB case).
+A T1 runs T1Prep's own pipeline on it; options the probe does not know (e.g.
+``--amap``, ``--lesions``, ``--atlas``) are passed on to segment.py.
+``--gpu`` uses the device T1Prep would pick (``T1PREP_DEVICE``, default auto:
+the brain model on MPS, deepmriprep's stages on CPU); without it everything
+runs on the CPU (the 24 GB case).
+
+``--stage`` and ``--verify`` drive one stage alone on synthetic inputs.
+``--upstream`` runs deepmriprep's own ``Preprocess.run`` instead (with no input,
+on an ellipsoid phantom of ``--shape`` mm); T1Prep no longer runs its nogm UNet
+or warp network, so neither that nor ``--stage nogm|warp`` is T1Prep's path, and
+with ``--gpu`` these modes route every deepmriprep stage to MPS.
+
+Without ``PYTHONPATH=src`` an installed t1prep is probed instead of the checkout.
 """
 
 import argparse
@@ -33,12 +46,46 @@ import numpy as np
 if sys.platform == "darwin":
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"        # CPU Fallback for MPS
     os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
+# A probe run is not a T1Prep run: no telemetry.
+os.environ.setdefault("T1PREP_NO_TRACK", "1")
 
 # ---------------------------------------------------------------------------
-# RSS sampling
+# Memory sampling
 # ---------------------------------------------------------------------------
-def _rss_bytes(pid):
-    """Current resident set size in bytes via ``ps`` (KB on macOS/Linux)."""
+class _RusageInfoV0(ctypes.Structure):
+    """``struct rusage_info_v0`` from macOS's <sys/resource.h>."""
+
+    _fields_ = [("ri_uuid", ctypes.c_uint8 * 16)] + [
+        (name, ctypes.c_uint64)
+        for name in (
+            "ri_user_time", "ri_system_time", "ri_pkg_idle_wkups",
+            "ri_interrupt_wkups", "ri_pageins", "ri_wired_size",
+            "ri_resident_size", "ri_phys_footprint",
+            "ri_proc_start_abstime", "ri_proc_exit_abstime",
+        )
+    ]
+
+
+def _libproc():
+    if sys.platform != "darwin":
+        return None
+    try:
+        return ctypes.CDLL("/usr/lib/libproc.dylib")
+    except OSError:
+        return None
+
+
+_LIBPROC = _libproc()
+MEM_KIND = "footprint" if _LIBPROC else "RSS"
+
+
+def _mem_bytes(pid):
+    """Current phys_footprint (macOS) or resident set size in bytes."""
+    if _LIBPROC:
+        info = _RusageInfoV0()
+        if _LIBPROC.proc_pid_rusage(pid, 0, ctypes.byref(info)) == 0:
+            return info.ri_phys_footprint
+        return 0
     try:
         out = subprocess.check_output(
             ["ps", "-o", "rss=", "-p", str(pid)], text=True
@@ -65,20 +112,28 @@ class Sampler(threading.Thread):
         self.stage_peaks = {}
         self.mps_global_peak = 0
         self.mps_stage_peaks = {}
+        #: [peak, mps peak] of every wrap() call still running, so a stage's
+        #: peak includes the sub-steps nested in it.
+        self.windows = {}
+        self.depth = 0
 
     def run(self):
         while not self._stop.is_set():
-            rss = _rss_bytes(self.pid)
+            rss = _mem_bytes(self.pid)
             if rss > self.global_peak:
                 self.global_peak = rss
             if rss > self.stage_peaks.get(self.stage, 0):
                 self.stage_peaks[self.stage] = rss
+            mps = 0
             if MPS_READER is not None:
                 mps = MPS_READER()
                 if mps > self.mps_global_peak:
                     self.mps_global_peak = mps
                 if mps > self.mps_stage_peaks.get(self.stage, 0):
                     self.mps_stage_peaks[self.stage] = mps
+            for window in list(self.windows.values()):
+                window[0] = max(window[0], rss)
+                window[1] = max(window[1], mps)
             time.sleep(self.interval)
 
     def stop(self):
@@ -103,21 +158,28 @@ def wrap(obj, name, label):
     def wrapped(*args, **kwargs):
         prev_stage = SAMPLER.stage
         SAMPLER.stage = label
-        SAMPLER.stage_peaks.setdefault(label, _rss_bytes(os.getpid()))
-        rss_before = _rss_bytes(os.getpid())
+        rss_before = _mem_bytes(os.getpid())
         maxrss_before = _maxrss_bytes()
+        window = [rss_before, MPS_READER() if MPS_READER else 0]
+        token = object()
+        SAMPLER.windows[token] = window
+        depth = SAMPLER.depth
+        SAMPLER.depth += 1
         t0 = time.time()
         try:
             return orig(*args, **kwargs)
         finally:
             dt = time.time() - t0
-            rss_after = _rss_bytes(os.getpid())
-            stage_peak = SAMPLER.stage_peaks.get(label, rss_after)
+            SAMPLER.depth -= 1
+            del SAMPLER.windows[token]
+            rss_after = _mem_bytes(os.getpid())
+            stage_peak = max(window[0], rss_after)
             maxrss_after = _maxrss_bytes()
-            mps_peak = SAMPLER.mps_stage_peaks.get(label, 0)
+            mps_peak = window[1]
             ROWS.append(
                 {
-                    "stage": label,
+                    "stage": "  " * depth + label,
+                    "start": t0,
                     "dt": dt,
                     "rss_before": rss_before,
                     "rss_after": rss_after,
@@ -129,7 +191,7 @@ def wrap(obj, name, label):
             )
             # Stream the row immediately so an OOM-kill still leaves data.
             print(
-                f"[row] {label:<20} {dt:6.1f}s  peakRSS={stage_peak / GB:5.2f}  "
+                f"[row] {label:<20} {dt:6.1f}s  peak={stage_peak / GB:5.2f}  "
                 f"maxrss={maxrss_after / GB:5.2f}  mps={mps_peak / GB:5.2f} GB",
                 flush=True,
             )
@@ -323,8 +385,8 @@ def run_stage(prep, stage, chunk):
     SAMPLER.stage = f"  {stage}.inputs"
     inputs = build(prep)
     _reclaim()
-    rss0 = _rss_bytes(os.getpid())
-    print(f"[{stage}] RSS with inputs built: {rss0 / GB:5.2f} GB", flush=True)
+    rss0 = _mem_bytes(os.getpid())
+    print(f"[{stage}] memory with inputs built: {rss0 / GB:5.2f} GB", flush=True)
 
     _instrument(prep, stage)
     SAMPLER.stage = f"  {stage}.run"
@@ -466,39 +528,124 @@ def _fmt(b):
 def report():
     has_mps = SAMPLER.mps_global_peak > 0
     print("\n" + "=" * 100)
-    print("PER-STAGE MEMORY (GB)" + ("   [mps peak = torch.mps.driver_allocated]" if has_mps else ""))
+    print(f"PER-STAGE MEMORY (GB, {MEM_KIND})"
+          + ("   [mps peak = torch.mps.driver_allocated]" if has_mps else ""))
     print("=" * 100)
     print(
-        f"{'stage':<22}{'secs':>7}{'RSS in':>9}{'RSS out':>9}"
+        f"{'stage':<30}{'secs':>7}{'in':>9}{'out':>9}"
         f"{'stage peak':>12}{'maxrss':>9}{'mps peak':>10}"
     )
     print("-" * 100)
-    for r in ROWS:
+    # Nested stages finish first; list them in the order they started.
+    for r in sorted(ROWS, key=lambda r: r.get("start", 0)):
         print(
-            f"{r['stage']:<22}{r['dt']:>7.1f}{_fmt(r['rss_before']):>9}"
+            f"{r['stage']:<30}{r['dt']:>7.1f}{_fmt(r['rss_before']):>9}"
             f"{_fmt(r['rss_after']):>9}{_fmt(r['stage_peak']):>12}"
             f"{_fmt(r['maxrss_after']):>9}{_fmt(r.get('mps_peak', 0)):>10}"
         )
     print("-" * 100)
     print(
-        f"{'GLOBAL PEAK':<22}{'':>7}{'':>9}{'':>9}"
+        f"{'GLOBAL PEAK':<30}{'':>7}{'':>9}{'':>9}"
         f"{_fmt(SAMPLER.global_peak):>12}{'':>9}{_fmt(SAMPLER.mps_global_peak):>10}"
     )
     if ROWS:
         key = "mps_peak" if has_mps else "stage_peak"
-        top = max(ROWS, key=lambda r: r.get(key, 0))
-        metric = "MPS" if has_mps else "RSS"
-        print(f"\nPeak-driving stage ({metric}): {top['stage']}  ({_fmt(top.get(key, 0)).strip()} GB)")
+        # The innermost stage that reached the peak, not the run around it.
+        top = max(ROWS, key=lambda r: (r.get(key, 0), len(r["stage"]) - len(r["stage"].lstrip())))
+        metric = "MPS" if has_mps else MEM_KIND
+        print(f"\nPeak-driving stage ({metric}): {top['stage'].strip()}  "
+              f"({_fmt(top.get(key, 0)).strip()} GB)")
     print("=" * 100)
+
+
+# ---------------------------------------------------------------------------
+# T1Prep's own pipeline on a real T1
+# ---------------------------------------------------------------------------
+#: Stages of ``t1prep.segment.run_segment`` to time, by owner.  Module-level
+#: functions are looked up as globals when they are called, so patching the
+#: module is enough; the model methods are patched on the classes because the
+#: instances are only built inside the run.
+T1PREP_STAGES = (
+    ("segment", (
+        "preprocess_input", "skull_strip", "affine_register",
+        "correct_bias_field", "remove_dura", "run_amap_segmentation",
+        "apply_LAS", "run_segment_nogm_conventional", "handle_lesions",
+        "save_results", "_save_native_outputs", "_to_template_space",
+        "_save_deformations", "_save_warped_maps", "_save_atlas_rois",
+        "_save_hemispheres", "_save_fmriprep_extras", "_write_volume_report",
+        "final_cleanup",
+    )),
+    ("CustomPreprocess", (
+        "run_segment_brain", "run_warp_register", "run_atlas_register",
+    )),
+    ("CustomBrainSegmentation", ("run_model", "run_patch_models")),
+)
+
+
+def run_t1prep(args, extra):
+    """Run ``segment.py`` on a real T1 with every stage of it wrapped."""
+    import shutil
+    import tempfile
+
+    import torch
+
+    if not args.gpu:
+        os.environ["T1PREP_DEVICE"] = "cpu"
+    from t1prep import segment
+    from t1prep._device import resolve_device
+
+    device, _ = resolve_device()
+    if device.type == "mps" and hasattr(torch.mps, "driver_allocated_memory"):
+        global MPS_READER
+        MPS_READER = torch.mps.driver_allocated_memory
+
+    for owner_name, names in T1PREP_STAGES:
+        owner = segment if owner_name == "segment" else getattr(segment, owner_name)
+        for name in names:
+            if hasattr(owner, name):
+                wrap(owner, name, name)
+            else:
+                print(f"[probe] {owner_name}.{name} not found, not timed", flush=True)
+    wrap(segment, "run_segment", "run_segment")
+
+    out_dir = args.out_dir or tempfile.mkdtemp(prefix="mem_probe_")
+    dirs = [os.path.join(out_dir, d) for d in ("mri", "report", "label")]
+    for d in dirs:
+        os.makedirs(d, exist_ok=True)
+    sys.argv = ["segment.py", "--input", args.input, "--mri-dir", dirs[0],
+                "--report-dir", dirs[1], "--label-dir", dirs[2], *extra]
+    print(f"Device: {device}   memory: {MEM_KIND}   segment.py {' '.join(sys.argv[1:])}",
+          flush=True)
+
+    SAMPLER.start()
+    try:
+        segment.run_segment()
+    except (Exception, SystemExit):
+        print("\n[pipeline stopped early]\n" + traceback.format_exc())
+    finally:
+        SAMPLER.stop()
+        time.sleep(0.1)
+        report()
+        if not args.out_dir:
+            shutil.rmtree(out_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("input", nargs="?", default=None, help="T1 NIfTI; phantom if omitted")
+    ap = argparse.ArgumentParser(
+        epilog="Options not listed here are passed on to segment.py when a T1 "
+        "runs T1Prep's pipeline."
+    )
+    ap.add_argument("input", nargs="?", default=None,
+                    help="T1 NIfTI: runs T1Prep's pipeline on it "
+                    "(with --upstream: deepmriprep's; phantom if omitted)")
     ap.add_argument("--gpu", action="store_true", help="allow CUDA/MPS (default: force CPU)")
+    ap.add_argument("--out-dir", help="keep segment.py's outputs here "
+                    "(default: a temporary folder, removed afterwards)")
+    ap.add_argument("--upstream", action="store_true",
+                    help="run deepmriprep's Preprocess.run instead of T1Prep's pipeline")
     ap.add_argument("--shape", type=int, default=256, help="phantom cube size (mm)")
     ap.add_argument(
         "--model-dir",
@@ -545,7 +692,13 @@ def main():
         help="run one stage with and without slab-wise conv and report the max "
         "abs difference per output",
     )
-    args = ap.parse_args()
+    args, extra = ap.parse_known_args()
+    isolated = args.only_nogm or args.stage or args.verify
+    t1prep_run = not (isolated or args.upstream)
+    if t1prep_run and args.input is None:
+        ap.error("pass a T1 (or --stage, --verify or --upstream)")
+    if extra and not t1prep_run:
+        ap.error(f"unrecognized arguments: {' '.join(extra)}")
 
     if not args.gpu:
         # Force CPU to reproduce the high-memory CPU scenario.
@@ -554,6 +707,10 @@ def main():
     # Point T1Prep/deepmriprep at hydrated weights before importing them.
     if args.model_dir and os.path.isdir(args.model_dir):
         os.environ["T1PREP_MODEL_DIR"] = args.model_dir
+
+    if t1prep_run:
+        run_t1prep(args, extra)
+        return
 
     import torch
 
@@ -600,7 +757,6 @@ def main():
 
     scratch = os.environ.get("TMPDIR", "/tmp")
     in_path = args.input
-    isolated = args.only_nogm or args.stage or args.verify
     if in_path is None and not isolated:
         in_path = os.path.join(scratch, "mem_probe_phantom.nii.gz")
         print(f"Generating phantom ({args.shape}^3) -> {in_path}")
@@ -663,8 +819,8 @@ def main():
             time.sleep(0.1)
             print(f"\nisolated {args.stage} [{tag}]  ({_t.time() - t0:.1f}s)")
             for st, pk in SAMPLER.stage_peaks.items():
-                print(f"  {st:<24} peakRSS={pk / GB:5.2f} GB")
-            print(f"  {'GLOBAL PEAK RSS':<24} peakRSS={SAMPLER.global_peak / GB:5.2f} GB")
+                print(f"  {st:<24} peak={pk / GB:5.2f} GB")
+            print(f"  {'GLOBAL PEAK':<24} peak={SAMPLER.global_peak / GB:5.2f} GB")
             if rss0:
                 print(f"  {'STAGE COST (peak-inputs)':<24} "
                       f"{(SAMPLER.global_peak - rss0) / GB:5.2f} GB")
@@ -684,8 +840,8 @@ def main():
             time.sleep(0.1)
             print(f"\nisolated segment_nogm [{tag}]  ({_t.time() - t0:.1f}s)")
             for st, pk in SAMPLER.stage_peaks.items():
-                print(f"  {st:<24} peakRSS={pk / GB:5.2f} GB")
-            print(f"  {'GLOBAL PEAK RSS':<24} peakRSS={SAMPLER.global_peak / GB:5.2f} GB")
+                print(f"  {st:<24} peak={pk / GB:5.2f} GB")
+            print(f"  {'GLOBAL PEAK':<24} peak={SAMPLER.global_peak / GB:5.2f} GB")
         return
 
     # Apply autocast ONLY around the neural-net forwards (where the peak
@@ -733,7 +889,7 @@ def main():
         if hasattr(prep, m):
             wrap(prep, m, label)
     # Sub-steps inside brain segmentation.
-    for m, label in [("run_model", "  seg.run_model"), ("run_patch_models", "  seg.patches")]:
+    for m, label in [("run_model", "seg.run_model"), ("run_patch_models", "seg.patches")]:
         if hasattr(prep.brain_segment, m):
             wrap(prep.brain_segment, m, label)
 
