@@ -60,6 +60,10 @@ CAT_VolDiff [--rel] [--glob] tp1.nii.gz tp2.nii.gz
 # Recalibrate the QA rating bounds from a processed BrainWeb Phantom set
 python scripts/qa_calibrate.py /path/to/BWP/report
 
+# Networks (src/t1prep/nn): backend per run, export (re)trained weights as safetensors
+T1PREP_NN_BACKEND=tinygrad T1Prep ...     # default torch; tinygrad: pip install 'T1Prep[tinygrad]'
+python -m t1prep.nn.convert model.pth --out-dir DIR
+
 # Histogram of volumes, surfaces or text data (CAT12's cat_plot_histogram.m)
 CAT_PlotHistogram [--dist kernel|gaussian_kde|none|normal|...] [--mean] [--ridgeline] [--save PREFIX] file...
 
@@ -112,6 +116,7 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` → Project Structure, `CLAUDE.md` |
 | Viewer features or options | `docs/viewers.md` |
 | The other GUI tools | `docs/tools.md` |
+| Networks, backends or model files (`src/t1prep/nn/`), image stages (`src/t1prep/stages/`) | `docs/usage.md` → Neural networks, `Agents.md` → Neural Networks; the torch backend must stay bit-identical to the archives (`tests/test_nn.py`), the stages to deepbet's/deepmriprep's code (`tests/test_stages.py`) |
 | Installation process | `docs/installation.md`, `README.md`, `README_pypi.md`, `scripts/install.sh` (bash bootstrapper is secondary to `pip install T1Prep`) |
 | Docker configuration | `docs/installation.md`, `Dockerfile` |
 | Supported Python range | `pyproject.toml` classifiers, `.github/workflows/tests.yml` matrix, `scripts/T1Prep_utils.sh`, `scripts/install.sh`, README badges, `docs/installation.md`, `Agents.md`; new Pythons also need cat-surf wheels (CAT-Surface `cat_surface_cython/pyproject.toml`) |

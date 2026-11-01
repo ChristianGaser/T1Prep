@@ -24,6 +24,19 @@ T1Prep/
 │       ├── _segment_utils.py       # Small shared segmentation helpers
 │       ├── _shoot.py               # Non-linear registration: geodesic shooting
 │       │                           # (cat_surf.vol_shoot, replaces deepmriprep's warp)
+│       ├── nn/                     # Neural networks (see "Neural Networks" below)
+│       │   ├── weights.py          # safetensors <-> numpy, no framework
+│       │   ├── backends/           # Backend base class + registry; torch, tinygrad
+│       │   ├── architectures/      # Registry; unet3d (deepmriprep), linknet3d (deepbet)
+│       │   ├── network.py          # Network = architecture + weights + backend
+│       │   ├── models.py           # The shipped networks: files, download, conversion
+│       │   │                       # (t1prep-download-models)
+│       │   └── convert.py          # TorchScript/state_dict -> safetensors (+ CLI)
+│       ├── stages/                 # The image stages taken over from deepmriprep
+│       │   ├── preprocess.py       # Preprocess: skull-strip, affine, segmentation,
+│       │   │                       # shooting, atlases -- as segment.py drives them
+│       │   ├── skullstrip.py       # deepbet's skull-strip on the networks
+│       │   └── segmentation.py     # deepmriprep's segmentation on the networks
 │       ├── _telemetry.py           # Telemetry opt-out, crash reports without paths
 │       ├── transforms.py           # ITK .txt/.h5 transforms, SPM y_ deformations
 │       ├── utils.py                # Shared utilities
@@ -267,6 +280,38 @@ When adding atlas files to `src/t1prep/data/`:
 2. **Surface atlases** go in `atlases_surfaces_32k/`
    - Add `lh.<atlas_name>.annot` and `rh.<atlas_name>.annot`
    - Add `lh.<atlas_name>.txt` (description shown in Web UI tooltip)
+
+## Neural Networks
+
+`src/t1prep/nn/` holds the networks T1Prep runs: deepbet's LinkNet3d
+(skull-strip) and deepmriprep's Unet3d (one coarse and 18 patch segmentation
+models). Each architecture is written once, against the operation table of a
+backend; the weights are safetensors files, made once from deepmriprep's
+TorchScript archives (`models.prepare_model_files`). `T1PREP_NN_BACKEND`
+(`torch`, default, or `tinygrad`) selects the backend; the device follows
+`T1PREP_DEVICE`. The package docstring (`nn/__init__.py`) is the map.
+
+`src/t1prep/stages/` runs them: `Preprocess` holds the stages T1Prep took
+over from deepmriprep (skull-strip, affine registration, segmentation,
+shooting, atlases), independent of deepmriprep, which T1Prep no longer
+imports. Keep the framework (`nn/`) free of pipeline knowledge, and the
+stages free of framework details.
+
+- **New backend**: subclass `nn.backends.Backend` in a new module of
+  `nn/backends/` (implement its abstract operations, `load` and `run`) and add
+  it to `_BACKENDS` there. Add a comparison against torch to `tests/test_nn.py`.
+- **New architecture**: write `forward(ops, weights, x)` in a new module of
+  `nn/architectures/`, decorate it with `@register(name, signature=...)`, and
+  import it at the bottom of `architectures/__init__.py`. Use only the
+  backend's operations and arithmetic.
+- **Retrained model**: export the `state_dict` with
+  `nn.convert.save_state_dict` (or `python -m t1prep.nn.convert model.pth`),
+  not with `torch.jit.trace`, and give the file its name from `nn.models.NETWORKS`.
+  New weights change every output: re-pin the phantom (`make phantom-pin`).
+- **Invariant**: the torch backend must stay bit-identical to the archives
+  on CPU and MPS (`tests/test_nn.py::TestAgainstTheArchives`), and the stages
+  to deepbet's and deepmriprep's code (`tests/test_stages.py`, networks
+  stubbed); a change that breaks either changes T1Prep's results.
 
 ## Ignore Rules
 - Coding agents should treat any files or folders matched by `.gitignore` as out of scope (do not search, edit, or base decisions on them) unless the user explicitly asks to work with those ignored paths.
