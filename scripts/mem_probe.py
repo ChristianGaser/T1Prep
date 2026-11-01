@@ -294,33 +294,28 @@ def _native_t1(shape=(256, 256, 256)):
 
 
 def _synth_warp_inputs(prep):
-    """Synthetic run_warp_register inputs at the real template grids.
+    """Synthetic run_warp_register inputs (p1_affine, p2_affine, wj_affine).
 
-    p0_large lives on the 0.5 mm affine template (339, 411, 339); the affine
-    tissue maps live on the 1.5 mm warp template (113, 137, 113) = 1/3 of it.
+    The affine tissue maps live on the 1.5 mm warp template (113, 137, 113).
     """
     import nibabel as nib
     import pandas as pd
 
-    p0_large = nib.Nifti1Image(_label_map(prep.affine_template.shape[:3]),
-                               prep.affine_template.affine)
     r = _ellipsoid(prep.warp_template.shape[:3])
     gm = np.clip(1.0 - 8.0 * np.abs(r - 0.9), 0, 1).astype(np.float32)
     wm = np.clip(1.0 - 3.0 * r, 0, 1).astype(np.float32)
     del r
     aff = prep.warp_template.affine
-    return (p0_large, nib.Nifti1Image(gm, aff), nib.Nifti1Image(wm, aff),
-            pd.Series([1.0]))
+    return nib.Nifti1Image(gm, aff), nib.Nifti1Image(wm, aff), pd.Series([1.0])
 
 
 def _synth_brain_inputs(prep):
-    """Synthetic run_segment_brain inputs (brain_large, mask, affine, mask_large).
+    """Synthetic run_segment_brain inputs (brain_large, mask_large).
 
     Both large volumes sit on the 0.5 mm affine template; BrainSegmentation
     crops them to its own (336, 384, 336) working grid on entry.
     """
     import nibabel as nib
-    import pandas as pd
 
     shape = prep.affine_template.shape[:3]
     aff = prep.affine_template.affine
@@ -331,8 +326,7 @@ def _synth_brain_inputs(prep):
     brain[(r >= 1.0) & (r < 1.08)] = 35.0
     mask_large = (r < 1.10).astype(np.float32)
     del r
-    return (nib.Nifti1Image(brain, aff), _native_t1(),
-            pd.DataFrame(np.eye(4)), nib.Nifti1Image(mask_large, aff))
+    return nib.Nifti1Image(brain, aff), nib.Nifti1Image(mask_large, aff)
 
 
 def _synth_nogm_inputs(prep):
@@ -369,12 +363,18 @@ def _instrument(prep, stage):
     # "warp" is geodesic shooting in libCAT: no Python sub-steps to label
     if stage == "brain":
         seg = prep.brain_segment
-        tag(seg, "run_model", "  brain.model", "  brain.run")
-        tag(seg, "run_patch_models", "  brain.patches", "  brain.run")
+        tag(seg, "coarse", "  brain.model", "  brain.run")
+        tag(seg, "refine", "  brain.patches", "  brain.run")
     elif stage == "nogm":
         seg = prep.nogm_segment
         tag(seg, "run_model", "  nogm.model", "  nogm.run")
         tag(seg, "apply_nogm", "  nogm.apply", "  nogm.run")
+
+
+def _probe_decides_chunking(prep):
+    """Switch off T1Prep's own slab convolution, so the probe's context decides."""
+    if hasattr(getattr(prep, "brain_segment", None), "chunk_conv"):
+        prep.brain_segment.chunk_conv = False
 
 
 def run_stage(prep, stage, chunk):
@@ -389,6 +389,7 @@ def run_stage(prep, stage, chunk):
     print(f"[{stage}] memory with inputs built: {rss0 / GB:5.2f} GB", flush=True)
 
     _instrument(prep, stage)
+    _probe_decides_chunking(prep)
     SAMPLER.stage = f"  {stage}.run"
     with chunked_conv3d(enabled=chunk) as mode:
         out = getattr(prep, method)(*inputs)
@@ -575,10 +576,11 @@ T1PREP_STAGES = (
         "_save_hemispheres", "_save_fmriprep_extras", "_write_volume_report",
         "final_cleanup",
     )),
-    ("CustomPreprocess", (
+    ("Preprocess", (
         "run_segment_brain", "run_warp_register", "run_atlas_register",
     )),
-    ("CustomBrainSegmentation", ("run_model", "run_patch_models")),
+    ("t1prep.stages.skullstrip:BrainExtraction", ("probability",)),
+    ("t1prep.stages.segmentation:BrainSegmentation", ("coarse", "refine")),
 )
 
 
@@ -599,8 +601,14 @@ def run_t1prep(args, extra):
         global MPS_READER
         MPS_READER = torch.mps.driver_allocated_memory
 
+    import importlib
+
     for owner_name, names in T1PREP_STAGES:
-        owner = segment if owner_name == "segment" else getattr(segment, owner_name)
+        if ":" in owner_name:
+            module, attr = owner_name.split(":")
+            owner = getattr(importlib.import_module(module), attr)
+        else:
+            owner = segment if owner_name == "segment" else getattr(segment, owner_name)
         for name in names:
             if hasattr(owner, name):
                 wrap(owner, name, name)
@@ -716,24 +724,27 @@ def main():
 
     if not args.gpu:
         # CUDA_VISIBLE_DEVICES doesn't disable MPS; force it off so every stage
-        # (incl. CustomBrainSegmentation.inference_device) stays on CPU.
+        # (incl. BrainSegmentation.inference_device) stays on CPU.
         torch.backends.mps.is_available = lambda: False
 
-    from t1prep._models import _redirect_deepmriprep_paths, MODEL_DIR
+    from t1prep.nn.models import MODEL_DIR, prepare_model_files
 
-    _redirect_deepmriprep_paths()
-    # T1Prep's redirect misses submodules that copied DATA_PATH at import
-    # (e.g. deepmriprep.register). Patch every one that has it.
+    # T1Prep's networks are safetensors files in MODEL_DIR, made from the
+    # archives on first use.  deepmriprep's own stages probed here (the nogm
+    # UNet, --upstream) still read TorchScript archives through DATA_PATH, so a
+    # hydrated deepmriprep data folder is handed to every module that copied it.
+    prepare_model_files()
     fake_data = str(MODEL_DIR.parent)
-    import importlib
+    if os.path.isdir(os.path.join(fake_data, "templates")):
+        import importlib
 
-    for mod in ("utils", "preprocess", "segment", "register", "atlas"):
-        try:
-            m = importlib.import_module(f"deepmriprep.{mod}")
-            if hasattr(m, "DATA_PATH"):
-                m.DATA_PATH = fake_data
-        except Exception:
-            pass
+        for mod in ("utils", "preprocess", "segment", "register", "atlas"):
+            try:
+                m = importlib.import_module(f"deepmriprep.{mod}")
+                if hasattr(m, "DATA_PATH"):
+                    m.DATA_PATH = fake_data
+            except Exception:
+                pass
     print(f"Model dir: {MODEL_DIR}")
 
     no_gpu = not args.gpu
@@ -747,13 +758,20 @@ def main():
         global MPS_READER
         MPS_READER = torch.mps.driver_allocated_memory
 
-    from t1prep.segment import CustomPreprocess
-    from t1prep._device import route_deepmriprep
+    probe_device = torch.device('mps') if is_mps else (
+        torch.device('cpu') if no_gpu else torch.device('cuda'))
+    # --upstream and the nogm modes measure deepmriprep's own Preprocess, with
+    # its TorchScript models; everything else T1Prep's stages.
+    upstream = args.upstream or args.only_nogm or "nogm" in (args.stage, args.verify)
+    if upstream:
+        import importlib
 
-    # Match the pipeline: deepmriprep pins itself to cuda-or-cpu at import,
-    # so without this --gpu would still measure the CPU path on Apple Silicon.
-    route_deepmriprep(torch.device('mps') if is_mps else
-                      (torch.device('cpu') if no_gpu else torch.device('cuda')))
+        # deepmriprep pins itself to cuda-or-cpu at import, so without this
+        # --gpu would still measure the CPU path on Apple Silicon.
+        for name in ("utils", "preprocess", "segment", "register", "smooth", "atlas"):
+            module = importlib.import_module(f"deepmriprep.{name}")
+            if hasattr(module, "DEVICE"):
+                module.DEVICE = probe_device
 
     scratch = os.environ.get("TMPDIR", "/tmp")
     in_path = args.input
@@ -766,13 +784,11 @@ def main():
     print(f"Device: {dev}   autocast: {args.autocast}")
     SAMPLER.start()
 
-    prep = CustomPreprocess(no_gpu=no_gpu)
-    # CustomPreprocess already builds CustomBrainSegmentation, but it skips the
-    # nogm UNet that T1Prep no longer runs; the upstream pipeline and the nogm
-    # stage probed here still need it.
-    from deepmriprep.preprocess import SEGMENT_NOGM_KWARGS
-    from deepmriprep.segment import NoGMSegmentation
-    prep.nogm_segment = NoGMSegmentation(no_gpu, **SEGMENT_NOGM_KWARGS)
+    if upstream:
+        from deepmriprep.preprocess import Preprocess
+    else:
+        from t1prep.stages import Preprocess
+    prep = Preprocess(no_gpu=no_gpu)
 
     if args.verify:
         # Cross-check the slab-wise convolution on real stage shapes; the unit
@@ -783,6 +799,7 @@ def main():
         build, method = STAGES[stage]
         print(f"Mode: verify {stage} (stock vs chunked conv)", flush=True)
         inputs = build(prep)
+        _probe_decides_chunking(prep)
         with chunked_conv3d() as mode:
             chunked = getattr(prep, method)(*inputs)
             print(f"  convolutions split: {mode.chunked_calls}", flush=True)

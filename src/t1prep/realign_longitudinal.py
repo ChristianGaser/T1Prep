@@ -647,9 +647,9 @@ def _skullstrip_for_realign(
     # fails with "attempted relative import with no known parent package".
     if __package__:
         from .segment import (
-            CustomPreprocess,
+            Preprocess,
             prepare_model_files,
-            setup_device,
+            resolve_device,
             skull_strip,
         )
     else:
@@ -659,15 +659,15 @@ def _skullstrip_for_realign(
         if src_dir not in sys.path:
             sys.path.insert(0, src_dir)
         from t1prep.segment import (
-            CustomPreprocess,
+            Preprocess,
             prepare_model_files,
-            setup_device,
+            resolve_device,
             skull_strip,
         )
 
     prepare_model_files()
-    _, no_gpu = setup_device()
-    prep = CustomPreprocess(no_gpu)
+    _, no_gpu = resolve_device()
+    prep = Preprocess(no_gpu)
 
     stripped: List[nib.Nifti1Image] = []
     for i, img in enumerate(images, start=1):
