@@ -124,7 +124,7 @@ takes_value()
     --defaults | --default | --python | --out-dir | --outdir | --out | \
     --pre-fwhm | --median-filter | --no-overwrite | --thickness-method | \
     --multi | --seed | --atlas | --atlas-surf | --min-memory | --min-mem | \
-    --initial-surface | --initial-surf | --long-data)
+    --initial-surface | --initial-surf | --long-data | --nn-backend)
       return 0
       ;;
   esac
@@ -164,6 +164,10 @@ parse_args()
   # Defaults for new skull-strip flags (may be absent in defaults file)
   skullstrip_only=${skullstrip_only:-0}
   skip_skullstrip=${skip_skullstrip:-0}
+
+  # The network backend: T1PREP_NN_BACKEND in the environment overrides the
+  # defaults file, --nn-backend both
+  nn_backend=${T1PREP_NN_BACKEND:-${nn_backend:-torch}}
 
   if [ $# -lt 1 ]; then
     logo
@@ -254,6 +258,11 @@ parse_args()
       --long-data)
         exit_if_empty "$optname" "$optarg"
         long_data=$optarg
+        shift
+        ;;
+      --nn-backend)
+        exit_if_empty "$optname" "$optarg"
+        nn_backend=$optarg
         shift
         ;;
       --save-h5)
@@ -416,6 +425,10 @@ parse_args()
   if [ "$estimate_surf" -eq 1 ]; then
     save_hemi=1
   fi
+
+  # The Python steps read the backend from the environment, and so do the
+  # --multi jobs, which parse their own command line
+  export T1PREP_NN_BACKEND="${nn_backend}"
 
 }
 
@@ -1027,7 +1040,7 @@ usage() {
     "${BOLD}Expert:${NC}   --initial-surface <FILE>  --amap" \
     "          --thickness-method <NUMBER>  --no-correct-folding" \
     "          --pre-fwhm <NUMBER>  --no-vessel  --median-filter <NUMBER>" \
-    "          --fast" \
+    "          --nn-backend <NAME>  --fast" \
     "" \
     "${BOLD}Other:${NC}    --help  --version"
 }
@@ -1328,6 +1341,14 @@ ${BOLD}${GREEN}Expert Options:${NC}
 
   --amap                      
       Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.
+
+  --nn-backend <NAME>
+      Set the framework that runs the neural networks (default: $nn_backend):
+        torch    = identical to deepmriprep's networks on CPU and MPS
+        tinygrad = experimental, for a GPU only; needs Python 3.11+ and
+                   pip install "T1Prep[tinygrad]"; results differ in the
+                   last digits
+      T1PREP_NN_BACKEND in the environment overrides the defaults file.
 
   --thickness-method <NUMBER> 
       Set the cortical thickness estimation method (default: $thickness_method):  

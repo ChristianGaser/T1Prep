@@ -116,7 +116,7 @@
       <label>
         Minimum memory per job (GB)
         <div class="input-with-help">
-          <span class="input-icon" data-icon="🧠"><input type="number" name="--min-memory" value="{{ min_memory }}" step="1" placeholder="24" data-help-target="min-memory-help"></span>
+          <span class="input-icon" data-icon="🧠"><input type="number" name="--min-memory" value="{{ min_memory }}" step="1" placeholder="{{ min_memory }}" data-help-target="min-memory-help"></span>
           <div id="min-memory-help" class="help-box" role="tooltip">
             Minimum memory in GB per job. Increase if the system runs low on memory.
           </div>
@@ -240,6 +240,17 @@
         <span class="toggle-icon">▶</span> Expert Options
       </legend>
       <div class="collapsible-content">
+        <label>
+          Network backend
+          <div class="input-with-help">
+            <span class="input-icon" data-icon="🧮"><select name="--nn-backend" data-help-target="nn-backend-help">
+              {% for name in nn_backends %}<option value="{{ name }}" {% if name == nn_backend %}selected{% endif %}>{{ name }}</option>{% endfor %}
+            </select></span>
+            <div id="nn-backend-help" class="help-box" role="tooltip">
+              Framework that runs the neural networks. torch is identical to deepmriprep's networks on CPU and MPS; tinygrad is experimental, for a GPU only, and needs Python 3.11+ and pip install "T1Prep[tinygrad]".
+            </div>
+          </div>
+        </label>
         <fieldset class="sub-fieldset">
           <legend>Processing Options</legend>
           <div class="atlas-panel options-panel">

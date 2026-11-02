@@ -18,6 +18,8 @@ from typing import Dict, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
+from ..nn.backends import BACKEND_ENV, backend_names
+
 # Layout-independent paths.  This module lives at ``t1prep/webui/app.py``;
 # ``_PKG_DIR`` is the installed ``t1prep`` package directory.  ``_REPO_ROOT`` is
 # only set when running from a source checkout (used as a dev fallback / sandbox
@@ -202,6 +204,16 @@ def parse_atlas_string(value: str) -> list[str]:
     return [item for item in parts if item]
 
 
+def selected_atlases(names: list[str], value: str) -> set[str]:
+    """Return the *names* that the atlas list *value* asks for.
+
+    Case-insensitive, as the pipeline looks atlases up (the defaults file
+    says ``neuromorphometrics``, the file is ``Neuromorphometrics.nii.gz``).
+    """
+    wanted = {item.lower() for item in parse_atlas_string(value)}
+    return {name for name in names if name.lower() in wanted}
+
+
 def build_atlas_arg(atlas_items: list[str]) -> Optional[str]:
     if not atlas_items:
         return None
@@ -209,13 +221,18 @@ def build_atlas_arg(atlas_items: list[str]) -> Optional[str]:
     return ",".join(quoted)
 
 
-def resolve_defaults_path(value: Optional[str]) -> Path:
-    if not value:
-        return BASE_DIR / "T1Prep_defaults.txt"
-    candidate = Path(value)
-    if not candidate.is_absolute():
-        candidate = BASE_DIR / candidate
-    return candidate
+def defaults_file() -> Path:
+    """Return the defaults file of the T1Prep that the jobs run.
+
+    The lookup of ``scripts/T1Prep``: beside the script's folder (a source
+    checkout keeps the file at the repository root), else in that folder
+    (``bin/`` of an installed environment).  The form used to read it from
+    ``BASE_DIR``, which is the working directory once installed, and then
+    started from fallbacks of its own.
+    """
+    script_dir = Path(T1PREP_CMD).parent
+    beside = script_dir.parent / "T1Prep_defaults.txt"
+    return beside if beside.is_file() else script_dir / "T1Prep_defaults.txt"
 
 
 def resolve_folder_pattern_inputs(form: dict) -> list[Path]:
@@ -314,7 +331,6 @@ def build_command(
         if not form.get("save_mwp"):
             cmd.append("--no-mwp")
 
-    add_flag("--no-atlas")
     # Explicit both ways, so that the box overrides the defaults file in either
     # direction (it used to send --pial-white, which T1Prep read as --p)
     cmd.append("--pial-white" if form.get("--pial-white") else "--no-pial-white")
@@ -327,7 +343,15 @@ def build_command(
     add_flag("--lesions")
     add_flag("--retry")
     add_flag("--no-track")
-    add_value("--atlas", atlas_override)
+    if form.get("--nn-backend", "") not in ("", *backend_names()):
+        raise ValueError("--nn-backend: unknown backend")
+    add_value("--nn-backend")
+    # The atlas boxes start ticked as the defaults file says, so none ticked
+    # means no atlases, not the defaults file's
+    if atlas_override:
+        add_value("--atlas", atlas_override)
+    else:
+        cmd.append("--no-atlas")
     add_value("--atlas-surf", surface_atlas_override)
 
     cmd.extend([str(path) for path in input_files])
@@ -524,18 +548,23 @@ def schedule_or_run(job_id: str, run_at: Optional[datetime]) -> None:
 
 @app.route("/")
 def index():
-    default_file = BASE_DIR / "T1Prep_defaults.txt"
-    defaults = load_defaults(default_file)
+    # The form starts from what T1Prep itself would do; each fallback below is
+    # the value T1Prep_defaults.txt ships with
+    defaults = load_defaults(defaults_file())
+    atlas_vol = defaults.get("atlas_vol", "'neuromorphometrics', 'cobra'")
+    atlas_surf = defaults.get(
+        "atlas_surf", "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"
+    )
 
     atlas_names = list_atlas_names()
-    atlas_selected = set(parse_atlas_string(defaults.get("atlas_vol", "")))
+    atlas_selected = selected_atlases(atlas_names, atlas_vol)
     surface_atlas_names = list_surface_atlas_names()
-    surface_atlas_selected = set(parse_atlas_string(defaults.get("atlas_surf", "")))
+    surface_atlas_selected = selected_atlases(surface_atlas_names, atlas_surf)
 
     context = {
         "python": defaults.get("python", ""),
-        "multi": defaults.get("multi", ""),
-        "min_memory": defaults.get("min_memory", ""),
+        "multi": defaults.get("multi", "-1"),
+        "min_memory": defaults.get("min_memory", "10"),
         "debug": _to_int(defaults.get("debug", "0"), 0) == 1,
         "outdir": defaults.get("outdir", ""),
         "use_bids": _to_int(defaults.get("use_bids_naming", "0"), 0) == 1,
@@ -552,8 +581,8 @@ def index():
             (_to_int(defaults.get("save_mwp", "1"), 1) == 1)
             and (_to_int(defaults.get("no_mwp", "0"), 0) == 0)
         ),
-        "no_atlas": defaults.get("atlas_vol", "") == "",
-        "pial_white": _to_int(defaults.get("save_pial_white", "0"), 0) == 1,
+        "no_atlas": atlas_vol == "",
+        "pial_white": _to_int(defaults.get("save_pial_white", "1"), 1) == 1,
         "hemi": _to_int(defaults.get("save_hemi", "0"), 0) == 1,
         "wp": _to_int(defaults.get("save_wp", "0"), 0) == 1,
         "rp": _to_int(defaults.get("save_rp", "0"), 0) == 1,
@@ -562,8 +591,15 @@ def index():
         "lesions": _to_int(defaults.get("save_lesions", "0"), 0) == 1,
         "retry": _to_int(defaults.get("retry", "0"), 0) == 1,
         "no_track": _to_int(defaults.get("track", "1"), 1) == 0,
-        "atlas": defaults.get("atlas_vol", ""),
-        "atlas_surf": defaults.get("atlas_surf", ""),
+        # As in scripts/T1Prep, the environment overrides the defaults file
+        "nn_backend": (
+            os.environ.get(BACKEND_ENV, "").strip().lower()
+            or defaults.get("nn_backend", "")
+            or backend_names()[0]
+        ),
+        "nn_backends": backend_names(),
+        "atlas": atlas_vol,
+        "atlas_surf": atlas_surf,
         "atlas_names": atlas_names,
         "atlas_selected": atlas_selected,
         "surface_atlas_names": surface_atlas_names,
