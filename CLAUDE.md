@@ -61,7 +61,7 @@ CAT_VolDiff [--rel] [--glob] tp1.nii.gz tp2.nii.gz
 python scripts/qa_calibrate.py /path/to/BWP/report
 
 # Networks (src/t1prep/nn): backend per run, export (re)trained weights as safetensors
-T1PREP_NN_BACKEND=tinygrad T1Prep ...     # default torch; tinygrad: pip install 'T1Prep[tinygrad]'
+T1Prep --nn-backend tinygrad ...          # default torch (nn_backend in the defaults file, T1PREP_NN_BACKEND); tinygrad: pip install 'T1Prep[tinygrad]'
 python -m t1prep.nn.convert model.pth --out-dir DIR
 
 # Histogram of volumes, surfaces or text data (CAT12's cat_plot_histogram.m)

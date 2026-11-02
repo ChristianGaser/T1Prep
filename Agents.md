@@ -289,8 +289,10 @@ models). Each architecture is written once, against the operation table of a
 backend; the weights are safetensors files, made once from deepmriprep's
 TorchScript archives (`models.prepare_model_files`) and kept in the user
 cache, in a folder named after `models.MODEL_RELEASE`. `T1PREP_NN_BACKEND`
-(`torch`, default, or `tinygrad`) selects the backend; the device follows
-`T1PREP_DEVICE`. The package docstring (`nn/__init__.py`) is the map.
+(`torch`, default, or `tinygrad`) selects the backend: `T1Prep --nn-backend`
+and `nn_backend` in the defaults file set it, `t1prep-run`/`run_t1prep` pass
+it to `segment.py`; the device follows `T1PREP_DEVICE`. The package
+docstring (`nn/__init__.py`) is the map.
 
 `src/t1prep/stages/` runs them: `Preprocess` holds the stages T1Prep took
 over from deepmriprep (skull-strip, affine registration, segmentation,
