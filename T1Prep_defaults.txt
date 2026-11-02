@@ -42,6 +42,8 @@ atlas_surf="'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"
 track=1               # Send telemetry: file counts, crash type and location,
                       # never paths or file names (0: off, see --no-track)
 use_amap=0            # Use AMAP instead of DeepMRIPrep for segmentation
+nn_backend='torch'    # Framework that runs the networks: torch, or tinygrad
+                      # (experimental; pip install "T1Prep[tinygrad]")
 thickness_method=3    # Set the thickness method
 correct_folding=1     # Correct for cortical thickness by folding effects
 pre_fwhm=2            # Set the pre-smoothing FWHM size in CAT_VolMarchingCubes

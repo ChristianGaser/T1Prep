@@ -89,6 +89,7 @@ from .vessels import (
     blood_vessel_prior,
     protected_regions,
 )
+from .nn.backends import get_backend
 from .nn.models import prepare_model_files
 from .stages import Preprocess
 from ._telemetry import init_crash_reporting
@@ -1268,6 +1269,14 @@ def run_segment():
     """Run the full segmentation workflow."""
 
     args = parse_arguments()
+
+    # An unknown or uninstalled network backend (--nn-backend) is a setting,
+    # not a crash: one line, before any work and before crash reporting
+    try:
+        get_backend()
+    except (ValueError, RuntimeError) as exc:
+        sys.exit(f"ERROR: {exc}")
+
     setup_determinism(args.seed)
 
     # Output locations and the optional outputs to write

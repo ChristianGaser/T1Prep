@@ -36,6 +36,7 @@ from typing import List, Optional, Sequence, Union
 # synopsis, --help the full description, and only "--" options are advertised.
 from .cli_help import ArgumentParser
 from ._telemetry import NO_TRACK_ENV
+from .nn.backends import BACKEND_ENV, backend_names
 
 
 # ---------------------------------------------------------------------------
@@ -221,8 +222,11 @@ def _build_segment_cmd(
     return cmd
 
 
-def _segment_env(track: bool = True) -> dict:
-    """Return the environment for the ``segment.py`` subprocess."""
+def _segment_env(track: bool = True, nn_backend: Optional[str] = None) -> dict:
+    """Return the environment for the ``segment.py`` subprocess.
+
+    *nn_backend* replaces an inherited ``T1PREP_NN_BACKEND``; ``None`` keeps it.
+    """
     # When invoked via ``python -m t1prep.segment``, the subprocess must
     # be able to locate the ``t1prep`` package.  If we are running from a
     # source checkout (not installed into site-packages), the parent
@@ -239,6 +243,9 @@ def _segment_env(track: bool = True) -> dict:
     # segment.py reports a crash unless this is set (see _telemetry)
     if not track:
         env[NO_TRACK_ENV] = "1"
+    # The stages read the backend from the environment (t1prep.nn.backends)
+    if nn_backend:
+        env[BACKEND_ENV] = nn_backend
     return env
 
 
@@ -479,6 +486,7 @@ def _process_single(
     initial_surf: str = "",
     retry: bool = False,
     track: bool = True,
+    nn_backend: Optional[str] = None,
 ) -> int:
     """Process one NIfTI file through the T1Prep pipeline.
 
@@ -559,7 +567,7 @@ def _process_single(
             skip_skullstrip=skip_skullstrip,
             seed=seed,
         )
-        seg_env = _segment_env(track)
+        seg_env = _segment_env(track, nn_backend)
 
         seg_status = subprocess.call(seg_cmd, env=seg_env)
         if seg_status != 0 and retry:
@@ -723,6 +731,7 @@ def run_t1prep(
     retry: bool = False,
     no_retry: bool = False,
     track: bool = True,
+    nn_backend: Optional[str] = None,
 ) -> int:
     """Run the T1Prep pipeline for one or more input files.
 
@@ -828,6 +837,9 @@ def run_t1prep(
         its exception type and code location only (default ``True``).
         ``False`` switches it off, as does ``T1PREP_NO_TRACK=1`` or
         ``DO_NOT_TRACK=1`` in the environment.
+    nn_backend:
+        Framework that runs the networks: ``"torch"`` or ``"tinygrad"``
+        (experimental).  Default: ``T1PREP_NN_BACKEND``, else torch.
 
     Returns
     -------
@@ -847,6 +859,10 @@ def run_t1prep(
             )
         if not os.path.isfile(long_data):
             raise ValueError(f"long_data {long_data} is not a file.")
+    if nn_backend and nn_backend not in backend_names():
+        raise ValueError(
+            f"nn_backend {nn_backend!r}: expected one of {', '.join(backend_names())}"
+        )
 
     # --fast shortcut
     if fast:
@@ -928,6 +944,7 @@ def run_t1prep(
             initial_surf=str(initial_surf) if initial_surf else "",
             retry=bool(retry) and not no_retry,
             track=bool(track),
+            nn_backend=nn_backend,
         )
         errors += rc
 
@@ -1037,6 +1054,9 @@ def _build_parser() -> ArgumentParser:
                     help="Skip pial and white matter surface estimation")
     g3.add_argument("--amap", action="store_true",
                     help="Use AMAP instead of DeepMRIPrep for segmentation")
+    g3.add_argument("--nn-backend", metavar="NAME", choices=backend_names(),
+                    help="Framework that runs the networks: torch or tinygrad "
+                         "(experimental); default: T1PREP_NN_BACKEND, else torch")
     g3.add_argument("--seed", type=int, default=0,
                     help="Random seed for reproducibility (default 0)")
     g3.add_argument("--long-data", metavar="FILE",
@@ -1116,6 +1136,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         retry=args.retry,
         no_retry=args.no_retry,
         track=args.track,
+        nn_backend=args.nn_backend,
     )
 
 
