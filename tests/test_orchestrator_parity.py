@@ -10,6 +10,7 @@ checks of ``--no-overwrite`` were wrong as well (one had the patterns
 swapped, the other a stray ``/``).
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -104,6 +105,44 @@ class TestPresets(_InATempDir):
     def test_an_explicit_atlas_survives_fast(self):
         kw = self.run_main("--fast", "--atlas", "'cobra'")
         self.assertEqual(kw["atlas"], "'cobra'")
+
+
+class TestNetworkBackend(_InATempDir):
+    """--nn-backend reaches segment.py as T1PREP_NN_BACKEND, as in bash, and
+    a backend segment.py cannot run stops it with one line, not a crash."""
+
+    def test_the_option_reaches_the_segmentation(self):
+        (self.tmp / "x.nii").write_bytes(b"")
+        with mock.patch.object(orchestrator, "_process_single", return_value=0) as single:
+            orchestrator.main([str(self.tmp / "x.nii"), "--nn-backend", "tinygrad"])
+        self.assertEqual(single.call_args.kwargs["nn_backend"], "tinygrad")
+        env = orchestrator._segment_env(nn_backend="tinygrad")
+        self.assertEqual(env[orchestrator.BACKEND_ENV], "tinygrad")
+
+    def test_without_it_the_environment_decides(self):
+        with mock.patch.dict(os.environ, {orchestrator.BACKEND_ENV: "tinygrad"}):
+            env = orchestrator._segment_env()
+        self.assertEqual(env[orchestrator.BACKEND_ENV], "tinygrad")
+
+    def test_an_unknown_backend_is_refused(self):
+        (self.tmp / "x.nii").write_bytes(b"")
+        with self.assertRaises(SystemExit):
+            orchestrator.main([str(self.tmp / "x.nii"), "--nn-backend", "jax"])
+        with self.assertRaises(ValueError):
+            orchestrator.run_t1prep(str(self.tmp / "x.nii"), nn_backend="jax")
+
+    def test_segment_says_so_in_one_line(self):
+        env = dict(os.environ, PYTHONPATH=str(_SRC), T1PREP_NN_BACKEND="jax",
+                   T1PREP_NO_TRACK="1")
+        done = subprocess.run(
+            [sys.executable, "-m", "t1prep.segment", "--input", str(self.tmp / "x.nii"),
+             "--mri-dir", str(self.tmp), "--report-dir", str(self.tmp),
+             "--label-dir", str(self.tmp)],
+            capture_output=True, text=True, timeout=300, env=env,
+        )
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn("expected one of torch, tinygrad", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
 
 
 class TestLongData(_InATempDir):

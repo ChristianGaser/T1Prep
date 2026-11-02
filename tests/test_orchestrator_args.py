@@ -25,7 +25,7 @@ _PARALLELIZE = _ROOT / "scripts" / "parallelize"
 _SHOW = (
     'source "$T1PREP" && parse_args "$@" && '
     'for v in save_p save_pial_white outdir multi python save_hemi keep_hemi '
-    'save_lesions min_memory initial_surface atlas_surf seed long_data; do '
+    'save_lesions min_memory initial_surface atlas_surf seed long_data nn_backend; do '
     'printf "%s=%s\\n" "$v" "${!v}"; done && '
     'printf "file=%s\\n" "${ARRAY[@]}"'
 )
@@ -37,12 +37,12 @@ class _InATempDir(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         (self.tmp / "f.nii").write_bytes(b"")
 
-    def parse(self, *args):
+    def parse(self, *args, env=None, show=_SHOW):
         """Run parse_args on *args*; return (returncode, {var: value}, files)."""
         done = subprocess.run(
-            ["bash", "-c", _SHOW, "bash", *args],
+            ["bash", "-c", show, "bash", *args],
             capture_output=True, text=True, timeout=120, cwd=self.tmp,
-            env=dict(os.environ, T1PREP=str(_T1PREP)),
+            env=dict(os.environ, T1PREP=str(_T1PREP), **(env or {})),
         )
         values, files = {}, []
         for line in done.stdout.splitlines():
@@ -106,6 +106,29 @@ class TestTheDefaultsFile(_InATempDir):
         (self.tmp / "my.txt").write_text(defaults + "\nseed=7\n")
         _, v, _ = self.parse("--defaults=my.txt", "f.nii")
         self.assertEqual(v["seed"], "7")
+
+
+class TestNetworkBackend(_InATempDir):
+    """--nn-backend over T1PREP_NN_BACKEND over nn_backend in the defaults
+    file; the choice is exported for the Python steps and the --multi jobs."""
+
+    def test_the_defaults_file(self):
+        _, v, _ = self.parse("f.nii", env={"T1PREP_NN_BACKEND": ""})
+        self.assertEqual(v["nn_backend"], "torch")
+
+    def test_the_environment_overrides_the_defaults_file(self):
+        _, v, _ = self.parse("f.nii", env={"T1PREP_NN_BACKEND": "tinygrad"})
+        self.assertEqual(v["nn_backend"], "tinygrad")
+
+    def test_the_option_overrides_both(self):
+        _, v, _ = self.parse("--nn-backend", "torch", "f.nii",
+                             env={"T1PREP_NN_BACKEND": "tinygrad"})
+        self.assertEqual(v["nn_backend"], "torch")
+
+    def test_it_is_exported(self):
+        show = 'source "$T1PREP" && parse_args "$@" && printenv T1PREP_NN_BACKEND'
+        done, _, _ = self.parse("--nn-backend=tinygrad", "f.nii", show=show)
+        self.assertEqual(done.stdout.strip(), "tinygrad")
 
 
 class TestLongData(_InATempDir):
