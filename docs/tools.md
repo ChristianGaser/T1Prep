@@ -29,8 +29,11 @@ Back to the [README](../README.md).
 ## Web UI (Flask)
 
 A minimal browser-based UI is available for local use. It uploads selected NIfTI
-files, lets you configure General and Save options, and can schedule jobs to
-start at a specific time.
+files, lets you configure General, Save and Expert options, and can schedule jobs
+to start at a specific time. The form starts from the defaults file of the
+`T1Prep` it runs (`T1Prep_defaults.txt` in the environment's `bin/` next to
+`T1Prep`, or at the root of a source checkout), so it shows what that `T1Prep`
+would do on its own; reload the page after editing the file.
 
 ```bash
 t1prep-ui

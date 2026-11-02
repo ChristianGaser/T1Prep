@@ -30,7 +30,7 @@ For full documentation, CLI usage, Docker instructions, and helper scripts see t
 
 ```bash
 pip install T1Prep
-pip install "T1Prep[tinygrad]"   # optional (Python 3.11+): tinygrad backend, T1PREP_NN_BACKEND=tinygrad
+pip install "T1Prep[tinygrad]"   # optional (Python 3.11+): tinygrad backend, T1Prep --nn-backend tinygrad
 ```
 
 > **Multiple Python versions?** Install with the exact interpreter you will run

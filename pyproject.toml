@@ -62,7 +62,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Second backend for the networks (T1PREP_NN_BACKEND=tinygrad, see t1prep.nn).
+# Second backend for the networks (T1Prep --nn-backend tinygrad, see t1prep.nn).
 # Pinned: tinygrad changes its API between minor releases.
 tinygrad = ["tinygrad==0.14.0; python_version >= '3.11'"]
 

@@ -155,7 +155,9 @@ run_t1prep([
 The files are processed one after another; for parallel batches use
 `T1Prep --multi N`.
 
-`track=False` switches off the crash report (see [Telemetry](#telemetry)).
+`track=False` switches off the crash report (see [Telemetry](#telemetry)),
+and `nn_backend="tinygrad"` runs the networks on tinygrad (see
+[Neural networks](#neural-networks)).
 
 ## Telemetry
 Unless you opt out, T1Prep reports two things to its developers (Sentry,
@@ -192,7 +194,10 @@ The networks run on the GPU when there is one (CUDA, else Apple's MPS) and
 on the CPU otherwise; `T1PREP_DEVICE=cpu`, `mps` or `cuda` forces a device
 (`cpu` gives a reference run).
 
-`T1PREP_NN_BACKEND` selects the framework that runs them:
+`--nn-backend` selects the framework that runs them (`nn_backend` in the
+defaults file, `nn_backend=` in the Python API, *Network backend* in the web
+UI). `T1PREP_NN_BACKEND` in the environment overrides the defaults file, and
+the option overrides both:
 
 | Backend | Install | Results | Use it |
 |---------|---------|---------|--------|
@@ -207,8 +212,11 @@ at 15 GB. Without a GPU, tinygrad's segmentation was about six times slower
 than torch's.
 
 ```bash
-T1PREP_NN_BACKEND=tinygrad T1Prep --out-dir out sub-01_T1w.nii.gz
+T1Prep --nn-backend tinygrad --out-dir out sub-01_T1w.nii.gz
 ```
+
+A backend that is unknown or not installed stops the segmentation of each
+file with a one-line error naming the fix.
 
 A retrained network is exported with
 `python -m t1prep.nn.convert model.pth --out-dir DIR` (a saved `state_dict`

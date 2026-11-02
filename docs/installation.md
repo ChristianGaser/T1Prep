@@ -39,8 +39,9 @@ pipx install T1Prep
 python3 -m pip install "T1Prep[tinygrad]"
 ```
 
-The tinygrad backend is selected per run with `T1PREP_NN_BACKEND=tinygrad`;
-see [Neural networks](usage.md#neural-networks) for when it pays off.
+The tinygrad backend is selected per run with `T1Prep --nn-backend tinygrad`
+(or for every run with `nn_backend='tinygrad'` in the defaults file); see
+[Neural networks](usage.md#neural-networks) for when it pays off.
 
 > **Multiple Python versions?** Install with the *exact* interpreter you intend
 > to run T1Prep with, e.g. `python3.12 -m pip install T1Prep` (T1Prep requires
