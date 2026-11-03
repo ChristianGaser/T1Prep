@@ -11,7 +11,6 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ENV_DIR="$PROJECT_DIR/env"
 
 PORT="5050"
 if [[ "${1-}" =~ ^[0-9]+$ ]]; then
@@ -19,14 +18,18 @@ if [[ "${1-}" =~ ^[0-9]+$ ]]; then
     shift
 fi
 
-# Activate environment if not already active
-if [[ "$VIRTUAL_ENV" != "$ENV_DIR" ]]; then
-    source "$ENV_DIR/bin/activate"
-fi
+# Dual-mode path resolution shared with T1Prep: sets root_dir and T1prep_env.
+# shellcheck source=scripts/T1Prep_utils.sh
+source "$SCRIPT_DIR/T1Prep_utils.sh"
+
+# Prepend src/ to PYTHONPATH, so the app resolves from the source tree ahead of
+# a pip-installed t1prep, and activate env/ when there is one.  A missing venv
+# is not fatal: the UI needs only T1Prep's Python dependencies, so the
+# interpreter T1Prep was pip installed into works as well ($T1PREP_PYTHON
+# picks one explicitly) -- see activate_t1prep_env() in T1Prep_utils.sh.
+activate_t1prep_env
 
 cd "$PROJECT_DIR"
 
-# Run the packaged Flask app (t1prep.webui.app) on the chosen port.  Prepend
-# src/ to PYTHONPATH so it resolves from the source tree without an install.
-export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH}"
-exec python -m t1prep.webui.app --port "$PORT" "$@"
+# Run the packaged Flask app (t1prep.webui.app) on the chosen port.
+exec "${python}" -m t1prep.webui.app --port "$PORT" "$@"

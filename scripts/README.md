@@ -88,7 +88,8 @@ the banner correct either way.
 
 ### `T1Prep_ui`
 
-Launches the Flask-based Web UI for T1Prep in a browser.
+Launches the Flask-based Web UI for T1Prep in a browser, from the source tree
+(installed: `t1prep-ui`).
 
 ```bash
 # Start on default port (5050)
@@ -100,6 +101,14 @@ Launches the Flask-based Web UI for T1Prep in a browser.
 # Start without opening a browser
 ./scripts/T1Prep_ui --no-browser
 ```
+
+**Python discovery:** shared with the longitudinal wrappers
+(`activate_t1prep_env` in `T1Prep_utils.sh`): `src/` goes first on
+`PYTHONPATH`, `env/` is activated when it exists, otherwise the first
+interpreter with T1Prep's requirements is used; `$T1PREP_PYTHON` overrides
+both. The UI code comes from the checkout, but its jobs run the `T1Prep` that
+comes first on `PATH` (the checkout's `scripts/T1Prep` only when there is
+none), and the form starts from that T1Prep's defaults file.
 
 ---
 

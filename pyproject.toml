@@ -95,7 +95,8 @@ package-dir = {"" = "src"}
 # works because setuptools dumps them all into the same bin/ directory.
 # Skipped on purpose:
 #   - install.sh / activate_env.sh / run_with_env.sh  (bootstrappers)
-#   - T1Prep_ui / dice.sh                             (hardcode <repo>/env)
+#   - T1Prep_ui                                       (dev launcher; installed: t1prep-ui)
+#   - dice.sh                                         (use `python -m t1prep.dice`)
 #   - the viewers                                     (console scripts:
 #                                                      CAT_SurfView, CAT_VolView)
 #   - realign_longitudinal.sh                         (use `python -m t1prep.realign_longitudinal`)

@@ -277,5 +277,38 @@ class TestDiceChecksTheImportItRuns(unittest.TestCase):
         self.assertEqual(done.stdout.strip(), f"dice.sh {__version__}")
 
 
+class TestTheWebUILauncherNeedsNoVenv(unittest.TestCase):
+    """scripts/T1Prep_ui sourced <repo>/env/bin/activate whether or not it
+    existed and then ran a bare ``python``: in a checkout without env/ on a
+    Mac, which has only python3, that ended in "exec: python: not found".
+    """
+
+    def test_it_does_not_hardcode_the_env_directory(self):
+        text = (_ROOT / "scripts" / "T1Prep_ui").read_text()
+        self.assertIn("activate_t1prep_env", text)
+        self.assertNotIn('ENV_DIR="$PROJECT_DIR/env"', text)
+
+    def test_it_runs_with_only_a_python3_on_path(self):
+        from t1prep import __version__
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        python3 = tmp / "python3"
+        python3.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        python3.chmod(0o755)
+        env = {k: v for k, v in os.environ.items() if k != "T1PREP_PYTHON"}
+        env["PATH"] = os.pathsep.join([str(tmp), "/usr/bin", "/bin"])
+
+        done = subprocess.run(
+            [str(_ROOT / "scripts" / "T1Prep_ui"), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=env,
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(done.stdout.strip(), f"t1prep-ui {__version__}")
+
+
 if __name__ == "__main__":
     unittest.main()
