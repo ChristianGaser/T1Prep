@@ -67,6 +67,15 @@ class TestOptionsMatchExactly(_InATempDir):
         _, v, files = self.parse("--out-dir=/r", "--multi=4", "f.nii")
         self.assertEqual((v["outdir"], v["multi"], files), ("/r", "4", ["f.nii"]))
 
+    def test_no_atlas_surf_empties_the_surface_list(self):
+        _, v, _ = self.parse("f.nii")
+        self.assertIn("aparc_DK40.freesurfer", v["atlas_surf"])
+        _, v, _ = self.parse("--no-atlas-surf", "f.nii")
+        self.assertEqual(v["atlas_surf"], "")
+        # The last word counts, as for every option
+        _, v, _ = self.parse("--no-atlas-surf", "--atlas-surf", "'aparc_HCP_MMP1'", "f.nii")
+        self.assertEqual(v["atlas_surf"], "'aparc_HCP_MMP1'")
+
     def test_unknown_option_is_an_error(self):
         done, _, _ = self.parse("--profile", "f.nii")
         self.assertEqual(done.returncode, 1)
@@ -210,6 +219,61 @@ class TestParallelizeNeverRunsAFileName(unittest.TestCase):
         self.assertFalse(self.marker.exists())
         logs = "".join(p.read_text() for p in self.tmp.glob("parallelize_*.log"))
         self.assertIn(str(self.evil), logs)
+
+
+class TestParallelizeReportsFailures(unittest.TestCase):
+    """The exit status says whether every item succeeded.
+
+    With one process ``parallelize`` runs the items one after the other, and
+    that branch returned 0 whatever had happened: ``T1Prep --multi 1`` (and
+    any batch on a machine whose memory allows one job only) exited 0 with
+    failed images.  Only the branch for several processes named them.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.files = []
+        for name in ("a", "bad one", "c"):
+            path = self.tmp / f"{name}.nii"
+            path.write_bytes(b"")
+            self.files.append(str(path))
+        self.step = self.tmp / "step.sh"
+        self.step.write_text(
+            '#!/bin/bash\ncase "$1" in *bad*) exit 3;; esac\ntouch "$1.done"\n')
+        self.step.chmod(0o755)
+
+    def run_parallelize(self, processes, files):
+        return subprocess.run(
+            [str(_PARALLELIZE), "--processes", str(processes),
+             "--logdir", str(self.tmp), "--command", str(self.step), *files],
+            capture_output=True, text=True, timeout=300, cwd=self.tmp,
+        )
+
+    def check_a_failure(self, processes):
+        done = self.run_parallelize(processes, self.files)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("with 1 error(s)", done.stdout)
+        listed = done.stdout.split("Failed items:", 1)[1]
+        self.assertIn(self.files[1], listed)
+        self.assertNotIn(self.files[0], listed)
+        # The others were still processed
+        self.assertTrue(Path(self.files[0] + ".done").exists())
+        self.assertTrue(Path(self.files[2] + ".done").exists())
+
+    def test_one_process(self):
+        self.check_a_failure(1)
+
+    def test_several_processes(self):
+        self.check_a_failure(2)
+
+    def test_success_is_still_zero(self):
+        good = [self.files[0], self.files[2]]
+        for processes in (1, 2):
+            with self.subTest(processes=processes):
+                done = self.run_parallelize(processes, good)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertNotIn("Failed items", done.stdout)
 
 
 if __name__ == "__main__":

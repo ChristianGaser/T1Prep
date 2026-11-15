@@ -160,12 +160,15 @@ class TestTheTableAgainstTheOrchestrator(unittest.TestCase):
     def test_no_atlas_at_all(self):
         held, arguments = self.check({"atlas": (), "atlas_surf": ()})
         self.assertIn("--no-atlas", arguments)
-        self.assertEqual(held["atlas_vol"], "")
-        # The surface list T1Prep holds is not empty, but it names nothing:
-        # surface_estimation splits it at the commas and drops empty items
-        self.assertEqual(
-            [a.strip().strip("'") for a in held["atlas_surf"].split(",") if a.strip()],
-            [])
+        self.assertIn("--no-atlas-surf", arguments)
+        self.assertEqual((held["atlas_vol"], held["atlas_surf"]), ("", ""))
+
+    def test_every_atlas_option_can_say_none(self):
+        # An empty selection has to reach T1Prep as "none", not as "the default"
+        for item in opt.OPTIONS:
+            if item.kind == "atlas":
+                with self.subTest(option=item.key):
+                    self.assertTrue(item.off)
 
 
 class TestTheTableAgainstTheDefaultsFile(unittest.TestCase):
@@ -191,6 +194,85 @@ class TestTheTableAgainstTheDefaultsFile(unittest.TestCase):
             (values["surf"], values["gz"], values["multi"], values["atlas"],
              values["skullstrip"]),
             (False, True, 6, ("SUIT",), "only"))
+
+
+class TestWhereTheDefaultsFileIs(unittest.TestCase):
+    """The form reads the defaults of the T1Prep it runs, as that T1Prep does.
+
+    The web UI once read ``T1Prep_defaults.txt`` from the working directory
+    and so started from fallbacks of its own; the file is looked up from the
+    orchestrator instead.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def t1prep(self, folder, defaults=None, beside=False):
+        """A T1Prep in tmp/*folder*, with *defaults* next to it or one up."""
+        script = self.tmp / folder / "T1Prep"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("#!/usr/bin/env bash\n")
+        if defaults is not None:
+            where = script.parent.parent if beside else script.parent
+            (where / "T1Prep_defaults.txt").write_text(defaults)
+        return str(script)
+
+    def values(self, script):
+        return opt.default_values(
+            opt.load_defaults(opt.defaults_file(script)), environ={})
+
+    def test_installed_next_to_t1prep_whatever_the_working_directory(self):
+        script = self.t1prep("venv/bin", "save_pial_white=0\nmin_memory=7\n")
+        decoy = self.tmp / "cwd"
+        decoy.mkdir()
+        (decoy / "T1Prep_defaults.txt").write_text("save_pial_white=1\nmin_memory=24\n")
+        before = os.getcwd()
+        os.chdir(decoy)
+        self.addCleanup(os.chdir, before)
+        values = self.values(script)
+        self.assertEqual((values["pial_white"], values["min_memory"]), (False, 7))
+
+    def test_a_source_checkout_keeps_it_at_the_root(self):
+        script = self.t1prep("repo/scripts", "min_memory=12\n", beside=True)
+        self.assertEqual(self.values(script)["min_memory"], 12)
+
+    def test_without_a_file_the_form_starts_as_shipped(self):
+        self.assertEqual(self.values(self.t1prep("empty/bin")), defaults())
+
+    def test_quotes_and_comments_of_the_file(self):
+        script = self.t1prep(
+            "venv/bin", "nii_ext='nii.gz'   # compressed\n# multi=9\nmulti=\"4\"\n")
+        values = self.values(script)
+        self.assertEqual((values["gz"], values["multi"]), (True, 4))
+
+
+class TestTheShippedAtlases(unittest.TestCase):
+    def test_the_defaults_name_them_in_lower_case(self):
+        # The file says neuromorphometrics, the atlas is Neuromorphometrics
+        values = defaults()
+        self.assertEqual(values["atlas"], ("CoBra", "Neuromorphometrics"))
+        self.assertEqual(values["atlas_surf"],
+                         ("aparc_DK40.freesurfer", "aparc_a2009s.freesurfer"))
+
+    def test_each_has_a_description_for_its_tool_tip(self):
+        for surface, names in ((False, opt.list_atlas_names()),
+                               (True, opt.list_surface_atlas_names())):
+            self.assertTrue(names)
+            for name in names:
+                with self.subTest(atlas=name):
+                    self.assertTrue(opt.atlas_description(name, surface))
+
+    def test_a_long_description_is_cut(self):
+        text = opt.atlas_description("aparc_DK40.freesurfer", surface=True, max_lines=3)
+        self.assertEqual(len(text.splitlines()), 4)
+        self.assertTrue(text.endswith("…"))
+
+    def test_only_shipped_atlases_are_read(self):
+        # The name ends up in a file path
+        for name in ("../../Names", "no_such_atlas", ""):
+            self.assertEqual(opt.atlas_description(name), "")
+            self.assertEqual(opt.atlas_description(name, surface=True), "")
 
 
 class TestWhatTheFormMayDo(unittest.TestCase):

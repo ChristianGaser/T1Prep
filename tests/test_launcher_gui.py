@@ -139,6 +139,7 @@ seen["run_enabled_with_images"] = win.run_button.isEnabled()
 seen["started"] = win.start()
 seen["locked_while_running"] = not box["seg"].isEnabled()
 seen["finished"] = wait(lambda: not win.is_running())
+seen["steps_logged"] = win.log.toPlainText().count("  25%  step")
 seen["first_run"] = {"rows": rows(win), "status": win.status_label.text(),
                      "log_shown": win.log.isVisible(), "count": win.count_label.text(),
                      "unlocked": box["seg"].isEnabled()}
@@ -259,6 +260,11 @@ class TestTheLauncher(unittest.TestCase):
         self.assertTrue(run["log_shown"])
         self.assertIn("1 with results", run["count"])
         self.assertTrue(run["unlocked"])
+
+    def test_the_log_keeps_each_step_once(self):
+        # The stand-in prints the 25 % bar twice per image, as a terminal
+        # bar is redrawn; the log names the step once for each of the two
+        self.assertEqual(self.seen["steps_logged"], 2)
 
     def test_finished_images_are_left_out_on_request(self):
         self.assertIn("bad.nii", self.seen["second_command"])

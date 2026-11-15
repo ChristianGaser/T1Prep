@@ -11,6 +11,7 @@ the lines and files it is fed here are the ones ``scripts/T1Prep`` and
 import os
 import queue
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -25,7 +26,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from t1prep.launch.progress import (  # noqa: E402
-    DONE, FAILED, QUEUED, RUNNING, SKIPPED, RunTracker, follow_line,
+    DONE, FAILED, QUEUED, RUNNING, SKIPPED, RunTracker, find_parallelize_logs,
+    follow_line,
     new_progress, read_progress_dir, step_text,
 )
 
@@ -318,6 +320,22 @@ class TestAgainstParallelize(unittest.TestCase):
         self.assertEqual(states, self.EXPECTED)
         self.assertEqual(before_the_end, self.EXPECTED)
         self.assertTrue(was_running)
+
+
+class TestParallelizeLog(unittest.TestCase):
+    def test_only_the_run_s_own_log_directory_is_read(self):
+        with tempfile.TemporaryDirectory() as mine, tempfile.TemporaryDirectory() as other:
+            host = socket.gethostname()
+            first = Path(mine) / f"parallelize_{host}_1.log"
+            second = Path(mine) / f"parallelize_{host}_2.log"
+            (Path(other) / f"parallelize_{host}_3.log").write_text("x")
+            first.write_text("a")
+            second.write_text("b")
+            os.utime(first, (100, 100))
+            os.utime(second, (200, 200))
+            # Oldest first: the order the phases ran
+            self.assertEqual(find_parallelize_logs(mine), [first, second])
+            self.assertEqual(find_parallelize_logs(None), [])
 
 
 class TestImagesOfTheSameName(unittest.TestCase):

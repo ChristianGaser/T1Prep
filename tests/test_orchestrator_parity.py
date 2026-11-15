@@ -55,6 +55,82 @@ class TestSymlinkedInputs(_InATempDir):
         )
 
 
+class TestNoAtlasIsAboutTheVolumes(_InATempDir):
+    """``--no-atlas`` skips the ROI volumes and leaves the surface atlases.
+
+    That is what ``scripts/T1Prep`` does.  ``t1prep-run`` (and ``run_t1prep``,
+    and with it Docker) emptied the surface atlas list as well, so the same
+    option gave different results depending on the entry point.
+    """
+
+    def atlases(self, *argv):
+        """The atlas lists the segmentation and the two hemispheres are given."""
+        image = self.tmp / "x.nii"
+        image.write_bytes(b"")
+        started = []
+
+        class Process:
+            def __init__(self, command, **_kwargs):
+                started.append(command)
+
+            def wait(self):
+                return 0
+
+        def call(command, **_kwargs):
+            started.append(command)
+            return 0
+
+        with mock.patch.object(orchestrator.subprocess, "call", call), \
+                mock.patch.object(orchestrator.subprocess, "Popen", Process), \
+                mock.patch.object(orchestrator, "_merge_glued_sulci_qa"), \
+                mock.patch.object(orchestrator, "_remove_hemi_volumes"):
+            status = orchestrator.main(
+                [str(image), "--out-dir", str(self.tmp / "out"), *argv])
+        self.assertEqual(status, 0)
+        self.assertEqual(len(started), 3)       # segmentation, left, right
+
+        def value(command, flag):
+            return command[command.index(flag) + 1]
+
+        surface = {value(command, "--atlas-surf") for command in started[1:]}
+        self.assertEqual(len(surface), 1)       # both hemispheres the same
+        return value(started[0], "--atlas"), surface.pop()
+
+    def test_by_default_both_kinds_are_computed(self):
+        volume, surface = self.atlases()
+        self.assertIn("neuromorphometrics", volume)
+        self.assertIn("aparc_DK40.freesurfer", surface)
+
+    def test_no_atlas_leaves_the_surface_atlases(self):
+        volume, surface = self.atlases("--no-atlas")
+        self.assertEqual(volume, "")
+        self.assertIn("aparc_DK40.freesurfer", surface)
+
+    def test_no_atlas_surf_leaves_the_volume_atlases(self):
+        volume, surface = self.atlases("--no-atlas-surf")
+        self.assertIn("neuromorphometrics", volume)
+        self.assertEqual(surface, "")
+
+    def test_both_switch_off_both(self):
+        self.assertEqual(self.atlases("--no-atlas", "--no-atlas-surf"), ("", ""))
+
+    def test_the_orchestrator_reads_the_two_options_the_same_way(self):
+        show = ('source "$T1PREP" && parse_args "$@" && '
+                'printf "%s\\n" "$atlas_vol" "$atlas_surf"')
+        (self.tmp / "f.nii").write_bytes(b"")
+        for argv, volumes, surfaces in ((["--no-atlas"], False, True),
+                                        (["--no-atlas-surf"], True, False)):
+            with self.subTest(option=argv):
+                done = subprocess.run(
+                    ["bash", "-c", show, "bash", *argv, "f.nii"],
+                    capture_output=True, text=True, timeout=120, cwd=self.tmp,
+                    env=dict(os.environ, T1PREP=str(_ROOT / "scripts" / "T1Prep")))
+                self.assertEqual(done.returncode, 0, done.stderr)
+                held_volume, held_surface = done.stdout.split("\n")[:2]
+                self.assertEqual(bool(held_volume), volumes)
+                self.assertEqual(bool(held_surface), surfaces)
+
+
 class TestNoOverwriteLooksForThisSubject(_InATempDir):
     def bash(self, outdir0, bname, pattern, bids):
         snippet = f'source "{_UTILS}"; already_processed "$@" && echo yes || echo no'
@@ -101,6 +177,13 @@ class TestPresets(_InATempDir):
     def test_fast_switches_the_atlases_off(self):
         kw = self.run_main("--fast")
         self.assertEqual((kw["atlas"], kw["atlas_surf"]), ("", ""))
+
+    def test_no_atlas_surf_leaves_the_volume_atlases(self):
+        kw = self.run_main("--no-atlas-surf")
+        self.assertEqual(kw["atlas_surf"], "")
+        self.assertIn("neuromorphometrics", kw["atlas"])
+        kw = self.run_main("--atlas-surf", "'aparc_HCP_MMP1'", "--no-atlas-surf")
+        self.assertEqual(kw["atlas_surf"], "")
 
     def test_an_explicit_atlas_survives_fast(self):
         kw = self.run_main("--fast", "--atlas", "'cobra'")

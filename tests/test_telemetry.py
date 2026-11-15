@@ -263,16 +263,13 @@ class TestTheEntryPointsPassTheChoiceOn(unittest.TestCase):
             )
             self.assertNotIn(_telemetry.NO_TRACK_ENV, _segment_env(track=True))
 
-    def test_the_web_ui_forwards_the_switch(self):
-        try:
-            from t1prep.webui.app import build_command
-        except ImportError as exc:  # pragma: no cover - flask is a dependency
-            self.skipTest(f"web UI not importable: {exc}")
+    def test_the_launcher_forwards_the_switch(self):
+        from t1prep.launch.options import build_arguments
 
-        form = {"save_mwp": "1"}
-        self.assertNotIn("--no-track", build_command(form, [Path("x.nii")]))
-        form["--no-track"] = "1"
-        self.assertIn("--no-track", build_command(form, [Path("x.nii")]))
+        self.assertNotIn("--no-track", build_arguments({}, {"track": "1"}))
+        self.assertIn("--no-track", build_arguments({"track": False}, {"track": "1"}))
+        # Switched off in the defaults file: nothing left for the form to say
+        self.assertNotIn("--no-track", build_arguments({"track": False}, {"track": "0"}))
 
     def test_the_bash_side_reads_the_same_variables(self):
         utils = _ROOT / "scripts" / "T1Prep_utils.sh"
