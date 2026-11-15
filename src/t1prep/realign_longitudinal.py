@@ -238,7 +238,6 @@ def _resample_images_to_reference(
     reference_img: nib.Nifti1Image,
 ) -> List[np.ndarray]:
     ref_affine = reference_img.affine
-    ref_header = reference_img.header.copy()
     resampled: List[np.ndarray] = []
     for img, T in zip(images, transforms):
         data = np.asarray(img.get_fdata(), dtype=np.float32)

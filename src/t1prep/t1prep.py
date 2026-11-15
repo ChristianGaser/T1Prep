@@ -36,7 +36,6 @@ from typing import List, Optional, Sequence, Union
 from .cli_help import ArgumentParser
 # Kept under its old name here: the surface measures of the two hemispheres
 # are merged into the report, as scripts/T1Prep does through T1Prep_utils.sh
-from .report import merge_surface_measures as _merge_glued_sulci_qa
 from ._telemetry import NO_TRACK_ENV
 from .nn.backends import BACKEND_ENV, backend_names
 
@@ -44,6 +43,18 @@ from .nn.backends import BACKEND_ENV, backend_names
 # ---------------------------------------------------------------------------
 # Atlas argument normalisation
 # ---------------------------------------------------------------------------
+
+def _merge_glued_sulci_qa(report_dir: str, bname: str) -> None:
+    """Fold the surface measures of both hemispheres into the report.
+
+    :func:`t1prep.report.merge_surface_measures`, imported when it is called:
+    ``report`` brings torch along, and this module is also imported by the
+    launcher, which only asks it where the results of an image are.
+    """
+    from .report import merge_surface_measures
+
+    merge_surface_measures(report_dir, bname)
+
 
 def _as_atlas_str(arg: Optional[Union[str, Sequence[str]]]) -> str:
     """Normalise an atlas argument to a comma-separated string.
@@ -282,7 +293,7 @@ def _build_surface_cmd(
     Uses ``-m t1prep.surface_estimation`` because the module uses relative
     imports which require it to run as part of a package, not as a bare script.
     """
-    from .utils import DATA_PATH_T1PREP, _resolve_names_tsv
+    from ._names import DATA_PATH_T1PREP, _resolve_names_tsv
 
     return [
         sys.executable, "-m", "t1prep.surface_estimation",
@@ -949,6 +960,10 @@ def _build_parser() -> ArgumentParser:
                     help="Median-filter passes (default 1)")
     g3.add_argument("--vessel", type=float, default=1.0,
                     help="Blood-vessel correction weight; 0 = off (default 1)")
+    # As T1Prep spells it
+    g3.add_argument("--no-vessel", "--no-vessels", dest="vessel",
+                    action="store_const", const=0.0,
+                    help="Disable the blood-vessel correction (--vessel 0)")
     g3.add_argument("--thickness-method", type=int, default=3, metavar="N",
                     choices=[1, 2, 3],
                     help="Thickness algorithm: 1=Tfs, 2=pial/white, 3=PBT "
@@ -972,7 +987,8 @@ def _build_parser() -> ArgumentParser:
                     help="Process FILE (the longitudinally realigned copy of "
                          "the input) instead of the input, keeping the output "
                          "folders and names of the input; one input only")
-    g3.add_argument("--initial-surf", metavar="FILE", default="",
+    g3.add_argument("--initial-surface", "--initial-surf", dest="initial_surf",
+                    metavar="FILE", default="",
                     help="Initial surface file for longitudinal processing")
     g3.add_argument("--retry", action="store_true",
                     help="Retry a failed processing step once (default: off)")

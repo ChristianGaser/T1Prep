@@ -133,7 +133,6 @@ def write_t1prep_report(
     uname = platform.uname()
     t1prep_version = __version__
     system_str = f"{uname.system} {uname.release} {uname.machine}"
-    changed_voxels_total = 0
 
     if log_path.exists():
         with open(log_path, "r", errors="replace") as fh:
@@ -144,10 +143,6 @@ def write_t1prep_report(
         m = re.search(r"\n(Darwin[^\n]*|Linux[^\n]*|Windows[^\n]*)\n", log_text)
         if m:
             system_str = m.group(1).strip()
-        # Sum all occurrences of "(N voxel changed)" from topology-fixing steps
-        changed_voxels_total = sum(
-            int(x) for x in re.findall(r"\((\d+)\s+voxel changed\)", log_text)
-        )
 
     # --- Read existing volume summary JSON (written by save_results) ---
     vol_data: dict = {}

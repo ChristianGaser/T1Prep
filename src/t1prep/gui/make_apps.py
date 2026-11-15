@@ -29,7 +29,6 @@ would leave files that ``pip uninstall`` could not remove.
 
 from __future__ import annotations
 
-import argparse
 import os
 import platform
 import plistlib

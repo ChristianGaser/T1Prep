@@ -20,7 +20,6 @@ Exposed as the ``t1prep-bbreg`` console script.
 
 from __future__ import annotations
 
-import argparse
 import os
 import sys
 from typing import Optional

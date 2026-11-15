@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from ..cli_help import version as t1prep_version
 from ..t1prep import _resolve_output_dirs
-from ..utils import NameTable, name_file
+from .._names import NameTable, name_file
 
 VOLUME, SURFACE = "volume", "surface"
 SIDES = ("left", "right")

@@ -1287,33 +1287,51 @@ class CatImageViewer:
                         pass
             self._surface_contours[vi] = []
 
-        # World-space normal of the voxel axis each pane slices along
-        dirs = self._voxel_axis_directions()
-        normals = [dirs[self._pane_axis[vi]] for vi in range(3)]
         # Origins must match the actual slice location used by the image actors,
         # which slices at integer voxel indices. Do NOT add the +0.5 voxel-center shift here.
-        origins = [self._world_from_index(tuple(self._ijk))] * 3
+        origin = self._world_from_index(tuple(self._ijk))
 
         for surface in self.surfaces:
             for vi in range(3):
-                plane = vtkPlane()
-                plane.SetNormal(*normals[vi])
-                plane.SetOrigin(*origins[vi])
-                cutter = vtkCutter()
-                cutter.SetCutFunction(plane)
-                cutter.SetInputData(surface['poly'])
-                actors = [self._surface_contour_actor(
-                    cutter, vi, color=surface['color'], distance=0.5)]
-                if surface.get('lut') is not None:
-                    # Over the plain line, so the clipped and missing values the
-                    # table leaves transparent still show which surface it is
-                    actors.append(self._surface_contour_actor(
-                        cutter, vi, lut=surface['lut'],
-                        scalar_range=surface.get('range'), distance=0.6))
-                for actor in actors:
+                entry = self._surface_outline(surface, vi, origin)
+                for actor in entry['actors']:
                     self.renderers[vi].AddActor(actor)
-                self._surface_contours[vi].append(
-                    {'plane': plane, 'cutter': cutter, 'actors': actors})
+                self._surface_contours[vi].append(entry)
+
+    def _surface_outline(self, surface: dict, pane: int,
+                         origin: Sequence[float]) -> dict:
+        """Cut *surface* with one slice plane of *pane* and make its line actors.
+
+        The pipeline behind an outline, without a renderer: the panes add the
+        actors to theirs and move the plane with the cursor, a montage builds
+        one per tile.  Both go through here, so a sheet of slices shows a
+        surface exactly as the pane it was made from does.
+
+        Args:
+            surface: Entry of :attr:`surfaces`.
+            pane: Pane whose slice direction and camera the outline is for.
+            origin: Any world (mm) point of the slice plane.
+
+        Returns:
+            ``plane``, ``cutter`` and ``actors`` — the plain line and, for a
+            surface with values, the line coloured by them on top of it.
+        """
+        plane = vtkPlane()
+        # World-space normal of the voxel axis the pane slices along
+        plane.SetNormal(*self._voxel_axis_directions()[self._pane_axis[pane]])
+        plane.SetOrigin(*origin)
+        cutter = vtkCutter()
+        cutter.SetCutFunction(plane)
+        cutter.SetInputData(surface['poly'])
+        actors = [self._surface_contour_actor(
+            cutter, pane, color=surface['color'], distance=0.5)]
+        if surface.get('lut') is not None:
+            # Over the plain line, so the clipped and missing values the
+            # table leaves transparent still show which surface it is
+            actors.append(self._surface_contour_actor(
+                cutter, pane, lut=surface['lut'],
+                scalar_range=surface.get('range'), distance=0.6))
+        return {'plane': plane, 'cutter': cutter, 'actors': actors}
 
     def _surface_contour_actor(self, cutter, pane: int, color=None, lut=None,
                                scalar_range=None, distance: float = 0.5):
@@ -1860,28 +1878,42 @@ class CatImageViewer:
     def _build_contour_actors(self, entry: dict):
         """One outline actor per pane for *entry*."""
         for pane in range(3):
-            squares = vtkMarchingSquares()
-            squares.SetInputData(entry['image'])
-            squares.SetValue(0, entry['level'])
-            mapper = vtkPolyDataMapper()
-            mapper.SetInputConnection(squares.GetOutputPort())
-            mapper.ScalarVisibilityOff()
-            actor = vtkActor()
-            actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(*entry['color'])
-            actor.GetProperty().SetLineWidth(1.5)
-            # In front of the image, like the overlay and the crosshair
-            offset = self._camera_offset(pane, 0.35)
-            if self._world_from_header:
-                matrix = self._world_matrix()
-                for row in range(3):
-                    matrix.SetElement(row, 3, matrix.GetElement(row, 3) + offset[row])
-                actor.SetUserMatrix(matrix)
-            else:
-                actor.SetPosition(*offset)
+            squares, actor = self._contour_outline(entry, pane)
             self.renderers[pane].AddActor(actor)
             entry['filters'][pane] = squares
             entry['actors'][pane] = actor
+
+    def _contour_outline(self, entry: dict, pane: int):
+        """Marching-squares filter and line actor that outline *entry* in *pane*.
+
+        Without a renderer and without a slice: the panes point the filter at
+        the slice they show (:meth:`_update_contour_slices`), a montage at the
+        slice of each tile.  Both go through here, so the outline has the same
+        level, colour, width and lift towards the camera in either.
+
+        Returns:
+            The filter, whose image range selects the slice, and its actor.
+        """
+        squares = vtkMarchingSquares()
+        squares.SetInputData(entry['image'])
+        squares.SetValue(0, entry['level'])
+        mapper = vtkPolyDataMapper()
+        mapper.SetInputConnection(squares.GetOutputPort())
+        mapper.ScalarVisibilityOff()
+        actor = vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(*entry['color'])
+        actor.GetProperty().SetLineWidth(1.5)
+        # In front of the image, like the overlay and the crosshair
+        offset = self._camera_offset(pane, 0.35)
+        if self._world_from_header:
+            matrix = self._world_matrix()
+            for row in range(3):
+                matrix.SetElement(row, 3, matrix.GetElement(row, 3) + offset[row])
+            actor.SetUserMatrix(matrix)
+        else:
+            actor.SetPosition(*offset)
+        return squares, actor
 
     def _update_contour_slices(self):
         """Point every outline at the slice its pane shows."""
@@ -2645,8 +2677,9 @@ class Montage:
     One slice at a time answers a question about a place; a montage answers one
     about the whole volume — which is what goes into a QC report, and what
     ``cat_vol_slice_overlay`` produces in CAT12.  The image is taken from a
-    :class:`CatImageViewer` with its display range, overlay and colours, so the
-    sheet looks like the slices it was made from.
+    :class:`CatImageViewer` with its display range, overlay and colours, and
+    with the contours and surface outlines drawn on it, so the sheet looks like
+    the slices it was made from.
 
     The class draws into a render window and knows nothing about Qt, so the
     same code serves :class:`MontageWindow` and the batch call that writes a
@@ -2886,6 +2919,15 @@ class Montage:
             camera.SetPosition(*position_3d)
             camera.SetViewUp(*template.GetViewUp())
             renderer.ResetCamera()
+
+            # After the camera is set: the image alone frames the tile, as the
+            # volume frames a pane, so a surface reaching beyond the image does
+            # not shrink this slice against the others.  The outlines sit off
+            # the slice plane, which the clipping range has to take in.
+            for actor in self._outline_actors(display):
+                renderer.AddActor(actor)
+                self._keep_alive.append(actor)
+            renderer.ResetCameraClippingRange()
             self.render_window.AddRenderer(renderer)
             self._renderers.append(renderer)
 
@@ -3025,6 +3067,45 @@ class Montage:
                         matrix.SetElement(row, 3,
                                           matrix.GetElement(row, 3) + shift[row])
                 actor.SetUserMatrix(matrix)
+        return actors
+
+    def _outline_actors(self, display_extent: Sequence[int]) -> List[vtkActor]:
+        """Volume contours and surface outlines for one slice of the montage.
+
+        A sheet that left them out would show bare slices where the viewer it
+        was made from shows a segmentation or a surface on them — and that
+        figure is what a montage is usually made for.  The lines come out of
+        the pipelines of the source viewer's panes, so level, colour, width,
+        the colouring by per-vertex values and the lift towards the camera are
+        the pane's; only the slice is the tile's.  What is hidden in the pane
+        is hidden here as well.
+        """
+        source = self.source
+        actors: List[vtkActor] = []
+
+        def add(actor, in_pane):
+            if in_pane is not None:
+                actor.SetVisibility(in_pane.GetVisibility())
+            actors.append(actor)
+
+        for entry in source.contours:
+            squares, actor = source._contour_outline(entry, self.pane)
+            squares.SetImageRange(*display_extent)
+            add(actor, entry['actors'][self.pane])
+
+        if source.surfaces:
+            # Any point of the slice places the cutting plane; the one used is
+            # where the cursor of the viewer would be on this slice
+            axis = source._pane_axis[self.pane]
+            position = list(source._ijk or [0, 0, 0])
+            position[axis] = display_extent[2 * axis]
+            origin = source._world_from_index(tuple(position))
+            shown = source._surface_contours[self.pane]
+            for number, surface in enumerate(source.surfaces):
+                outline = source._surface_outline(surface, self.pane, origin)
+                in_pane = shown[number]['actors'] if number < len(shown) else ()
+                for line, actor in enumerate(outline['actors']):
+                    add(actor, in_pane[line] if line < len(in_pane) else None)
         return actors
 
 
@@ -4144,7 +4225,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     )
     montage = p.add_argument_group(
         "montage",
-        "A sheet of slices instead of the three orthogonal views.  With "
+        "A sheet of slices instead of the three orthogonal views, with the "
+        "overlay, contours and surface outlines they show.  With "
         "--screenshot it is written without opening a window, which is what "
         "makes it usable in a script.")
     montage.add_argument(

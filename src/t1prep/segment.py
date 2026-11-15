@@ -1,14 +1,15 @@
 """T1Prep volume pipeline (segmentation) CLI.
 
 This module is primarily invoked by the bash pipeline in scripts/T1Prep.
-It can also be run directly for debugging:
+It can also be run directly for debugging -- as a module, not as a file,
+because it imports its neighbours relatively:
 
-    python src/t1prep/segment.py --help
+    python -m t1prep.segment --help
 
 Typical usage (as done by scripts/T1Prep) provides output directories and
 optionally atlas names:
 
-    python src/t1prep/segment.py \
+    python -m t1prep.segment \
         --input sub-01_T1w.nii.gz --mri-dir out/mri --report-dir out/report --label-dir out/label \
         --atlas "'Neuromorphometrics','suit'" --bids
 """

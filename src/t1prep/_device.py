@@ -22,7 +22,6 @@ accelerator for nothing T1Prep uses, linear interpolation;
 :func:`interpolate` gives it its own kernel back.
 """
 
-import math
 import os
 from typing import Tuple
 

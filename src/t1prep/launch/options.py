@@ -456,6 +456,18 @@ def choices(item: Option) -> Tuple[Tuple[str, str], ...]:
     return item.choices
 
 
+#: What ``--fast`` sets in ``scripts/T1Prep`` (``apply_fast_preset``), as
+#: variables of the defaults file.  ``fast=1`` in that file is the same preset.
+FAST_PRESET = {
+    "save_pial_white": "0",
+    "estimate_spherereg": "0",
+    "save_mwp": "0",
+    "save_hemi": "0",
+    "atlas_vol": "",
+    "atlas_surf": "",
+}
+
+
 def _flag_is_on(raw: Optional[str], fallback: bool) -> bool:
     """Read a 0/1 variable of the defaults file."""
     if raw is None:
@@ -492,7 +504,12 @@ def default_values(
     Returns:
         A value per option key: bool, int, str or a tuple of atlas names.
     """
-    defaults = defaults or {}
+    defaults = dict(defaults or {})
+    # fast=1 in the file is --fast: scripts/T1Prep applies the preset once it
+    # has read the file, so the form starts from the preset as well.
+    # (fmriprep=1 needs nothing here: :func:`implied` knows what it forces.)
+    if _flag_is_on(defaults.get("fast"), False):
+        defaults.update(FAST_PRESET)
     environ = os.environ if environ is None else environ
     available = {
         "atlas": list_atlas_names() if atlas_names is None else list(atlas_names),

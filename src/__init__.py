@@ -2,7 +2,7 @@
 # Note: This file is NOT part of the installed package; the package is t1prep.
 # For normal usage, import directly from t1prep: `from t1prep import run_t1prep`
 
-from t1prep import (
+from t1prep import (  # noqa: F401
     run_t1prep,
     progress_bar,
     remove_file,
