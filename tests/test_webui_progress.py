@@ -7,7 +7,9 @@ started because only several subjects got the phase headers.  After the job
 ended the page did not fetch the final state either.
 """
 
+import os
 import shutil
+import socket
 import sys
 import tempfile
 import textwrap
@@ -189,14 +191,14 @@ class TestJobProgress(unittest.TestCase):
 class TestParallelizeLog(unittest.TestCase):
     def test_only_the_job_s_own_log_directory_is_read(self):
         with tempfile.TemporaryDirectory() as mine, tempfile.TemporaryDirectory() as other:
-            host = webui.socket.gethostname()
+            host = socket.gethostname()
             first = Path(mine) / f"parallelize_{host}_1.log"
             second = Path(mine) / f"parallelize_{host}_2.log"
             (Path(other) / f"parallelize_{host}_3.log").write_text("x")
             first.write_text("a")
             second.write_text("b")
-            webui.os.utime(first, (100, 100))
-            webui.os.utime(second, (200, 200))
+            os.utime(first, (100, 100))
+            os.utime(second, (200, 200))
             self.assertEqual(webui.find_parallelize_logs(mine), [first, second])
             self.assertEqual(webui.find_parallelize_logs(None), [])
 

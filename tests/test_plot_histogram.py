@@ -8,6 +8,7 @@ printed table.
 
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -209,6 +210,36 @@ class TestTheZeroBackground(unittest.TestCase):
         data = np.ones(1000, dtype=np.float32)
         data[:5] = 0.0
         self.assertFalse(np.isnan(cph._drop_zero_background(data)).any())
+
+
+class TestTheFreeSurferReader(unittest.TestCase):
+    """Morphometry data is recognised by its header, not taken on trust."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+
+    def test_morphometry_data_is_read(self):
+        from nibabel.freesurfer.io import write_morph_data
+
+        path = str(Path(self.folder.name) / "lh.thickness.sub")
+        values = np.linspace(0.5, 4.5, 9).astype(np.float32)
+        write_morph_data(path, values)
+        np.testing.assert_allclose(cph.load_data(path)[0], values)
+
+    def test_the_old_format_is_still_read(self):
+        # Vertex and face count in three bytes each, then int16 / 100
+        path = Path(self.folder.name) / "lh.curv.old"
+        path.write_bytes((3).to_bytes(3, "big") + (0).to_bytes(3, "big")
+                         + np.array([150, 225, 300], dtype=">i2").tobytes())
+        np.testing.assert_allclose(cph.load_data(str(path))[0], [1.5, 2.25, 3.0])
+
+    def test_text_without_its_extension_is_refused(self):
+        # nibabel would read it as morphometry data: 1500, 1600 -> 138.72, ...
+        path = Path(self.folder.name) / "tiv.csv"
+        path.write_text("1500\n1600\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "unknown data format"):
+            cph.load_data(str(path))
 
 
 class TestTheResult(unittest.TestCase):
