@@ -135,7 +135,8 @@ run_t1prep(
     # atlas labeling
     atlas=None,          # str | list[str]
     atlas_surf=None,     # str | list[str]
-    no_atlas=False,
+    no_atlas=False,      # skip the volume atlases (ROI volumes)
+    no_atlas_surf=False, # skip the surface atlases
     # parallelization
     multi=None,          # int; -1 = auto
     min_memory=None,     # float (GB per process)
