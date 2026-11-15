@@ -1,4 +1,13 @@
+#!/usr/bin/env python3
 """Register the subset to MNI with ANTs and warp the manual labels.
+
+    run_ants_antspy.py --work <work> --mindboggle <mindboggle-101/data> <config> [workers]
+
+``--work`` holds ``mni_fixed.nii.gz`` (the fixed image) and gets ``moving/``
+and ``ants20_<config>/``; the subjects are read from ``--subject-file``
+(default ``<work>/subset20.txt``, else ``evaluation/data/subset20.txt``).
+Both folders can also be given as ``SP`` and ``MB`` in the environment, as
+for ``run_ants_batch.sh``.
 
 Fixed image: T1Prep's own MNI152NLin2009cAsym brain template on the grid its
 ``y_`` writes, so both pipelines land in the same space on the same grid.
@@ -11,12 +20,20 @@ Two configurations are run because ANTsPy's default ``SyN`` sets
 would understate ANTs.  ``SyNCC`` is the cross-correlation configuration ANTs
 is known for and the one behind its Klein-2009 result.
 """
-import os, sys, time
+import argparse
+import os
+import time
 from concurrent.futures import ProcessPoolExecutor
-import numpy as np, nibabel as nib
+from pathlib import Path
 
-SP = "/private/tmp/claude-501/-Users-gaser-GitHub-T1Prep/d60c79ac-f20a-41db-974b-3e197cf0a946/scratchpad"
-MB = "/Users/gaser/Downloads/mindboggle-101/data"
+import nibabel as nib
+import numpy as np
+
+# Set by main() from the command line (they used to be two paths of the
+# machine the evaluation was run on, one of them a scratch folder long gone)
+# and handed to the worker processes with each job.
+SP = os.environ.get("SP", "")
+MB = os.environ.get("MB", "")
 
 CONFIGS = {
     "syncc":  dict(type_of_transform="SyNCC"),
@@ -38,7 +55,7 @@ CONFIGS = {
 
 
 def one(args):
-    subject, cfg = args
+    subject, cfg, SP, MB = args
     import ants
     out = f"{SP}/ants20_{cfg}"
     os.makedirs(f"{out}/{subject}", exist_ok=True)
@@ -66,12 +83,35 @@ def one(args):
     return f"{subject} [{cfg}]: {time.time() - t0:.0f}s"
 
 
-if __name__ == "__main__":
-    cfg = sys.argv[1]
-    workers = int(sys.argv[2]) if len(sys.argv) > 2 else 4
-    subs = [s.strip() for s in open(f"{SP}/subset20.txt") if s.strip()]
+def main(argv=None):
+    """Run one configuration over the subjects of the subset."""
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("config", choices=sorted(CONFIGS))
+    parser.add_argument("workers", nargs="?", type=int, default=4)
+    parser.add_argument("--work", default=SP,
+                        help="work folder with mni_fixed.nii.gz (default: $SP)")
+    parser.add_argument("--mindboggle", default=MB,
+                        help="Mindboggle-101 data folder (default: $MB)")
+    parser.add_argument("--subject-file", default=None,
+                        help="subjects, one per line (default: <work>/subset20.txt, "
+                             "else evaluation/data/subset20.txt)")
+    args = parser.parse_args(argv)
+    if not args.work or not args.mindboggle:
+        parser.error("give --work and --mindboggle (or SP and MB in the environment)")
+    if not os.path.isfile(f"{args.work}/mni_fixed.nii.gz"):
+        parser.error(f"{args.work}/mni_fixed.nii.gz not found")
+    subject_file = args.subject_file or f"{args.work}/subset20.txt"
+    if not os.path.isfile(subject_file):
+        subject_file = str(Path(__file__).resolve().parents[1] / "data" / "subset20.txt")
+    subs = [s.strip() for s in open(subject_file) if s.strip()]
     t0 = time.time()
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        for r in ex.map(one, [(s, cfg) for s in subs]):
+    jobs = [(s, args.config, args.work, args.mindboggle) for s in subs]
+    with ProcessPoolExecutor(max_workers=args.workers) as ex:
+        for r in ex.map(one, jobs):
             print(r, flush=True)
     print(f"total {time.time() - t0:.0f}s", flush=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -204,7 +204,8 @@ done
 
 # 2. the competing methods (see tools/ for each)
 tools/run_cat12.sh   <mindboggle>/data <work>/cat12
-tools/run_ants_batch.sh                     # antsRegistration, fMRIPrep config (set SP, MB and ANTSPATH at its top first)
+SP=<work>/ants MB=<mindboggle>/data ANTSPATH=<ants>/bin \
+    tools/run_ants_batch.sh                 # antsRegistration, fMRIPrep config
 tools/make_affine_baseline.py --mindboggle <mindboggle>/data \
     --reference <mindboggle>/data/<subj>/mri/y_*.nii --out <work>/affine
 # other settings of T1Prep's shooting (the settings table), e.g. --fmriprep's
@@ -232,8 +233,8 @@ normalisation can be dropped into the same comparison.
 | `eval_phantom.py` | T1Prep against the simulated phantom: run, score, pin, check; `wmh` over a set of simulations |
 | `fit_wmh_calibration.py` | refits the WMH probability of `t1prep._lesions` on simulations (`dump`, `fit`) |
 | `make_affine_baseline.py` | Mindboggle's affine labels on the evaluation grid |
-| `run_ants_batch.sh` + `ants_fmriprep.sh` | `antsRegistration` with fMRIPrep's exact JSON (as it was run: its paths are set at the top of the script and have to be edited before use) |
-| `run_ants_antspy.py` | ANTsPy arms, paths set at its top as well (note: its default `SyN` uses `reg_iterations=(40,20,0)` — no iterations at the finest level) |
+| `run_ants_batch.sh` + `ants_fmriprep.sh` | `antsRegistration` with fMRIPrep's exact JSON; work folder, Mindboggle folder and ANTs are given as `SP`, `MB` and `ANTSPATH` in the environment |
+| `run_ants_antspy.py` | ANTsPy arms: `--work DIR --mindboggle DIR <config>` (note: ANTsPy's default `SyN` uses `reg_iterations=(40,20,0)` — no iterations at the finest level) |
 | `run_cat12.sh` | CAT12 geodesic shooting |
 | `run_volshoot.py` | other settings of T1Prep's geodesic shooting on its own tissue maps, composed into `y_` |
 | `gen_sulc.py` | `?h.sulc` from an existing run, without `--fmriprep` |
