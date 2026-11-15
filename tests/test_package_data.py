@@ -62,5 +62,21 @@ class TestOnlyTheNetworksInUseAreKept(unittest.TestCase):
         self.assertEqual(archives - set(NETWORKS), set())
 
 
+class TestTheNoticeNamesWhatT1PrepIsBuiltOn(unittest.TestCase):
+    """T1Prep redistributes deepmriprep's and deepbet's networks and a port of
+    their code; their MIT licence asks for its notice to come along."""
+
+    def test_both_packages_with_their_licence(self):
+        notice = (_ROOT / "NOTICE").read_text(encoding="utf-8")
+        for needed in ("deepmriprep", "deepbet", "MIT License",
+                       "Medical Machine Learning Lab", "arXiv:2408.10656",
+                       "The above copyright notice and this permission notice"):
+            with self.subTest(needed=needed):
+                self.assertIn(needed, notice)
+
+    def test_the_readme_points_at_it(self):
+        self.assertIn("(NOTICE)", (_ROOT / "README.md").read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

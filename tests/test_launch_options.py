@@ -196,6 +196,33 @@ class TestTheTableAgainstTheDefaultsFile(unittest.TestCase):
             (False, True, 6, ("SUIT",), "only"))
 
 
+class TestTheFastPresetOfTheDefaultsFile(unittest.TestCase):
+    """``fast=1`` in the defaults file is ``--fast`` for ``scripts/T1Prep``;
+    the form shows what such a run does."""
+
+    def test_the_form_starts_from_the_preset(self):
+        values = opt.default_values(dict(_DEFAULTS, fast="1"), environ={})
+        self.assertEqual(
+            (values["pial_white"], values["sphere_reg"], values["mwp"],
+             values["atlas"], values["atlas_surf"]),
+            (False, False, False, (), ()))
+        usual = defaults()
+        self.assertTrue(usual["pial_white"] and usual["sphere_reg"] and usual["mwp"])
+        self.assertTrue(usual["atlas"] and usual["atlas_surf"])
+
+    def test_the_preset_is_the_one_of_the_script(self):
+        # apply_fast_preset() in scripts/T1Prep, read from its source
+        text = (_ROOT / "scripts" / "T1Prep").read_text()
+        body = text[text.index("apply_fast_preset()\n{"):]
+        body = body[body.index("{") + 1:body.index("\n}")]
+        script = {}
+        for line in body.splitlines():
+            key, _, value = line.strip().partition("=")
+            if key and key != "fast":
+                script[key] = value.strip('"\'')
+        self.assertEqual(script, opt.FAST_PRESET)
+
+
 class TestWhereTheDefaultsFileIs(unittest.TestCase):
     """The form reads the defaults of the T1Prep it runs, as that T1Prep does.
 

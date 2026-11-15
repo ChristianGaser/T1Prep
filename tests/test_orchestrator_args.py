@@ -191,6 +191,85 @@ class TestT1PrepRunParser(unittest.TestCase):
         self.assertFalse(parser.parse_args(["x.nii", "--no-pial-white"]).pial_white)
 
 
+class TestPresetsInTheDefaultsFile(_InATempDir):
+    """``fast=1`` in the defaults file was never read, and ``fmriprep=1`` only
+    switched the fsLR registration on.  Both now mean what the option means."""
+
+    SHOWN = ("save_pial_white estimate_spherereg save_mwp save_hemi atlas_vol "
+             "atlas_surf fmriprep use_bids_naming save_csf save_p nii_ext")
+
+    def settings(self, *args, **changed):
+        """What T1Prep would do, with *changed* written into a defaults file."""
+        show = ('source "$T1PREP" && parse_args "$@" && for v in ' + self.SHOWN +
+                '; do printf "%s=%s\\n" "$v" "${!v}"; done')
+        if changed:
+            text = (_ROOT / "T1Prep_defaults.txt").read_text()
+            for variable, value in changed.items():
+                self.assertIn(f"\n{variable}=0 ", text)
+                text = text.replace(f"\n{variable}=0 ", f"\n{variable}={value} ")
+            (self.tmp / "defaults.txt").write_text(text)
+            args = ("--defaults", "defaults.txt", *args)
+        done, values, _ = self.parse(*args, "f.nii", show=show)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return values
+
+    def test_fast_in_the_file_is_the_option(self):
+        by_option = self.settings("--fast")
+        self.assertEqual(self.settings(fast=1), by_option)
+        self.assertEqual((by_option["estimate_spherereg"], by_option["atlas_surf"]),
+                         ("0", ""))
+        self.assertNotEqual(self.settings(), by_option)
+
+    def test_fmriprep_in_the_file_is_the_option(self):
+        by_option = self.settings("--fmriprep")
+        self.assertEqual(self.settings(fmriprep=1), by_option)
+        self.assertEqual(
+            (by_option["use_bids_naming"], by_option["save_p"], by_option["nii_ext"]),
+            ("1", "1", "nii.gz"))
+
+    def test_the_command_line_has_the_last_word(self):
+        values = self.settings("--pial-white", fast=1)
+        self.assertEqual((values["save_pial_white"], values["save_mwp"]), ("1", "0"))
+
+    def test_both_presets_keep_the_registration_fmriprep_needs(self):
+        values = self.settings(fast=1, fmriprep=1)
+        self.assertEqual((values["estimate_spherereg"], values["save_pial_white"]),
+                         ("1", "0"))
+
+
+class TestABatchFailsWhenEitherPhaseFails(_InATempDir):
+    """With several images T1Prep runs the volumes of all, then the surfaces
+    of all, each through ``parallelize``.  Its status was that of the surface
+    phase alone."""
+
+    def batch_status(self, seg, surf, *options):
+        stubs = self.tmp / "stubs"
+        stubs.mkdir(exist_ok=True)
+        # Ends with $SURF_STATUS for the surface phase (--no-seg), else $SEG_STATUS
+        (stubs / "parallelize").write_text(
+            '#!/bin/sh\ncase "$*" in *--no-seg*) exit "$SURF_STATUS" ;; esac\n'
+            'exit "$SEG_STATUS"\n')
+        (stubs / "parallelize").chmod(0o755)
+        (self.tmp / "g.nii").write_bytes(b"")
+        run = ('source "$T1PREP" && parse_args "$@" && script_dir="$STUBS" && '
+               '(process "$@") >/dev/null 2>&1; echo "status=$?"')
+        done, values, _ = self.parse(
+            "--multi", "2", *options, "f.nii", "g.nii", show=run,
+            env={"STUBS": str(stubs), "SEG_STATUS": str(seg), "SURF_STATUS": str(surf)})
+        self.assertIn("status", values, done.stdout + done.stderr)
+        return int(values["status"])
+
+    def test_the_status_of_both_phases_counts(self):
+        self.assertEqual(self.batch_status(0, 0), 0)
+        self.assertNotEqual(self.batch_status(0, 1), 0)
+        # ... which is the case that was lost
+        self.assertNotEqual(self.batch_status(1, 0), 0)
+
+    def test_volumes_alone(self):
+        self.assertEqual(self.batch_status(0, 1, "--no-surf"), 0)
+        self.assertNotEqual(self.batch_status(1, 0, "--no-surf"), 0)
+
+
 class TestVerbosePrintsTheSteps(_InATempDir):
     """``--verbose`` was parsed and then never read: it printed nothing."""
 

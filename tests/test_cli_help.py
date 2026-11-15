@@ -9,6 +9,7 @@ tools used before still have to parse, or existing command lines break.
 import contextlib
 import io
 import re
+import os
 import subprocess
 import sys
 import unittest
@@ -170,6 +171,88 @@ class TestTheBashToolsFollowIt(unittest.TestCase):
                 done = self.run_script(name, "--version")
                 self.assertEqual(done.returncode, 0)
                 self.assertEqual(done.stdout.strip(), f"{name} {version()}")
+
+    #: The wrappers around a Python module.  They printed their synopsis with
+    #: ``cat`` -- on stdout, where a pipe takes it for the result
+    WRAPPERS = [
+        "dice.sh",
+        "process_longitudinal.sh",
+        "realign_longitudinal.sh",
+        "warp_longitudinal.sh",
+        "modulate_longitudinal.sh",
+    ]
+
+    def test_the_synopsis_goes_to_stderr(self):
+        for name in self.SCRIPTS + self.WRAPPERS:
+            with self.subTest(script=name):
+                done = self.run_script(name)
+                self.assertEqual(done.returncode, 1)
+                self.assertEqual(done.stdout, "")
+                self.assertIn("USAGE:", done.stderr)
+                self.assertIn(f"Run '{name} --help'", done.stderr)
+
+    def test_the_synopsis_survives_nounset_without_a_terminal(self):
+        # process_longitudinal.sh runs with "set -u", and the colours are only
+        # defined on a terminal
+        utils = _ROOT / "scripts" / "T1Prep_utils.sh"
+        done = subprocess.run(
+            ["bash", "-c", f'source "{utils}"; set -u; unset BOLD NC GREEN; '
+                           'print_usage "[options] <file>" "--x  an option"'],
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("--x  an option", done.stderr)
+
+
+class TestTheInstaller(unittest.TestCase):
+    """``scripts/install.sh`` installs when it is called -- but not whatever
+    its arguments are, and not only from a terminal."""
+
+    INSTALLER = _ROOT / "scripts" / "install.sh"
+
+    def test_help_is_printed_and_nothing_installed(self):
+        done = subprocess.run(["bash", str(self.INSTALLER), "--help"],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0)
+        for variable in ("T1PREP_VERSION", "T1PREP_INSTALL_DIR", "T1PREP_PYTHON"):
+            self.assertIn(variable, done.stdout)
+        self.assertNotIn("T1Prep installer", done.stdout)
+
+    def test_an_argument_it_does_not_know_stops_it(self):
+        done = subprocess.run(["bash", str(self.INSTALLER), "--prefix", "/x"],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("Unknown argument: --prefix", done.stderr)
+        self.assertNotIn("T1Prep installer", done.stdout)
+
+    def test_with_its_three_variables_it_needs_no_terminal(self):
+        # As in CI or a Dockerfile.  The download is made to fail (a curl
+        # that only fails), so the test ends where the network would begin:
+        # past every question, which is the point.
+        import shutil
+        import sys
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "bin").mkdir()
+        for tool in ("curl", "wget"):
+            (tmp / "bin" / tool).write_text("#!/bin/sh\nexit 22\n")
+            (tmp / "bin" / tool).chmod(0o755)
+        done = subprocess.run(
+            ["bash", str(self.INSTALLER)],
+            capture_output=True, text=True, timeout=120,
+            stdin=subprocess.DEVNULL, start_new_session=True,   # no terminal at all
+            env={"PATH": os.pathsep.join([str(tmp / "bin"), "/usr/bin", "/bin"]),
+                 "HOME": str(tmp), "TMPDIR": str(tmp),
+                 "T1PREP_VERSION": "v0.0.0",
+                 "T1PREP_INSTALL_DIR": str(tmp / "installation"),
+                 "T1PREP_PYTHON": sys.executable})
+        output = done.stdout + done.stderr
+        self.assertNotIn("no terminal", output)
+        self.assertNotIn("Cannot read user input", output)
+        self.assertIn("Using installation directory from environment", output)
+        self.assertIn("Failed to download", output)
+        self.assertEqual(done.returncode, 1)
 
 
 if __name__ == "__main__":

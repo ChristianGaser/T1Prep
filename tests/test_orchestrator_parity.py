@@ -244,6 +244,16 @@ class TestPresets(_InATempDir):
         kw = self.run_main("--atlas-surf", "'aparc_HCP_MMP1'", "--no-atlas-surf")
         self.assertEqual(kw["atlas_surf"], "")
 
+    def test_the_spellings_of_t1prep_are_understood(self):
+        # T1Prep says --no-vessel and --initial-surface; t1prep-run only knew
+        # --vessel 0 and --initial-surf
+        self.assertEqual(self.run_main()["vessel"], 1.0)
+        self.assertEqual(self.run_main("--no-vessel")["vessel"], 0.0)
+        self.assertEqual(self.run_main("--vessel", "0.5")["vessel"], 0.5)
+        for spelling in ("--initial-surface", "--initial-surf"):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(self.run_main(spelling, "s.gii")["initial_surf"], "s.gii")
+
     def test_bids_names_come_compressed_as_from_t1prep(self):
         # scripts/T1Prep: --bids) use_bids_naming=1; nii_ext='nii.gz'
         self.assertFalse(self.run_main()["gz"])
