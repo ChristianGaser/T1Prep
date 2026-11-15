@@ -277,5 +277,54 @@ class TestDiceChecksTheImportItRuns(unittest.TestCase):
         self.assertEqual(done.stdout.strip(), f"dice.sh {__version__}")
 
 
+class TestTheLauncherWrapperNeedsNoVenv(unittest.TestCase):
+    """scripts/T1Prep_gui starts the launcher of the checkout.
+
+    Its predecessor for the web UI sourced <repo>/env/bin/activate whether or
+    not it existed and then ran a bare ``python``: in a checkout without env/
+    on a Mac, which has only python3, that ended in "exec: python: not found".
+    """
+
+    WRAPPER = _ROOT / "scripts" / "T1Prep_gui"
+
+    def run_wrapper(self, *arguments, cwd=None):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        python3 = tmp / "python3"
+        python3.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        python3.chmod(0o755)
+        env = {k: v for k, v in os.environ.items() if k != "T1PREP_PYTHON"}
+        env["PATH"] = os.pathsep.join([str(tmp), "/usr/bin", "/bin"])
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        return subprocess.run(
+            [str(self.WRAPPER), *arguments],
+            capture_output=True, text=True, timeout=180, env=env, cwd=cwd or tmp,
+        )
+
+    def test_it_is_executable_and_does_not_hardcode_the_env_directory(self):
+        self.assertTrue(os.access(self.WRAPPER, os.X_OK))
+        text = self.WRAPPER.read_text()
+        self.assertIn("activate_t1prep_env", text)
+        self.assertNotIn("env/bin/activate", text)
+
+    def test_it_runs_with_only_a_python3_on_path(self):
+        from t1prep import __version__
+
+        done = self.run_wrapper("--version")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(done.stdout.strip(), f"t1prep-gui {__version__}")
+
+    def test_it_is_the_launcher_of_the_checkout(self):
+        done = self.run_wrapper("--help")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("usage: t1prep-gui", done.stdout)
+        self.assertIn("--out-dir", done.stdout)
+
+    def test_it_passes_its_arguments_on(self):
+        done = self.run_wrapper("--no-such-option")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("t1prep-gui --help", done.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
