@@ -7,7 +7,7 @@ step and a notice when a step failed.  For several images it hands the work to
 each job, what it has finished and what failed in ``PROGRESS_DIR``.
 
 :func:`follow_line` turns the printed lines into the phase and percentage a
-front end shows; it is what the web UI's job page and the Qt launcher share.
+front end shows.
 :class:`RunTracker` adds what a table of images needs: which image is queued,
 running, done or failed in which phase.
 

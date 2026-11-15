@@ -9,9 +9,9 @@ end builds its form from the table and hands the values to
 ``scripts/T1Prep``, so an option that is renamed or removed there fails in the
 test suite rather than at the user's desk.
 
-The helpers around the table — locating the orchestrator and its defaults
-file, reading that file, listing the shipped atlases — are what the web UI
-used to keep to itself; ``t1prep.webui.app`` imports them from here.
+Around the table are the helpers a form needs to start from what T1Prep
+itself would do: locating the orchestrator and its defaults file, reading
+that file, listing the shipped atlases and their descriptions.
 """
 
 from __future__ import annotations
@@ -155,6 +155,50 @@ def list_surface_atlas_names(directory: Optional[Path] = None) -> List[str]:
     return names
 
 
+def atlas_description(name: str, surface: bool = False,
+                      directory: Optional[Path] = None, max_lines: int = 20) -> str:
+    """The text that describes a shipped atlas: source, reference, licence.
+
+    Every atlas comes with a text file next to it (``<name>.txt``, for a
+    surface atlas ``lh.<name>.txt``); a form shows its beginning as the tool
+    tip of the atlas.
+
+    Args:
+        name: An atlas of :func:`list_atlas_names` or, with *surface*, of
+            :func:`list_surface_atlas_names`.  Any other name gives no text:
+            the name ends up in a file path.
+        surface: Whether *name* is a surface atlas.
+        directory: Folder of the atlases; the shipped one when not given.
+        max_lines: Lines after which the text is cut.
+
+    Returns:
+        The text, or an empty string when there is none.
+    """
+    if surface:
+        directory = Path(directory) if directory else (
+            data_dir() / "atlases_surfaces_32k")
+        known = list_surface_atlas_names(directory)
+        candidates = [f"{name}.txt", f"lh.{name}.txt", f"rh.{name}.txt"]
+    else:
+        directory = Path(directory) if directory else (
+            data_dir() / "templates_MNI152NLin2009cAsym")
+        known = list_atlas_names(directory)
+        candidates = [f"{name}.txt"]
+    if name not in known:
+        return ""
+    for candidate in candidates:
+        path = directory / candidate
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ""
+        text = "\n".join(lines[:max_lines]).strip()
+        return f"{text}\n…" if text and len(lines) > max_lines else text
+    return ""
+
+
 def parse_atlas_string(value: str) -> List[str]:
     """Split an atlas list such as ``"'suit', 'cobra'"`` into its names."""
     if not value:
@@ -295,7 +339,7 @@ OPTIONS: Tuple[Option, ...] = (
     Option("atlas_surf", "Atlases", "surface", kind="atlas",
            variable="atlas_surf",
            fallback="'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'",
-           flag="--atlas-surf", needs="surf",
+           flag="--atlas-surf", off="--no-atlas-surf", needs="surf",
            help="Parcellations mapped onto the individual surface."),
 
     # -- Files ------------------------------------------------------------
@@ -607,11 +651,6 @@ def build_arguments(
             names = build_atlas_arg(list(value or ()))
             if names:
                 args.extend([item.flag, names])
-            elif item.off:
-                args.append(item.off)
             else:
-                # T1Prep has no flag for "no surface atlas", and an empty
-                # value is refused.  A lone comma is a list without a name:
-                # surface_estimation drops the empty items and maps nothing.
-                args.extend([item.flag, ","])
+                args.append(item.off)
     return args

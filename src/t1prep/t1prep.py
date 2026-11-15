@@ -583,8 +583,10 @@ def _process_single(
 
     # ------------------------------------------------------------------ surfaces
     if estimate_surf:
-        atlas_surf_arg = "" if no_atlas else atlas_surf
-
+        # --no-atlas is about the ROI volumes only, as in scripts/T1Prep; the
+        # surface atlases are switched off with --no-atlas-surf, which
+        # run_t1prep() turns into an empty list.  (no_atlas used to empty
+        # this list as well, so t1prep-run and T1Prep disagreed.)
         surf_kwargs = dict(
             estimate_spherereg=estimate_spherereg,
             thickness_method=thickness_method,
@@ -597,7 +599,7 @@ def _process_single(
             debug=debug,
             gz=gz,
             use_bids=bids,
-            atlas_surf=atlas_surf_arg,
+            atlas_surf=atlas_surf,
             initial_surf=initial_surf,
             fmriprep=fmriprep,
         )
@@ -699,6 +701,7 @@ def run_t1prep(
     atlas: Optional[Union[str, Sequence[str]]] = None,
     atlas_surf: Optional[Union[str, Sequence[str]]] = None,
     no_atlas: bool = False,
+    no_atlas_surf: bool = False,
     # output format
     gz: bool = False,
     bids: bool = False,
@@ -776,7 +779,10 @@ def run_t1prep(
         Surface atlas or list of surface atlases.
         Default: ``"'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'"``.
     no_atlas:
-        Disable atlas labelling entirely.
+        Skip the volumetric atlases (the ROI volumes); *atlas* is then
+        ignored.  The surface atlases are not affected.
+    no_atlas_surf:
+        Skip the surface atlases; *atlas_surf* is then ignored.
     gz:
         Write compressed (``.nii.gz``) outputs.
     bids:
@@ -883,6 +889,10 @@ def run_t1prep(
         no_sphere_reg = False
         if atlas is None:
             atlas = ""
+
+    # --no-atlas-surf: no surface atlas, whatever --atlas-surf says
+    if no_atlas_surf:
+        atlas_surf = ""
 
     # Resolve atlas strings
     if atlas is None:
@@ -1030,7 +1040,9 @@ def _build_parser() -> ArgumentParser:
                     help="Comma-separated surface atlas list (default: "
                          "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer')")
     g2.add_argument("--no-atlas", action="store_true",
-                    help="Disable atlas labelling")
+                    help="Skip the volumetric atlases (ROI volumes)")
+    g2.add_argument("--no-atlas-surf", action="store_true",
+                    help="Skip the surface atlases")
 
     # expert / tuning
     g3 = p.add_argument_group("Expert options")
@@ -1111,6 +1123,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         atlas=args.atlas,
         atlas_surf=args.atlas_surf,
         no_atlas=args.no_atlas,
+        no_atlas_surf=args.no_atlas_surf,
         gz=args.gz,
         bids=args.bids,
         no_surf=args.no_surf,

@@ -10,9 +10,10 @@ PNG files the volume viewer renders in a process of its own.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt, Signal
@@ -380,11 +381,18 @@ class Section(QtWidgets.QWidget):
 
 
 class AtlasPicker(QtWidgets.QToolButton):
-    """Chooses any number of atlases from a list that drops down."""
+    """Chooses any number of atlases from a list that drops down.
+
+    Args:
+        names: The atlases to choose from.
+        describe: Called with a name; the text it returns is the tool tip of
+            that atlas in the list.
+    """
 
     changed = Signal()
 
-    def __init__(self, names: Sequence[str], parent=None):
+    def __init__(self, names: Sequence[str],
+                 describe: Optional[Callable[[str], str]] = None, parent=None):
         super().__init__(parent)
         self.setObjectName("picker")
         self.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -399,6 +407,12 @@ class AtlasPicker(QtWidgets.QToolButton):
             item = QtWidgets.QListWidgetItem(name)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
+            text = describe(name) if describe is not None else ""
+            if text:
+                # As rich text, so that Qt wraps it and takes nothing in it
+                # for markup of its own
+                item.setToolTip("<p style='white-space: pre-wrap'>"
+                                f"{html.escape(text)}</p>")
             self._list.addItem(item)
         rows = max(1, min(len(names), 10))
         self._list.setFixedSize(
@@ -542,9 +556,11 @@ class OptionsPanel(QtWidgets.QScrollArea):
             control.currentIndexChanged.connect(
                 lambda _i, k=item.key, c=control: self._edited(k, str(c.currentData())))
         else:
-            names = (opt.list_atlas_names() if item.key == "atlas"
-                     else opt.list_surface_atlas_names())
-            control = AtlasPicker(names)
+            surface = item.key == "atlas_surf"
+            names = (opt.list_surface_atlas_names() if surface
+                     else opt.list_atlas_names())
+            control = AtlasPicker(
+                names, lambda name, s=surface: opt.atlas_description(name, s))
             control.changed.connect(lambda k=item.key, c=control: self._edited(k, c.value()))
         label = QtWidgets.QLabel(item.label)
         label.setToolTip(item.help)
