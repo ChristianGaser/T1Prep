@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import glob
-import json
 import os
 import subprocess
 import sys
@@ -35,6 +34,9 @@ from typing import List, Optional, Sequence, Union
 # Command-line behaviour shared by every T1Prep tool: no argument prints the
 # synopsis, --help the full description, and only "--" options are advertised.
 from .cli_help import ArgumentParser
+# Kept under its old name here: the surface measures of the two hemispheres
+# are merged into the report, as scripts/T1Prep does through T1Prep_utils.sh
+from .report import merge_surface_measures as _merge_glued_sulci_qa
 from ._telemetry import NO_TRACK_ENV
 from .nn.backends import BACKEND_ENV, backend_names
 
@@ -314,120 +316,6 @@ def _build_surface_cmd(
 # ---------------------------------------------------------------------------
 # Single-subject pipeline
 # ---------------------------------------------------------------------------
-
-def _merge_glued_sulci_qa(report_dir: str, bname: str) -> None:
-    """Fold the per-hemisphere surface QA sidecars into the report JSON.
-
-    The sidecars carry the glued-sulcus measure, the shape of the thickness
-    distribution (see :mod:`t1prep.thickness_qa`) and the reference the
-    sulcal-barrier gate of PBT was derived from.
-    ``surface_estimation`` runs the two hemispheres as concurrent subprocesses
-    that both resolve the same ``Report_file``, so each writes its own sidecar
-    and the merge happens here, once both have finished.  Purely additive: a
-    missing or unreadable sidecar, or a measure missing from it, leaves the
-    report untouched.
-    """
-    from .thickness_qa import HIGH_FACTOR, LOWER_CUT
-
-    sidecars = sorted(
-        glob.glob(os.path.join(report_dir, f"{bname}_glued-*.json"))
-    )
-    if not sidecars:
-        return
-    entries = {}
-    report_file = ""
-    for path in sidecars:
-        try:
-            with open(path) as fh:
-                data = json.load(fh)
-            entries[data["hemi"]] = data
-            report_file = data.get("report_file") or report_file
-        except (OSError, ValueError, KeyError):
-            continue
-    report_path = os.path.join(report_dir, report_file) if report_file else ""
-    if entries and report_path and os.path.exists(report_path):
-        try:
-            with open(report_path) as fh:
-                report = json.load(fh)
-            qa = report.setdefault("qualitymeasures", {})
-            for hemi, data in entries.items():
-                if data.get("glued_fraction") is not None:
-                    qa[f"glued_{hemi}"] = {
-                        "value": round(100.0 * data["glued_fraction"], 4),
-                        "desc": (
-                            "Percentage of central-surface vertices touching a "
-                            "facing patch of the same surface (glued/buried "
-                            "sulci; ideal = 0; lower is better)"
-                        ),
-                    }
-                if data.get("thickness_upper_skewness") is not None:
-                    qa[f"thickness_skew_{hemi}"] = {
-                        "value": round(data["thickness_upper_skewness"], 4),
-                        "desc": (
-                            "Skewness of the cortical thickness over vertices "
-                            f">= {LOWER_CUT:g} mm (medial wall excluded); a "
-                            "long upper tail (higher value) points at "
-                            "residual overestimation such as unopened glued "
-                            "sulci"
-                        ),
-                    }
-                if data.get("thickness_high_fraction") is not None:
-                    qa[f"thickness_high_{hemi}"] = {
-                        "value": round(100.0 * data["thickness_high_fraction"], 4),
-                        "desc": (
-                            f"Percentage of vertices thicker than {HIGH_FACTOR:g}x "
-                            "the median thickness of this hemisphere"
-                        ),
-                    }
-                if data.get("sulci_sigma_factor") is not None:
-                    qa[f"glued_{hemi}_sigma"] = {
-                        "value": data["sulci_sigma_factor"],
-                        "desc": (
-                            "sulci_sigma_factor used by CAT_VolMarchingCubes "
-                            "for this hemisphere"
-                        ),
-                    }
-                if data.get("barrier_reference") is not None:
-                    qa[f"barrier_ref_{hemi}"] = {
-                        "value": round(data["barrier_reference"], 4),
-                        "desc": (
-                            "Reference thickness in mm the sulcal-barrier "
-                            "gate of this hemisphere is derived from (trimmed "
-                            "mean of dist_WM + dist_CSF in the cortical band)"
-                        ),
-                    }
-                if data.get("barrier_reference_shared") is not None:
-                    qa["barrier_ref_shared"] = {
-                        "value": round(data["barrier_reference_shared"], 4),
-                        "desc": (
-                            "Mean of both hemisphere references; the barrier "
-                            "gate of both hemispheres is barrier_gmtfactor "
-                            "times this value"
-                        ),
-                    }
-            skew = {h: d.get("thickness_upper_skewness")
-                    for h, d in entries.items()}
-            if skew.get("lh") is not None and skew.get("rh") is not None:
-                # The two hemispheres of a subject agree closely (rank
-                # correlation 0.95 on 38 test hemispheres), so their
-                # difference is the most sensitive use of the measure.
-                qa["thickness_skew_asym"] = {
-                    "value": round(skew["lh"] - skew["rh"], 4),
-                    "desc": (
-                        "Left minus right thickness skewness; a large "
-                        "difference points at residual overestimation in "
-                        "one hemisphere"
-                    ),
-                }
-            with open(report_path, "w") as fh:
-                json.dump(report, fh, indent=2)
-        except (OSError, ValueError):
-            pass
-    for path in sidecars:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
 
 
 def _remove_hemi_volumes(mri_dir: str, bname: str, bids: bool, gz: bool) -> None:
@@ -786,7 +674,8 @@ def run_t1prep(
     gz:
         Write compressed (``.nii.gz``) outputs.
     bids:
-        Use BIDS derivatives naming conventions.
+        Use BIDS derivatives naming conventions; the volumes are then
+        compressed (``gz``), as with ``T1Prep --bids``.
     no_surf:
         Skip cortical surface and thickness estimation.
     no_seg:
@@ -891,6 +780,12 @@ def run_t1prep(
         if atlas is None:
             atlas = ""
 
+    # --bids: BIDS derivatives are compressed, as scripts/T1Prep writes them.
+    # (t1prep-run kept .nii with --bids, so the same option gave .nii from
+    # one entry point and .nii.gz from the other.)
+    if bids:
+        gz = True
+
     # --no-atlas-surf: no surface atlas, whatever --atlas-surf says
     if no_atlas_surf:
         atlas_surf = ""
@@ -985,7 +880,8 @@ def _build_parser() -> ArgumentParser:
     g.add_argument("--out-dir", metavar="DIR",
                    help="Base output directory")
     g.add_argument("--bids", action="store_true",
-                   help="Use BIDS derivatives naming conventions")
+                   help="Use BIDS derivatives naming conventions "
+                        "(implies --gz)")
     g.add_argument("--gz", action="store_true",
                    help="Write compressed .nii.gz outputs")
     g.add_argument("--no-overwrite", metavar="PATTERN",

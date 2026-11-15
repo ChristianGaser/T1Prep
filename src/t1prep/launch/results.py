@@ -122,7 +122,7 @@ class Subject:
                 since the epoch), so the results of an earlier run do not
                 pass for those of the one that just failed.
             skullstrip_only: The run stops after skull-stripping, which
-                writes the skull-stripped image and no report.
+                writes the skull-stripped image and its mask and no report.
         """
         if stage == VOLUME:
             files = [self.find("skullstripped_volume" if skullstrip_only

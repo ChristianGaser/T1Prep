@@ -84,7 +84,18 @@ from .vessels import suppress_vessels_for_surface
 # Logging / step timing (mirrors run_cmd_log in utils.sh)
 # ===========================================================================
 
-def _setup_logger(report_log: Optional[str]) -> logging.Logger:
+def _setup_logger(report_log: Optional[str], show_steps: bool = False,
+                  prefix: str = "") -> logging.Logger:
+    """Log to the report log, and warnings to the console.
+
+    Args:
+        report_log: The log of the subject; every step and its run time go
+            there.
+        show_steps: Print the steps on the console as well (``T1Prep
+            --verbose``), not only warnings.
+        prefix: Put in front of each console line; the two hemispheres run
+            at the same time and print into the same terminal.
+    """
     log = logging.getLogger("t1prep.surface_estimation")
     log.setLevel(logging.INFO)
     log.handlers.clear()
@@ -96,8 +107,9 @@ def _setup_logger(report_log: Optional[str]) -> logging.Logger:
         log.addHandler(h)
     # Mirror to stderr for live monitoring.
     sh = logging.StreamHandler(sys.stderr)
-    sh.setFormatter(logging.Formatter("%(message)s"))
-    sh.setLevel(logging.WARNING)
+    sh.setFormatter(logging.Formatter(
+        (prefix.replace("%", "%%") if show_steps else "") + "%(message)s"))
+    sh.setLevel(logging.INFO if show_steps else logging.WARNING)
     log.addHandler(sh)
     return log
 
@@ -320,13 +332,19 @@ def surface_estimation(
     progress_end_count: int = 0,
     progress_start_count: int = 0,
     shared_barrier_ref: int = 1,
+    show_steps: int = 0,
 ) -> int:
     """Port of ``surface_estimation()`` from T1Prep's bash script.
+
+    With *show_steps* every step and its run time are printed on the console
+    as they are written to the report log (``T1Prep --verbose``); the output
+    of the C library stays with *debug*.
 
     Returns 0 on success, non-zero on failure (matching the bash
     function's ``return`` behaviour).
     """
-    log = _setup_logger(report_log)
+    log = _setup_logger(report_log, show_steps=bool(show_steps),
+                        prefix="lh: " if side == "left" else "rh: ")
 
     # If mri_dir == surf_dir, the bash code uses "." for both; we cd into
     # that directory.  Otherwise both are relative paths under base_dir.
@@ -957,6 +975,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--progress-count-file", default=None)
     ap.add_argument("--progress-end-count", type=int, default=0)
     ap.add_argument("--progress-start-count", type=int, default=0)
+    ap.add_argument("--verbose", dest="show_steps", type=int, default=0,
+                    help="1: print every step and its run time on the "
+                         "console as well (T1Prep --verbose)")
     ap.add_argument("--shared-barrier-ref", type=int, default=1,
                     help="Gate the sulcal barrier of both hemispheres with "
                          "their mean reference thickness (default 1)")

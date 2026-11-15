@@ -231,7 +231,7 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help=(
             "Only run skull stripping and save outputs to --mri-dir, then exit. "
-            "Writes the skull-stripped volume."
+            "Writes the skull-stripped volume and the brain mask."
         ),
     )
     skullstrip_group.add_argument(
@@ -328,18 +328,39 @@ def mask_from_skullstripped(brain: nib.Nifti1Image) -> nib.Nifti1Image:
 
 def save_skullstrip_only_outputs(
     brain: nib.Nifti1Image,
+    mask: Optional[nib.Nifti1Image],
     use_bids: bool,
     mri_dir: str,
     out_name: str,
     ext: str,
 ) -> None:
-    """Save skull-stripped image into the output folder."""
+    """Save the skull-stripped image and the brain mask into the output folder.
+
+    Args:
+        brain: The skull-stripped image.
+        mask: The brain mask on the grid of *brain*; saved as 0/1 in uint8.
+            Up to 0.9.0 it was not saved at all, although the help of
+            ``--skullstrip-only`` promised it.
+        use_bids: Name the files by the BIDS convention.
+        mri_dir: Output folder.
+        out_name: Name of the subject.
+        ext: ``nii`` or ``nii.gz``.
+    """
 
     code_vars = get_filenames(use_bids, out_name, "", "", "", ext)
     skullstripped_name = code_vars.get("skullstripped_volume", "")
     os.makedirs(mri_dir, exist_ok=True)
     brain_path = f"{mri_dir}/{skullstripped_name}"
     nib.save(brain, brain_path)
+
+    mask_name = code_vars.get("mask_volume", "")
+    if mask is not None and mask_name:
+        header = mask.header.copy()
+        header.set_data_dtype(np.uint8)
+        header.set_slope_inter(None, None)
+        binary = (np.asanyarray(mask.dataobj) > 0).astype(np.uint8)
+        nib.save(nib.Nifti1Image(binary, mask.affine, header),
+                 f"{mri_dir}/{mask_name}")
 
 
 def affine_register(
@@ -1324,7 +1345,8 @@ def run_segment():
         brain, mask, count = skull_strip(prep, t1, verbose, count, end_count)
 
     if skullstrip_only:
-        save_skullstrip_only_outputs(brain, opts.use_bids, mri_dir, out_name, ext)
+        save_skullstrip_only_outputs(
+            brain, mask, opts.use_bids, mri_dir, out_name, ext)
         return
 
     # Step 2: Initial bias-correction that is beneficial for strong signal

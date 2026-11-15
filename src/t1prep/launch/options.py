@@ -388,7 +388,8 @@ OPTIONS: Tuple[Option, ...] = (
            flags=(("skip", "--no-skullstrip"), ("only", "--skullstrip-only")),
            needs="seg",
            help="Skip skull-stripping for an image that has no skull left, "
-                "or stop after it and save the skull-stripped image."),
+                "or stop after it and save the skull-stripped image and "
+                "the brain mask."),
     Option("amap", "AMAP segmentation", "expert", variable="use_amap",
            on="--amap", needs="seg",
            help="Use the network's segmentation as the starting estimate of "
