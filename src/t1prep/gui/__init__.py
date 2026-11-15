@@ -1,9 +1,12 @@
 """t1prep.gui
 
-Qt/VTK-based visualization tools for T1Prep.
+The graphical tools of T1Prep.
 
-Currently exposes the CAT_SurfView port as a module with a command-line
-entrypoint. See `t1prep.gui.cat_surf_view:main`.
+* The viewers, Qt and VTK: ``cat_surf_view`` (``CAT_SurfView``) and
+  ``cat_vol_view`` (``CAT_VolView``).
+* The launcher, Qt only: ``launcher`` (``t1prep-gui``) runs the pipeline and
+  shows its results.  It starts the viewers as processes of their own and
+  imports no VTK itself.
 """
 
 __all__ = [
