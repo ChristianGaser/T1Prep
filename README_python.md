@@ -118,7 +118,7 @@ run_t1prep(
     *,
     # output
     out_dir=None,            # str | Path; default: next to the input
-    bids=False,              # BIDS derivatives names
+    bids=False,              # BIDS derivatives names (implies gz)
     gz=False,                # .nii.gz instead of .nii
     # processing control
     no_surf=False,

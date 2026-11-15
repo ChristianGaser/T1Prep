@@ -130,7 +130,7 @@ run_t1prep(
 | `out_dir` | `str` | Output directory (default: same as input) |
 | `atlas` | `list[str]` | Atlas names for ROI extraction |
 | `no_surf` | `bool` | Skip cortical surface estimation (default: `False`) |
-| `bids` | `bool` | Use BIDS derivatives naming |
+| `bids` | `bool` | Use BIDS derivatives naming (implies `gz`) |
 | `gz` | `bool` | Save compressed NIfTI (`.nii.gz`) |
 | `wp` | `bool` | Save warped (MNI space) segmentations |
 | `p` | `bool` | Save native space segmentations |
