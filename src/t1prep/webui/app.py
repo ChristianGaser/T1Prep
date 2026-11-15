@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import copy
-import glob
 import os
 import re
 import secrets
 import shutil
-import socket
 import subprocess
 import threading
 import time
@@ -18,6 +16,21 @@ from typing import Dict, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
+from ..launch import options as _options
+from ..launch.options import (  # noqa: F401 - part of this module's interface
+    build_atlas_arg,
+    format_command as format_command_for_log,
+    load_defaults,
+    selected_atlases,
+)
+from ..launch.progress import (  # noqa: F401 - part of this module's interface
+    PHASE_ORDER as _PHASE_ORDER,
+    find_parallelize_logs,
+    follow_line,
+    format_duration as _format_duration,
+    new_progress as _new_progress,
+    stop_clock as _stop_clock,
+)
 from ..nn.backends import BACKEND_ENV, backend_names
 
 # Layout-independent paths.  This module lives at ``t1prep/webui/app.py``;
@@ -33,38 +46,11 @@ _REPO_ROOT = (
 )
 
 
-def _data_dir() -> Path:
-    """Resolve the packaged ``t1prep/data`` dir (installed) or source fallback."""
-    try:
-        from importlib.resources import files as _res_files
-
-        p = Path(str(_res_files("t1prep.data")))
-        if p.is_dir():
-            return p
-    except Exception:
-        pass
-    return _PKG_DIR / "data"
-
-
-def _resolve_t1prep_cmd() -> str:
-    """Locate the bash ``T1Prep`` orchestrator (needs --multi/--min-memory).
-
-    Prefer one on PATH (the venv ``bin/`` in installed mode); fall back to the
-    source-tree ``scripts/T1Prep`` for dev use.
-    """
-    found = shutil.which("T1Prep")
-    if found:
-        return found
-    if _REPO_ROOT is not None:
-        return str(_REPO_ROOT / "scripts" / "T1Prep")
-    return "T1Prep"
-
-
 # Sandbox/base dir for uploads, jobs and relative output paths: the repo root in
 # a source checkout, otherwise the current working directory.
 BASE_DIR = _REPO_ROOT or Path.cwd()
-T1PREP_CMD = _resolve_t1prep_cmd()
-DATA_DIR = _data_dir()
+T1PREP_CMD = _options.t1prep_command()
+DATA_DIR = _options.data_dir()
 TEMPLATE_ATLAS_DIR = DATA_DIR / "templates_MNI152NLin2009cAsym"
 SURFACE_ATLAS_DIR = DATA_DIR / "atlases_surfaces_32k"
 DEFAULT_UPLOAD_ROOT = BASE_DIR / "webui_uploads"
@@ -106,6 +92,25 @@ JOBS: Dict[str, dict] = {}
 LOCK = threading.Lock()
 
 
+def list_atlas_names() -> list[str]:
+    """Names of the volume atlases T1Prep ships."""
+    return _options.list_atlas_names(TEMPLATE_ATLAS_DIR)
+
+
+def list_surface_atlas_names() -> list[str]:
+    """Names of the surface atlases T1Prep ships."""
+    return _options.list_surface_atlas_names(SURFACE_ATLAS_DIR)
+
+
+def defaults_file() -> Path:
+    """Return the defaults file of the T1Prep that the jobs run.
+
+    The form used to read it from ``BASE_DIR``, which is the working directory
+    once installed, and then started from fallbacks of its own.
+    """
+    return _options.defaults_file(T1PREP_CMD)
+
+
 def ensure_dirs() -> None:
     DEFAULT_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     DEFAULT_JOB_ROOT.mkdir(parents=True, exist_ok=True)
@@ -120,119 +125,11 @@ def parse_datetime(value: str) -> Optional[datetime]:
         return None
 
 
-def _strip_quotes(value: str) -> str:
-    value = value.strip()
-    if (value.startswith("\"") and value.endswith("\"")) or (
-        value.startswith("'") and value.endswith("'")
-    ):
-        return value[1:-1]
-    return value
-
-
-def load_defaults(path: Path) -> dict:
-    defaults: dict[str, str] = {}
-    if not path.exists():
-        return defaults
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        line = line.split("#", 1)[0].strip()
-        if not line or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        defaults[key.strip()] = _strip_quotes(value.strip())
-    return defaults
-
-
 def _to_int(value: str, fallback: int = 0) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
         return fallback
-
-
-def format_command_for_log(cmd: list[str]) -> str:
-    formatted = []
-    for arg in cmd:
-        if any(ch in arg for ch in [" ", ",", "\t"]):
-            escaped = arg.replace('"', '\\"')
-            formatted.append(f'"{escaped}"')
-        else:
-            formatted.append(arg)
-    return " ".join(formatted)
-
-
-def list_atlas_names() -> list[str]:
-    if not TEMPLATE_ATLAS_DIR.exists():
-        return []
-    names = []
-    for path in sorted(TEMPLATE_ATLAS_DIR.glob("*.nii*")):
-        name = path.name
-        if name.endswith(".nii.gz"):
-            name = name[:-7]
-        elif name.endswith(".nii"):
-            name = name[:-4]
-        csv_path = TEMPLATE_ATLAS_DIR / f"{name}.csv"
-        if not csv_path.exists():
-            continue
-        if name and name not in names:
-            names.append(name)
-    return names
-
-
-def list_surface_atlas_names() -> list[str]:
-    if not SURFACE_ATLAS_DIR.exists():
-        return []
-    names = []
-    for path in sorted(SURFACE_ATLAS_DIR.glob("lh.*.annot")):
-        name = path.name
-        if name.startswith("lh."):
-            name = name[3:]
-        if name.endswith(".annot"):
-            name = name[:-6]
-        if name and name not in names:
-            names.append(name)
-    return names
-
-
-def parse_atlas_string(value: str) -> list[str]:
-    if not value:
-        return []
-    parts = [item.strip().strip("'\"") for item in value.split(",")]
-    return [item for item in parts if item]
-
-
-def selected_atlases(names: list[str], value: str) -> set[str]:
-    """Return the *names* that the atlas list *value* asks for.
-
-    Case-insensitive, as the pipeline looks atlases up (the defaults file
-    says ``neuromorphometrics``, the file is ``Neuromorphometrics.nii.gz``).
-    """
-    wanted = {item.lower() for item in parse_atlas_string(value)}
-    return {name for name in names if name.lower() in wanted}
-
-
-def build_atlas_arg(atlas_items: list[str]) -> Optional[str]:
-    if not atlas_items:
-        return None
-    quoted = [f"'{item}'" for item in atlas_items]
-    return ",".join(quoted)
-
-
-def defaults_file() -> Path:
-    """Return the defaults file of the T1Prep that the jobs run.
-
-    The lookup of ``scripts/T1Prep``: beside the script's folder (a source
-    checkout keeps the file at the repository root), else in that folder
-    (``bin/`` of an installed environment).  The form used to read it from
-    ``BASE_DIR``, which is the working directory once installed, and then
-    started from fallbacks of its own.
-    """
-    script_dir = Path(T1PREP_CMD).parent
-    beside = script_dir.parent / "T1Prep_defaults.txt"
-    return beside if beside.is_file() else script_dir / "T1Prep_defaults.txt"
 
 
 def resolve_folder_pattern_inputs(form: dict) -> list[Path]:
@@ -358,79 +255,6 @@ def build_command(
     return cmd
 
 
-def find_parallelize_logs(log_dir: Optional[str]) -> list[Path]:
-    """Return the parallelize logs written into a job's own log directory.
-
-    The job hands ``log_dir`` to T1Prep (``T1PREP_LOGDIR``), so no other
-    job's log can be found here.  Oldest first: the order the phases ran.
-    """
-    if not log_dir:
-        return []
-    hostname = socket.gethostname()
-    pattern = os.path.join(glob.escape(str(log_dir)), f"parallelize_{hostname}_*.log")
-    return [Path(path) for path in sorted(glob.glob(pattern), key=os.path.getmtime)]
-
-
-# A bar line of progress_bar_multi.sh ("|███     |  42% label ETA ...") or of
-# the Python renderer ("[███     ]  42% label")
-_PROGRESS_LINE = re.compile(r"^[|\[][^|\]]*[|\]]\s*(\d{1,3})%")
-
-# The headers T1Prep prints before each phase, in the order the phases run
-_PHASES = (("Volume Segmentation", "volume"), ("Surface Estimation", "surface"))
-_PHASE_ORDER = tuple(name for _, name in _PHASES)
-
-
-def _new_progress() -> dict:
-    """Return the live progress of a job that has printed nothing yet."""
-    return {
-        "phase": None,
-        "since": None,
-        **{
-            name: {
-                "percent": 0,
-                "started": False,
-                "seconds": 0.0,
-                "entries": 0,
-                "failed": False,
-            }
-            for name in _PHASE_ORDER
-        },
-    }
-
-
-def _stop_clock(live: dict, now: float) -> None:
-    """Add the time since the running phase started to that phase."""
-    if live["phase"] is not None and live["since"] is not None:
-        live[live["phase"]]["seconds"] += now - live["since"]
-    live["since"] = None
-
-
-def _enter_phase(live: dict, phase: str, now: float) -> None:
-    """Start ``phase`` for one more subject; its bar counts from zero."""
-    _stop_clock(live, now)
-    live["phase"], live["since"] = phase, now
-    live[phase]["started"] = True
-    live[phase]["entries"] += 1
-    live[phase]["percent"] = 0
-
-
-def _failed_phase(stripped: str) -> Optional[str]:
-    """Name the phase whose failure notice ``stripped`` is, if it is one."""
-    if "Segmentation failed" in stripped:
-        return "volume"
-    if "Surface estimation failed" in stripped:
-        return "surface"
-    return None
-
-
-def _format_duration(seconds: float) -> str:
-    """Spell a duration as T1Prep's "Finished after" does: ``1hrs 2min 3s``."""
-    hours, rest = divmod(int(round(seconds)), 3600)
-    minutes, secs = divmod(rest, 60)
-    text = f"{hours}hrs " if hours else ""
-    if minutes:
-        text += f"{minutes}min "
-    return f"{text}{secs}s"
 
 
 def run_job(job_id: str) -> None:
@@ -479,30 +303,17 @@ def run_job(job_id: str) -> None:
         assert process.stdout is not None
         logged_percent = None
         for line in process.stdout:
-            stripped = line.strip()
-
-            phase = next((name for header, name in _PHASES if header in stripped), None)
-            failure = _failed_phase(stripped)
-            match = None if phase or failure else _PROGRESS_LINE.match(stripped)
-            if failure:
-                # Kept in the phase where it happened, not read as progress
-                with LOCK:
-                    live[failure]["failed"] = True
-            elif phase:
-                with LOCK:
-                    _enter_phase(live, phase, time.time())
+            # Phase headers, failure notices and bars (see t1prep.launch.progress)
+            with LOCK:
+                event = follow_line(live, line, time.time())
+            if event is not None and event[0] == "phase":
                 logged_percent = None
-            elif match:
-                percent = min(100, int(match.group(1)))
-                with LOCK:
-                    if live["phase"] is None:
-                        _enter_phase(live, _PHASE_ORDER[0], time.time())
-                    live[live["phase"]]["percent"] = percent
+            elif event is not None and event[0] == "bar":
                 # The terminal redraws a bar in place: log each step once
                 # (the bar over several subjects repeats every second)
-                if percent == logged_percent:
+                if event[1] == logged_percent:
                     continue
-                logged_percent = percent
+                logged_percent = event[1]
 
             log_file.write(line)
             log_file.flush()

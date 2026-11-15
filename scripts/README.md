@@ -4,7 +4,7 @@ This directory contains the shell scripts behind the T1Prep command-line interfa
 
 > **Installed usage:** after `pip install` (or the bash bootstrapper), these
 > entry points are placed into the environment's `bin/` directory — put that on
-> your `PATH` and call them directly (`T1Prep`, `PyCAT`, `t1prep-ui`, `t1prep-run`,
+> your `PATH` and call them directly (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-ui`, `t1prep-run`,
 > `CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
 > `./scripts/<name>` form shown below is the source-tree/dev fallback; the
 > `scripts/` folder itself does not need to be on `PATH`.
@@ -516,6 +516,20 @@ python -m t1prep.plot_histogram mwp1*.nii.gz        # source checkout
 ```
 
 The fitted curves, the palettes and the statistics it prints are documented in
+**[docs/tools.md](../docs/tools.md)**.
+
+### `CAT_PlotBoxplot`
+
+Box and violin plots of the same inputs — the Python counterpart of CAT12's
+`cat_plot_boxplot.m`. It is a console script too; from a source checkout run
+it as a module:
+
+```bash
+CAT_PlotBoxplot --style violin lh.thickness.*                  # installed
+python -m t1prep.plot_boxplot --style violin lh.thickness.*    # source checkout
+```
+
+The styles, the statistics and the outlier listing are documented in
 **[docs/tools.md](../docs/tools.md)**.
 
 ### `CAT_GrepJson`
