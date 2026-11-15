@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Source-tree dev wrapper for the T1Prep launcher (Qt).
+# Installed users should use the `t1prep-gui` console script from <venv>/bin.
+# Usage:
+#   ./scripts/T1Prep_gui [--out-dir DIR] [FILE|FOLDER ...]
+# Examples:
+#   ./scripts/T1Prep_gui
+#   ./scripts/T1Prep_gui sub-01_T1w.nii.gz sub-02_T1w.nii.gz
+#   ./scripts/T1Prep_gui --out-dir /data/results /data/study/*.nii
+#   ./scripts/T1Prep_gui /data/results        # browse the results of an earlier run
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Dual-mode path resolution shared with T1Prep: sets root_dir and T1prep_env.
+# shellcheck source=scripts/T1Prep_utils.sh
+source "$SCRIPT_DIR/T1Prep_utils.sh"
+
+# Prepend src/ to PYTHONPATH, so the launcher resolves from the source tree
+# ahead of a pip-installed t1prep, and activate env/ when there is one.  A
+# missing venv is not fatal: the launcher needs only T1Prep's Python
+# dependencies, so the interpreter T1Prep was pip installed into works as well
+# ($T1PREP_PYTHON picks one explicitly) -- see activate_t1prep_env() in
+# T1Prep_utils.sh.
+activate_t1prep_env
+
+# No change of directory: the images and folders given on the command line are
+# relative to where the caller is.
+
+# Run the launcher module, which is what the t1prep-gui console script calls.
+exec "${python}" -m t1prep.gui.launcher "$@"
