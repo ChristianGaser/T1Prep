@@ -59,12 +59,20 @@ T1Prep            # synopsis
 T1Prep --help     # every option, in full
 ```
 
+The built-in settings are those of the defaults file (`T1Prep_defaults.txt`;
+another one with `--defaults <FILE>`). The options on the command line are
+applied on top of it, in the order given. The two presets can be set there as
+well: `fast=1` and `fmriprep=1` mean what `--fast` and `--fmriprep` mean.
+
+With several images `T1Prep` exits with a non-zero status when any image
+failed, in the volume or in the surface phase.
+
 Skull-stripping modes:
 - `--skullstrip-only`: run skull-stripping only and exit after writing the skull-stripped image and the brain mask (`mri/m<name>.nii`, `mri/mask<name>.nii`; with `--bids` `<name>_desc-skullstripped_T1w.nii.gz`, `<name>_desc-brain_mask.nii.gz`).
 - `--no-skullstrip` / `--skip-skullstrip`: skip skull-stripping (assumes input is already skull-stripped).
 
 Longitudinal / advanced flags:
-- `--initial-surf <FILE>`: use an initial surface estimate for longitudinal processing (`T1Prep` also takes the spelling `--initial-surface`).
+- `--initial-surface <FILE>` (also `--initial-surf`): use an initial surface estimate for longitudinal processing.
 - `--long-data <FILE>`: process `<FILE>`, the longitudinally realigned copy of the input (as `process_longitudinal.sh` passes it), instead of the input, while output folders and names still follow the input file. Takes exactly one input file.
 - `--no-atlas`: skip the volume atlases, i.e. the ROI volumes (overrides the defaults file). The surface atlases are not affected.
 - `--no-atlas-surf`: skip the surface atlases (overrides the defaults file).

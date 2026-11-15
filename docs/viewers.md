@@ -256,6 +256,15 @@ zooming on every mouse move. Uncheck *Zoom → Lock zoom* (or start with
 give start, step and stop in millimetres (as in `cat_vol_slice_overlay`) and the
 number of columns and rows, or leave the layout on *auto*.
 
+Contours and surface outlines are drawn on the sheet too: every slice carries
+the lines the panes show on it, in the same colours, so a segmentation or the
+central surfaces can be checked through the whole volume in one figure.
+
+```bash
+CAT_VolView T1.nii.gz lh.central.T1.gii rh.central.T1.gii --contour p0T1.nii.gz \
+    --montage --orientation coronal --screenshot qc_montage.png
+```
+
 ---
 
 ## Figures from a script

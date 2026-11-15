@@ -147,9 +147,11 @@ curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/ma
 ```
 
 Without `T1PREP_PYTHON` the installer still asks when it finds several
-supported Pythons, and it asks before replacing an existing installation. It
-opens the terminal for these questions in any case, so it has to be started
-from one.
+supported Pythons, and it asks before replacing an existing installation.
+With all three variables set and no installation to replace it asks nothing
+and needs no terminal, so it runs in CI or in a Dockerfile; it opens the
+terminal only for a question it actually has. `install.sh --help` prints the
+variables and installs nothing.
 
 | Environment Variable | Description |
 |---------------------|-------------|

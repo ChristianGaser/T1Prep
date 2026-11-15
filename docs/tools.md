@@ -98,12 +98,13 @@ CAT_SurfResampleMulti_ui [options] surf/lh.thickness.subject
 ```
 
 Common options:
-- `--out <DIR>` output directory
-- `--res <STR>` resolution tag in the output name (`32k` by default); for a
-  target other than the 32k template also give `--trg-sphere` and `--mask`
+- `--out <DIR>` output directory, created if it does not exist (default: next
+  to the input)
+- `--res <STR>` mesh to resample to, `32k` (default) or `4k`: it selects the
+  template sphere and mask of that mesh and is part of the output name
 - `--fwhm <FLOAT>` smoothing FWHM
-- `--trg-sphere <FILE>` target LH sphere
-- `--mask <FILE>` target LH mask
+- `--trg-sphere <FILE>`, `--mask <FILE>` another target LH sphere and mask
+  than the template's
 - `--jobs <N>` parallel worker count
 
 Input expectations:
@@ -123,7 +124,7 @@ CAT_SurfParameters_ui [options] lh.central.gii
 ```
 
 Common options:
-- `--gy`, `--mc`, `--gc`, `--cv`, `--si`, `--sh`, `--fi`, `--area`, `--fd`, `--sr`, `--sra`
+- `--gy` (the default: gyrification, the absolute mean curvature), `--mc`, `--gc`, `--cv`, `--si`, `--sh`, `--fi`, `--area`, `--fd`, `--sr`, `--sra`
 - `--depth`, `--sqrt-depth`, `--min-curv`, `--max-curv`, `--dp`
 - `--gifti` write GIfTI output
 - `--noclobber` do not overwrite existing files
@@ -144,7 +145,9 @@ CAT_Surf2ROIMulti_ui [options] surf/lh.thickness.subject
 ```
 
 Common options:
-- `--out <DIR>` output directory
+- `--out <DIR>` output directory (default: for an input in a `surf` folder
+  the `label` folder next to it, where T1Prep writes its own tables;
+  otherwise the folder of the input)
 - `--res <STR>` surface/atlas resolution (default `32k`)
 - `--trg-sphere <FILE>` target LH sphere
 - `--annot <NAMES>` one or multiple atlas names
@@ -159,6 +162,10 @@ Multi-atlas examples:
 CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'" surf/lh.thickness.subject
 CAT_Surf2ROIMulti_ui --annot "aparc_DK40.freesurfer,aparc_a2009s.freesurfer" surf/lh.thickness.subject
 ```
+
+Like the other `CAT_*_ui` helpers it exits with status 1 when a file could not
+be processed (a missing input or atlas, a failed computation) and with 0 only
+when every output was written.
 
 ### `CAT_VolDiff`
 
