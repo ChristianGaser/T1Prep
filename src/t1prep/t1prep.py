@@ -1,9 +1,9 @@
 """T1Prep – pure-Python single-subject pipeline.
 
 Replaces the former bash-subprocess wrapper with a direct Python implementation.
-Accepts the same flags as ``scripts/T1Prep`` (minus the bash-only parallelisation
+Accepts the options of ``scripts/T1Prep`` (without the bash-only parallelisation
 options ``--multi`` and ``--min-memory``) and drives the two pipeline stages
-entirely in-process::
+itself, each as child processes::
 
     python -m t1prep.t1prep [options] file.nii.gz
 
@@ -738,9 +738,9 @@ def run_t1prep(
 ) -> int:
     """Run the T1Prep pipeline for one or more input files.
 
-    This is a pure-Python implementation that calls ``t1prep.segment``
-    (via subprocess) and ``t1prep.surface_estimation`` (in-process) for
-    each input file sequentially.  For batch parallelisation use
+    This is a pure-Python implementation that runs ``t1prep.segment`` and
+    ``t1prep.surface_estimation`` (both as child processes) for each input
+    file sequentially.  For batch parallelisation use
     ``scripts/T1Prep --multi N`` or dispatch :func:`run_t1prep` calls
     from multiple threads / processes at the caller's level.
 
@@ -819,7 +819,8 @@ def run_t1prep(
         Save WMH lesion maps (``p4``): the WMH probability inside the
         detected lesions, 0 elsewhere.
     amap:
-        Use AMAP instead of DeepMRIPrep for segmentation.
+        Refine the segmentation with CAT12's AMAP, which starts from the
+        DeepMRIPrep segmentation.
     fmriprep:
         Save fMRIPrep-compatible outputs (deformation fields, dseg, etc.),
         registered with the setting for fMRIPrep: every scheduled
@@ -1006,7 +1007,7 @@ def _build_parser() -> ArgumentParser:
     g.add_argument("--p", action="store_true",
                    help="Save native-space tissue maps")
     g.add_argument("--csf", action="store_true",
-                   help="Include CSF in tissue map outputs")
+                   help="Include CSF in the native-space and affine-registered tissue maps")
     g.add_argument("--hemi", "--hemisphere", dest="hemisphere",
                    action="store_true",
                    help="Save hemispheric (lh/rh) partitions of the label map "
@@ -1065,7 +1066,7 @@ def _build_parser() -> ArgumentParser:
                     action="store_false", default=True,
                     help="Skip pial and white matter surface estimation")
     g3.add_argument("--amap", action="store_true",
-                    help="Use AMAP instead of DeepMRIPrep for segmentation")
+                    help="Refine the DeepMRIPrep segmentation with CAT12's AMAP")
     g3.add_argument("--nn-backend", metavar="NAME", choices=backend_names(),
                     help="Framework that runs the networks: torch or tinygrad "
                          "(experimental); default: T1PREP_NN_BACKEND, else torch")
@@ -1095,7 +1096,7 @@ def _build_parser() -> ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """CLI entry point: ``python -m t1prep.t1prep`` or ``t1prep`` console script."""
+    """CLI entry point: ``python -m t1prep.t1prep`` or the ``t1prep-run`` console script."""
     parser = _build_parser()
     argv = sys.argv[1:] if argv is None else list(argv)
     # Called with nothing at all: the synopsis says what the pipeline takes,

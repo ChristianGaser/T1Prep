@@ -396,7 +396,9 @@ def main() -> None:
     # unified behaviour (--help, "--" options) is the same as everywhere.
     parser = ArgumentParser(
         prog="t1prep-download-models",
-        description="Download T1Prep model weights from GitHub.",
+        description=("Prepare the model weights of T1Prep: convert the archives "
+                     "already on disk, or download them from GitHub when "
+                     "there are none."),
     )
     parser.add_argument(
         "--force",

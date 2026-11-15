@@ -317,8 +317,7 @@ OPTIONS: Tuple[Option, ...] = (
     Option("lesions", "WMH lesion maps (p4)", "volume", variable="save_lesions",
            on="--lesions", needs="seg",
            help="Probability of a white matter hyperintensity inside the "
-                "detected lesions. Applies to the native-space and the "
-                "affine-registered maps."),
+                "detected lesions, written in native space."),
     Option("atlas", "Atlases", "volume", kind="atlas", variable="atlas_vol",
            fallback="'neuromorphometrics', 'cobra'", flag="--atlas",
            off="--no-atlas", needs="seg",
@@ -389,7 +388,7 @@ OPTIONS: Tuple[Option, ...] = (
            flags=(("skip", "--no-skullstrip"), ("only", "--skullstrip-only")),
            needs="seg",
            help="Skip skull-stripping for an image that has no skull left, "
-                "or stop after it and save the brain and its mask."),
+                "or stop after it and save the skull-stripped image."),
     Option("amap", "AMAP segmentation", "expert", variable="use_amap",
            on="--amap", needs="seg",
            help="Use the network's segmentation as the starting estimate of "

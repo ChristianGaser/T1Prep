@@ -192,7 +192,7 @@ def parse_arguments() -> argparse.Namespace:
         help=(
             "Save the T1w<->MNI deformations as ANTs/ITK composite HDF5 "
             "(.h5) files alongside the NIfTI y_ field, without switching the "
-            "run to fMRIPrep output mode.  Requires the nitransforms package."
+            "run to fMRIPrep output mode."
         ),
     )
     parser.add_argument(
@@ -200,8 +200,7 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help=(
             "Save deformation fields as ANTs/ITK-compatible HDF5 (.h5) files "
-            "in addition to the default NIfTI output. "
-            "Requires the nitransforms package."
+            "in addition to the default NIfTI output."
         ),
     )
     parser.add_argument(
@@ -232,7 +231,7 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help=(
             "Only run skull stripping and save outputs to --mri-dir, then exit. "
-            "Writes a skull-stripped volume and a brain mask."
+            "Writes the skull-stripped volume."
         ),
     )
     skullstrip_group.add_argument(
