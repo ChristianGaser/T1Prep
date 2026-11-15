@@ -154,3 +154,8 @@ For issues and inquiries, contact [me](mailto:christian.gaser@uni-jena.de).
 ## License
 T1Prep is distributed under the terms of the [Apache License](https://www.apache.org/licenses/LICENSE-2.0) 
 as published by the Apache Software Foundation.
+
+The networks of [DeepMriPrep](https://github.com/wwu-mmll/deepmriprep) and
+[deepbet](https://github.com/wwu-mmll/deepbet) that T1Prep runs, and the code
+ported from the two packages, are under the MIT License of the Medical Machine
+Learning Lab, University of Münster; see [NOTICE](NOTICE).
