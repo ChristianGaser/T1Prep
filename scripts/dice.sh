@@ -20,25 +20,21 @@
 # Resolve this script's directory robustly (works even if invoked via symlink)
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-synopsis() {
-    cat <<'USAGE'
-USAGE:
-  dice.sh --gt <GT.nii.gz> --pred <PRED.nii.gz> [options]
-
-OPTIONS:
-  --gt <FILE>          Ground-truth label or probability volume
-  --pred <FILE>        Predicted volume, compared against --gt
-  --soft               Soft Dice on the unrounded inputs
-  --no-resample        Compare voxel-to-voxel, ignoring the affines
-  --save-conf <FILE>   Write the confusion matrix to this CSV
-  --verbose            One line per label instead of the single summary line
-  --python <FILE>      Interpreter to run t1prep.dice with
-  --help               Show the full description
-USAGE
-    echo "Run '$(basename -- "$0") --help' for the full description."
+# The synopsis, on stderr like that of every T1Prep tool (print_usage, which
+# T1Prep_utils.sh defines: it is sourced below, before anything is printed)
+usage() {
+    print_usage "--gt <GT.nii.gz> --pred <PRED.nii.gz> [options]" \
+        "--gt <FILE>          Ground-truth label or probability volume" \
+        "--pred <FILE>        Predicted volume, compared against --gt" \
+        "--soft               Soft Dice on the unrounded inputs" \
+        "--no-resample        Compare voxel-to-voxel, ignoring the affines" \
+        "--save-conf <FILE>   Write the confusion matrix to this CSV" \
+        "--verbose            One line per label instead of the single summary line" \
+        "--python <FILE>      Interpreter to run t1prep.dice with" \
+        "--help               Show the full description"
 }
 
-usage() {
+help() {
     cat <<'USAGE'
 Dice-based metric — wrapper
 
@@ -79,12 +75,9 @@ USAGE
 # auto-detection in check_python_cmd.  The flag is consumed here because
 # t1prep.dice itself does not know it.
 # ----------------------------------------------------------------------
-# Called with nothing at all: the synopsis, as every T1Prep tool does;
-# '--help' gives the full description
-if [ $# -eq 0 ]; then
-    synopsis >&2
-    exit 1
-fi
+bare_call=0
+[ $# -eq 0 ] && bare_call=1
+want_help=0
 
 args=()
 _expect_python=0
@@ -97,7 +90,7 @@ for _arg in "$@"; do
     case "${_arg}" in
         --python)   _expect_python=1 ;;
         --python=*) python="${_arg#--python=}" ;;
-        --help|-h)  usage; exit 0 ;;
+        --help|-h)  want_help=1 ;;
         *)          args+=("${_arg}") ;;
     esac
 done
@@ -115,6 +108,17 @@ fi
 # shellcheck source=scripts/T1Prep_utils.sh
 source "${script_dir}/T1Prep_utils.sh"
 
+# Called with nothing at all: the synopsis, as every T1Prep tool does;
+# '--help' gives the full description
+if [ "${bare_call}" -eq 1 ]; then
+    usage
+    exit 1
+fi
+if [ "${want_help}" -eq 1 ]; then
+    help
+    exit 0
+fi
+
 # Validate/auto-detect the interpreter, put the checkout on PYTHONPATH and
 # activate the project-managed venv when there is one.  A missing venv is not
 # fatal: any interpreter with T1Prep's requirements works — see
@@ -122,10 +126,9 @@ source "${script_dir}/T1Prep_utils.sh"
 activate_t1prep_env
 
 # The import is the dependency check, in the process that then computes the
-# metric.  t1prep.dice itself needs only numpy/nibabel/scipy, but importing it
-# runs the package __init__ first, which pulls in cat_surf and torch: a module
-# list kept here goes stale, and a check in a separate process would import
-# torch twice.  A failure names the interpreter and the missing module instead
+# metric: a module list kept here goes stale.  (t1prep.dice needs
+# numpy/nibabel/scipy; the package no longer loads torch and cat_surf on
+# import.)  A failure names the interpreter and the missing module instead
 # of ending in a bare traceback.  (In an installed tree T1Prep_utils.sh has
 # already settled on an interpreter that imports t1prep.)
 # shellcheck disable=SC2016  # $T1PREP_PYTHON is literal text in the message

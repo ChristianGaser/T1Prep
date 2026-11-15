@@ -2,18 +2,30 @@
 #
 # PURPOSE: Move utility functions from T1Prep for better code structure
 #
-# FUNCTIONS:
+# FUNCTIONS (in the order they are defined):
+# - indent02, indent04: Indent piped text by two or four spaces.
+# - print_usage: The synopsis every tool prints when called without an argument.
+# - print_version: The answer to --version.
 # - exit_if_empty: Checks if a command line argument is empty and exits with an error message if it is.
+# - check_files: Checks if the input files exist.
+# - get_no_processes: Number of parallel jobs the available memory allows.
+# - cleanup: Stops the progress bar and the background jobs on Ctrl+C.
+# - filter_arguments: Filter arguments so that filenames are removed
 # - check_python_cmd: Finds and validates the Python interpreter (3.9-3.14).
+# - activate_t1prep_env: Interpreter, PYTHONPATH and venv for the wrapper scripts.
 # - check_python_module: Checks for python modules.
+# - logo: The start-up banner (T1Prep or PyCAT).
+# - get_pattern: Get the pattern from the desired column in namefile
+# - substitute_pattern: Substitute variables in the pattern
+# - check_venv_prerequisites: Whether the interpreter can create a venv.
 # - check_python_libraries: Checks for python libraries.
 # - merge_surface_report: Folds the surface measures of both hemispheres into the report.
 # - has_python_libraries: Whether the interpreter has the libraries of requirements.txt.
+# - repair_venv: Re-links a venv whose interpreter has moved.
 # - install_python_libraries: Installs requirements.txt and T1Prep into the venv.
-# - get_pattern: Get the pattern from the desired column in namefile
-# - substitute_pattern: Substitute variables in the pattern
-# - check_files: Checks if the input files exist.
-# - filter_arguments: Filter arguments so that filenames are removed
+# - t1prep_output_folder_from_input, get_output_folder: Where the results of an input go.
+# - already_processed: Whether the results of an input exist (--no-overwrite).
+# - telemetry_allowed, send_sentry: Opt-out check and the anonymous run statistics.
 #
 # ______________________________________________________________________
 #
@@ -106,7 +118,10 @@ else
       "$(command -v python3.9 2>/dev/null || true)"; do
     [ -n "${_cand}" ] || continue
     command -v "${_cand}" >/dev/null 2>&1 || [ -x "${_cand}" ] || continue
-    _dd="$("${_cand}" -c 'from importlib.resources import files; print(files("t1prep").joinpath("data"))' 2>/dev/null)"
+    # utils and cat_surf are imported by name: "import t1prep" alone no
+    # longer loads them (the package imports its parts on first use), and an
+    # interpreter whose torch or cat_surf is missing or broken must not win.
+    _dd="$("${_cand}" -c 'import t1prep.utils, t1prep.cat_surf; from importlib.resources import files; print(files("t1prep").joinpath("data"))' 2>/dev/null)"
     if [ -n "${_dd}" ] && [ -d "${_dd}" ]; then
       python="${_cand}"
       data_dir="${_dd}"
@@ -132,7 +147,7 @@ else
       echo "Interpreter: ${_broken_python}" >&2
       echo "" >&2
       echo "--- original import error ---" >&2
-      "${_broken_python}" -c 'from importlib.resources import files; print(files("t1prep").joinpath("data"))' >/dev/null || true
+      "${_broken_python}" -c 'import t1prep.utils, t1prep.cat_surf; from importlib.resources import files; print(files("t1prep").joinpath("data"))' >/dev/null || true
       echo "-----------------------------" >&2
       echo "" >&2
       echo "This is a broken or half-upgraded installation, not the wrong" >&2
@@ -239,12 +254,14 @@ print_usage() {
   shift
   prog="$(basename -- "$0")"
 
+  # The colours are only set on a terminal; ":-" keeps a script that runs
+  # with "set -u" (process_longitudinal.sh) from stopping here
   {
-    echo "${BOLD}USAGE:${NC}"
-    echo "  ${GREEN}${prog} ${synopsis}${NC}"
+    echo "${BOLD:-}USAGE:${NC:-}"
+    echo "  ${GREEN:-}${prog} ${synopsis}${NC:-}"
     if [ $# -gt 0 ]; then
       echo ""
-      echo "${BOLD}OPTIONS:${NC}"
+      echo "${BOLD:-}OPTIONS:${NC:-}"
       local line
       for line in "$@"; do
         # A blank entry separates groups, and a blank line carries no indent
@@ -256,7 +273,7 @@ print_usage() {
       done
     fi
     echo ""
-    echo "Run '${GREEN}${prog} --help${NC}' for the full description."
+    echo "Run '${GREEN:-}${prog} --help${NC:-}' for the full description."
   } >&2
 }
 

@@ -60,24 +60,19 @@ read_lines_to_array() {
     done <<< "$data"
 }
 
+# The synopsis, on stderr like that of every T1Prep tool (print_usage)
 usage() {
-    cat <<'USAGE'
-USAGE:
-  process_longitudinal.sh [options] <tp1.nii.gz> <tp2.nii.gz> [...]
-
-OPTIONS:
-  --out-dir <DIR>          Output folder, or the dataset root
-  --long-model <MODEL>     plasticity (default), ageing or both
-  --t1prep-arg <STRING>    Extra argument for T1Prep (repeatable)
-  --realign-arg <STRING>   Extra argument for realign_longitudinal.sh
-  --warp-arg <STRING>      Extra argument for warp_longitudinal.sh
-  --modulate-arg <STRING>  Extra argument for modulate_longitudinal.sh
-  --dry-run                Print the steps without running them
-  --debug                  Keep the intermediate files and be verbose
-  --help                   Show the full description
-  --version                Show the version
-USAGE
-    echo "Run '$(basename -- "$0") --help' for the full description."
+    print_usage "[options] <tp1.nii.gz> <tp2.nii.gz> [...]" \
+        "--out-dir <DIR>          Output folder, or the dataset root" \
+        "--long-model <MODEL>     plasticity (default), ageing or both" \
+        "--t1prep-arg <STRING>    Extra argument for T1Prep (repeatable)" \
+        "--realign-arg <STRING>   Extra argument for realign_longitudinal.sh" \
+        "--warp-arg <STRING>      Extra argument for warp_longitudinal.sh" \
+        "--modulate-arg <STRING>  Extra argument for modulate_longitudinal.sh" \
+        "--dry-run                Print the steps without running them" \
+        "--debug                  Keep the intermediate files and be verbose" \
+        "--help                   Show the full description" \
+        "--version                Show the version"
 }
 
 help() {
@@ -90,8 +85,9 @@ Usage:
         [--long-model plasticity|ageing|both] \
         [--t1prep-arg "--flag"] \
         [--realign-arg "--opt"] [--warp-arg "--opt"] [--modulate-arg "--opt"] \
-        [--dry-run] \
+        [--dry-run] [--debug] \
         /path/to/tp1.nii.gz /path/to/tp2.nii.gz [...]
+    scripts/process_longitudinal.sh --help | --version
 
 Longitudinal models (CAT12 naming):
     plasticity  (default) Rigid realignment only. Assumes the anatomy itself is

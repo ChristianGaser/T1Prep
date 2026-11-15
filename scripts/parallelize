@@ -245,7 +245,7 @@ get_no_processes () {
     exit 1
   fi
     
-  # Calculate number of processes (at least 1) and require 10GB memory for each process
+  # Number of processes (at least 1): --mem-limit GB of memory for each of them
   NUM_JOBS=$(echo "$mem_gb / $MEM_LIMIT" | bc)
   if [ "$NUM_JOBS" -lt 1 ]; then
     NUM_JOBS=1

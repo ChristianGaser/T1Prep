@@ -21,7 +21,24 @@ fi
 # shellcheck source=scripts/T1Prep_utils.sh
 source "${script_dir}/T1Prep_utils.sh"
 
+# The synopsis, on stderr like that of every T1Prep tool (print_usage)
 usage() {
+    print_usage "--mri-dirs <DIR> ... --names <NAME> ... --out-dir <DIR> [options]" \
+        "--mri-dirs <DIR> ...         T1Prep's output folder of each time point" \
+        "--long-dirs <DIR> ...        Where warp_longitudinal.sh wrote its fields" \
+        "--names <NAME> ...           Basename of each time point" \
+        "--out-dir <DIR>              Folder for the outputs" \
+        "--model <NAME>               ageing (default) or plasticity" \
+        "--modulation <NAME>          full (default) or nonlinear" \
+        "--tissue-class <NAME>        GM (default), WM or CSF" \
+        "--tissue, --displacement, --log-jacobian, --deformation <FILE> ..." \
+        "                             The files themselves, instead of --mri-dirs" \
+        "--verbose                    Print the volumes of each time point" \
+        "--help                       Show the full description and every option" \
+        "--version                    Show the version"
+}
+
+help() {
     cat <<'USAGE'
 Longitudinal Jacobian modulation wrapper
 
@@ -78,18 +95,30 @@ Notes:
       the interpreter T1Prep is installed into
     - All positional/optional arguments are forwarded to the Python CLI
 USAGE
-    echo "Run '$(basename -- "$0") --help' for the full description."
 }
 
 main() {
-    # Called with nothing at all: the synopsis, as every T1Prep tool does;
-    # '--help' and '--version' are forwarded to the Python module
+    # Called with nothing at all: the synopsis, as every T1Prep tool does
     if [[ $# -eq 0 ]]; then
         usage
         exit 1
     fi
 
     activate_t1prep_env
+
+    # '--help': what this step does, then every option of the Python module
+    # ('--version' is answered by the module alone)
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --help | -h)
+                help
+                echo
+                "${python}" -m t1prep.modulate_longitudinal --help
+                exit $?
+                ;;
+        esac
+    done
 
     "${python}" -m t1prep.modulate_longitudinal "$@"
 }

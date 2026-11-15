@@ -41,26 +41,56 @@ info() { printf "\033[32m[info]\033[0m %s\n" "$*"; }
 warn() { printf "[warn] %s\n" "$*"; }
 err()  { printf "\033[31m[error]\033[0m %s\n" "$*" 1>&2; }
 
-# Setup TTY input - call once at script start
+# Open the terminal for the questions, on fd 3.  Called by the first question
+# that is actually asked: with T1PREP_VERSION, T1PREP_INSTALL_DIR and
+# T1PREP_PYTHON set there is none, so the installer runs without a terminal
+# (CI, Docker, ssh without -t).  It used to be called at the start and
+# stopped such a run before anything was installed.
+TTY_READY=0
 setup_tty_input() {
+  [ "$TTY_READY" -eq 1 ] && return 0
   if [ -t 0 ]; then
     # stdin is a terminal, use it directly
     exec 3<&0
-  elif [ -e /dev/tty ]; then
-    # stdin is piped, open /dev/tty on fd 3
-    exec 3</dev/tty
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    # stdin is piped (curl | bash): the terminal itself is on fd 3 now
+    :
   else
-    err "Cannot read user input (no tty available). Use environment variables for non-interactive mode."
+    echo "" 1>&2
+    err "Cannot ask: no terminal available."
+    err "Set T1PREP_VERSION, T1PREP_INSTALL_DIR and T1PREP_PYTHON for an installation without questions."
     exit 1
   fi
+  TTY_READY=1
 }
 
-# Read user input from fd 3 (set up by setup_tty_input)
-# Usage: read_input "prompt" variable_name
+# Ask on the terminal; the answer is in REPLY
+# Usage: read_input "prompt"
 read_input() {
   local prompt="$1"
   printf "%s" "$prompt"
+  setup_tty_input
   IFS= read -r REPLY <&3
+}
+
+usage() {
+  cat <<EOF
+install.sh - download a T1Prep release and install it into its own environment
+
+Usage:
+  install.sh            ask for release, folder and Python, then install
+  install.sh --help     show this text
+
+Without questions (CI, Docker): set all three of
+  T1PREP_VERSION       release to install, e.g. "v0.9.0", or "latest"
+  T1PREP_INSTALL_DIR   folder to install into
+  T1PREP_PYTHON        interpreter to use (Python 3.9-3.14), e.g. "python3.12"
+
+Also read: REPO_OWNER (default ${REPO_OWNER}), REPO_NAME (default ${REPO_NAME}).
+
+"pip install T1Prep" is the simpler way to install T1Prep; this script is for
+a source installation with its own environment (env/).
+EOF
 }
 
 have_cmd() {
@@ -435,10 +465,22 @@ prompt_python_command() {
 }
 
 main() {
-  bold "T1Prep installer"
+  # The installer takes no arguments: anything but --help is a mistake, and
+  # installing regardless is not what was asked for
+  case "${1:-}" in
+    "") ;;
+    -h | --help | -help)
+      usage
+      exit 0
+      ;;
+    *)
+      err "Unknown argument: $1"
+      usage 1>&2
+      exit 1
+      ;;
+  esac
 
-  # Setup TTY input for interactive prompts (works when piped)
-  setup_tty_input
+  bold "T1Prep installer"
 
   # Prompt for release version
   prompt_release_version

@@ -131,6 +131,36 @@ takes_value()
   return 1
 }
 
+# ----------------------------------------------------------------------
+# presets: options that stand for several others
+# ----------------------------------------------------------------------
+# Used by the option on the command line and by its variable in the
+# defaults file (fast=1, fmriprep=1), so both mean the same.
+
+apply_fast_preset()
+{
+  fast=1
+  save_pial_white=0
+  estimate_spherereg=0
+  save_mwp=0
+  save_hemi=0
+  atlas_vol=""
+  atlas_surf=""
+}
+
+apply_fmriprep_preset()
+{
+  fmriprep=1
+  use_bids_naming=1
+  save_csf=1
+  save_p=1
+  save_mwp=0
+  save_hemi=0
+  estimate_spherereg=1
+  atlas_vol=""
+  nii_ext='nii.gz'
+}
+
 parse_args()
 {
   local optname optarg
@@ -160,6 +190,15 @@ parse_args()
     esac
   done
   source "${cfg}"
+
+  # A preset asked for in the defaults file is applied as its option is.
+  # ("fast=1" was never read, and "fmriprep=1" only switched the fsLR
+  # registration on, without the names, outputs and compression --fmriprep
+  # stands for.)  Before the command line is read, so an option given there
+  # still has the last word; fast first, because --fmriprep needs the
+  # spherical registration --fast switches off.
+  if [ "${fast:-0}" = 1 ]; then apply_fast_preset; fi
+  if [ "${fmriprep:-0}" = 1 ]; then apply_fmriprep_preset; fi
 
   # Defaults for new skull-strip flags (may be absent in defaults file)
   skullstrip_only=${skullstrip_only:-0}
@@ -278,15 +317,7 @@ parse_args()
         save_h5=1
         ;;
       --fmriprep)
-        fmriprep=1
-        use_bids_naming=1
-        save_csf=1
-        save_p=1
-        save_mwp=0
-        save_hemi=0
-        estimate_spherereg=1
-        atlas_vol=""
-        nii_ext='nii.gz'
+        apply_fmriprep_preset
         ;;
       --gz)
         nii_ext='nii.gz'
@@ -366,12 +397,7 @@ parse_args()
         verbose=1
         ;;
       --fast)
-        save_pial_white=0
-        estimate_spherereg=0
-        save_mwp=0
-        save_hemi=0
-        atlas_vol=""
-        atlas_surf=""
+        apply_fast_preset
         ;;
       --help | -h | -help | --h)
         help
@@ -544,11 +570,13 @@ process()
     )
 
     # Execute the command
+    seg_status=0
+    status=0
     if [ "${estimate_seg}" -eq 1 ]; then
       echo "${BOLD}Volume Segmentation${NC}"
       "${cmd[@]}"
-      status=$?
-      if [ "$status" -ne 0 ]; then
+      seg_status=$?
+      if [ "$seg_status" -ne 0 ]; then
         echo "${RED}ERROR: Volume segmentation failed for one or more subjects (see log above).${NC}" >&2
       fi
     fi
@@ -575,7 +603,13 @@ process()
       "${cmd[@]}"
       status=$?
     fi
-    
+
+    # A subject that failed in either phase fails the batch.  (The status
+    # was that of the surface phase alone: a segmentation that failed went
+    # unnoticed when surfaces of an earlier run were still there to work on.)
+    if [ "$status" -eq 0 ]; then
+      status=$seg_status
+    fi
     exit $status
   fi
 
