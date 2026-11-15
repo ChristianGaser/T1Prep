@@ -1,11 +1,13 @@
 # Additional tools
 
-T1Prep installs more than the pipeline itself: a web UI, four small GUIs for
-surface post-processing, a histogram plotter, and the two viewers (documented
-separately in [viewers.md](viewers.md)).
+T1Prep installs more than the pipeline itself: a desktop launcher, a web UI,
+four small GUIs for
+surface post-processing, a histogram plotter, a box and violin plotter, and
+the two viewers (documented separately in [viewers.md](viewers.md)).
 
 | Command | What it is |
 |---------|------------|
+| `t1prep-gui` | Desktop launcher: choose images, run the pipeline, browse the results |
 | `t1prep-ui` | Web UI for the pipeline |
 | `CAT_SurfView` / `CAT_VolView` | Surface and volume viewers — see [viewers.md](viewers.md) |
 | `CAT_SurfResampleMulti_ui` | Resample and smooth surface data |
@@ -13,6 +15,7 @@ separately in [viewers.md](viewers.md)).
 | `CAT_Surf2ROIMulti_ui` | Map surface values to atlas ROIs |
 | `CAT_VolDiff` | Voxel-wise differences between volumes |
 | `CAT_PlotHistogram` | Histograms of volumes, surfaces or text data |
+| `CAT_PlotBoxplot` | Box and violin plots of volumes, surfaces or text data |
 | `t1prep-make-apps` | macOS: build the viewer `.app` bundles |
 | `t1prep-download-models` | Fetch the model weights ahead of time |
 
@@ -25,6 +28,49 @@ single-dash spellings that are still accepted.
 Back to the [README](../README.md).
 
 ---
+
+## Launcher (Qt)
+
+`t1prep-gui` is the desktop front end of the pipeline: add images, choose the
+options, run, and look at the results, all in one window.
+
+```bash
+t1prep-gui                                        # open the window
+t1prep-gui sub-01_T1w.nii.gz sub-02_T1w.nii.gz    # with these images in the table
+t1prep-gui --out-dir /data/results /data/study/*.nii
+t1prep-gui /data/results                          # browse the results of an earlier run
+```
+
+From a source checkout, without installing: `PYTHONPATH=src python -m t1prep.gui.launcher`.
+
+- **Images.** *Add images…*, *Add folder…* (a name pattern, optionally with
+  subfolders; folders that hold T1Prep results are left out) or drag and drop.
+  The images are processed where they are; nothing is copied.
+- **Options.** The form starts from the defaults file of the `T1Prep` it runs
+  (`T1Prep_defaults.txt` next to it), so it shows what that `T1Prep` would do
+  on its own. What another choice forces is shown as it will be used (`--bids`
+  compresses the volumes, `--fmriprep` implies BIDS names), and the options of
+  a step that is switched off are disabled. The choices are remembered between
+  sessions; *Restore defaults* returns to the defaults file.
+- **Output.** Next to each image, as `T1Prep` does by default, or one folder
+  for all results.
+- **Run.** The table shows for each image whether the volume and the surface
+  phase are waiting, running, finished or failed, and the image quality rating
+  of its report. *Stop* ends the run and every process it started. *Skip
+  finished images* (under Processing) leaves out what is complete, so a batch
+  that was stopped or partly failed can be continued.
+- **Results.** Selecting an image shows a picture of the segmentation outline
+  or of the central surfaces on the image, the measures of its report, and
+  buttons that open the segmentation and the surfaces in `CAT_VolView` and the
+  thickness in `CAT_SurfView`. The picture appears as soon as a phase has
+  written its results, so the segmentation can be checked while the surfaces
+  are still being estimated. *Open results…* shows the results of an earlier
+  run without processing anything.
+
+The launcher itself uses neither VTK nor OpenGL. The pictures are rendered by
+`CAT_VolView --headless`, and the viewers are started as processes of their
+own. Where the viewers cannot start (no working OpenGL), the launcher still
+runs the pipeline; only the pictures and the viewer buttons are missing.
 
 ## Web UI (Flask)
 
@@ -195,7 +241,10 @@ CAT_PlotHistogram --dist none --xrange 0 6 \
 ```
 
 Reads NIfTI volumes (`.nii`, `.nii.gz`, `.img`), GIFTI surface overlays,
-FreeSurfer morphometry data (`lh.thickness`, `lh.curv`, ...) and plain text.
+FreeSurfer morphometry data (`lh.thickness`, `lh.curv`, ...) and plain text
+(`.txt`). A file with any other name has to be FreeSurfer morphometry data by
+its header; anything else, such as a text file named `.csv`, is refused
+rather than read as numbers it does not hold.
 Volumes, GIFTI and text files lose their zero background — zeros become NaN
 once they make up more than 1% of the data — while FreeSurfer data keeps its
 zeros, where zero is a value like any other.
@@ -286,3 +335,145 @@ matrix whose smaller dimension counts the data sets, and returns the bin
 centers, the histograms, the fitted curves, the per-input statistics and the
 figures. Repeated calls with `mean=True` overlay their averages in figure 11,
 each in the next colour, so a caller can label them with one `legend()` call.
+
+---
+
+## `CAT_PlotBoxplot`
+
+Draws box and violin plots of one or more data sets, the Python counterpart of
+CAT12's `cat_plot_boxplot.m`. It reads the same files as
+[`CAT_PlotHistogram`](#cat_plothistogram) and draws one box or violin per
+file, so that the distributions of several images, or one measure over a group
+of subjects, can be compared at a glance.
+
+```bash
+CAT_PlotBoxplot mwp1*.nii                                  # one box per volume
+CAT_PlotBoxplot --style violinbox --sort ascending lh.thickness.*
+CAT_GrepJson --field subjectmeasures.vol_TIV --out tiv.txt report/log_*.json
+CAT_PlotBoxplot --style jitter --list-outliers tiv.txt     # which subjects stand out
+CAT_GrepJson --field subjectmeasures.vol_abs_CGW --out cgw.txt report/log_*.json
+CAT_PlotBoxplot --columns --names CSF,GM,WM --connect cgw.txt
+```
+
+Volumes and GIFTI overlays lose their zero background and FreeSurfer data keep
+their zeros, as in `CAT_PlotHistogram`. Text files keep their zeros too, unlike
+in `CAT_PlotHistogram`: a list of values has no background, and dropping its
+zeros would shift the quartiles. In a text file the values are separated by
+white space; words such as a header or a subject name are skipped, lines
+starting with `#` or `%` are comments, and `N/A`, `NA`, `null` or `none` —
+what `CAT_GrepJson` writes for a field a report lacks or leaves empty — is a
+missing value that keeps its place. `--columns` makes every column of a text
+file a box of its own, the counterpart of the matrix input of
+`cat_plot_boxplot`; a header line above the values names the columns, and a
+row holding only a missing value — `CAT_GrepJson`'s `N/A` for a report without
+`vol_abs_CGW` — stands for a whole row of them.
+
+`--style` picks one of the predefined styles of `cat_plot_boxplot`:
+
+| Style | `opt.style` | Draws |
+|-------|-------------|-------|
+| `box` (default) | 0 | box plot |
+| `violin` | 1 | violin plot, the values as a barcode |
+| `violinbox` | 2 | violin plot with a thin box plot inside (without the barcode) |
+| `density` | 3 | horizontal half violins, the values along the baseline |
+| `jitter` | 4 | box plot with the values as points, spread by their density |
+
+A style only sets defaults; each option below changes one thing of it.
+
+Options:
+- `--horizontal` / `--vertical` the orientation. Horizontal boxes run from the
+  first input at the top downwards; `density` is horizontal by default.
+- `--notch` notches the boxes of `box` and `jitter` at the confidence
+  interval of the median
+- `--whisker <K>` the reach of the whiskers in interquartile ranges (IQR) of
+  the box (default 1.5); `0` makes every value outside the box an outlier
+- `--outliers` / `--no-outliers` mark the mild outliers with `+` and the
+  extreme ones with `o`. On by default for `box` and `jitter`, off for the
+  violin styles: a violin shows the tails itself, and the thousands of
+  outliers of a volume or a surface would bury it.
+- `--list-outliers` prints every outlier with its 1-based position among the
+  values of its box. For a one-column text file that is the n-th value — with
+  the output of `CAT_GrepJson` the n-th report it read; a header or a comment
+  line does not count. A text file of several columns read without `--columns`
+  counts row by row. For a volume it prints the voxel coordinates `i,j,k`,
+  counted from 1 as SPM shows them.
+- `--show-data {none,strip,jitter,barcode}` draws the values themselves: as
+  points on the centre line, as points spread sideways by their density (a
+  sina plot), or as one short line each. At most 5000 random values per box
+  are drawn; the statistics always use all of them.
+- `--sort {none,ascending,descending}` orders the boxes by their median, the
+  first on the left or at the top; every box keeps its colour
+- `--names A,B,...` comma-separated labels; `--groupnum` adds the number of
+  values to each
+- `--connect` draws a line through the n-th value of every box, such as one
+  subject over several time points. It needs data sets of equal size and
+  draws the values as points unless the style already shows them; a missing
+  value leaves a gap.
+- `--width <W>` the width of a box, or of a violin at its widest, in box
+  spacings. `--varwidth` scales it with the square root of the number of
+  values, as R's `boxplot(varwidth = TRUE)`; `cat_plot_boxplot` scales its
+  boxes with the number itself, by default.
+- `--no-fill`, `--alpha <A>` the opacity of the fill between 0 and 1 (default
+  0.5), `--no-grid`
+- `--ylim MIN MAX` the range of the value axis — the horizontal one when the
+  boxes are horizontal — as `opt.ylim`. An end given as `nan` is left to the
+  data, as `-inf`/`inf` are in MATLAB (`--ylim nan 5`). Outliers beyond it are
+  drawn at its edge, and every violin is scaled to its widest point within
+  it. That matters for p1 maps: their many near-zero values form a spike that
+  squeezes a violin into a sliver, and `--ylim 0.05 1.5` brings out the rest.
+  All values still enter the density and the statistics.
+- `--ylabel`, `--title`, `--color <NAME>` (the palettes of
+  `CAT_PlotHistogram`), `--winsize W H`, `--fig N`
+- `--save <FILE>` writes the figure instead of opening a window; the extension
+  picks the format, `.png` when there is none or it is no image format (as the
+  `.2` of `qc_v1.2`). `--quiet` suppresses the table.
+
+Options are not abbreviated: `--out`, the option of `CAT_GrepJson`, is an
+error here rather than `--outliers`.
+
+Printed per box: the number of finite values, mean, standard deviation,
+minimum, quartiles, maximum and the number of outliers.
+
+The statistics are those of `cat_plot_boxplot`. The quartiles are computed as
+`cat_stat_prctile` does (MATLAB's `prctile`, numpy's `hazen` method), not with
+numpy's default, which matplotlib's `boxplot` uses and which gives other
+quartiles for small samples. The whiskers reach the last value within `K` IQR
+of the box; mild outliers lie up to `2K` IQR from the box, extreme ones
+beyond — Tukey's inner and outer fences for `K = 1.5`. The notch spans the
+median ± 1.57 IQR/√n, kept inside the box. The drawing is matplotlib's own
+(`Axes.bxp` and `Axes.violin`), so the figures do not look like the MATLAB
+ones. The violins show the Gaussian kernel density estimate of
+`CAT_PlotHistogram`, whose Improved Sheather–Jones bandwidth is what
+`cat_plot_boxplot` uses as well. It is computed from every value, so
+whole-brain maps are not thinned out (19 mwp1 volumes take about 3 s), and cut
+at the smallest and the largest value, as matplotlib cuts its violins. Each
+violin is scaled to its own widest point, as in both.
+
+Not carried over from `cat_plot_boxplot`: the shading of subsets, the dark
+mode, the flip of horizontal plots, the brighter colours for repeated groups,
+the median shown by two fill colours, the barcode of style 2 (`--show-data
+barcode` adds it), and the design matrix `opt.I`, whose common case — one
+data set per time point — `--connect` covers. Its batch mode over CAT12 XML
+fields is replaced by `CAT_GrepJson` and a text file.
+
+It is also importable, and then returns the statistics with the figure:
+
+```python
+from t1prep.plot_boxplot import plot_boxplot
+
+result = plot_boxplot(["tiv_controls.txt", "tiv_patients.txt"], notch=True)
+print(result.matrix())            # the s of cat_plot_boxplot, 7 x boxes
+print(result.stats[1].outliers)   # 0-based indices of the patients' outliers
+result.figure.savefig("tiv.png")
+```
+
+`plot_boxplot()` takes file names; a vector or a list of numbers, which is one
+data set; a matrix or a pandas DataFrame with one column per data set — as
+`cat_plot_boxplot` does, not the smaller dimension as `plot_histogram()` does;
+a list of arrays; or a dict of names and arrays. A DataFrame, a named Series
+and a dict bring their labels. Every argument after the figure has to be
+named (`style="violin"`). `result.stats` holds one entry per data set in the
+order of the input, with its outliers as 0-based indices into the flattened
+data set. Missing values count, so the indices match the input positions; the
+MATLAB original counts without them. `result.order` gives the order the boxes
+were drawn in.

@@ -83,10 +83,12 @@ the following commands are available:
 T1Prep file.nii.gz                              # main CLI (batch + parallel, --multi)
 PyCAT  file.nii.gz                              # same thing, PyCAT banner
 t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
+t1prep-gui                                      # desktop launcher
 t1prep-ui                                       # web UI
 CAT_SurfView lh.central.gii                     # surface viewer
 CAT_VolView T1.nii.gz                           # volume viewer
 CAT_PlotHistogram p1*.nii.gz                    # histograms of the inputs
+CAT_PlotBoxplot p1*.nii.gz                      # box or violin plots of the inputs
 t1prep-download-models                          # fetch the model weights now
 t1prep-make-apps                                # macOS: build the viewer .app bundles
 ```
@@ -111,7 +113,7 @@ curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/ma
 
 It creates a virtualenv, installs T1Prep into it, and prints the `export PATH`
 line to add its `bin/` directory to your shell. After that, run `T1Prep`,
-`t1prep-ui`, etc. directly.
+`t1prep-gui`, etc. directly.
 
 The installer will interactively prompt you to:
 1. **Select a version**: Latest release, development (main branch), or choose from available releases
@@ -210,9 +212,9 @@ pip install -e .                    # editable; tracks local edits
 pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
-Either way the entry points (`T1Prep`, `PyCAT`, `t1prep-ui`, `t1prep-run`,
-`CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `t1prep-make-apps`,
-`t1prep-download-models`, `t1prep-bbreg`) are
+Either way the entry points (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-ui`, `t1prep-run`,
+`CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`,
+`t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`) are
 placed in `env/bin`. Activating
 the venv — or adding `env/bin` to your `PATH` — is all that is needed; the
 source `scripts/` folder is only a dev fallback and should not be put on `PATH`.
@@ -332,8 +334,10 @@ t1 warp_longitudinal.sh --inputs /data/tp1.nii.gz /data/tp2.nii.gz --out-dir /da
 t1 modulate_longitudinal.sh --mri-dirs /data/D1 /data/D2 --names tp1 tp2 --out-dir /data/out
 ```
 
-`CAT_VolDiff`, `CAT_PlotHistogram`, `t1prep-bbreg`, `CAT_GrepJson` and the
-`CAT_*_ui` helpers are reached the same way.
+`CAT_VolDiff`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`, `t1prep-bbreg`,
+`CAT_GrepJson` and the `CAT_*_ui` helpers are reached the same way. The image
+has no display, so the two plotters need `--save` there; without it they print
+their table and draw nothing.
 
 **The viewers do not run in this image.** `CAT_SurfView` and `CAT_VolView` are
 installed as console scripts, but the slim base image carries none of the

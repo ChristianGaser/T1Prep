@@ -29,8 +29,9 @@ a source checkout without an install you can still run `./scripts/T1Prep`.)
 ## Command-line conventions
 
 Every T1Prep tool — `T1Prep`, `PyCAT`, the viewers `CAT_VolView` and
-`CAT_SurfView`, `CAT_VolDiff`, the `CAT_*_ui` wrappers, `parallelize` and the
-longitudinal scripts — answers the same way:
+`CAT_SurfView`, `CAT_VolDiff`, the plotters `CAT_PlotHistogram` and
+`CAT_PlotBoxplot`, the `CAT_*_ui` wrappers, `parallelize` and the longitudinal
+scripts — answers the same way:
 
 | You type | You get |
 |----------|---------|
@@ -43,10 +44,11 @@ tools used before (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`)
 are still accepted so existing command lines and scripts keep working; they are
 no longer listed in the help.
 
-Two tools do a job rather than take a file, so calling them without an argument
-runs that job instead of printing the synopsis: `t1prep-ui` starts the web
-interface, and `t1prep-download-models` fetches the model weights. Both still
-answer `--help`.
+Three tools do a job rather than take a file, so calling them without an
+argument runs that job instead of printing the synopsis: `t1prep-gui` opens
+the launcher window, `t1prep-ui` starts the web interface, and
+`t1prep-download-models` fetches the model weights. All three still answer
+`--help`.
 
 ## Options
 Call T1Prep without an argument for the overview, and with `--help` for the
