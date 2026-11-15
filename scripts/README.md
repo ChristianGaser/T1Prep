@@ -86,6 +86,34 @@ PyCAT --out-dir /tmp/out sub-01_T1w.nii.gz   # identical to the T1Prep call abov
 gets `bin/PyCAT` as a second copy of the orchestrator; the `$0` dispatch keeps
 the banner correct either way.
 
+### `T1Prep_gui`
+
+Opens the T1Prep launcher (choose images and options, run the pipeline, browse
+the results) from the source tree (installed: `t1prep-gui`). The arguments are
+those of `t1prep-gui`.
+
+```bash
+# Open the window
+./scripts/T1Prep_gui
+
+# With these images in the table
+./scripts/T1Prep_gui sub-01_T1w.nii.gz sub-02_T1w.nii.gz
+
+# Results into one folder instead of next to each image
+./scripts/T1Prep_gui --out-dir /data/results /data/study/*.nii
+
+# Browse the results of an earlier run
+./scripts/T1Prep_gui /data/results
+```
+
+**Python discovery:** shared with the longitudinal wrappers
+(`activate_t1prep_env` in `T1Prep_utils.sh`): `src/` goes first on
+`PYTHONPATH`, `env/` is activated when it exists, otherwise the first
+interpreter with T1Prep's requirements is used; `$T1PREP_PYTHON` overrides
+both. The launcher's code comes from the checkout, but its jobs run the `T1Prep`
+that comes first on `PATH` (the checkout's `scripts/T1Prep` only when there is
+none), and the form starts from that T1Prep's defaults file.
+
 ---
 
 ## Environment & Installation

@@ -117,7 +117,14 @@ python src/t1prep/gui/cat_surf_view.py data/templates_surfaces_32k/lh.pial.gii
 ### Running the Launcher
 
 ```bash
-# From the checkout, with the environment's interpreter
+# Recommended: use the wrapper (handles environment automatically)
+./scripts/T1Prep_gui
+
+# With images, or a folder of results to browse
+./scripts/T1Prep_gui sub-01_T1w.nii.gz
+./scripts/T1Prep_gui /data/results
+
+# Alternative: the module, with the environment's interpreter
 PYTHONPATH=src python -m t1prep.gui.launcher
 ```
 
@@ -179,7 +186,7 @@ T1Prep/
 3. **Use the generic runner** for any Python script in the project
 4. **Keep dependencies updated** - run `pip install -r requirements.txt` after environment changes
 5. **Document your workflow** - use these scripts in your own automation
-6. **Use provided launchers** - the installed `CAT_SurfView` and `CAT_VolView` for visualization manage the environment for you
+6. **Use provided launchers** - `scripts/T1Prep_gui` for the launcher and the installed `CAT_SurfView` and `CAT_VolView` for visualization manage the environment for you
 
 ## 🔧 Advanced Usage
 

@@ -39,7 +39,7 @@ t1prep-gui --out-dir /data/results /data/study/*.nii
 t1prep-gui /data/results                          # browse the results of an earlier run
 ```
 
-From a source checkout, without installing: `PYTHONPATH=src python -m t1prep.gui.launcher`.
+From a source checkout, without installing: `./scripts/T1Prep_gui`, which takes the same arguments.
 
 - **Images.** *Add images…*, *Add folder…* (a name pattern, optionally with
   subfolders; folders that hold T1Prep results are left out) or drag and drop.
