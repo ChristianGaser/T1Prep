@@ -72,6 +72,7 @@ T1Prep/
 │   ├── README.md                   # Comprehensive script documentation
 │   ├── T1Prep                      # Main CLI entry point (bash; shipped to <venv>/bin)
 │   ├── PyCAT -> T1Prep             # Symlink; same CLI, PyCAT banner (logo() switches on $0)
+│   ├── T1Prep_gui                  # Launcher dev wrapper (installed: t1prep-gui)
 │   ├── activate_env.sh             # Source to activate the venv
 │   ├── run_with_env.sh             # Run any Python script with venv
 │   ├── make_macos_apps.sh          # macOS .app bundles (installed: t1prep-make-apps)
@@ -177,6 +178,7 @@ src/t1prep/launch/ (option table, run states, result files; no Qt, used by the l
 - Prefer wrapper scripts that auto-activate the environment:
        - [scripts/activate_env.sh](scripts/activate_env.sh)
        - [scripts/run_with_env.sh](scripts/run_with_env.sh)
+       - [scripts/T1Prep_gui](scripts/T1Prep_gui) (launcher)
   
 These helpers ensure the correct interpreter and dependencies are used across CLI and GUI workflows.
 
@@ -185,7 +187,7 @@ These helpers ensure the correct interpreter and dependencies are used across CL
 - Run pipeline (example): `./scripts/T1Prep --out-dir /tmp/out sub-01_T1w.nii.gz`
 - Python API: `from t1prep import run_t1prep`
 - Quick Python sanity check: `python -m compileall src`
-- Run the launcher from the checkout: `PYTHONPATH=src python -m t1prep.gui.launcher`
+- Run the launcher from the checkout: `./scripts/T1Prep_gui`
 
 ## When to Update the Documentation
 
