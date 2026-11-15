@@ -7,6 +7,7 @@
 # - check_python_cmd: Finds and validates the Python interpreter (3.9-3.14).
 # - check_python_module: Checks for python modules.
 # - check_python_libraries: Checks for python libraries.
+# - merge_surface_report: Folds the surface measures of both hemispheres into the report.
 # - has_python_libraries: Whether the interpreter has the libraries of requirements.txt.
 # - install_python_libraries: Installs requirements.txt and T1Prep into the venv.
 # - get_pattern: Get the pattern from the desired column in namefile
@@ -676,7 +677,7 @@ check_python_libraries()
   # (otherwise we wouldn't be running).  Recreating it from here would clobber
   # their environment.  Quietly accept --install / --re-install as no-ops.
   if [ "${T1PREP_INSTALLED:-0}" -eq 1 ]; then
-    if [ "${re_install:-0}" -eq 1 ]; then
+    if [ "${re_install:-0}" -eq 1 ] || [ "${install_only:-0}" -eq 1 ]; then
       echo "${YELLOW}--install/--re-install ignored: T1Prep was installed via pip; reinstall with 'pip install --force-reinstall T1Prep' if needed.${NC}"
     fi
     return 0
@@ -711,6 +712,26 @@ check_python_libraries()
   if ! has_python_libraries; then
     install_python_libraries
   fi
+}
+
+# ----------------------------------------------------------------------
+# Fold the surface measures of the two hemispheres into the report
+# ----------------------------------------------------------------------
+# Usage: merge_surface_report <report_dir> <bname>
+#
+# Each hemisphere writes its measures (glued sulci, thickness distribution,
+# barrier reference) to a file of its own, <bname>_glued-lh.json and -rh.json,
+# because both run at once and share the report.  t1prep-run merges them once
+# both are done; T1Prep did not, so its reports lacked them and the two files
+# stayed behind.  Never fatal: the report is complete without the measures.
+
+merge_surface_report()
+{
+  local -a _py
+  read -r -a _py <<< "${python}"
+  "${_py[@]}" -c 'import sys
+from t1prep.report import merge_surface_measures
+merge_surface_measures(sys.argv[1], sys.argv[2])' "$1" "$2" || true
 }
 
 # ----------------------------------------------------------------------

@@ -99,7 +99,7 @@ main()
     check_python_module venv
     check_python_module pip
     check_python_libraries
-    if [ "$re_install" -eq 1 ]; then
+    if [ "$re_install" -eq 1 ] || [ "${install_only:-0}" -eq 1 ]; then
       exit 0
     fi
   fi
@@ -165,6 +165,10 @@ parse_args()
   skullstrip_only=${skullstrip_only:-0}
   skip_skullstrip=${skip_skullstrip:-0}
 
+  # Not in the defaults file: only the command line asks for them
+  install_only=0
+  verbose=0
+
   # The network backend: T1PREP_NN_BACKEND in the environment overrides the
   # defaults file, --nn-backend both
   nn_backend=${T1PREP_NN_BACKEND:-${nn_backend:-torch}}
@@ -186,7 +190,12 @@ parse_args()
         cfg=$optarg
         shift
         ;;
-      --install | --re-install)
+      # --install keeps an environment that is there and complete;
+      # --re-install removes it first.  (Both used to remove it.)
+      --install)
+        install_only=1
+        ;;
+      --re-install)
         re_install=1
         ;;
       --python)
@@ -479,7 +488,8 @@ surface_estimation()
       --progress-bar "${progress_bar}" \
       --progress-count-file "${_count_file}" \
       --progress-end-count "${end_count}" \
-      --progress-start-count "${count}"
+      --progress-start-count "${count}" \
+      --verbose "${verbose:-0}"
   return $?
 }
 
@@ -832,6 +842,12 @@ process()
         [ "${frontend_phases}" -eq 1 ] && echo "Volume Segmentation"
         printf '%q ' "${cmd[@]}" >> "${report_log}"
         echo >> "${report_log}"
+        # --verbose: the command on the console as well.  The surface steps
+        # print theirs themselves (surface_estimation --verbose).
+        if [ "${verbose:-0}" -eq 1 ]; then
+          printf '%q ' "${cmd[@]}"
+          echo
+        fi
         # Take the status inside each branch: after a pipeline `$?` is the
         # status of `tee`, which practically never fails, so a segmentation
         # that died (e.g. on a signal) was recorded as a success and the
@@ -938,6 +954,12 @@ process()
         for pid in "${pids[@]}"; do
           wait "$pid" || surf_status=1
         done
+      fi
+
+      # Both hemispheres are done: their measures go into the report, as
+      # t1prep-run puts them there
+      if [ "$surf_status" -eq 0 ]; then
+        merge_surface_report "${report_dir}" "${bname}"
       fi
 
       # The progress counter is shared between the two hemisphere processes;
@@ -1135,10 +1157,14 @@ ${BOLD}${GREEN}General Options:${NC}
   --defaults <FILE>           
       Specify an alternative defaults file to override built-in settings.
 
-  --install, --re-install
-      Source checkout only: remove an existing environment (env/) and install 
-      all required Python libraries again. Ignored when T1Prep was installed 
-      with pip.
+  --install
+      Source checkout only: create the environment (env/) and install all 
+      required Python libraries into it, unless it is there and has them 
+      already. Ignored when T1Prep was installed with pip.
+
+  --re-install
+      Source checkout only: remove the existing environment (env/) and 
+      install all required Python libraries again.
 
   --python <FILE>             
       Path to the Python interpreter to use (default: $python).
@@ -1165,7 +1191,9 @@ ${BOLD}${GREEN}General Options:${NC}
       discrepancy map (pd*) the WMH probability is read from.
 
   --verbose
-      Print the command of every processing step as it is run.
+      Print the command of every processing step as it is run: the call of
+      the volume pipeline, and each surface step of both hemispheres with
+      its run time. They are written to the log of the subject in any case.
 
   --help
       Show this description of every option. Called without any argument,
@@ -1278,7 +1306,7 @@ ${BOLD}${GREEN}Save Options:${NC}
 
   --skullstrip-only
     Run skull-stripping only and stop afterwards.
-    Writes the skull-stripped image into the output mri folder.
+    Writes the skull-stripped image and the brain mask into the output mri folder.
     This option disables surface estimation and spherical registration.
 
   --no-skullstrip
@@ -1413,7 +1441,7 @@ ${BLUE}T1Prep --multi 8 --p --csf --atlas "'neuromorphometrics', 'suit'" sTRIO*.
   The processing pipeline involves two stages 
   of parallelization:
   
-  1. Segmentation (Python-based): Runs best with at least 16-24GB of memory per process. 
+  1. Segmentation (Python-based): Runs best with about 10-16 GB of memory per process. 
      The number of processes is automatically estimated based on available memory to 
      optimize resource usage. If you notice system overload due to peak memory usage
      you can set a higher minimum memory limit using the "--min-memory" flag.

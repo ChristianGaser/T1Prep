@@ -590,6 +590,7 @@ Shared bash utility functions sourced by most other scripts. Provides:
 - `exit_if_empty` — Argument validation
 - `check_python_cmd` / `check_python_module` / `check_python_libraries` — Python environment checks
 - `activate_t1prep_env` — Interpreter and `PYTHONPATH` for the wrappers of a source checkout
+- `merge_surface_report` — Folds the surface measures of both hemispheres into the report
 - `has_python_libraries` / `install_python_libraries` — The source-tree environment `env/`: whether it has the libraries of `requirements.txt`, and installing them and T1Prep into it
 - `t1prep_output_folder_from_input` / `already_processed` — Output folder and `--no-overwrite` logic, shared with `process_longitudinal.sh`
 - `get_no_processes` — Number of jobs the memory allows

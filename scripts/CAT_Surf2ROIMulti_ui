@@ -34,11 +34,11 @@ os_type=$(uname -s) # Determine OS type
 
 script_dir=$(dirname "$0")
 root_dir=$(dirname "$script_dir")
-surf_templates_dir=${root_dir}/src/t1prep/data/templates_surfaces_${res}
-atlas_templates_dir=${root_dir}/src/t1prep/data/atlases_surfaces_${res}
 
 DEFAULT_ANNOT="'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'"
 
+# Sets data_dir, surf_templates_dir and atlas_templates_dir for a source
+# checkout as well as for an installation
 source "${script_dir}/T1Prep_utils.sh"
 
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
@@ -102,11 +102,12 @@ main()
     local -a cmd_argv
     local atlas_names_joined
     atlas_names_joined=$(IFS=,; echo "${ATLAS_NAMES[*]}")
+    # The right target sphere is not passed on: each job derives it from the
+    # left one, as this call did.  (It used to be passed as --trg-sphere-rh,
+    # an option that does not exist, so every job of a batch stopped with
+    # "Unrecognized option".)
     cmd_argv=("$0" "--no-parallel" "--res" "$res" "--trg-sphere" "$lh_trg_sphere" "--annot" "$atlas_names_joined")
 
-    if [[ -n "$rh_trg_sphere" ]]; then
-      cmd_argv+=("--trg-sphere-rh" "$rh_trg_sphere")
-    fi
     if [[ -n "${out:-}" ]]; then
       cmd_argv+=("--out" "$out")
     fi
@@ -206,11 +207,13 @@ parse_args()
     shift
   done
 
-  # refresh default paths after --res change if defaults are still selected
+  # refresh default paths after --res change if defaults are still selected.
+  # Below data_dir, not below root_dir/src: an installation has no src/, so
+  # no atlas was found there.
   local default_lh_trg
-  surf_templates_dir="${root_dir}/src/t1prep/data/templates_surfaces_${res}"
-  atlas_templates_dir="${root_dir}/src/t1prep/data/atlases_surfaces_${res}"
-  default_lh_trg="${root_dir}/src/t1prep/data/templates_surfaces_${res}/lh.sphere.freesurfer.gii"
+  surf_templates_dir="${data_dir}/templates_surfaces_${res}"
+  atlas_templates_dir="${data_dir}/atlases_surfaces_${res}"
+  default_lh_trg="${surf_templates_dir}/lh.sphere.freesurfer.gii"
   if [[ "$lh_trg_sphere" == */templates_surfaces_*/lh.sphere.freesurfer.gii ]]; then
     lh_trg_sphere="$default_lh_trg"
   fi
