@@ -785,7 +785,7 @@ process()
       seg_end_count=$((count + 1))
     fi
 
-    # 1. Call deepmriprep segmentation
+    # 1. Volume pipeline (t1prep.segment): skull-strip, segmentation, registration
     # ----------------------------------------------------------------------
     # Check for outputs from previous step
     if [ -f "${input}" ]; then
@@ -1039,9 +1039,9 @@ usage() {
     "${BOLD}Save:${NC}     --out-dir <DIR>  --bids  --gz  --no-overwrite <STRING>" \
     "          --save-h5  --fmriprep  --no-track  --skullstrip-only" \
     "          --no-skullstrip  --no-surf  --no-seg  --no-sphere-reg" \
-    "          --no-mwp  --no-atlas  --no-atlas-surf  --no-pial-white  --hemi" \
-    "          --wp  --rp  --p  --csf  --lesions  --atlas <LIST>" \
-    "          --atlas-surf <LIST>" \
+    "          --no-mwp  --no-atlas  --no-atlas-surf  --pial-white" \
+    "          --no-pial-white  --hemi  --wp  --rp  --p  --csf  --lesions" \
+    "          --atlas <LIST>  --atlas-surf <LIST>" \
     "" \
     "${BOLD}Expert:${NC}   --initial-surface <FILE>  --amap" \
     "          --thickness-method <NUMBER>  --no-correct-folding" \
@@ -1078,11 +1078,14 @@ and cortical surface reconstruction. It provides a complete set of tools for eff
 processing structural MRI scans.
 
 T1Prep partially integrates DeepMriPrep, which uses deep learning (DL) techniques to 
-mimic functionality of CAT12 for processing structural MRIs. DeepMriPrep is used for 
-skull-stripping, segmentation and nonlinear spatial registration.
+mimic functionality of CAT12 for processing structural MRIs. The networks of DeepMriPrep 
+(and of deepbet, its brain extraction) are used for skull-stripping and segmentation. 
+T1Prep runs them with its own code, so neither package has to be installed. The 
+nonlinear spatial registration is CAT12's geodesic shooting.
 
-An alternative approach uses DeepMriPrep for bias field correction, lesion detection, 
-and also serves as an initial estimate for the subsequent AMAP segmentation from CAT12. 
+An alternative approach (--amap) uses the DeepMriPrep segmentation to guide the bias 
+field correction and the lesion detection, and as the initial estimate for the 
+subsequent AMAP segmentation from CAT12. 
 
 Cortical surface reconstruction and thickness estimation are performed using Cortex 
 Analysis Tools for Surface, a core component of the CAT12 toolbox.
@@ -1104,8 +1107,8 @@ The location and structure of the output folders depend on:
 2. Non-BIDS datasets
 
   If the upper-level folder is not anat, results are written into subfolders similar 
-  to CAT12 output inside the specified output directory (or the current working 
-  directory if none is specified).
+  to CAT12 output inside the specified output directory (or the folder of the 
+  input file if none is specified).
 
 3. Folder naming conventions
 
@@ -1117,7 +1120,7 @@ The location and structure of the output folders depend on:
 4. Custom output folder
 
   You can specify --out-dir <DIR> to override the default location.
-  If --bids is set, the BIDS substructure will still be appended inside <DIR>.
+  For a BIDS dataset the derivatives substructure is still appended inside <DIR>.
   
 ${BOLD}Naming conventions:${NC}
 CAT12 style (default): Uses legacy names for files and subfolders (mri, surf, etc.).
@@ -1132,11 +1135,10 @@ ${BOLD}${GREEN}General Options:${NC}
   --defaults <FILE>           
       Specify an alternative defaults file to override built-in settings.
 
-  --install                   
-      Install all required Python libraries.
-
-  --re-install                
-      Remove the existing installation and re-install all required Python libraries.
+  --install, --re-install
+      Source checkout only: remove an existing environment (env/) and install 
+      all required Python libraries again. Ignored when T1Prep was installed 
+      with pip.
 
   --python <FILE>             
       Path to the Python interpreter to use (default: $python).
@@ -1190,7 +1192,7 @@ ${BOLD}${GREEN}General Options:${NC}
 ${BOLD}${GREEN}Save Options:${NC}
   --out-dir <DIR>             
       Set the base output directory (relative or absolute).  
-      Default: the current working directory.
+      Default: the folder of the input file (for a BIDS dataset its root).
 
       Output folder structure depends on the input dataset type:
         • BIDS datasets (if the upper-level folder of the input files is 'anat'):
@@ -1201,8 +1203,10 @@ ${BOLD}${GREEN}Save Options:${NC}
             Results are placed in subfolders similar to CAT12 output
             (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified output directory.
 
-      If '--bids' is set, the BIDS derivatives substructure will always be used
-      inside '<DIR>'.
+      '--bids' changes the file names, and all files then go into one folder,
+      without 'mri/', 'surf/', 'report/' and 'label/'. The derivatives
+      substructure is built only for an input inside an 'anat' folder, with
+      or without '--bids'.
 
   --bids                      
       Use BIDS derivatives naming conventions for all output files and folders
@@ -1213,7 +1217,7 @@ ${BOLD}${GREEN}Save Options:${NC}
           (e.g., 'mri/mwp1sub-01.nii', 'surf/lh.thickness.sub-01').
         • BIDS style: Uses standardized derivatives names, including subject/session
           identifiers, modality, and processing steps
-          (e.g., 'sub-01_ses-1_space-MNI152NLin2009cAsym-nonlinear-modulated_label-WM_probseg.gz',
+          (e.g., 'sub-01_ses-1_space-MNI152NLin2009cAsym-nonlinear-modulated_label-WM_probseg.nii.gz',
           'sub-01_ses-1_hemi-L_thickness.shape.gii').
 
       The complete mapping between internal outputs and both naming conventions
@@ -1255,7 +1259,6 @@ ${BOLD}${GREEN}Save Options:${NC}
           own fsLR registration and MSMSulc
         Save BIDS dataset_description.json and JSON sidecars, without which
           fMRIPrep cannot see any of the above
-        Save spatially registered data with 2mm voxel size
         Register with every scheduled iteration and half of CAT12's
           regularisation: more accurate for moving data and labels, but
           not meant for VBM (no modulated maps are saved)
@@ -1275,7 +1278,7 @@ ${BOLD}${GREEN}Save Options:${NC}
 
   --skullstrip-only
     Run skull-stripping only and stop afterwards.
-    Writes a skull-stripped image and a brain mask into the output mri folder.
+    Writes the skull-stripped image into the output mri folder.
     This option disables surface estimation and spherical registration.
 
   --no-skullstrip
@@ -1328,7 +1331,7 @@ ${BOLD}${GREEN}Save Options:${NC}
       Additionally save WMH lesion maps (p4*): the probability of a WMH
       inside the detected lesions, 0 elsewhere.  The WMH volume in the report
       is the volume of these lesions.
-      This works currently only for native-space and affine-registered segmentations.
+      The lesion map is written in native space only.
 
   --atlas                     
       Specify a volumetric atlas list in the format 

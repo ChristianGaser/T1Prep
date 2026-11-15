@@ -9,7 +9,7 @@
 #   CAT_SurfResampleMulti_ui [options] <lh_input_value_file> [<lh_input_value_file> ...]
 #
 # INPUT:
-#   Left hemisphere value files (e.g. lh.thickness.gii or lh.thickness.dat).
+#   Left hemisphere value files as T1Prep names them (e.g. lh.thickness.sub-01).
 #   The script auto-derives corresponding central/sphere files and the right
 #   hemisphere counterparts by name.
 #
@@ -418,12 +418,12 @@ ${BOLD}OPTIONS:${NC}
 
 ${BOLD}INPUT NAMING EXPECTATIONS:${NC}
   lh.* case (supported now)
-    lh.<measure>.something.gii
-    Will look for:
-      lh.central.gii               (same base, measure replaced by "central")
-      lh.sphere.reg.gii            (same base, measure replaced by "sphere.reg")
-      rh.<measure>.something.gii   (right hemisphere counterpart)
-      rh.central.gii, rh.sphere.reg.gii accordingly
+    lh.<measure>.<name>            (as T1Prep writes it, without .gii)
+    Will look for, next to it:
+      lh.central.<name>.gii        (measure replaced by "central", .gii added)
+      lh.sphere.reg.<name>.gii     (measure replaced by "sphere.reg", .gii added)
+      rh.<measure>.<name>          (right hemisphere counterpart)
+      rh.central.<name>.gii, rh.sphere.reg.<name>.gii accordingly
 
   *_left* (BIDS) not yet implemented → the script exits with an error.
         

@@ -10,7 +10,7 @@ WARP_SCRIPT="$SCRIPT_DIR/warp_longitudinal.sh"
 MODULATE_SCRIPT="$SCRIPT_DIR/modulate_longitudinal.sh"
 T1PREP_CMD="$SCRIPT_DIR/T1Prep"
 
-# We run with nounset, but utils.sh is shared with scripts that don't.
+# We run with nounset, but T1Prep_utils.sh is shared with scripts that don't.
 # Temporarily disable nounset while sourcing to avoid unbound variable errors.
 set +u
 source "$SCRIPT_DIR/T1Prep_utils.sh"

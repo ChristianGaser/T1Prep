@@ -4,9 +4,11 @@
 #
 # FUNCTIONS:
 # - exit_if_empty: Checks if a command line argument is empty and exits with an error message if it is.
-# - check_python: Checks if the specified Python command is available.
+# - check_python_cmd: Finds and validates the Python interpreter (3.9-3.14).
 # - check_python_module: Checks for python modules.
 # - check_python_libraries: Checks for python libraries.
+# - has_python_libraries: Whether the interpreter has the libraries of requirements.txt.
+# - install_python_libraries: Installs requirements.txt and T1Prep into the venv.
 # - get_pattern: Get the pattern from the desired column in namefile
 # - substitute_pattern: Substitute variables in the pattern
 # - check_files: Checks if the input files exist.
@@ -694,7 +696,7 @@ check_python_libraries()
       echo "${RED}Failed to create Python virtual environment at ${T1prep_env}.${NC}" >&2
       exit 1
     fi
-    install_deepmriprep
+    install_python_libraries
   fi
 
   if [ ! -f "${T1prep_env}/bin/activate" ]; then
@@ -706,10 +708,28 @@ check_python_libraries()
   echo "${YELLOW}source ${T1prep_env}/bin/activate${NC}"
   
   # Check that installation was successful and try it a 2nd time otherwise
-  $python -c "import deepmriprep" &>/dev/null
-  if [ $? -gt 0 ]; then
-    install_deepmriprep
+  if ! has_python_libraries; then
+    install_python_libraries
   fi
+}
+
+# ----------------------------------------------------------------------
+# Whether the interpreter has the Python libraries of requirements.txt
+# ----------------------------------------------------------------------
+# cat_surf stands for them: it is the first dependency t1prep/__init__.py
+# imports and nothing but requirements.txt brings it, while importing t1prep
+# itself would add seconds (torch) to every call.  Given further modules,
+# those have to import as well.
+#
+# The check used to be "import deepmriprep".  deepmriprep left the
+# requirements in 0.9.0 (T1Prep runs its networks itself, see t1prep.nn), so
+# from then on no fresh environment passed it: the installer ended in
+# "Installation of deepmriprep not successful" before T1Prep was installed.
+
+has_python_libraries()
+{
+  local _modules="cat_surf${1:+, $1}"
+  $python -c "import ${_modules}" &>/dev/null
 }
 
 # ----------------------------------------------------------------------
@@ -768,12 +788,12 @@ repair_venv()
 }
 
 # ----------------------------------------------------------------------
-# Install deepmriprep
+# Install the Python libraries (requirements.txt) and T1Prep itself
 # ----------------------------------------------------------------------
 
-install_deepmriprep()
+install_python_libraries()
 {
-  echo "Install deepmriprep"
+  echo "Install the Python libraries of T1Prep"
   check_venv_prerequisites
   if ! $python -m venv ${T1prep_env}; then
     echo "${RED}Failed to create Python virtual environment at ${T1prep_env}.${NC}" >&2
@@ -793,10 +813,12 @@ install_deepmriprep()
   PYTHONIOENCODING=utf-8 $python -m pip install -U pip
   PYTHONIOENCODING=utf-8 $python -m pip install --no-compile -r ${root_dir}/requirements.txt
 
-  $python -c "import deepmriprep" &>/dev/null
-  if [ $? -gt 0 ]; then
-    echo "${RED}ERROR: Installation of deepmriprep not successful.
-      Please install it manually${NC}" >&2
+  # torch as well: the largest of them, and the one a platform is most
+  # likely to have no wheel for
+  if ! has_python_libraries torch; then
+    echo "${RED}ERROR: Installation of the Python libraries not successful.
+      Please install them manually:
+      $python -m pip install -r ${root_dir}/requirements.txt${NC}" >&2
     exit 1
   fi
 

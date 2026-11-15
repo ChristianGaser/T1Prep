@@ -480,6 +480,7 @@ ${BOLD}USAGE:${NC}
 
 ${BOLD}DESCRIPTION:${NC}
 Compute surface-based parameters from surface files using:
+  cat_surf.cli.surf_curvature
   cat_surf.cli.surf_sulcus_depth
   cat_surf.cli.surf_fractal_dimension
   cat_surf.cli.surf_ratio
@@ -524,6 +525,7 @@ ${BOLD}OUTPUT:${NC}
   Per input (and hemisphere if auto-RH applies): curvature values for each node.
 
 ${BOLD}Dependencies:${NC}
+  cat_surf.cli.surf_curvature
   cat_surf.cli.surf_sulcus_depth
   cat_surf.cli.surf_fractal_dimension
   cat_surf.cli.surf_ratio

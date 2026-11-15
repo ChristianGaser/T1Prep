@@ -16,7 +16,7 @@ fi
 # Check if environment exists
 if [[ ! -d "$ENV_DIR" ]]; then
     echo "❌ Error: Virtual environment not found: $ENV_DIR"
-    echo "   Please run: python3 -m venv env"
+    echo "   Please run: scripts/T1Prep --install"
     return 1 2>/dev/null || exit 1
 fi
 

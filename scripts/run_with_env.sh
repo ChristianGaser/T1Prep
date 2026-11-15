@@ -13,7 +13,7 @@ ENV_DIR="$PROJECT_DIR/env"
 if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: $0 <script_path> [arguments...]"
     echo "Example: $0 src/t1prep/gui/cat_surf_view.py --help"
-    echo "         $0 src/t1prep/segment.py --help"
+    echo "         $0 scripts/qa_calibrate.py /path/to/BWP/report"
     exit 0
 fi
 

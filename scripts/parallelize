@@ -567,7 +567,8 @@ ${BOLD}USAGE:${NC}
   $(basename "$0") [options] --command <STRING> [filename|filepattern]
 
 ${BOLD}OPTIONS:${NC}
-  --processes <NUMBER>     Specify the number of parallel jobs (default $NUM_JOBS).
+  --processes <NUMBER>     Specify the number of parallel jobs (default: all logical cores,
+                           or as many as --mem-limit allows).
                            If <NUMBER> is a floating-point value between 0 and 1,
                            it will be interpreted as a fraction of available CPU cores.
                            For example, 0.7 means 70% of CPU cores will be used.
@@ -602,16 +603,16 @@ ${BOLD}EXAMPLES:${NC}
   ${BLUE}parallelize --command "gunzip" *.zip${NC}
     Parallelizes unzipping of all .zip files in the current directory.
 
-  ${BLUE}parallelize --mem-limit 20 --command "T1prep --no-surf" sTRIO*.nii${NC}
-    Parallelizes 'T1prep' without surface estimation, setting a 10GB RAM limit per process.
+  ${BLUE}parallelize --mem-limit 20 --command "T1Prep --no-surf" sTRIO*.nii${NC}
+    Parallelizes 'T1Prep' without surface estimation, setting a 20GB RAM limit per process.
 
   ${BLUE}parallelize --processes 0.7 --command "gunzip" *.zip${NC}
     Parallelizes unzipping of all .zip files in the current directory by using 70% of the
     available processors.
 
-  ${BLUE}${T1prep_dir}/T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
-  ${T1prep_dir}/parallelize --processes 8 --command "T1prep.sh --out-dir test_folder --no-seg" sTRIO*.nii${NC}
-    1. Runs 'T1prep.sh' on all files matching the pattern 'sTRIO*.nii', skipping surface 
+  ${BLUE}T1Prep --out-dir test_folder --no-surf --hemisphere sTRIO*.nii
+  parallelize --processes 8 --command "T1Prep --out-dir test_folder --no-seg" sTRIO*.nii${NC}
+    1. Runs 'T1Prep' on all files matching the pattern 'sTRIO*.nii', skipping surface 
        creation and saving results in 'test_folder'.
     2. Parallelizes the processing using 8 processors for improved performance. The first 
        command is not parallelized because it already uses multi-threading and is 

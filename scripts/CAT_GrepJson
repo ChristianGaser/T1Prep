@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# PURPOSE:
+# PURPOSE: Print one field of T1Prep's JSON reports for a list of files.
 #
-# USAGE:
+# USAGE: CAT_GrepJson --field <NAME> [--out <FILE>] <json file(s)>
 #
-# INPUT:
+# INPUT: T1Prep report files (report/log_<name>.json; BIDS: <name>_log.json).
 #
-# OUTPUT:
+# OUTPUT: The field of each file, on the terminal or in the file given with
+#         --out.  Needs jq.
 # ______________________________________________________________________
 #
 # Christian Gaser
@@ -151,6 +152,8 @@ ${BOLD}USAGE:${NC}
   ${GREEN}$0 [options] <json-filename(s)>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
+Print one field of T1Prep's JSON reports (report/log_<name>.json) for a list
+of files, e.g. the total intracranial volume of every subject. Needs jq.
 
 ${BOLD}OPTIONS:${NC}
   --field <STR>  Field name to be used in json file.

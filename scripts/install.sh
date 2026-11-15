@@ -12,7 +12,7 @@
 #
 # Env overrides:
 #   REPO_OWNER  (default: ChristianGaser)
-#   REPO_NAME   (default: T1prep)
+#   REPO_NAME   (default: T1Prep)
 #   T1PREP_INSTALL_DIR (skip interactive prompt, use this directory)
 #   T1PREP_VERSION (skip interactive prompt, use this release version, e.g., "v1.0.0" or "latest")
 #   T1PREP_PYTHON  (skip interactive prompt, use this Python interpreter, e.g.,
@@ -554,7 +554,7 @@ main() {
   echo ""
   info "Then the following commands are available:"
   echo "  T1Prep                 # main CLI (batch + parallel, --multi)"
-  echo "  PyCAT                  # symlink to T1Prep, PyCAT banner"
+  echo "  PyCAT                  # T1Prep under a second name, PyCAT banner"
   echo "  t1prep-gui             # desktop launcher (images, options, run, results)"
   echo "  t1prep-run             # single-subject Python entry"
   echo "  CAT_SurfView           # surface viewer"
