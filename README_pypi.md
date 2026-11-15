@@ -49,6 +49,7 @@ following commands are available:
 | --- | --- |
 | `T1Prep` | main CLI — batch + parallel processing (`--multi`) |
 | `PyCAT` | symlink to `T1Prep`; identical, only the banner differs |
+| `t1prep-gui` | desktop launcher: choose images, run, browse the results |
 | `t1prep-ui` | browser-based web UI |
 | `t1prep-run` | single-subject Python entry |
 | `CAT_SurfView` | surface viewer |
@@ -57,6 +58,7 @@ following commands are available:
 | `t1prep-download-models` | fetch model weights |
 | `t1prep-bbreg` | BOLD reference, head-motion correction and boundary-based BOLD-to-T1w registration for fMRIPrep to reuse |
 | `CAT_PlotHistogram` | histograms of volumes, surfaces or text data |
+| `CAT_PlotBoxplot` | box and violin plots of volumes, surfaces or text data |
 
 ### Download model weights
 
