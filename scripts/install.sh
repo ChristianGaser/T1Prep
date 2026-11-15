@@ -556,7 +556,6 @@ main() {
   echo "  T1Prep                 # main CLI (batch + parallel, --multi)"
   echo "  PyCAT                  # symlink to T1Prep, PyCAT banner"
   echo "  t1prep-gui             # desktop launcher (images, options, run, results)"
-  echo "  t1prep-ui              # web UI"
   echo "  t1prep-run             # single-subject Python entry"
   echo "  CAT_SurfView           # surface viewer"
   echo "  CAT_VolView            # volume viewer (3 orthogonal slices)"

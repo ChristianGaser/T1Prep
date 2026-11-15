@@ -128,7 +128,8 @@ single_job_bar() {
       echo ""  # newline at end
     fi
   elif [ -n "$T1PREP_WEBUI" ]; then
-    # Web UI mode: always output progress for tracking
+    # For a front end that reads the output (t1prep-gui sets T1PREP_WEBUI):
+    # every step as a line of its own
     echo "|${bar}| ${percent}% $label $eta"
   else
     # Non-TTY: only final output

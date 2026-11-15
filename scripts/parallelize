@@ -322,15 +322,20 @@ do_parallelize ()
   if [ "$NUM_JOBS" -lt 2 ]; then
       #echo "Executing serially..."
       i=0
-      
+      errors=0
+      error_list=""
+
       for file in "${ARRAY[@]}"; do
           # eval splits the command string; the file name is quoted with %q
           # so that $(...) or backticks in it are never executed
           eval "$COMMAND $(printf '%q' "$file")"
           exit_code=$?
           ((i++))
-          
+
           if [ $exit_code -ne 0 ]; then
+            ((errors++))
+            error_list+="  $file"
+            error_list+=$'\n'
             $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "" $i $SIZE_OF_ARRAY "$cmd_name" 40 1
           else
             $(dirname "$0")/progress_bar_multi.sh "$NUM_JOBS" "" $i $SIZE_OF_ARRAY "$cmd_name" 40
@@ -352,7 +357,18 @@ do_parallelize ()
       # wait until progress bar is finished
       wait $progress_pid
 
-      # Display the result
+      # Display the result depending on error status, as the parallel branch
+      # below does.  A failed item used to show in the bar only and the status
+      # was 0 whatever had happened, so "T1Prep --multi 1" reported success
+      # for a batch with failures.
+      if [ "$errors" -ne 0 ]; then
+        overall+=" with $errors error(s)"
+        echo "${RED}-------------------------------------------------------"
+        echo "${RED}${overall}${NC}"
+        echo "${RED}Failed items:${NC}"
+        printf '%s' "$error_list"
+        exit 1
+      fi
       echo "${GREEN}-------------------------------------------------------${NC}"
       echo "${GREEN}${overall}${NC}"
       echo " "
@@ -572,6 +588,11 @@ ${BOLD}DESCRIPTION:${NC}
 ${BOLD}OUTPUT:${NC}
   If a log directory is specified, logs are saved in that folder in a file named 
   'parallelize_${HOSTNAME}_\${time}.log', incorporating the current date and time.
+
+${BOLD}EXIT STATUS:${NC}
+  0 when the command succeeded for every file, 1 when it failed for at least one; the
+  files it failed for are then listed. With --bg the jobs are not waited for and the
+  status is 0.
 
 ${BOLD}EXAMPLES:${NC}
   ${BLUE}parallelize --command "niismooth -v -fwhm 8" sTRIO*.nii${NC}
