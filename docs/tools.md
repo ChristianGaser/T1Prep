@@ -1,14 +1,12 @@
 # Additional tools
 
-T1Prep installs more than the pipeline itself: a desktop launcher, a web UI,
-four small GUIs for
-surface post-processing, a histogram plotter, a box and violin plotter, and
+T1Prep installs more than the pipeline itself: a desktop launcher, four small
+GUIs for surface post-processing, a histogram plotter, a box and violin plotter, and
 the two viewers (documented separately in [viewers.md](viewers.md)).
 
 | Command | What it is |
 |---------|------------|
 | `t1prep-gui` | Desktop launcher: choose images, run the pipeline, browse the results |
-| `t1prep-ui` | Web UI for the pipeline |
 | `CAT_SurfView` / `CAT_VolView` | Surface and volume viewers — see [viewers.md](viewers.md) |
 | `CAT_SurfResampleMulti_ui` | Resample and smooth surface data |
 | `CAT_SurfParameters_ui` | Extract surface parameters |
@@ -72,64 +70,11 @@ The launcher itself uses neither VTK nor OpenGL. The pictures are rendered by
 own. Where the viewers cannot start (no working OpenGL), the launcher still
 runs the pipeline; only the pictures and the viewer buttons are missing.
 
-## Web UI (Flask)
-
-A minimal browser-based UI is available for local use. It uploads selected NIfTI
-files, lets you configure General, Save and Expert options, and can schedule jobs
-to start at a specific time. The form starts from the defaults file of the
-`T1Prep` it runs (`T1Prep_defaults.txt` in the environment's `bin/` next to
-`T1Prep`, or at the root of a source checkout), so it shows what that `T1Prep`
-would do on its own; reload the page after editing the file.
-
-```bash
-t1prep-ui
-```
-
-By default the Web UI runs on port 5050. To use a different port:
-
-```bash
-t1prep-ui 5500
-```
-
-When started, the UI will try to open an app-style window (Chrome if available,
-otherwise your default browser). You can also open the URL manually in any
-browser.
-
-Then open http://127.0.0.1:5050 (or the port you selected) in your browser.
-
-To prevent auto-opening a browser window:
-
-```bash
-t1prep-ui --no-browser
-```
-
-Uploaded files are stored under `webui_uploads/` (in the current working
-directory) and per-job logs under `/tmp/webui_jobs/`.
-
-The UI listens on 127.0.0.1 only, answers only requests addressed to
-`127.0.0.1` or `localhost`, and accepts a job only with the token embedded
-in its own form. Other web pages open in your browser therefore cannot
-start jobs (cross-site requests, DNS rebinding). Option values may not start
-with `-` (negative numbers excepted), so a form field cannot smuggle in an
-option.
+## Surface post-processing tools
 
 In addition to `T1Prep`, the following commands — all installed into the
-environment's `bin/` — provide convenient entry points for the Web UI and
-CAT-Surface post-processing.
-
-### `t1prep-ui`
-
-Launches the Flask Web UI (same tool described in the [Web UI (Flask)](#web-ui-flask) section).
-
-```bash
-t1prep-ui
-t1prep-ui 5500
-t1prep-ui --no-browser
-```
-
-- Default port: `5050`
-- Optional positional port argument (e.g., `5500`)
-- `--no-browser` disables auto-launching a browser/app window
+environment's `bin/` — provide convenient entry points for CAT-Surface
+post-processing.
 
 ### `CAT_SurfResampleMulti_ui`
 

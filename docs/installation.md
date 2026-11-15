@@ -84,7 +84,6 @@ T1Prep file.nii.gz                              # main CLI (batch + parallel, --
 PyCAT  file.nii.gz                              # same thing, PyCAT banner
 t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
 t1prep-gui                                      # desktop launcher
-t1prep-ui                                       # web UI
 CAT_SurfView lh.central.gii                     # surface viewer
 CAT_VolView T1.nii.gz                           # volume viewer
 CAT_PlotHistogram p1*.nii.gz                    # histograms of the inputs
@@ -212,7 +211,7 @@ pip install -e .                    # editable; tracks local edits
 pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
-Either way the entry points (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-ui`, `t1prep-run`,
+Either way the entry points (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-run`,
 `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`,
 `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`) are
 placed in `env/bin`. Activating
@@ -223,7 +222,7 @@ source `scripts/` folder is only a dev fallback and should not be put on `PATH`.
 ```bash
 unzip T1Prep_$version.zip -d your_installation_folder
 ./scripts/T1Prep --python python3.12 --install   # creates env/ and installs into it
-export PATH="$PWD/env/bin:$PATH"                  # then use T1Prep, t1prep-ui, …
+export PATH="$PWD/env/bin:$PATH"                  # then use T1Prep, t1prep-gui, …
 ```
 
 ## Docker

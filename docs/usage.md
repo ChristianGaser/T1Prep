@@ -44,11 +44,10 @@ tools used before (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`)
 are still accepted so existing command lines and scripts keep working; they are
 no longer listed in the help.
 
-Three tools do a job rather than take a file, so calling them without an
-argument runs that job instead of printing the synopsis: `t1prep-gui` opens
-the launcher window, `t1prep-ui` starts the web interface, and
-`t1prep-download-models` fetches the model weights. All three still answer
-`--help`.
+Two tools do a job rather than take a file, so calling them without an argument
+runs that job instead of printing the synopsis: `t1prep-gui` opens the launcher
+window, and `t1prep-download-models` fetches the model weights. Both still
+answer `--help`.
 
 ## Options
 Call T1Prep without an argument for the overview, and with `--help` for the
@@ -65,7 +64,8 @@ Skull-stripping modes:
 Longitudinal / advanced flags:
 - `--initial-surf <FILE>`: use an initial surface estimate for longitudinal processing.
 - `--long-data <FILE>`: process `<FILE>`, the longitudinally realigned copy of the input (as `process_longitudinal.sh` passes it), instead of the input, while output folders and names still follow the input file. Takes exactly one input file.
-- `--no-atlas`: disable atlas labeling (overrides any defaults file atlas selection).
+- `--no-atlas`: skip the volume atlases, i.e. the ROI volumes (overrides the defaults file and `--atlas`). The surface atlases are not affected.
+- `--no-atlas-surf`: skip the surface atlases (overrides the defaults file and `--atlas-surf`).
 - `--hemi`: keep the hemispheric partitions of the label map (`mri/lh.seg.*`, `mri/rh.seg.*`; with `--bids` `*_hemi-L_seg.*`, `*_hemi-R_seg.*`). Surface estimation creates them as its input and removes them afterwards unless `--hemi` or `--debug` is given; after a failed surface estimation they stay. To run the surfaces later with `--no-seg`, write them with `--no-surf --hemi` first.
 
 Segmentation refinement:
@@ -180,7 +180,8 @@ Any one of these switches telemetry off:
 
 | Where | How |
 |-------|-----|
-| `T1Prep`, `t1prep-run`, web UI | `--no-track`, or the *No telemetry* switch |
+| `T1Prep`, `t1prep-run` | `--no-track` |
+| `t1prep-gui` | *Send anonymous usage statistics* switched off (Expert options) |
 | Defaults file | `track=0` |
 | Environment (every entry point, also Docker) | `T1PREP_NO_TRACK=1` or `DO_NOT_TRACK=1`, e.g. `docker run -e T1PREP_NO_TRACK=1 ...` |
 | Python API | `run_t1prep(..., track=False)` |
