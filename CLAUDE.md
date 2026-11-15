@@ -81,6 +81,7 @@ python evaluation/tools/eval_mindboggle.py project --mindboggle DIR... --t1prep 
 python evaluation/tools/eval_mindboggle.py dice --work DIR --protocol both
 
 # Accuracy against the simulated phantom (manual, ~15 min): run, then check the pins
+# (the make targets go through scripts/run_with_env.sh and need the project venv env/)
 make phantom                     # = eval_phantom.py run + check in /tmp/T1Prep_phantom
 make phantom-check PHANTOM_DIR=DIR
 make phantom-pin                 # re-pin after an intended change (two devices, ~30 min)
@@ -90,12 +91,16 @@ python evaluation/tools/fit_wmh_calibration.py fit --work DIR  # refit WMH_CALIB
 
 ## Environment
 
-Always use the wrapper scripts – they auto-activate the virtual environment:
+The wrapper scripts of a source checkout. `activate_env.sh` and `run_with_env.sh`
+activate the project venv `env/` and stop when there is none (`scripts/T1Prep
+--install` creates it); `T1Prep_gui`, `dice.sh` and the longitudinal wrappers also
+work without it, on the first interpreter that has T1Prep's requirements
+(`$T1PREP_PYTHON` picks one):
 
 | Script | Purpose |
 |--------|---------|
 | `scripts/activate_env.sh` | Activate venv manually |
-| `scripts/run_with_env.sh <script>` | Run any Python script with correct env |
+| `scripts/run_with_env.sh <script>` | Run a Python script file with `env/` (not modules with relative imports such as `t1prep.segment`: use `python -m`) |
 | `scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py` | Surface viewer from a checkout (installed: `CAT_SurfView`) |
 | `scripts/run_with_env.sh src/t1prep/gui/cat_vol_view.py` | Volume viewer from a checkout (installed: `CAT_VolView`) |
 | `scripts/make_macos_apps.sh` | Build macOS `.app` bundles (installed: `t1prep-make-apps`) |
@@ -110,8 +115,8 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 | `requirements.txt` | `pyproject.toml` → `[project.dependencies]` |
 | `pyproject.toml` dependencies | `requirements.txt` |
 | CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py`, `src/t1prep/launch/options.py` (the launcher's form; `tests/test_launch_options.py` holds it against `parse_args`), `T1Prep_defaults.txt`, `docs/usage.md` |
-| `[project.scripts]` / `script-files` entry points in `pyproject.toml` | `README.md`, `README_pypi.md`, `docs/installation.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
-| `src/t1prep/t1prep.py` API | `docs/usage.md` → Python API section |
+| `[project.scripts]` / `script-files` entry points in `pyproject.toml` | `README.md`, `README_pypi.md`, `docs/installation.md`, `docs/tools.md`, `scripts/README.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
+| `src/t1prep/t1prep.py` API | `docs/usage.md` → Python API section, `README_python.md` → Signature, `README_pypi.md` → Key parameters |
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` → Project Structure, `CLAUDE.md` |
 | Viewer features or options | `docs/viewers.md` |
 | The other GUI tools | `docs/tools.md` |
@@ -134,9 +139,10 @@ Every tool behaves the same way, with `CAT_VolView` as the template:
 Options are spelled `--like-this`. Single-dash spellings that predate this
 (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`, `-h`, `-v`) stay
 valid so existing command lines keep working, but they are hidden from the
-help. Two launchers are the deliberate exception to the no-argument rule:
-`t1prep-gui` and `t1prep-download-models` do their job instead of printing the
-synopsis.
+help. Three tools are the deliberate exception to the no-argument rule:
+`t1prep-gui`, `t1prep-download-models` and `t1prep-make-apps` do their job instead
+of printing the synopsis (the last one writes app bundles to /Applications or
+~/Applications, so do not call it bare to see its options).
 
 The behaviour lives in one place per language — reuse it, do not re-implement:
 
@@ -162,7 +168,7 @@ and keeps any old single-dash spelling only as a hidden alias.
 
 ## Adding New Atlases
 
-- **Volume atlases** → `src/t1prep/data/templates_MNI152NLin2009cAsym/`: add `<name>.nii.gz` + `<name>.txt`
+- **Volume atlases** → `src/t1prep/data/templates_MNI152NLin2009cAsym/`: add `<name>.nii.gz` + `<name>.csv` (ROI table) + `<name>.txt`
 - **Surface atlases** → `src/t1prep/data/atlases_surfaces_32k/`: add `lh.<name>.annot`, `rh.<name>.annot` + `lh.<name>.txt`
 
 ## Coding Style

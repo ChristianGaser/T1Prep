@@ -13,7 +13,9 @@ T1Prep/
 │       ├── t1prep.py               # Python API: run_t1prep() function
 │       ├── cli_help.py             # Shared CLI behaviour: synopsis, --help,
 │       │                           # --version, "--" options (see below)
-│       ├── segment.py              # Segmentation logic
+│       ├── segment.py              # Volume pipeline (python -m t1prep.segment)
+│       ├── surface_estimation.py   # Surface pipeline per hemisphere
+│       │                           # (python -m t1prep.surface_estimation)
 │       ├── nogm.py                 # Conventional non-cortical GM removal (replaces
 │       │                           # the DeepMRIPrep nogm model)
 │       ├── dura.py                 # Removes dura left outside the CSF by the skull-strip
@@ -22,6 +24,17 @@ T1Prep/
 │       ├── _lesions.py             # WMH detection and tissue-map correction
 │       ├── _partition.py           # Hemisphere partition + Euler number
 │       ├── _segment_utils.py       # Small shared segmentation helpers
+│       ├── _device.py              # Device selection, interpolate()
+│       ├── _conv_chunk.py          # Memory-bounded 3-D convolution (CPU inference)
+│       ├── vessels.py              # Blood-vessel detection and correction
+│       ├── qa.py                   # Image quality measures and ratings
+│       ├── report.py               # JSON report writer
+│       ├── glued_sulci.py          # Glued (buried) sulci as a surface quality measure
+│       ├── thickness_qa.py         # Shape of the thickness distribution (quality measure)
+│       ├── bids_derivatives.py     # Sidecars and dataset description for --fmriprep
+│       ├── fslr.py                 # Registration of the surfaces to fsLR (--fmriprep)
+│       ├── bbreg.py                # BOLD-to-T1w boundary-based registration (t1prep-bbreg)
+│       ├── cat_surf/               # Re-export of the cat-surf package as t1prep.cat_surf
 │       ├── _shoot.py               # Non-linear registration: geodesic shooting
 │       │                           # (cat_surf.vol_shoot, replaces deepmriprep's warp)
 │       ├── nn/                     # Neural networks (see "Neural Networks" below)
@@ -32,7 +45,7 @@ T1Prep/
 │       │   ├── models.py           # The shipped networks: files, download, conversion
 │       │   │                       # (t1prep-download-models)
 │       │   └── convert.py          # TorchScript/state_dict -> safetensors (+ CLI)
-│       ├── stages/                 # The image stages taken over from deepmriprep
+│       ├── stages/                 # T1Prep's port of deepmriprep's stage sequence
 │       │   ├── preprocess.py       # Preprocess: skull-strip, affine, segmentation,
 │       │   │                       # shooting, atlases -- as segment.py drives them
 │       │   ├── skullstrip.py       # deepbet's skull-strip on the networks
@@ -47,10 +60,11 @@ T1Prep/
 │       ├── realign_longitudinal.py
 │       ├── warp_longitudinal.py
 │       ├── modulate_longitudinal.py
-│       ├── bin/                    # Compiled CAT-Surface binaries
 │       ├── data/                   # Templates, atlases, default files
-│       │   ├── templates_MNI152NLin2009cAsym/  # Volume atlases + .txt descriptions
-│       │   └── atlases_surfaces_32k/           # Surface atlases + .txt descriptions
+│       │   ├── Names.tsv                       # Output file names, CAT12 and BIDS
+│       │   ├── templates_MNI152NLin2009cAsym/  # Templates, volume atlases (.nii.gz, .csv, .txt)
+│       │   ├── atlases_surfaces_32k/           # Surface atlases + .txt descriptions
+│       │   └── templates_surfaces_{32k,4k,164k,fsLR}/  # Surface templates
 │       ├── launch/                 # What the launcher knows that is not Qt (no VTK either)
 │       │   ├── options.py          # Option table -> form and T1Prep arguments
 │       │   ├── progress.py         # Phases, bars and per-image states of a run
@@ -74,18 +88,13 @@ T1Prep/
 │   ├── PyCAT -> T1Prep             # Symlink; same CLI, PyCAT banner (logo() switches on $0)
 │   ├── T1Prep_gui                  # Launcher dev wrapper (installed: t1prep-gui)
 │   ├── activate_env.sh             # Source to activate the venv
-│   ├── run_with_env.sh             # Run any Python script with venv
+│   ├── run_with_env.sh             # Run a Python script file with env/ (needs env/)
 │   ├── make_macos_apps.sh          # macOS .app bundles (installed: t1prep-make-apps)
 │   ├── install.sh                  # Bash bootstrapper: download release + set up venv
 │   #                                 (alternative to `pip install T1Prep` from PyPI)
 │   ├── dice.sh                     # Dice similarity metric wrapper
 │   ├── qa_calibrate.py             # Derive QA rating bounds from BrainWeb Phantom runs
-├── evaluation/                     # Registration benchmark + simulated-phantom accuracy test
-│   ├── tools/                      # eval_mindboggle.py, eval_phantom.py, fit_wmh_calibration.py + competing tools
-│   ├── data/subset20.txt           # subjects used for the volume comparison
-│   ├── data/phantom/               # 14 simulated T1w + ground-truth labels (mri_simulate)
-│   ├── PHANTOM.md                  # phantom metrics, the thickness reference, pinning
-│   └── results/                    # README.md (results), RESULTS_long.md, phantom_pinned.json, bug write-ups
+│   ├── mem_probe.py                # Per-stage time and memory probe of the volume pipeline (dev)
 │   ├── process_longitudinal.sh     # Batch longitudinal processing
 │   ├── realign_longitudinal.sh     # Longitudinal rigid realignment
 │   ├── warp_longitudinal.sh       # Longitudinal low-dimensional non-linear registration
@@ -98,20 +107,32 @@ T1Prep/
 │   ├── CAT_VolDiff                 # Volume differences (cat_stat_diff via CAT_VolCalc)
 │   ├── parallelize                 # Generic job parallelization engine
 │   ├── progress_bar_multi.sh       # Multi-job progress bars with ETA
-│   └── utils.sh                    # Shared bash utility functions
+│   └── T1Prep_utils.sh             # Shared bash utility functions (sourced; shipped to <venv>/bin)
+├── evaluation/                     # Registration benchmark + simulated-phantom accuracy test
+│   ├── tools/                      # eval_mindboggle.py, eval_phantom.py, fit_wmh_calibration.py + competing tools
+│   ├── data/subset20.txt           # subjects used for the volume comparison
+│   ├── data/phantom/               # 14 simulated T1w + ground-truth labels (mri_simulate)
+│   ├── PHANTOM.md                  # phantom metrics, the thickness reference, pinning
+│   └── results/                    # README.md (results), RESULTS_long.md, per-arm CSVs, phantom_pinned.json
 ├── tests/
 │   ├── __init__.py
-│   └── test_utils.py               # Unit tests
+│   └── test_*.py                   # One module per topic, e.g. test_nn.py, test_stages.py,
+│                                   # test_orchestrator_args.py, test_launch_options.py,
+│                                   # test_launch_progress.py, test_launch_results.py,
+│                                   # test_launcher_gui.py, test_source_install.py
 ├── Makefile                        # Build/dev tasks
 ├── requirements.txt                # pip dependencies
 ├── pyproject.toml                  # Package metadata and dependencies
 ├── setup.py                        # Legacy setup script
 ├── README.md                       # Landing page: what it is, install, links
+├── README_pypi.md                  # The page shown on PyPI
+├── README_python.md                # Python API reference (run_t1prep, t1prep.cat_surf)
+├── ENVIRONMENT_USAGE.md            # The project venv and the wrapper scripts
 ├── docs/
 │   ├── installation.md             # pip, source checkout, WSL, manual, Docker
 │   ├── usage.md                    # Running the pipeline: options, outputs, examples
 │   ├── viewers.md                  # CAT_SurfView and CAT_VolView
-│   └── tools.md                    # Launcher and the surface post-processing GUIs
+│   └── tools.md                    # Launcher, plot tools and the post-processing helpers
 ├── Dockerfile                      # Container build
 ├── T1Prep_defaults.txt             # Default CLI options
 └── Agents.md                       # This file
@@ -128,11 +149,11 @@ T1Prep/
 | CLI options in `scripts/T1Prep` | `docs/usage.md` -> Options section |
 | CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py` -> `run_t1prep()` parameters |
 | CLI options in `scripts/T1Prep` | `src/t1prep/launch/options.py` -> one `Option` in the table (the launcher's form and arguments; `tests/test_launch_options.py` holds it against `parse_args`) |
-| `[project.scripts]` / `script-files` in `pyproject.toml` | `README.md`, `README_pypi.md`, `docs/installation.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
-| `src/t1prep/t1prep.py` API | `docs/usage.md` -> Python API section |
+| `[project.scripts]` / `script-files` in `pyproject.toml` | `README.md`, `README_pypi.md`, `docs/installation.md`, `docs/tools.md`, `scripts/README.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
+| `src/t1prep/t1prep.py` API | `docs/usage.md` -> Python API section, `README_python.md` -> Signature, `README_pypi.md` -> Key parameters |
 | Default values | `T1Prep_defaults.txt` |
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` -> Project Structure, `CLAUDE.md` |
-| Atlas files in `src/t1prep/data/` | Add corresponding `.txt` description file |
+| Atlas files in `src/t1prep/data/` | Add the `.csv` ROI table (volume atlases) and the `.txt` description file |
 | Installation process | `docs/installation.md` (README keeps the one-line quick start) |
 | Installation process (bash bootstrapper) | `scripts/install.sh` |
 | Installation process (PyPI distribution) | `pyproject.toml`, `README_pypi.md` |
@@ -157,7 +178,7 @@ cat_surf (Python package — C-extension bindings to CAT-Surface algorithms)
 scripts/CAT_Surf*_ui, scripts/CAT_VolSmooth_ui, scripts/CAT_VolDiff (post-processing helpers)
        |
        v call
-src/t1prep/bin/* (compiled CAT-Surface binaries, used only by helper scripts)
+cat_surf.cli (Python equivalents of the CAT-Surface command-line tools, in the cat-surf package)
 
 src/t1prep/gui/launcher.py (Qt launcher, `t1prep-gui`)
        |
@@ -175,16 +196,19 @@ src/t1prep/launch/ (option table, run states, result files; no Qt, used by the l
 
 ### Environment Usage
 - See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for activating the virtual environment and running scripts safely.
-- Prefer wrapper scripts that auto-activate the environment:
-       - [scripts/activate_env.sh](scripts/activate_env.sh)
-       - [scripts/run_with_env.sh](scripts/run_with_env.sh)
-       - [scripts/T1Prep_gui](scripts/T1Prep_gui) (launcher)
-  
-These helpers ensure the correct interpreter and dependencies are used across CLI and GUI workflows.
+- Wrapper scripts of a source checkout:
+       - [scripts/activate_env.sh](scripts/activate_env.sh) and [scripts/run_with_env.sh](scripts/run_with_env.sh)
+         activate the project venv `env/` and stop when there is none
+         (`scripts/T1Prep --install` creates it)
+       - [scripts/T1Prep_gui](scripts/T1Prep_gui) (launcher), `scripts/dice.sh` and the longitudinal
+         wrappers also work without `env/`: they take the first interpreter that has
+         T1Prep's requirements (`$T1PREP_PYTHON` picks one) and put `src/` first on `PYTHONPATH`
 
 ## Common Tasks
-- Show CLI options: `./scripts/T1Prep --help`
-- Run pipeline (example): `./scripts/T1Prep --out-dir /tmp/out sub-01_T1w.nii.gz`
+- Show CLI options: `T1Prep --help` (installed). In a checkout without `env/`, read `usage()` and
+  `help()` in `scripts/T1Prep` instead: there `--help` ends with a Y/N prompt offering to build
+  `env/`, and a run builds it (several GB) without asking
+- Run pipeline (example): `T1Prep --out-dir /tmp/out sub-01_T1w.nii.gz`
 - Python API: `from t1prep import run_t1prep`
 - Quick Python sanity check: `python -m compileall src`
 - Run the launcher from the checkout: `./scripts/T1Prep_gui`
@@ -235,9 +259,11 @@ answers the same way, with `CAT_VolView` as the template:
 Options are spelled `--like-this`. The single-dash spellings that predate this
 (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`, and `-h`/`-v`)
 remain valid so existing command lines and scripts keep working; they are
-simply no longer listed in the help. `t1prep-gui` and
-`t1prep-download-models` are the deliberate exception to the no-argument rule — called bare they do
-their job, because that job needs no input file.
+simply no longer listed in the help. `t1prep-gui`, `t1prep-download-models` and
+`t1prep-make-apps` (with its wrapper `scripts/make_macos_apps.sh`) are the deliberate exception to
+the no-argument rule — called bare they do their job, because that job needs no input file: open
+the window, fetch the weights, write the app bundles to /Applications or ~/Applications. So do not
+call `t1prep-make-apps` bare just to see its options.
 
 The behaviour lives in one place per language, so a new tool inherits it
 rather than re-implementing it:
@@ -260,7 +286,7 @@ rather than re-implementing it:
 
 When adding a new CLI option, update these files in order:
 
-1. `scripts/T1Prep` - Add the option to argparse/getopts
+1. `scripts/T1Prep` - Add a `case` label in `parse_args()` (and the option to `takes_value()` if it takes a value), then to `usage()` and `help()`
 2. `src/t1prep/t1prep.py` - Add parameter to `run_t1prep()` function
 3. `src/t1prep/launch/options.py` - Add one `Option` to the table if the launcher should offer it
 4. `T1Prep_defaults.txt` - Add default value if applicable
@@ -275,6 +301,8 @@ When adding atlas files to `src/t1prep/data/`:
 
 1. **Volume atlases** go in `templates_MNI152NLin2009cAsym/`
    - Add `<atlas_name>.nii.gz` (the atlas file)
+   - Add `<atlas_name>.csv` (the ROI table, `;`-separated; the ROI volumes are read with it, and
+     the launcher lists only atlases that have it)
    - Add `<atlas_name>.txt` (description shown as the atlas's tool tip in the launcher)
 
 2. **Surface atlases** go in `atlases_surfaces_32k/`
@@ -294,10 +322,14 @@ and `nn_backend` in the defaults file set it, `t1prep-run`/`run_t1prep` pass
 it to `segment.py`; the device follows `T1PREP_DEVICE`. The package
 docstring (`nn/__init__.py`) is the map.
 
-`src/t1prep/stages/` runs them: `Preprocess` holds the stages T1Prep took
-over from deepmriprep (skull-strip, affine registration, segmentation,
-shooting, atlases), independent of deepmriprep, which T1Prep no longer
-imports. Keep the framework (`nn/`) free of pipeline knowledge, and the
+`src/t1prep/stages/` runs them: `Preprocess` keeps the sequence of
+deepmriprep's pipeline (skull-strip, affine registration, segmentation,
+non-linear registration, atlases) in T1Prep's own code, which imports neither
+deepmriprep nor deepbet. Skull-strip and segmentation run deepbet's and
+deepmriprep's trained networks, and the affine registration is deepmriprep's
+method on torchreg. The non-linear registration is not deepmriprep's warp
+network but geodesic shooting (`_shoot.py`), and non-cortical grey matter is
+removed by rule (`nogm.py`). Keep the framework (`nn/`) free of pipeline knowledge, and the
 stages free of framework details.
 
 - **New backend**: subclass `nn.backends.Backend` in a new module of
@@ -335,7 +367,7 @@ stages free of framework details.
 - Resize tensors with `t1prep._device.interpolate`, not `F.interpolate`: under the deterministic algorithms `segment.py` enables, torch computes linear interpolation on CUDA and MPS through a slow decomposition (0.7 s instead of 14 ms onto the working grid on an M2). `tests/test_device.py` fails on a direct call.
 
 ## Performance Optimization
-- For compute-heavy voxel-wise operations, consider PyTorch or Numba.
+- For compute-heavy voxel-wise operations, consider PyTorch or libCAT (`cat_surf`; numba was evaluated and rejected).
 - Prefer clear, correct implementations first; optimize only when needed and measured.
 
 ## Commit Guidance
@@ -360,7 +392,7 @@ stages free of framework details.
 ## Programmatic Checks
 - Install dependencies via `pip install -r requirements.txt`.
 - Run `python -m compileall src` to ensure files compile.
-- Run `pytest` before submitting (when tests are present and configured).
+- Run `pytest` from the repository root before submitting (CI runs it on Python 3.9-3.14; the tests put `src/` on `sys.path` themselves).
 
 ## Pull Request Guidelines
 
@@ -387,6 +419,7 @@ The Qt launcher (`t1prep-gui`) is the graphical front end of the pipeline.
 - `src/t1prep/launch/options.py` - the option table: labels, defaults, flags
 - `src/t1prep/launch/progress.py` - phases, bars and per-image states of a run
 - `src/t1prep/launch/results.py` - files of a subject, report measures, viewer calls
+- `src/t1prep/launch/inputs.py` - finding the images of a folder
 - `src/t1prep/gui/launcher.py` - the window, the T1Prep process, the viewer processes
 - `src/t1prep/gui/launcher_widgets.py`, `theme.py` - table, form, results panel, look
 
@@ -400,7 +433,7 @@ The Qt launcher (`t1prep-gui`) is the graphical front end of the pipeline.
 ## Testing
 
 - Unit tests are in `tests/`
-- Run with `pytest` (when configured)
+- Run with `pytest` from the repository root
 - Test file naming: `test_<module>.py`
 
 ## Notes
