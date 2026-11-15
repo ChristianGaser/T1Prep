@@ -44,14 +44,17 @@ jobs:
       - name: Install T1Prep (CPU PyTorch)
         # The PyTorch CPU wheel index keeps the download small and avoids CUDA
         # packages the runner cannot use.  The conditional torch pin in
-        # pyproject.toml selects 2.8 on 3.9 and 2.9+ on 3.10-3.12 automatically.
+        # pyproject.toml selects 2.8 on 3.9 and 2.9.1+ from 3.10 on automatically.
         run: pip install --extra-index-url https://download.pytorch.org/whl/cpu .
 
       - name: Byte-compile sources
         run: python -m compileall -q src
 
       - name: Import smoke test
-        run: python -c "import t1prep; print('t1prep', t1prep.__version__, 'OK')"
+        # The package imports its parts on first use, so utils (torch,
+        # nibabel, ...) and cat_surf are named: a bare "import t1prep" would
+        # pass without them.
+        run: python -c "import t1prep, t1prep.utils, t1prep.cat_surf; print('t1prep', t1prep.__version__, 'OK')"
 
       - name: Run test suite
         run: |

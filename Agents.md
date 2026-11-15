@@ -9,7 +9,7 @@ This repository contains **T1Prep**, a Python-based pipeline for preprocessing a
 T1Prep/
 ├── src/
 │   └── t1prep/
-│       ├── __init__.py             # Package init, exports run_t1prep
+│       ├── __init__.py             # Package init; exports run_t1prep etc. on first use (no torch at import)
 │       ├── t1prep.py               # Python API: run_t1prep() function
 │       ├── cli_help.py             # Shared CLI behaviour: synopsis, --help,
 │       │                           # --version, "--" options (see below)
@@ -53,6 +53,7 @@ T1Prep/
 │       ├── _telemetry.py           # Telemetry opt-out, crash reports without paths
 │       ├── transforms.py           # ITK .txt/.h5 transforms, SPM y_ deformations
 │       ├── utils.py                # Shared utilities
+│       ├── _names.py               # Data folder and Names.tsv table, without torch (launcher, viewers)
 │       ├── metrics.py              # Dice/evaluation metrics + CLI
 │       ├── dice.py                 # CLI wrapper for metrics (python -m t1prep.dice)
 │       ├── plot_boxplot.py         # Box/violin plots of volumes/surfaces (CAT_PlotBoxplot)
@@ -360,7 +361,7 @@ stages free of framework details.
 ## Coding Style
 - Follow [PEP 8](https://peps.python.org/pep-0008/) style.
 - If available in your environment, format with `black` and verify with `black --check src scripts`.
-- If available, lint with `flake8 src scripts` (or `ruff check src scripts` if the project migrates to Ruff).
+- If available, lint with `flake8 --select=F src` (or `ruff check --select F src`): unused and undefined names. The style classes are not enforced; `black` decides the layout of new code.
 - Keep indentation at four spaces.
 - Provide docstrings for all public functions and classes.
 - Keep code clean and readable.
@@ -386,7 +387,7 @@ stages free of framework details.
 - `test:` adding or fixing tests
 
 ## Shell Scripts
-- Validate scripts in `scripts/` with `shellcheck`.
+- Validate scripts in `scripts/` with `shellcheck` (`-S error` must report nothing).
 - Quick syntax check: `bash -n scripts/T1Prep`.
 
 ## Programmatic Checks
@@ -400,13 +401,13 @@ When creating a PR:
 1. Summarize the changes and link to relevant issues.
 2. Mention any new dependencies or setup steps.
 3. Ensure `python -m compileall src` completed without errors and describe the result in the PR body.
-4. Use the following linters to pass before a PR is merged. They're installed automatically by the Codex environment's Setup Script: shellcheck for *.sh and *.bash and flake8 (or ruff) for Python.
+4. Run the linters before a PR is merged: `shellcheck` for the bash scripts and `flake8` (or `ruff`) for Python. The repository is clean at the levels the checklist names (shellcheck errors, the pyflakes class `F` of flake8); the style classes of flake8 (line length and the like) and shellcheck's warnings are not, so there the rule is to add none.
 
 ### PR Checklist
 
 - [ ] `python -m compileall src` passes
-- [ ] `shellcheck scripts/*.sh` passes (for shell changes)
-- [ ] `flake8 src` passes (or `ruff check src`)
+- [ ] `shellcheck -S error scripts/*.sh scripts/T1Prep scripts/parallelize scripts/CAT_*_ui scripts/CAT_GrepJson` reports nothing, and no new warnings (for shell changes)
+- [ ] `flake8 --select=F src` reports nothing (or `ruff check --select F src`)
 - [ ] Dependencies synced between `requirements.txt` and `pyproject.toml`
 - [ ] README.md updated if user-facing changes
 - [ ] Docstrings added for new public functions

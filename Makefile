@@ -1,4 +1,4 @@
-.PHONY: help version release clean zip cp_binaries phantom phantom-check phantom-score phantom-pin phantom-wmh phantom-wmh-pin
+.PHONY: help version release clean zip phantom phantom-check phantom-score phantom-pin phantom-wmh phantom-wmh-pin
 .DEFAULT_GOAL := help
 
 # ---------------------------------------------------------------------------
@@ -18,8 +18,6 @@ VERSION ?= $(CURRENT_VERSION)
 
 ZIPFILE = T1Prep_$(VERSION).zip
 
-BIN ?= CAT*
-
 # Phantom accuracy test (evaluation/PHANTOM.md).  PHANTOM_DIR holds the run;
 # the re-pin also uses $(PHANTOM_DIR)_cpu.  PHANTOM_ARGS is passed through,
 # e.g. PHANTOM_ARGS=--history, or "-- --no-overwrite" for T1Prep options.
@@ -35,7 +33,6 @@ help:
 	-@echo "  release       Bump __version__, commit and tag: make release VERSION=x.y.z"
 	-@echo "  zip           Zip the project (current version)"
 	-@echo "  clean         Clean up artifacts and permissions"
-	-@echo "  cp_binaries   Copy CAT-Surface binaries [BIN=CAT_MyBinary]"
 	-@echo "  version       Show the current version"
 	-@echo "  phantom       Run T1Prep on the simulated phantom and check the pins (~15 min)"
 	-@echo "  phantom-check Check an existing phantom run against the pins [PHANTOM_DIR=...]"
@@ -84,14 +81,6 @@ release:
 	@echo "Bumped $(CURRENT_VERSION) -> $(VERSION) and tagged v$(VERSION). Next:"
 	@echo "  git push origin main v$(VERSION)"
 	@echo "  then create the GitHub release from tag v$(VERSION)"
-
-# copy binaries after cross-compiling
-cp_binaries: 
-	-@echo copy binaries matching $(BIN)
-	-@for i in src/t1prep/bin/Linux/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-pc-linux/Progs/`basename $${i}` src/t1prep/bin/Linux/ ; done
-	-@for i in src/t1prep/bin/Windows/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-x86_64-w64-mingw32/Progs/`basename $${i}` src/t1prep/bin/Windows/ ; done
-	-@for i in src/t1prep/bin/MacOS/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-native-arm64/Progs/`basename $${i}` src/t1prep/bin/MacOS/ ; done
-	-@for i in src/t1prep/bin/LinuxARM64/$(BIN); do cp ~/Dropbox/GitHub/CAT-Surface/build-aarch64-none-elf/Progs/`basename $${i}` src/t1prep/bin/LinuxARM64/ ; done
 
 # phantom accuracy test: T1Prep + ground-truth surface arm, then the pinned check
 # (no "-" prefix: a regression has to fail the make run)

@@ -42,7 +42,7 @@ RUN set -eux; \
     else \
         pip install --no-cache-dir T1Prep; \
     fi; \
-    python -c "import t1prep, sys; sys.stdout.write(f'Installed T1Prep {t1prep.__version__}\n')"
+    python -c "import t1prep, t1prep.utils, t1prep.cat_surf, sys; sys.stdout.write(f'Installed T1Prep {t1prep.__version__}\n')"
 
 # Drop privileges.  /data is the expected mount point for user volumes.
 # The home directory is made traversable because the image is routinely run
