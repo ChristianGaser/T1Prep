@@ -63,12 +63,12 @@ class TestTheSourceTreeInstaller(unittest.TestCase):
         self.env = self.root / "env"
         self.log = self.tmp / "calls.log"
 
-    def run_function(self, function, missing):
+    def run_function(self, function, missing, re_install=0):
         """Call *function* of T1Prep_utils.sh; return (process, what the interpreter was asked)."""
         snippet = (
             f'source "{_UTILS}" >/dev/null 2>&1; '
             f'root_dir="{self.root}"; T1prep_env="{self.env}"; python=python3; '
-            f'T1PREP_INSTALLED=0; re_install=0; os_type=Linux; '
+            f'T1PREP_INSTALLED=0; re_install={re_install}; os_type=Linux; '
             f'{function}; echo "returned $?"'
         )
         environment = dict(
@@ -117,6 +117,34 @@ class TestTheSourceTreeInstaller(unittest.TestCase):
         done, asked = self.run_function("check_python_libraries", "cat_surf")
         self.assertEqual(done.returncode, 1)
         self.assertTrue([line for line in asked if "requirements.txt" in line])
+
+    def test_install_keeps_a_complete_environment_and_re_install_replaces_it(self):
+        # T1Prep --install used to be --re-install: it removed env/ first
+        self.run_function("install_python_libraries", "deepmriprep")
+        kept = self.env / "kept"
+        kept.write_text("")
+        done, asked = self.run_function("check_python_libraries", "deepmriprep")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertTrue(kept.exists())
+        self.assertFalse([line for line in asked if "pip" in line])
+
+        done, asked = self.run_function(
+            "check_python_libraries", "deepmriprep", re_install=1)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertFalse(kept.exists())
+        self.assertTrue([line for line in asked if "requirements.txt" in line])
+
+    def test_the_two_options_are_told_apart(self):
+        show = ('source "$T1PREP" && parse_args "$@" && '
+                'printf "%s %s\\n" "$install_only" "$re_install"')
+        for option, expected in (("--install", "1 0"), ("--re-install", "0 1")):
+            with self.subTest(option=option):
+                done = subprocess.run(
+                    ["bash", "-c", show, "bash", option],
+                    capture_output=True, text=True, timeout=120,
+                    env=dict(os.environ, T1PREP=str(_ROOT / "scripts" / "T1Prep")))
+                self.assertEqual(done.stdout.strip().splitlines()[-1], expected,
+                                 done.stderr)
 
     def test_nothing_in_the_scripts_asks_for_deepmriprep(self):
         for name in ("T1Prep", "T1Prep_utils.sh", "install.sh"):

@@ -191,6 +191,43 @@ class TestT1PrepRunParser(unittest.TestCase):
         self.assertFalse(parser.parse_args(["x.nii", "--no-pial-white"]).pial_white)
 
 
+class TestVerbosePrintsTheSteps(_InATempDir):
+    """``--verbose`` was parsed and then never read: it printed nothing."""
+
+    def test_the_option_is_off_unless_given(self):
+        show = 'source "$T1PREP" && parse_args "$@" && printf "verbose=%s\\n" "$verbose"'
+        _, v, _ = self.parse("f.nii", show=show)
+        self.assertEqual(v["verbose"], "0")
+        _, v, _ = self.parse("--verbose", "f.nii", show=show)
+        self.assertEqual(v["verbose"], "1")
+
+    def test_the_surface_step_is_told(self):
+        text = _T1PREP.read_text()
+        function = text[text.index("surface_estimation() "):text.index("# Process data")]
+        self.assertIn('--verbose "${verbose:-0}"', function)
+
+    def test_the_surface_step_prints_its_steps_with_the_hemisphere(self):
+        import contextlib
+        import io
+        import sys
+        sys.path.insert(0, str(_ROOT / "src"))
+        from t1prep import surface_estimation as surfaces
+
+        def printed(**settings):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                log = surfaces._setup_logger(None, **settings)
+                log.info("CAT_SurfDeform")
+                log.warning("careful")
+            return err.getvalue().splitlines()
+
+        self.assertEqual(printed(), ["careful"])                   # as before
+        self.assertEqual(printed(show_steps=True, prefix="rh: "),
+                         ["rh: CAT_SurfDeform", "rh: careful"])
+        parser_default = surfaces.surface_estimation.__kwdefaults__["show_steps"]
+        self.assertEqual(parser_default, 0)
+
+
 class TestParallelizeNeverRunsAFileName(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

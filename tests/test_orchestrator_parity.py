@@ -10,6 +10,7 @@ checks of ``--no-overwrite`` were wrong as well (one had the patterns
 swapped, the other a stray ``/``).
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -131,6 +132,64 @@ class TestNoAtlasIsAboutTheVolumes(_InATempDir):
                 self.assertEqual(bool(held_surface), surfaces)
 
 
+class TestTheReportGetsTheSurfaceMeasures(_InATempDir):
+    """Both orchestrators fold the surface measures into the report.
+
+    Each hemisphere leaves its measures (glued sulci, thickness distribution,
+    barrier reference) in a file of its own.  ``t1prep-run`` merged them into
+    the report; ``scripts/T1Prep`` did not, so the canonical command wrote
+    reports without them and left ``<name>_glued-lh.json`` and ``-rh.json``
+    behind.
+    """
+
+    def lay_out(self, folder):
+        folder.mkdir(parents=True, exist_ok=True)
+        report = folder / "log_SUB01.json"
+        report.write_text(json.dumps({"qualitymeasures": {"euler_lh": {"value": 2}}}))
+        for hemi, glued, skew in (("lh", 0.005, 0.25), ("rh", 0.001, 0.10)):
+            (folder / f"SUB01_glued-{hemi}.json").write_text(json.dumps({
+                "hemi": hemi, "report_file": "log_SUB01.json",
+                "glued_fraction": glued, "thickness_upper_skewness": skew,
+                "thickness_high_fraction": 0.0003, "barrier_reference": 2.4,
+                "barrier_reference_shared": 2.45, "sulci_sigma_factor": None,
+            }))
+        return report
+
+    def bash_merge(self, folder, name="SUB01"):
+        snippet = (f'source "{_UTILS}" >/dev/null 2>&1; python="$PY"; '
+                   'merge_surface_report "$1" "$2"; echo "returned $?"')
+        return subprocess.run(
+            ["bash", "-c", snippet, "bash", str(folder), name],
+            capture_output=True, text=True, timeout=120,
+            env=dict(os.environ, PY=sys.executable, PYTHONPATH=os.pathsep.join(
+                [str(_SRC)] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p])))
+
+    def test_the_bash_orchestrator_merges_as_the_python_one_does(self):
+        by_bash = self.lay_out(self.tmp / "a folder with 'quotes'")
+        done = self.bash_merge(by_bash.parent)
+        self.assertIn("returned 0", done.stdout, done.stderr)
+        by_python = self.lay_out(self.tmp / "python")
+        orchestrator._merge_glued_sulci_qa(str(by_python.parent), "SUB01")
+
+        merged = json.loads(by_bash.read_text())["qualitymeasures"]
+        self.assertEqual(merged, json.loads(by_python.read_text())["qualitymeasures"])
+        self.assertEqual(merged["glued_lh"]["value"], 0.5)
+        self.assertEqual(merged["thickness_skew_asym"]["value"], 0.15)
+        self.assertEqual(merged["euler_lh"], {"value": 2})        # kept
+        self.assertEqual(list(by_bash.parent.glob("*_glued-*.json")), [])
+
+    def test_nothing_to_merge_is_not_an_error(self):
+        empty = self.tmp / "empty"
+        empty.mkdir()
+        done = self.bash_merge(empty)
+        self.assertIn("returned 0", done.stdout, done.stderr)
+
+    def test_t1prep_merges_after_the_surfaces(self):
+        text = (_ROOT / "scripts" / "T1Prep").read_text()
+        surfaces = text.index('wait "$pid" || surf_status=1')
+        self.assertIn('merge_surface_report "${report_dir}" "${bname}"', text[surfaces:])
+
+
 class TestNoOverwriteLooksForThisSubject(_InATempDir):
     def bash(self, outdir0, bname, pattern, bids):
         snippet = f'source "{_UTILS}"; already_processed "$@" && echo yes || echo no'
@@ -184,6 +243,12 @@ class TestPresets(_InATempDir):
         self.assertIn("neuromorphometrics", kw["atlas"])
         kw = self.run_main("--atlas-surf", "'aparc_HCP_MMP1'", "--no-atlas-surf")
         self.assertEqual(kw["atlas_surf"], "")
+
+    def test_bids_names_come_compressed_as_from_t1prep(self):
+        # scripts/T1Prep: --bids) use_bids_naming=1; nii_ext='nii.gz'
+        self.assertFalse(self.run_main()["gz"])
+        kw = self.run_main("--bids")
+        self.assertTrue(kw["bids"] and kw["gz"])
 
     def test_an_explicit_atlas_survives_fast(self):
         kw = self.run_main("--fast", "--atlas", "'cobra'")
