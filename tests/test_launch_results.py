@@ -126,10 +126,12 @@ class TestWhichPhasesAreComplete(_Folders):
         self.assertFalse(subject.stage_done("volume", since=2000))
         self.assertTrue(subject.stage_done("volume", since=500))
 
-    def test_skull_stripping_alone_writes_a_mask_and_no_report(self):
+    def test_skull_stripping_alone_writes_the_stripped_image_and_no_report(self):
+        # save_skullstrip_only_outputs() in segment.py writes this file only
         image = self.touch(self.tmp / "s.nii")
         subject = res.subject_for_input(image)
-        self.touch(subject.expected("mask_volume"))
+        self.assertEqual(subject.expected("skullstripped_volume").name, "ms.nii")
+        self.touch(subject.expected("skullstripped_volume"))
         self.assertFalse(subject.stage_done("volume"))
         self.assertTrue(subject.stage_done("volume", skullstrip_only=True))
 
