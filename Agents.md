@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Overview
-This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`, PyCAT banner), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`.
+This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and the Qt launcher lives in `src/t1prep/gui/` on top of `src/t1prep/launch/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`, PyCAT banner), `t1prep-gui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`.
 
 ## Project Structure
 
@@ -51,7 +51,7 @@ T1Prep/
 │       ├── data/                   # Templates, atlases, default files
 │       │   ├── templates_MNI152NLin2009cAsym/  # Volume atlases + .txt descriptions
 │       │   └── atlases_surfaces_32k/           # Surface atlases + .txt descriptions
-│       ├── launch/                 # What the front ends share (no Qt, no Flask, no VTK)
+│       ├── launch/                 # What the launcher knows that is not Qt (no VTK either)
 │       │   ├── options.py          # Option table -> form and T1Prep arguments
 │       │   ├── progress.py         # Phases, bars and per-image states of a run
 │       │   ├── results.py          # Files of a subject, report measures, viewer calls
@@ -68,15 +68,10 @@ T1Prep/
 │       │   ├── controls.py         # Overlay control panel shared by both viewers
 │       │   ├── colormaps.py        # Colormaps and p-value colorbar labels
 │       │   └── viewer_common.py    # Event claiming, drop targets, help, screenshots
-│       └── webui/                  # Flask web UI (t1prep-ui)
-│           ├── app.py              # Flask application (main())
-│           ├── templates/index.html
-│           └── static/styles.css
 ├── scripts/
 │   ├── README.md                   # Comprehensive script documentation
 │   ├── T1Prep                      # Main CLI entry point (bash; shipped to <venv>/bin)
 │   ├── PyCAT -> T1Prep             # Symlink; same CLI, PyCAT banner (logo() switches on $0)
-│   ├── T1Prep_ui                   # Web UI dev launcher (installed: t1prep-ui)
 │   ├── activate_env.sh             # Source to activate the venv
 │   ├── run_with_env.sh             # Run any Python script with venv
 │   ├── make_macos_apps.sh          # macOS .app bundles (installed: t1prep-make-apps)
@@ -115,7 +110,7 @@ T1Prep/
 │   ├── installation.md             # pip, source checkout, WSL, manual, Docker
 │   ├── usage.md                    # Running the pipeline: options, outputs, examples
 │   ├── viewers.md                  # CAT_SurfView and CAT_VolView
-│   └── tools.md                    # Web UI and the surface post-processing GUIs
+│   └── tools.md                    # Launcher and the surface post-processing GUIs
 ├── Dockerfile                      # Container build
 ├── T1Prep_defaults.txt             # Default CLI options
 └── Agents.md                       # This file
@@ -131,7 +126,7 @@ T1Prep/
 | `pyproject.toml` dependencies | `requirements.txt` (keep versions aligned) |
 | CLI options in `scripts/T1Prep` | `docs/usage.md` -> Options section |
 | CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py` -> `run_t1prep()` parameters |
-| CLI options in `scripts/T1Prep` | `src/t1prep/webui/app.py` -> form handling and defaults |
+| CLI options in `scripts/T1Prep` | `src/t1prep/launch/options.py` -> one `Option` in the table (the launcher's form and arguments; `tests/test_launch_options.py` holds it against `parse_args`) |
 | `[project.scripts]` / `script-files` in `pyproject.toml` | `README.md`, `README_pypi.md`, `docs/installation.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
 | `src/t1prep/t1prep.py` API | `docs/usage.md` -> Python API section |
 | Default values | `T1Prep_defaults.txt` |
@@ -168,18 +163,7 @@ src/t1prep/gui/launcher.py (Qt launcher, `t1prep-gui`)
        v calls                  starts as processes of their own
 T1Prep (bash orchestrator)      CAT_VolView (--headless for the pictures), CAT_SurfView
 
-src/t1prep/launch/ (option table, run states, result files; shared by both front ends)
-
-src/t1prep/webui/app.py (Web UI, `t1prep-ui`)
-       |
-       v calls
-T1Prep (the bash orchestrator on PATH, via subprocess)
-       |
-       v renders
-src/t1prep/webui/templates/index.html
-       |
-       v styled by
-webui/static/styles.css
+src/t1prep/launch/ (option table, run states, result files; no Qt, used by the launcher)
 ```
 
 ## Development Guidelines
@@ -193,17 +177,15 @@ webui/static/styles.css
 - Prefer wrapper scripts that auto-activate the environment:
        - [scripts/activate_env.sh](scripts/activate_env.sh)
        - [scripts/run_with_env.sh](scripts/run_with_env.sh)
-       - [scripts/T1Prep_ui](scripts/T1Prep_ui) (Web UI launcher)
   
-These helpers ensure the correct interpreter and dependencies are used across CLI, GUI, and Web UI workflows.
+These helpers ensure the correct interpreter and dependencies are used across CLI and GUI workflows.
 
 ## Common Tasks
 - Show CLI options: `./scripts/T1Prep --help`
 - Run pipeline (example): `./scripts/T1Prep --out-dir /tmp/out sub-01_T1w.nii.gz`
 - Python API: `from t1prep import run_t1prep`
 - Quick Python sanity check: `python -m compileall src`
-- Run Web UI: `cd webui && python app.py`
- - Run Web UI (recommended): `./scripts/T1Prep_ui --port 5000`
+- Run the launcher from the checkout: `PYTHONPATH=src python -m t1prep.gui.launcher`
 
 ## When to Update the Documentation
 
@@ -215,7 +197,7 @@ links.  Everything else lives in `docs/`, so a change usually belongs there.
 | CLI options, output structure, naming, examples | `docs/usage.md` |
 | Installation, dependencies, Docker | `docs/installation.md` |
 | Viewer features or options | `docs/viewers.md` |
-| Web UI, surface post-processing GUIs | `docs/tools.md` |
+| Launcher, surface post-processing GUIs | `docs/tools.md` |
 | A new entry point, or what T1Prep *is* | `README.md` as well |
 
 **Always update the documentation when:**
@@ -251,7 +233,7 @@ answers the same way, with `CAT_VolView` as the template:
 Options are spelled `--like-this`. The single-dash spellings that predate this
 (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`, and `-h`/`-v`)
 remain valid so existing command lines and scripts keep working; they are
-simply no longer listed in the help. `t1prep-gui`, `t1prep-ui` and
+simply no longer listed in the help. `t1prep-gui` and
 `t1prep-download-models` are the deliberate exception to the no-argument rule — called bare they do
 their job, because that job needs no input file.
 
@@ -278,10 +260,9 @@ When adding a new CLI option, update these files in order:
 
 1. `scripts/T1Prep` - Add the option to argparse/getopts
 2. `src/t1prep/t1prep.py` - Add parameter to `run_t1prep()` function
-3. `webui/app.py` - Add form field handling if applicable
-4. `webui/templates/index.html` - Add UI element if applicable
-5. `T1Prep_defaults.txt` - Add default value if applicable
-6. `docs/usage.md` - Document the new option
+3. `src/t1prep/launch/options.py` - Add one `Option` to the table if the launcher should offer it
+4. `T1Prep_defaults.txt` - Add default value if applicable
+5. `docs/usage.md` - Document the new option
 
 Give the option a `--` spelling, list it in `usage()` as well as `help()`, and
 keep any old single-dash spelling only as a hidden alias.
@@ -292,11 +273,11 @@ When adding atlas files to `src/t1prep/data/`:
 
 1. **Volume atlases** go in `templates_MNI152NLin2009cAsym/`
    - Add `<atlas_name>.nii.gz` (the atlas file)
-   - Add `<atlas_name>.txt` (description shown in Web UI tooltip)
+   - Add `<atlas_name>.txt` (description shown as the atlas's tool tip in the launcher)
 
 2. **Surface atlases** go in `atlases_surfaces_32k/`
    - Add `lh.<atlas_name>.annot` and `rh.<atlas_name>.annot`
-   - Add `lh.<atlas_name>.txt` (description shown in Web UI tooltip)
+   - Add `lh.<atlas_name>.txt` (description shown as the atlas's tool tip in the launcher)
 
 ## Neural Networks
 
@@ -396,20 +377,23 @@ When creating a PR:
 - [ ] README.md updated if user-facing changes
 - [ ] Docstrings added for new public functions
 
-## Web UI Development
+## Launcher Development
 
-The Flask-based Web UI (`webui/`) provides a browser interface for T1Prep.
+The Qt launcher (`t1prep-gui`) is the graphical front end of the pipeline.
 
 **Key files:**
-- `webui/app.py` - Flask routes, form handling, subprocess calls to T1Prep
-- `webui/templates/index.html` - Jinja2 template with form elements and JavaScript
-- `webui/static/styles.css` - CSS styling
+- `src/t1prep/launch/options.py` - the option table: labels, defaults, flags
+- `src/t1prep/launch/progress.py` - phases, bars and per-image states of a run
+- `src/t1prep/launch/results.py` - files of a subject, report measures, viewer calls
+- `src/t1prep/gui/launcher.py` - the window, the T1Prep process, the viewer processes
+- `src/t1prep/gui/launcher_widgets.py`, `theme.py` - table, form, results panel, look
 
-**When modifying the Web UI:**
-- Form fields should match CLI options in `scripts/T1Prep`
-- Add tooltip help text matching CLI option descriptions
-- For atlas selections, ensure `.txt` description files exist for hover help
-- Test both light and dark mode (CSS variables in `:root`)
+**When modifying the launcher:**
+- An option is one `Option` in the table; the form and the arguments follow from it
+- Keep VTK and OpenGL out of it: the viewers draw, each in a process of its own
+  (`tests/test_launcher_gui.py` fails when a VTK module gets imported)
+- What is not Qt belongs in `src/t1prep/launch/`, where it is tested without a window
+- For atlas selections, ensure `.txt` description files exist for the tool tips
 
 ## Testing
 
