@@ -50,7 +50,6 @@ following commands are available:
 | `T1Prep` | main CLI — batch + parallel processing (`--multi`) |
 | `PyCAT` | symlink to `T1Prep`; identical, only the banner differs |
 | `t1prep-gui` | desktop launcher: choose images, run, browse the results |
-| `t1prep-ui` | browser-based web UI |
 | `t1prep-run` | single-subject Python entry |
 | `CAT_SurfView` | surface viewer |
 | `CAT_VolView` | volume viewer (3 orthogonal slices) |
@@ -161,7 +160,7 @@ the environment switch it off; details in
 | [Installation](https://github.com/ChristianGaser/T1Prep/blob/main/docs/installation.md) | pip, source checkout, WSL, manual install, Docker |
 | [Usage](https://github.com/ChristianGaser/T1Prep/blob/main/docs/usage.md) | Options, output structure, naming, examples |
 | [Viewers](https://github.com/ChristianGaser/T1Prep/blob/main/docs/viewers.md) | `CAT_SurfView` and `CAT_VolView`, interactive and batch |
-| [Tools](https://github.com/ChristianGaser/T1Prep/blob/main/docs/tools.md) | Web UI and the surface post-processing GUIs |
+| [Tools](https://github.com/ChristianGaser/T1Prep/blob/main/docs/tools.md) | Launcher and the surface post-processing GUIs |
 
 ---
 

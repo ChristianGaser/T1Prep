@@ -114,20 +114,16 @@ source scripts/activate_env.sh
 python src/t1prep/gui/cat_surf_view.py data/templates_surfaces_32k/lh.pial.gii
 ```
 
-### Running the Web UI
+### Running the Launcher
 
 ```bash
-# Recommended: use the launcher (handles environment automatically)
-./scripts/T1Prep_ui --port 5000
-
-# Alternative: generic runner
-./scripts/run_with_env.sh webui/app.py --port 5000
+# From the checkout, with the environment's interpreter
+PYTHONPATH=src python -m t1prep.gui.launcher
 ```
 
-What it does:
-- ✅ Activates the environment if needed
-- ✅ Starts the Flask app with the correct interpreter
-- ✅ Auto-opens Chrome in app mode when available
+The launcher's code comes from the checkout; the jobs it starts run the `T1Prep`
+that comes first on `PATH` (the checkout's `scripts/T1Prep` only when there is
+none).
 
 ### Running Other Scripts
 
@@ -183,7 +179,7 @@ T1Prep/
 3. **Use the generic runner** for any Python script in the project
 4. **Keep dependencies updated** - run `pip install -r requirements.txt` after environment changes
 5. **Document your workflow** - use these scripts in your own automation
-6. **Use provided launchers** - `scripts/T1Prep_ui` for the Web UI and `scripts/CAT_SurfView` for visualization both manage the environment for you
+6. **Use provided launchers** - the installed `CAT_SurfView` and `CAT_VolView` for visualization manage the environment for you
 
 ## 🔧 Advanced Usage
 

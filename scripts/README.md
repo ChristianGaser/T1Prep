@@ -4,7 +4,7 @@ This directory contains the shell scripts behind the T1Prep command-line interfa
 
 > **Installed usage:** after `pip install` (or the bash bootstrapper), these
 > entry points are placed into the environment's `bin/` directory — put that on
-> your `PATH` and call them directly (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-ui`, `t1prep-run`,
+> your `PATH` and call them directly (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-run`,
 > `CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
 > `./scripts/<name>` form shown below is the source-tree/dev fallback; the
 > `scripts/` folder itself does not need to be on `PATH`.
@@ -85,30 +85,6 @@ PyCAT --out-dir /tmp/out sub-01_T1w.nii.gz   # identical to the T1Prep call abov
 `setuptools` dereferences the symlink at build time, so an installed environment
 gets `bin/PyCAT` as a second copy of the orchestrator; the `$0` dispatch keeps
 the banner correct either way.
-
-### `T1Prep_ui`
-
-Launches the Flask-based Web UI for T1Prep in a browser, from the source tree
-(installed: `t1prep-ui`).
-
-```bash
-# Start on default port (5050)
-./scripts/T1Prep_ui
-
-# Start on a custom port
-./scripts/T1Prep_ui 5500
-
-# Start without opening a browser
-./scripts/T1Prep_ui --no-browser
-```
-
-**Python discovery:** shared with the longitudinal wrappers
-(`activate_t1prep_env` in `T1Prep_utils.sh`): `src/` goes first on
-`PYTHONPATH`, `env/` is activated when it exists, otherwise the first
-interpreter with T1Prep's requirements is used; `$T1PREP_PYTHON` overrides
-both. The UI code comes from the checkout, but its jobs run the `T1Prep` that
-comes first on `PATH` (the checkout's `scripts/T1Prep` only when there is
-none), and the form starts from that T1Prep's defaults file.
 
 ---
 

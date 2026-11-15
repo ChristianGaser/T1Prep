@@ -66,7 +66,7 @@ T1Prep is on PyPI and needs nothing but Python:
 python3 -m pip install T1Prep
 ```
 
-That places every command — `T1Prep` (aka `PyCAT`), `t1prep-gui`, `t1prep-ui`, `t1prep-run`,
+That places every command — `T1Prep` (aka `PyCAT`), `t1prep-gui`, `t1prep-run`,
 `CAT_SurfView`, `CAT_VolView` and the helpers — into the active environment's
 `bin/`. Model
 weights are fetched on the first run (or ahead of time with
@@ -109,7 +109,6 @@ Installed alongside the pipeline, and usable on their own:
 | `CAT_SurfView` | Surface viewer: overlays, atlases, cluster tables, figures |
 | `CAT_VolView` | Volume viewer: three orthogonal slices, overlays, montages |
 | `t1prep-gui` | Desktop launcher: choose images, run the pipeline, browse the results |
-| `t1prep-ui` | Web UI for the pipeline |
 | `CAT_SurfResampleMulti_ui`, `CAT_SurfParameters_ui`, `CAT_Surf2ROIMulti_ui` | Surface post-processing GUIs |
 | `CAT_VolDiff` | Voxel-wise volume differences (`diff_*` / `diffrel_*`) |
 | `CAT_PlotHistogram` | Histograms of volumes, surfaces or text data |
@@ -131,7 +130,7 @@ from a script. See **[docs/viewers.md](docs/viewers.md)** for them and
 | [docs/installation.md](docs/installation.md) | pip, source checkout, WSL, manual install, Docker |
 | [docs/usage.md](docs/usage.md) | Running the pipeline: options, outputs, naming, examples |
 | [docs/viewers.md](docs/viewers.md) | `CAT_SurfView` and `CAT_VolView`, interactive and batch |
-| [docs/tools.md](docs/tools.md) | Web UI and the surface post-processing GUIs |
+| [docs/tools.md](docs/tools.md) | Launcher and the surface post-processing GUIs |
 | [scripts/README.md](scripts/README.md) | The scripts in a source checkout |
 | [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) | The bundled virtual environment |
 | [Agents.md](Agents.md) | Contributing: layout, style, tests |
