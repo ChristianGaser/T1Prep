@@ -147,7 +147,7 @@ parse_args()
 
   # Load the defaults file before any other option.  The values of the other
   # options are skipped: a value that reads "--defaults" must not make us
-  # source the word after it (the web UI passes form values through here).
+  # source the word after it (a front end passes form values through here).
   for ((_k = 1; _k <= $#; _k++)); do
     case "${!_k}" in
       --defaults | --default)
@@ -314,6 +314,9 @@ parse_args()
         ;;
       --no-atlas)
         atlas_vol=""
+        ;;
+      --no-atlas-surf)
+        atlas_surf=""
         ;;
       --wp | --warped-seg-nomod)
         save_wp=1
@@ -769,14 +772,16 @@ process()
       fi
     fi
 
-    # The web UI shows each phase in a panel of its own: there a header names
-    # the phase and its steps count from zero (the terminal keeps one bar).
+    # A front end that reads this output (t1prep-gui; it sets T1PREP_WEBUI,
+    # named after the web UI that came first) follows each phase on its own:
+    # there a header names the phase and its steps count from zero (the
+    # terminal keeps one bar).
     # A step is announced when it starts, so each phase gets one step more,
     # taken when it has finished: its last step does not read 100 % yet
-    webui_phases=0
+    frontend_phases=0
     seg_end_count=${end_count}
     if [[ -n "${T1PREP_WEBUI:-}" && "$multi" -ne -2 ]]; then
-      webui_phases=1
+      frontend_phases=1
       seg_end_count=$((count + 1))
     fi
 
@@ -824,7 +829,7 @@ process()
 
       # Execute the command and capture exit code
       if [ "${estimate_seg}" -eq 1 ]; then
-        [ "${webui_phases}" -eq 1 ] && echo "Volume Segmentation"
+        [ "${frontend_phases}" -eq 1 ] && echo "Volume Segmentation"
         printf '%q ' "${cmd[@]}" >> "${report_log}"
         echo >> "${report_log}"
         # Take the status inside each branch: after a pipeline `$?` is the
@@ -858,7 +863,7 @@ process()
 
       if [ "$seg_status" -ne 0 ]; then
         if [[ -n "${T1PREP_WEBUI:-}" && "$multi" -ne -2 ]]; then
-          # A plain line: the web UI must not read a 100 % bar as progress
+          # A plain line: a front end must not read a 100 % bar as progress
           echo "Segmentation failed"
         elif [[ "$multi" -ne -2 ]]; then
           # Use 1/1 so the single job bar renders without relying on end_count
@@ -869,7 +874,7 @@ process()
         echo "Error in ${input}"
         continue
       fi
-      if [[ "${webui_phases}" -eq 1 && "${estimate_seg}" -eq 1 ]]; then
+      if [[ "${frontend_phases}" -eq 1 && "${estimate_seg}" -eq 1 ]]; then
         ${progress_bar} 1 "" "${seg_end_count}" "${seg_end_count}" "Volume segmentation finished"
       fi
 
@@ -887,7 +892,7 @@ process()
       # Set starting time
       start_surf=$(date +%s)
 
-      if [ "${webui_phases}" -eq 1 ]; then
+      if [ "${frontend_phases}" -eq 1 ]; then
         echo "Surface Estimation"
         end_count=$((end_count - count))
         count=0
@@ -1034,8 +1039,9 @@ usage() {
     "${BOLD}Save:${NC}     --out-dir <DIR>  --bids  --gz  --no-overwrite <STRING>" \
     "          --save-h5  --fmriprep  --no-track  --skullstrip-only" \
     "          --no-skullstrip  --no-surf  --no-seg  --no-sphere-reg" \
-    "          --no-mwp  --no-atlas  --no-pial-white  --hemi  --wp  --rp" \
-    "          --p  --csf  --lesions  --atlas <LIST>  --atlas-surf <LIST>" \
+    "          --no-mwp  --no-atlas  --no-atlas-surf  --no-pial-white  --hemi" \
+    "          --wp  --rp  --p  --csf  --lesions  --atlas <LIST>" \
+    "          --atlas-surf <LIST>" \
     "" \
     "${BOLD}Expert:${NC}   --initial-surface <FILE>  --amap" \
     "          --thickness-method <NUMBER>  --no-correct-folding" \
@@ -1292,6 +1298,9 @@ ${BOLD}${GREEN}Save Options:${NC}
   --no-atlas                
       Skip estimation of volumetric atlases.
 
+  --no-atlas-surf
+      Skip mapping of surface atlases onto the individual surfaces.
+
   --pial-white, --no-pial-white
       Estimate (the default) or skip the pial and white matter surfaces
       during surface processing.
@@ -1328,7 +1337,7 @@ ${BOLD}${GREEN}Save Options:${NC}
   --atlas-surf                
       Specify a surface atlas list in the format 
       "'aparc_DK40.freesurfer','aparc_a2009s.freesurfer'" 
-      (default: $atlas_surf).
+      (default: $atlas_surf). Use --no-atlas-surf for none.
       Available: aparc_DK40.freesurfer, aparc_a2009s.freesurfer,
       aparc_HCP_MMP1, Schaefer2018_{100,200,400,600}Parcels_17Networks_order.
       Each is taken from the space it was defined in -- DK40 and Destrieux
