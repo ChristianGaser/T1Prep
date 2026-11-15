@@ -53,8 +53,6 @@ dependencies = [
     # Drawing backend of CAT_PlotHistogram and CAT_PlotBoxplot; the pipeline
     # itself does not plot
     "matplotlib>=3.5",
-    "flask>=2.3",
-    "apscheduler>=3.10",
     "h5py>=3.0",
     # Crash reports (t1prep._telemetry); 2.0 has the options that keep paths out
     "sentry-sdk>=2.0",
@@ -74,7 +72,6 @@ tinygrad = ["tinygrad==0.14.0; python_version >= '3.11'"]
 # ``t1prep-run`` to avoid colliding with ``T1Prep`` on case-insensitive
 # filesystems (macOS), where ``t1prep`` and ``T1Prep`` are the same path.
 t1prep-run = "t1prep.t1prep:main"
-t1prep-ui = "t1prep.webui.app:main"
 t1prep-gui = "t1prep.gui.launcher:main"
 CAT_SurfView = "t1prep.gui.cat_surf_view:main"
 CAT_VolView = "t1prep.gui.cat_vol_view:main"
@@ -98,7 +95,6 @@ package-dir = {"" = "src"}
 # works because setuptools dumps them all into the same bin/ directory.
 # Skipped on purpose:
 #   - install.sh / activate_env.sh / run_with_env.sh  (bootstrappers)
-#   - T1Prep_ui                                       (dev launcher; installed: t1prep-ui)
 #   - dice.sh                                         (use `python -m t1prep.dice`)
 #   - the viewers                                     (console scripts:
 #                                                      CAT_SurfView, CAT_VolView)
@@ -150,10 +146,5 @@ t1prep = [
     "data/templates_surfaces_32k/**",
     "data/templates_surfaces_4k/**",
     "data/templates_surfaces_fsLR/**",
-]
-# Flask templates/static for the packaged web UI (`t1prep-ui`).
-"t1prep.webui" = [
-    "templates/*.html",
-    "static/*",
 ]
 
