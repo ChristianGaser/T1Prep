@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # PURPOSE:
-#   Resample left (und optional right) hemisphere surface data to a target sphere,
+#   Resample left (and optional right) hemisphere surface data to a target sphere,
 #   optionally smooth the values and write a single combined GIfTI using
 #   CAT_SurfResampleMulti.
 #
@@ -38,11 +38,11 @@ areal_str=""
 os_type=$(uname -s) # Determine OS type
 
 script_dir=$(dirname "$0")
-root_dir=$(dirname $script_dir)
-name_file=${root_dir}/src/t1prep/data/Names.tsv
-surf_templates_dir=${root_dir}/src/t1prep/data/templates_surfaces_${res}
+root_dir=$(dirname "$script_dir")
 
+# Sets data_dir for a source checkout as well as for an installation
 source "${script_dir}/T1Prep_utils.sh"
+surf_templates_dir=${data_dir}/templates_surfaces_${res}
 
 JOB_ID="jobrun_$(date +%s%N)"  # Unique ID based on timestamp in nanoseconds
 PROGRESS_DIR="/tmp/progress_bars/$JOB_ID"
@@ -210,6 +210,22 @@ parse_args()
     shift
   done
 
+  # --res picks the templates as well as the name of the output: sphere and
+  # mask follow it unless they were given.  (They stayed at 32k, so "--res 4k"
+  # wrote 32k data under a 4k name.)  Below data_dir, not below root_dir/src:
+  # an installation has no src/.
+  surf_templates_dir="${data_dir}/templates_surfaces_${res}"
+  if [ ! -d "${surf_templates_dir}" ]; then
+    echo "${RED}No surface templates for --res ${res} (${surf_templates_dir}).${NC}" >&2
+    exit 1
+  fi
+  if [[ "$lh_fsavg_sphere" == */templates_surfaces_*/lh.sphere.freesurfer.gii ]]; then
+    lh_fsavg_sphere="${surf_templates_dir}/lh.sphere.freesurfer.gii"
+  fi
+  if [[ "$lh_fsavg_mask" == */templates_surfaces_*/lh.mask ]]; then
+    lh_fsavg_mask="${surf_templates_dir}/lh.mask"
+  fi
+
   # RH hemisphere fallback
   if [[ -z "$rh_fsavg_sphere" ]]; then
     rh_fsavg_sphere="${lh_fsavg_sphere/lh./rh.}"
@@ -273,6 +289,7 @@ process_file() {
   LH_ARRAY+=("$lh_unit")
   RH_ARRAY+=("$rh_unit")
   OUT_ARRAY+=("$out_name")
+  return 0
 }
 
 
@@ -283,6 +300,7 @@ process_file() {
 process()
 {  
   n="${#FILES[@]}"
+  failed=0
   
   # Check for mixed area/non-area measures in serial mode (same as parallel check)
   local has_area=0 has_other=0
@@ -304,9 +322,10 @@ process()
   for f in "${FILES[@]}"; do
     if [[ ! -f "$f" && ! -L "$f" ]]; then
       echo -e "${RED}File '$f' not found – skipping.${NC}" >&2
+      failed=1
       continue
     fi
-    process_file "$f"
+    process_file "$f" || failed=1
   done
 
   # Use the actual number of queued jobs (some inputs might have been skipped)
@@ -329,13 +348,16 @@ process()
    
   j=1
   for ((i=0; i<${n}; i++)); do
+    # --out names a folder that need not exist yet
+    mkdir -p "$(dirname "${OUT_ARRAY[$i]}")"
+
     if [  ${n} -gt 1 ]; then
       echo "$j/$n" > "$PROGRESS_DIR/job0.progress"
       ((j++))
       echo 0 > "$PROGRESS_DIR/job0.status"
     fi
     
-    LH_UNIT="${LH_ARRAY[$i]}" RH_UNIT="${RH_ARRAY[$i]}" OUT_FILE="${OUT_ARRAY[$i]}" python3 - <<PYEOF 2>&1
+    LH_UNIT="${LH_ARRAY[$i]}" RH_UNIT="${RH_ARRAY[$i]}" OUT_FILE="${OUT_ARRAY[$i]}" "${python:-python3}" - <<PYEOF 2>&1
 import os, cat_surf.cli as cli
 def parse_unit(s):
     d = {}
@@ -352,18 +374,22 @@ cli.surf_resample_multi(
 PYEOF
       
     exit_code=$?
-    pids=($!)
 
-    if [[ ${n} -gt 1  &&  $exit_code -ne 0 ]]; then
-      echo 1 > "$PROGRESS_DIR/job0.status"
+    # A file that failed fails the call.  The status used to be that of the
+    # clean-up below, so a call that had written nothing still ended with 0.
+    if [ "$exit_code" -ne 0 ]; then
+      failed=1
+      if [ "${n}" -gt 1 ]; then
+        echo 1 > "$PROGRESS_DIR/job0.status"
+      fi
     fi
   done
-  
-  if [  ${n} -gt 1 ]; then
+
+  if [ "${n}" -gt 1 ]; then
     wait $progress_pid
     rm -r "$PROGRESS_DIR"
   fi
-  exit $?
+  exit "$failed"
 }
 
 
@@ -404,15 +430,19 @@ Resample left (and optional right) hemisphere surfaces/values to target spheres 
 write a single combined GIfTI per subject using CAT_SurfResampleMulti.
 
 ${BOLD}OPTIONS:${NC}
-  --out <DIR>                  Output directory (default: same as input file dir)
+  --out <DIR>                  Output directory, created if missing (default: same as
+                               input file dir)
   --no-parallel                Disable parallelization via ${script_dir}/parallelize
   --jobs <N>                   Number of parallel processes (passed to parallelize --processes)
   --areal                      Resample with areal interpolation, as surface area needs
                                (set automatically for an 'area' measure)
   --ext <STR>                  Output file extension (default: $ext)
-  --res <STR>                  Output surface resolution (32k or 4k, default: $res)
-  --trg-sphere <FILE>          Target sphere for the left hemisphere
-  --mask <FILE>                Target mask for the left hemisphere
+  --res <STR>                  Output surface resolution (32k or 4k, default: $res);
+                               selects the target sphere and mask of that mesh
+  --trg-sphere <FILE>          Target sphere for the left hemisphere (default: the
+                               template sphere of --res)
+  --mask <FILE>                Target mask for the left hemisphere (default: the
+                               template mask of --res)
   --fwhm <FLOAT>               Smoothing FWHM applied inside CAT_SurfResampleMulti (default: $fwhm)
   --help                       Show this help and exit
 
@@ -432,7 +462,7 @@ ${BOLD}OUTPUT:${NC}
   for use with SPM.
 
 ${BOLD}Dependencies:${NC}
-  CAT_SurfResampleMulti
+  cat_surf (Python package; cat_surf.cli.surf_resample_multi)
   ${script_dir}/progress_bar_multi.sh
   ${script_dir}/parallelize
 

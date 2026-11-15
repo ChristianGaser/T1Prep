@@ -140,7 +140,7 @@ full source tree (development, the tests, the evaluation tools).
 # Interactive installation
 bash scripts/install.sh
 
-# Without the prompts (via environment variables; it still needs a terminal)
+# Without the prompts and without a terminal (CI, Docker): all three variables
 T1PREP_VERSION=latest T1PREP_INSTALL_DIR=/opt/T1Prep T1PREP_PYTHON=python3.12 bash scripts/install.sh
 ```
 
@@ -461,6 +461,7 @@ Computes curvature-based surface parameters (curvature, fractal dimension, surfa
 - Automatically processes both hemispheres when given a `lh.*` file
 - Supports GIfTI (`.gii`) and OBJ (`.obj`) input formats
 - Output: text files or GIfTI (with `--gifti` flag)
+- Without a measure option it computes gyrification (`--gy`, the absolute mean curvature)
 
 ### `CAT_SurfResampleMulti_ui`
 
@@ -472,6 +473,9 @@ Resamples surface data to a target sphere (default: 32k), with optional smoothin
 
 # Custom smoothing kernel
 ./scripts/CAT_SurfResampleMulti_ui --fwhm 20 surf/lh.thickness.sub-01
+
+# 4k mesh, into a folder of its own (created if missing)
+./scripts/CAT_SurfResampleMulti_ui --res 4k --out resampled surf/lh.thickness.sub-01
 ```
 
 - Input: left hemisphere value files as T1Prep names them, `lh.<measure>.<name>`;
@@ -492,7 +496,8 @@ Extracts ROI-wise values from surface data using atlas parcellations (via `cat_s
 ```
 
 - Input: left hemisphere value files, `lh.<measure>.<name>` (sphere.reg and right hemisphere auto-derived)
-- Output: one ROI table (JSON) per input file and atlas, in `label/` or the folder given with `--out`
+- Output: one ROI table (JSON) per input file and atlas; for an input in a `surf` folder in the `label` folder next to it, otherwise next to the input, or in the folder given with `--out`
+- Exit status (all `CAT_*_ui` helpers): 1 when a file could not be processed, 0 only when every output was written
 
 ### `CAT_VolSmooth_ui`
 

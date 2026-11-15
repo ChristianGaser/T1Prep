@@ -20,7 +20,7 @@
 #
 # OUTPUT:
 #   One output per processed hemisphere/input (txt by default, or *.gii when
-#   -gifti is used).
+#   --gifti is used).
 # ______________________________________________________________________
 #
 # Christian Gaser
@@ -121,7 +121,7 @@ main()
 
     if [[ "${#files_for_parallel[@]}" -lt 2 ]]; then
       process
-      exit 0
+      exit $?
     fi
 
     local -a cmd_argv
@@ -169,7 +169,7 @@ main()
   
   process
 
-  exit 0
+  exit $?
 }
 
 # ----------------------------------------------------------------------
@@ -218,7 +218,6 @@ parse_args()
       ;;
     --gy* | -gy*)
       method=0
-      use_absolute=1
       ;;
     --gc* | -gc*)
       method=1
@@ -291,6 +290,14 @@ parse_args()
     shift
   done
 
+  # Gyrification is the absolute mean curvature, whether --gy was given or
+  # is the default.  (Only the option set this: one file without an option
+  # gave the signed curvature, several files -- run through "--gy" -- the
+  # absolute one, under the same output name.)
+  use_absolute=0
+  if [ "$method" -eq 0 ]; then
+    use_absolute=1
+  fi
 }
 
 # ----------------------------------------------------------------------
@@ -402,7 +409,7 @@ process()
     exit 1
   fi
 
-  local infile
+  local infile failed=0
   for infile in "${WORK_FILES[@]}"; do
     get_outputname "$infile"
     if [[ -f "${outputname}" && "$noclobber" -eq 1 ]]; then
@@ -419,7 +426,7 @@ process()
     fi
     
     echo "calculating ${outputname}"
-    IN="$infile" OUT="$outputname" SPHERE="$sphere" python3 - <<PYEOF 2>&1
+    IN="$infile" OUT="$outputname" SPHERE="$sphere" "${python:-python3}" - <<PYEOF 2>&1
 import os, cat_surf.cli as cli
 infile     = os.environ['IN']
 outputname = os.environ['OUT']
@@ -445,7 +452,10 @@ elif method == 17:
 elif method == 18:
     cli.surf_curvature(infile, outputname, curvtype=11, use_abs_values=use_absolute)
 PYEOF
+    # A file that failed fails the call (the status was always 0)
+    [ $? -eq 0 ] || failed=1
   done
+  return "$failed"
 }
 
 

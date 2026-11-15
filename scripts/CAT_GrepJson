@@ -19,6 +19,8 @@
 script_dir=$(dirname "$0")
 source "${script_dir}/T1Prep_utils.sh"
 out_file=""
+field=""
+declare -a FILES=()
 
 # ----------------------------------------------------------------------
 # run main
@@ -81,8 +83,17 @@ parse_args()
     shift
   done
 
-  if [[ -z "$field" || -z "$FILES" ]]; then
-      help
+  # Without a field or without files there is nothing to print.  (The help
+  # was shown and jq then run all the same, on whatever was there.)
+  if [[ -z "$field" ]]; then
+    echo "${RED}ERROR: No field given (--field <NAME>).${NC}" >&2
+    usage
+    exit 1
+  fi
+  if [[ "${#FILES[@]}" -eq 0 ]]; then
+    echo "${RED}ERROR: No JSON file given.${NC}" >&2
+    usage
+    exit 1
   fi
 }
 

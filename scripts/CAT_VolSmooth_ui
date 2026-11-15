@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # PURPOSE:
-#   Smooth volumetric data with a Gaussian kernel using CAT_VolSmooth.
+#   Smooth volumetric data with a Gaussian kernel (cat_surf.cli.vol_smooth).
 #
 # USAGE:
 #   CAT_VolSmooth_ui [options] <volume_file> [<volume_file> ...]
@@ -187,6 +187,7 @@ cleanup() {
 process()
 {  
   n="${#FILES[@]}"
+  failed=0
   
   declare -a FILES_IN=()
   
@@ -224,24 +225,28 @@ process()
       echo 0 > "$PROGRESS_DIR/job0.status"
     fi
     
-    IN="${FILES_IN[$i]}" OUT="${OUT_ARRAY[$i]}" python3 - <<PYEOF 2>&1
+    IN="${FILES_IN[$i]}" OUT="${OUT_ARRAY[$i]}" "${python:-python3}" - <<PYEOF 2>&1
 import os, cat_surf.cli as cli
 cli.vol_smooth(os.environ['IN'], os.environ['OUT'], fwhm=${fwhm})
 PYEOF
       
     exit_code=$?
-    pids=($!)
 
-    if [[ ${n} -gt 1  &&  $exit_code -ne 0 ]]; then
-      echo 1 > "$PROGRESS_DIR/job0.status"
+    # A file that failed fails the call.  The status used to be that of the
+    # clean-up below, so a call that had written nothing still ended with 0.
+    if [ "$exit_code" -ne 0 ]; then
+      failed=1
+      if [ "${n}" -gt 1 ]; then
+        echo 1 > "$PROGRESS_DIR/job0.status"
+      fi
     fi
   done
-  
-  if [  ${n} -gt 1 ]; then
+
+  if [ "${n}" -gt 1 ]; then
     wait $progress_pid
     rm -r "$PROGRESS_DIR"
   fi
-  exit $?
+  exit "$failed"
 }
 
 
@@ -272,7 +277,7 @@ ${BOLD}USAGE:${NC}
   ${GREEN}$0 [options] <filename(s)>${NC}
 
 ${BOLD}DESCRIPTION:${NC}
-Smooth volumetric 3D data with a Gaussian kernel using CAT_VolSmooth.
+Smooth volumetric 3D data with a Gaussian kernel (cat_surf.cli.vol_smooth).
 Processes one or more Nifti images in parallel or serially.
 
 ${BOLD}OPTIONS:${NC}
@@ -289,7 +294,7 @@ ${BOLD}OUTPUT:${NC}
   (e.g., input.nii.gz -> s6input.nii.gz with default fwhm=6)
 
 ${BOLD}Dependencies:${NC}
-  CAT_VolSmooth
+  cat_surf (Python package; cat_surf.cli.vol_smooth)
   ${script_dir}/progress_bar_multi.sh
   ${script_dir}/parallelize
 

@@ -235,10 +235,13 @@ process_file() {
   dname=$(dirname "$infile")
   bname=$(basename "$infile")
   
-  # write in label instead of surf
-  dname_label=$(basename "$dname")
-  if [ "$dname_label" == "surf" ]; then
-    dname_label="${dname_label//surf/label}"
+  # The tables of a surf folder go to the label folder next to it, as T1Prep
+  # writes its own; anything else stays next to the input.  (The folder used
+  # to be taken relative to the current directory: "label/..." or the bare
+  # name of the input's folder.)
+  dname_label="$dname"
+  if [ "$(basename "$dname")" == "surf" ]; then
+    dname_label="$(dirname "$dname")/label"
   fi
 
   # only lh.* supported for now
@@ -271,16 +274,19 @@ process_file() {
   fi
 
   local atlas_name lh_annot_path rh_annot_path lh_unit rh_unit out_name
+  local missing=0
   for atlas_name in "${ATLAS_NAMES[@]}"; do
     lh_annot_path="${atlas_templates_dir}/lh.${atlas_name}.annot"
     rh_annot_path="${atlas_templates_dir}/rh.${atlas_name}.annot"
 
     if [[ ! -f "$lh_annot_path" && ! -L "$lh_annot_path" ]]; then
       echo -e "${RED}Missing atlas '$lh_annot_path' – skipping atlas '${atlas_name}'.${NC}" >&2
+      missing=1
       continue
     fi
     if [[ ! -f "$rh_annot_path" && ! -L "$rh_annot_path" ]]; then
       echo -e "${RED}Missing atlas '$rh_annot_path' – skipping atlas '${atlas_name}'.${NC}" >&2
+      missing=1
       continue
     fi
 
@@ -300,6 +306,7 @@ process_file() {
     RH_ARRAY+=("$rh_unit")
     OUT_ARRAY+=("$out_name")
   done
+  return "$missing"
 }
 
 
@@ -310,13 +317,15 @@ process_file() {
 process()
 {
   n="${#FILES[@]}"
+  failed=0
 
   for f in "${FILES[@]}"; do
     if [[ ! -f "$f" && ! -L "$f" ]]; then
       echo -e "${RED}File '$f' not found – skipping.${NC}" >&2
+      failed=1
       continue
     fi
-    process_file "$f"
+    process_file "$f" || failed=1
   done
 
   # Use the actual number of queued jobs (some inputs might have been skipped)
@@ -347,7 +356,7 @@ process()
       echo 0 > "$PROGRESS_DIR/job0.status"
     fi
 
-    LH_UNIT="${LH_ARRAY[$i]}" RH_UNIT="${RH_ARRAY[$i]}" OUT_FILE="${OUT_ARRAY[$i]}" python3 - <<PYEOF 2>&1
+    LH_UNIT="${LH_ARRAY[$i]}" RH_UNIT="${RH_ARRAY[$i]}" OUT_FILE="${OUT_ARRAY[$i]}" "${python:-python3}" - <<PYEOF 2>&1
 import os, cat_surf.cli as cli
 def parse_unit(s):
     d = {}
@@ -362,18 +371,22 @@ cli.surf2roi_multi(
 PYEOF
 
     exit_code=$?
-    pids=($!)
 
-    if [[ ${n} -gt 1 && $exit_code -ne 0 ]]; then
-      echo 1 > "$PROGRESS_DIR/job0.status"
+    # A file that failed fails the call.  The status used to be that of the
+    # clean-up below, so a call that had written nothing still ended with 0.
+    if [ "$exit_code" -ne 0 ]; then
+      failed=1
+      if [ "${n}" -gt 1 ]; then
+        echo 1 > "$PROGRESS_DIR/job0.status"
+      fi
     fi
   done
 
-  if [ ${n} -gt 1 ]; then
+  if [ "${n}" -gt 1 ]; then
     wait $progress_pid
     rm -r "$PROGRESS_DIR"
   fi
-  exit $?
+  exit "$failed"
 }
 
 
@@ -412,7 +425,8 @@ For each left-hemisphere input file (lh.*), the matching right-hemisphere file i
 automatically by replacing lh. with rh.
 
 ${BOLD}OPTIONS:${NC}
-  --out <DIR>                  Output directory (default: same as input file dir)
+  --out <DIR>                  Output directory (default: the label folder next to a
+                               surf folder, otherwise the folder of the input)
   --no-parallel                Disable parallelization via ${script_dir}/parallelize
   --jobs <N>                   Number of parallel processes (passed to parallelize --processes)
   --res <STR>                  Surface/atlas resolution (default: $res)
