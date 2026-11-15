@@ -99,8 +99,8 @@ package-dir = {"" = "src"}
 #   - dice.sh                                         (use `python -m t1prep.dice`)
 #   - the viewers                                     (console scripts:
 #                                                      CAT_SurfView, CAT_VolView)
-#   - realign_longitudinal.sh                         (use `python -m t1prep.realign_longitudinal`)
-#   - process_longitudinal.sh                         (depends on the above)
+#   - make_macos_apps.sh                              (installed: t1prep-make-apps)
+#   - mem_probe.py / qa_calibrate.py                  (dev tools)
 script-files = [
     "scripts/T1Prep",
     # Symlink to T1Prep; setuptools dereferences it into a second copy in bin/.
