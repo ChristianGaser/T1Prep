@@ -56,12 +56,16 @@ automatically.
 t1prep/
 ├── __init__.py          # top-level exports
 ├── t1prep.py            # run_t1prep() – pipeline entry point
-├── segment.py           # segmentation logic
-├── surface_estimation.py
+├── segment.py           # volume pipeline (python -m t1prep.segment)
+├── surface_estimation.py  # surface pipeline per hemisphere
+├── stages/              # skull-strip, affine registration, segmentation
+├── nn/                  # the networks: weights, architectures, backends
 ├── utils.py             # shared utilities
 ├── metrics.py           # Dice / evaluation metrics
 ├── cat_surf/
 │   └── __init__.py      # re-exports all cat_surf symbols + cli sub-module
+├── gui/                 # viewers (CAT_SurfView, CAT_VolView) and launcher (t1prep-gui)
+├── launch/              # what the launcher knows that is not Qt
 └── ...
 ```
 
@@ -74,7 +78,10 @@ entirely from Python: segmentation runs in a child process via
 `python -m t1prep.segment`, surface estimation runs in parallel child
 processes via `python -m t1prep.surface_estimation`, and the two
 hemispheres are joined in-process.  No bash interpreter is required.
-The function returns a numeric exit code (`0` on success).
+Several files are processed one after another; for a parallel batch use the
+bash orchestrator (`T1Prep --multi N`) or call `run_t1prep()` from several
+processes.  The function returns the number of files that failed (`0` when
+all succeeded).
 
 ```python
 from t1prep import run_t1prep
@@ -89,11 +96,10 @@ run_t1prep(
     bids=True,
 )
 
-# Batch: multiple files, parallel workers, extra outputs
-run_t1prep(
+# Several files (one after another), extra outputs
+failed = run_t1prep(
     ["/data/sub-01_T1w.nii.gz", "/data/sub-02_T1w.nii.gz"],
     out_dir="/results",
-    multi=-1,            # auto-detect CPU count
     atlas=["neuromorphometrics", "suit"],
     atlas_surf=["aparc_DK40.freesurfer"],
     wp=True,             # write warped gray matter
@@ -101,8 +107,6 @@ run_t1prep(
     csf=True,            # include CSF tissue map
     lesions=True,        # lesion detection
     gz=True,             # compress outputs
-    log_file="/results/run.log",
-    stream_output=True,
 )
 ```
 
@@ -110,63 +114,56 @@ run_t1prep(
 
 ```python
 run_t1prep(
-    inputs,              # str | Path | list[str | Path]
+    inputs,                  # str | Path | list[str | Path]
     *,
     # output
-    out_dir=None,        # str | Path
-    bids=False,
-    gz=False,
+    out_dir=None,            # str | Path; default: next to the input
+    bids=False,              # BIDS derivatives names
+    gz=False,                # .nii.gz instead of .nii
     # processing control
     no_surf=False,
     no_seg=False,
     no_sphere_reg=False,
     skullstrip_only=False,
     skip_skullstrip=False,
-    pial_white=False,
+    pial_white=True,         # estimate the pial and white surfaces as well
     lesions=False,
-    amap=False,
+    amap=False,              # refine the network segmentation with AMAP
+    fmriprep=False,          # fMRIPrep-compatible results
+    save_h5=False,           # deformations also as ANTs/ITK .h5
     fast=False,
     # tissue maps
-    no_mwp=False,        # suppress modulated warped tissue maps
-    wp=False,            # warped tissue maps (unmodulated)
-    rp=False,            # rigid-body warped tissue maps
-    p=False,             # native-space tissue maps
-    csf=False,           # include CSF output
+    no_mwp=False,            # suppress modulated warped tissue maps
+    wp=False,                # warped tissue maps (unmodulated)
+    rp=False,                # affine-registered tissue maps
+    p=False,                 # native-space tissue maps
+    csf=False,               # include CSF in the p and rp maps
+    hemisphere=False,        # keep the hemispheric label maps
     # atlas labeling
-    atlas=None,          # str | list[str]
-    atlas_surf=None,     # str | list[str]
-    no_atlas=False,      # skip the volume atlases (ROI volumes)
-    no_atlas_surf=False, # skip the surface atlases
-    # parallelization
-    multi=None,          # int; -1 = auto
-    min_memory=None,     # float (GB per process)
-    seed=None,           # int (reproducibility)
-    # pre-processing
-    pre_fwhm=None,       # float (mm)
-    downsample=None,     # float (mm)
-    median_filter=None,  # int (kernel size)
-    vessel=None,         # float (vessel-correction threshold)
-    thickness_method=None,
+    atlas=None,              # str | list[str]; default 'neuromorphometrics', 'cobra'
+    atlas_surf=None,         # str | list[str]; default DK40 and Destrieux
+    no_atlas=False,          # skip the volume atlases (ROI volumes)
+    no_atlas_surf=False,     # skip the surface atlases
+    # tuning
+    seed=0,                  # int (reproducibility)
+    pre_fwhm=2.0,            # float (mm), smoothing before Marching Cubes
+    median_filter=1,         # int, number of median filter passes
+    vessel=1.0,              # float, vessel correction (0 switches it off)
+    thickness_method=3,      # 1 = Tfs, 2 = pial/white, 3 = PBT
     no_correct_folding=False,
     # longitudinal
-    initial_surf=None,   # str | Path
-    long_data=None,      # str | Path
+    initial_surf=None,       # str | Path
+    long_data=None,          # str | Path
     # robustness
-    no_overwrite=None,   # str (filename pattern to skip)
-    retry=False,         # retry a failed step once
+    no_overwrite=None,       # str: skip a subject whose results match this pattern
+    retry=False,             # retry a failed step once
+    no_retry=False,          # kept for compatibility; retry is off by default
     # misc
-    hemisphere=False,
-    defaults=None,       # str | Path (alternative defaults file)
-    python=None,         # str | Path (interpreter)
-    install=False,
-    re_install=False,
     debug=False,
-    cwd=None,
-    env=None,
-    check=True,          # raise on non-zero exit
-    log_file=None,       # str | Path
-    stream_output=True,
-) -> int
+    verbose=True,
+    track=True,              # report a crash (no paths); False switches it off
+    nn_backend=None,         # "torch" | "tinygrad"; default T1PREP_NN_BACKEND, else torch
+) -> int                     # number of files that failed (0 = all succeeded)
 ```
 
 ---
@@ -207,17 +204,17 @@ cs.write_values("lh.corrected_thickness.sub-01", thickness)
 
 | Function | Description |
 |----------|-------------|
-| `get_area(v, fcs)` | Total surface area |
-| `get_area_normalized(v, fcs)` | Per-vertex area (normalized) |
+| `get_area(v, fcs)` | Per-vertex area and the total surface area |
+| `get_area_normalized(v, fcs, sphere_v, sphere_fcs)` | Per-vertex area, normalized against a reference sphere |
 | `euler_characteristic(v, fcs)` | Euler number |
-| `point_distance(v, fcs, pts)` | Distance from points to surface |
-| `point_distance_mean(v, fcs, pts)` | Mean distance from points to surface |
+| `point_distance(v1, fcs1, v2, fcs2)` | Per-vertex distance between two meshes, and its maximum |
+| `point_distance_mean(v1, fcs1, v2, fcs2)` | Mean (FreeSurfer Tfs) per-vertex distance between two meshes |
 | `hausdorff_distance(v1, fcs1, v2, fcs2)` | Hausdorff distance between two meshes |
-| `sphere_radius(v)` | Sphere radius from vertex array |
+| `sphere_radius(v, fcs)` | Average radius of a spherical mesh |
 | `sulcus_depth(v, fcs)` | Sulcus depth map |
 | `smoothed_curvatures(v, fcs)` | Smoothed mean curvature |
-| `surf_curvature(v, fcs)` | Raw mean curvature |
-| `count_intersections(v, fcs)` | Count self-intersecting triangles |
+| `surf_curvature(v, fcs)` | Per-vertex curvature (`curvtype` selects the measure) |
+| `count_intersections(v, fcs)` | Number of self-intersecting triangle pairs |
 
 ### Surface Processing
 
@@ -225,12 +222,12 @@ cs.write_values("lh.corrected_thickness.sub-01", thickness)
 |----------|-------------|
 | `smooth_heatkernel(v, fcs, values, fwhm)` | Heat-kernel surface smoothing |
 | `smooth_mesh(v, fcs, iterations)` | Laplacian mesh smoothing |
-| `reduce_mesh(v, fcs, ratio, aggr)` | Mesh decimation |
-| `remove_intersections(v, fcs)` | Remove self-intersections |
-| `surf_average(meshes)` | Average across a list of meshes |
-| `surf_deform(v, fcs, ...)` | Surface deformation |
-| `resample_to_sphere(v, fcs, sphere_v, sphere_fcs)` | Resample mesh to sphere |
-| `resample_annot(annot, ...)` | Resample atlas annotation |
+| `reduce_mesh(v, fcs, target_faces)` | Mesh decimation to a number of faces |
+| `fix_self_intersect(v, fcs)` | Remove self-intersections |
+| `surf_average(surfaces)` | Average across a list of meshes |
+| `surf_deform(v, fcs, volume, ...)` | Deform a surface toward an isovalue of a volume |
+| `resample_to_sphere(v, fcs, sphere_v, sphere_fcs, target_sphere_v, target_sphere_fcs)` | Resample a mesh (and values) from its sphere to a target sphere |
+| `resample_annot(source_surface_file, source_sphere_file, target_sphere_file, annot_in_file, annot_out_file)` | Resample an atlas annotation (file based) |
 
 ```python
 import t1prep.cat_surf as cs
@@ -248,7 +245,7 @@ cs.write_values("lh.thickness_s20.sub-01", smoothed)
 | Function | Description |
 |----------|-------------|
 | `surf_to_sphere(v, fcs)` | Map surface to unit sphere |
-| `surf_to_pial_white(central_v, fcs, thickness)` | Derive pial/white from central + thickness |
+| `surf_to_pial_white(central_v, fcs, thickness, label)` | Derive pial/white from central surface, thickness and the label volume |
 | `central_to_pial(v, fcs, thickness)` | Expand central surface to pial |
 | `correct_thickness_folding(v, fcs, thickness)` | Correct thickness for folding artefacts |
 
@@ -258,36 +255,41 @@ cs.write_values("lh.thickness_s20.sub-01", smoothed)
 |----------|-------------|
 | `vol_sanlm(volume)` | Non-local-means denoising |
 | `vol_blood_vessel_correction(label, voxelsize)` | Remove blood-vessel label artefacts |
-| `vol_thickness_pbt(label, voxelsize)` | PBT cortical thickness estimation |
-| `vol_amap(data, mask)` | AMAP tissue segmentation |
-| `vol_marching_cubes(label, voxelsize, iso)` | Marching-cubes surface extraction |
+| `vol_thickness_pbt(label, voxelsize)` | PBT cortical thickness: thickness map, percentage position map and the two distance maps |
+| `vol_amap(volume, labels)` | AMAP tissue segmentation, started from a label volume |
+| `vol_marching_cubes(volume, threshold)` | Marching-cubes surface extraction at a threshold of the volume |
 | `vol2surf(volume, v, fcs, ...)` | Sample volume values onto surface |
 
 ```python
 import t1prep.cat_surf as cs
 import nibabel as nib
 
-label_img = nib.load("p0sub-01_T1w.nii.gz")
+# A hemisphere label map, as T1Prep keeps it with --hemi
+label_img = nib.load("lh.seg.sub-01.nii")
 label = label_img.get_fdata()
 vx = label_img.header.get_zooms()[:3]
 
-# Extract initial surface via marching cubes
-v, fcs = cs.vol_marching_cubes(label, voxelsize=vx, iso=1.5)
-cs.write_surface("lh.initial.gii", v, fcs)
-
-# Cortical thickness via PBT
+# Cortical thickness (GMT) and percentage position map (PPM) via PBT
 gmt, ppm, dcsf, dwm = cs.vol_thickness_pbt(label, voxelsize=vx)
-cs.write_values("lh.thickness.sub-01", gmt)
+nib.save(nib.Nifti1Image(gmt, label_img.affine), "lh.thickness.sub-01.nii")
+
+# Central surface: the 0.5 level of the percentage position map
+ppm_img = nib.Nifti1Image(ppm, label_img.affine)
+v, fcs = cs.vol_marching_cubes(ppm_img, threshold=0.5)
+cs.write_surface("lh.central.sub-01.gii", v, fcs)
 ```
 
 ### Registration
 
 | Function | Description |
 |----------|-------------|
-| `bbreg(moving, fixed, ...)` | Boundary-based registration |
-| `bbreg_detect_contrast(volume)` | Auto-detect image contrast for BBR |
-| `volume_register_nmi(moving, fixed)` | NMI-based volume registration |
-| `volume_register_robust(moving, fixed)` | Robust volume registration |
+| `bbreg(volume_file, lh_surface=..., rh_surface=..., ref_file=...)` | Boundary-based registration of a volume to the cortical surfaces |
+| `bbreg_detect_contrast(volume_file, lh_surface=..., rh_surface=...)` | Auto-detect image contrast for BBR |
+| `volume_register_nmi(fixed_file, moving_file)` | Rigid registration by normalised mutual information |
+| `volume_register_robust(fixed_file, moving_file)` | Rigid same-modality registration, robust to outliers |
+
+These four take file names and return the 4x4 transform from the moving to
+the fixed image.
 
 ### CLI Sub-module
 
@@ -303,13 +305,14 @@ cli.surf2sphere("lh.central.sub-01.gii", "lh.sphere.sub-01.gii")
 # Reduce mesh
 cli.surf_reduce("lh.central.sub-01.gii", "lh.reduced.gii", ratio=0.25)
 
-# Resample to template sphere and apply smoothing
+# Resample thickness values to the template sphere
 cli.surf_resample(
-    "lh.thickness.sub-01",
-    "lh.sphere.sub-01.gii",
-    target_sphere="lh.sphere.freesurfer_fsaverage.gii",
-    fwhm=15.0,
-    output="lh.thickness.resampled.sub-01",
+    "lh.central.sub-01.gii",            # the surface
+    "lh.sphere.reg.sub-01.gii",         # its registered sphere
+    "lh.sphere.freesurfer.gii",         # target sphere (data/templates_surfaces_32k)
+    None,                               # no resampled surface wanted
+    input_values_file="lh.thickness.sub-01",
+    output_values_file="lh.thickness.resampled.sub-01",
 )
 
 # Compute surface curvature
@@ -317,9 +320,9 @@ cli.surf_curvature("lh.central.sub-01.gii", "lh.mc.sub-01")
 
 # Map volume values onto surface
 cli.vol2surf(
-    volume="sub-01_T1w.nii.gz",
-    central="lh.central.sub-01.gii",
-    output="lh.T1.sub-01",
+    "lh.central.sub-01.gii",            # surface
+    "sub-01_T1w.nii.gz",                # volume
+    "lh.T1.sub-01",                     # output values
 )
 ```
 
@@ -327,24 +330,39 @@ Full list of `cli` functions:
 
 | Function | Equivalent CLI tool |
 |----------|---------------------|
-| `surf2pial_white` | `CAT_SurfPialWhite` |
-| `surf2sphere` | `CAT_SurfToSphere` |
+| `surf2pial_white` | `CAT_Surf2PialWhite` |
+| `surf2roi_multi` | `CAT_Surf2ROIMulti` |
+| `surf2sphere` | `CAT_Surf2Sphere` |
 | `surf_area` | `CAT_SurfArea` |
 | `surf_average` | `CAT_SurfAverage` |
-| `surf_correct_thickness_folding` | `CAT_SurfCorrectThicknessfolding` |
+| `surf_correct_thickness_folding` | `CAT_SurfCorrectThicknessFolding` |
 | `surf_curvature` | `CAT_SurfCurvature` |
 | `surf_deform` | `CAT_SurfDeform` |
 | `surf_distance` | `CAT_SurfDistance` |
+| `surf_fix_self_intersect` | `CAT_SurfFixSelfIntersect` |
+| `surf_fractal_dimension` | `CAT_SurfFractalDimension` |
+| `surf_info` | `CAT_SurfInfo` |
+| `surf_ratio` | `CAT_SurfRatio` |
 | `surf_reduce` | `CAT_SurfReduce` |
-| `surf_remove_intersections` | `CAT_SurfRemoveIntersections` |
 | `surf_resample` | `CAT_SurfResample` |
-| `surf_resample_annot` | `CAT_SurfResampleAnnot` |
+| `surf_resample_annot` | `CAT_SurfResample -label` |
+| `surf_resample_multi` | `CAT_SurfResampleMulti` |
+| `surf_spherical_demon` | `CAT_SurfSphericalDemon` |
+| `surf_sulcus_depth` | `CAT_SurfSulcusDepth` |
 | `vol2surf` | `CAT_Vol2Surf` |
 | `vol_amap` | `CAT_VolAmap` |
-| `vol_blood_vessel_correction` | `CAT_VolBloodVesselCorrection` |
+| `vol_calc` | `CAT_VolCalc` |
+| `vol_local_stat` | `CAT_VolLocalStat` |
 | `vol_marching_cubes` | `CAT_VolMarchingCubes` |
+| `vol_realign` | `CAT_VolRealign` |
 | `vol_sanlm` | `CAT_VolSanlm` |
+| `vol_sheetness` | `CAT_VolSheetness` |
+| `vol_shoot` | `CAT_VolShoot` |
+| `vol_smooth` | `CAT_VolSmooth` |
 | `vol_thickness_pbt` | `CAT_VolThicknessPbt` |
+
+The names in the right column are those of the CAT-Surface command-line
+tools; T1Prep installs none of them, the functions are their equivalents.
 
 ---
 
@@ -364,20 +382,21 @@ from t1prep import (
 
 | Function | Description |
 |----------|-------------|
-| `get_filenames(input_file, out_dir, bids)` | Resolve all output filenames for a given input |
+| `get_filenames(use_bids_naming, bname, side, desc, space, nii_ext)` | The output file names of an image by their code in `Names.tsv`, in the CAT12 or the BIDS convention |
 | `resample_and_save_nifti(img, grid, affine, header, out_path, ...)` | Resample a NIfTI onto a sampling grid and save. `bspline=True` swaps the default trilinear kernel for a quadratic B-spline (sharper edges, ~10x slower); `clip_overshoot=True` clamps the result to the input range to remove spline ringing |
-| `get_resampled_header(header, voxel_size)` | Build a resampled NIfTI header |
-| `align_brain(img, template)` | Reorient to match template orientation |
-| `get_volume_native_space(warped, deform, reference)` | Warp a volume back to native space |
-| `remove_file(path)` | Delete a file, silently ignoring missing-file errors |
-| `progress_bar(...)` | Drive the `progress_bar_multi.sh` progress display |
+| `get_resampled_header(header, aff, new_vox_size)` | Header and affine for a new voxel size |
+| `align_brain(data, aff, header, aff_ref)` | Reorient data to the orientation of a reference affine |
+| `get_volume_native_space(vol_nifti, wj_affine)` | Native-space volume of a registered probability map |
+| `remove_file(name)` | Delete a file if it exists |
+| `progress_bar(elapsed, total, name)` | Print a progress bar with percentage and ETA |
 
 ```python
 from t1prep import get_filenames
 
-fnames = get_filenames("/data/sub-01_T1w.nii.gz", out_dir="/results", bids=True)
-print(fnames["brainmask"])   # /results/.../sub-01_..._desc-brain_mask.nii.gz
-print(fnames["lh_thickness"])
+# BIDS names of the files of sub-01_T1w, compressed
+names = get_filenames(True, "sub-01_T1w", "left", "", "", "nii.gz")
+print(names["Label_volume"])   # sub-01_label-seg.nii.gz
+print(names["mask_volume"])    # sub-01_desc-brain_mask.nii.gz
 ```
 
 ---
@@ -462,8 +481,8 @@ class SurfReduce(BaseInterface):
 
         v, fcs = cs.read_surface(self.inputs.in_file)
         v, fcs = cs.reduce_mesh(v, fcs,
-                                 ratio=self.inputs.ratio,
-                                 aggr=self.inputs.aggr)
+                                 target_faces=int(len(fcs) * self.inputs.ratio),
+                                 aggressiveness=self.inputs.aggr)
         cs.write_surface(out, v, fcs)
 
         self._out_file = out
@@ -484,13 +503,11 @@ import t1prep.cat_surf as cs
 run_t1prep(
     "/data/sub-01_T1w.nii.gz",
     out_dir="/results",
-    bids=True,
-    gz=True,
 )
 
 # 2. Post-process surfaces directly with t1prep.cat_surf
-v, fcs   = cs.read_surface("/results/.../lh.central.sub-01.gii")
-thickness = cs.read_values("/results/.../lh.thickness.sub-01")
+v, fcs   = cs.read_surface("/results/surf/lh.central.sub-01.gii")
+thickness = cs.read_values("/results/surf/lh.thickness.sub-01")
 smoothed  = cs.smooth_heatkernel(v, fcs, thickness, fwhm=20.0)
-cs.write_values("/results/.../lh.thickness_s20.sub-01", smoothed)
+cs.write_values("/results/surf/lh.thickness_s20.sub-01", smoothed)
 ```

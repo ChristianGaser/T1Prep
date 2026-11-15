@@ -6,7 +6,7 @@ This guide explains how to ensure you're using the correct virtual environment w
 
 When you call `python src/t1prep/gui/cat_surf_view.py`, you need to ensure that:
 1. The virtual environment is activated
-2. All required dependencies (PyQt6, VTK, etc.) are available
+2. All required dependencies (PySide6, VTK, etc.) are available
 3. The correct Python version is being used
 
 ## ✅ Solutions
@@ -22,7 +22,9 @@ CAT_SurfView mesh_file.gii --overlay overlay.gii
 CAT_VolView  T1.nii.gz
 ```
 
-From a source checkout without installing, use the generic runner:
+From a source checkout without installing, use the generic runner. It needs
+the project venv `env/` (`./scripts/T1Prep --install` creates it) and stops
+when there is none:
 
 ```bash
 ./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py mesh_file.gii
@@ -32,18 +34,18 @@ From a source checkout without installing, use the generic runner:
 **What it does:**
 - ✅ Automatically detects if environment is activated
 - ✅ Activates environment if needed
-- ✅ Verifies correct Python path and version
 - ✅ Runs the script with all arguments
 - ✅ Provides clear status messages
 
 ### 2. **Generic Script Runner**
 
-For any Python script in the project:
+For a Python script file in the project (modules that use relative imports,
+such as `t1prep.segment`, are run with `python -m` instead):
 
 ```bash
-# Run any script with automatic environment activation
+# Run a script with automatic environment activation
 ./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py --help
-./scripts/run_with_env.sh src/t1prep/segment.py [arguments...]
+./scripts/run_with_env.sh scripts/qa_calibrate.py /path/to/BWP/report
 ```
 
 ### 3. **Manual Environment Activation**
@@ -56,7 +58,7 @@ source scripts/activate_env.sh
 
 # Now you can run any script normally
 python src/t1prep/gui/cat_surf_view.py --help
-python src/t1prep/segment.py [arguments...]
+PYTHONPATH=src python -m t1prep.segment --help
 ```
 
 ### 4. **Direct Environment Activation**
@@ -81,15 +83,15 @@ python src/t1prep/gui/cat_surf_view.py --help
 ```bash
 # Check if environment is activated
 echo $VIRTUAL_ENV
-# Should show: /path/to/T1prep/env
+# Should show: /path/to/T1Prep/env
 
 # Check Python path
 which python
-# Should show: /path/to/T1prep/env/bin/python
+# Should show: /path/to/T1Prep/env/bin/python
 
 # Check Python version
 python --version
-# Should show: Python 3.10+
+# Should show: Python 3.9-3.14 (3.10+ recommended)
 ```
 
 ### Visual Indicators
@@ -104,14 +106,14 @@ python --version
 
 ```bash
 # Method 1: Installed entry point (recommended)
-CAT_SurfView data/templates_surfaces_32k/lh.pial.gii
+CAT_SurfView src/t1prep/data/templates_surfaces_32k/lh.central.freesurfer.gii
 
 # Method 2: Using generic runner
-./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py data/templates_surfaces_32k/lh.pial.gii
+./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py src/t1prep/data/templates_surfaces_32k/lh.central.freesurfer.gii
 
 # Method 3: Manual activation
 source scripts/activate_env.sh
-python src/t1prep/gui/cat_surf_view.py data/templates_surfaces_32k/lh.pial.gii
+python src/t1prep/gui/cat_surf_view.py src/t1prep/data/templates_surfaces_32k/lh.central.freesurfer.gii
 ```
 
 ### Running the Launcher
@@ -135,8 +137,8 @@ none).
 ### Running Other Scripts
 
 ```bash
-# Using generic runner for any script
-./scripts/run_with_env.sh src/t1prep/segment.py input.nii.gz
+# Using generic runner for a script file
+./scripts/run_with_env.sh scripts/qa_calibrate.py /path/to/BWP/report
 ```
 
 ## 🛠️ Troubleshooting
@@ -145,11 +147,11 @@ none).
 ```
 ❌ Error: Virtual environment not found: /path/to/env
 ```
-**Solution**: Run `python3 -m venv env` to create the environment
+**Solution**: `./scripts/T1Prep --install` creates `env/` with all requirements
 
 ### Missing Dependencies
 ```
-ModuleNotFoundError: No module named 'PyQt6'
+ModuleNotFoundError: No module named 'PySide6'
 ```
 **Solution**: The environment is not activated or dependencies are missing. Use a wrapper script or run `pip install -r requirements.txt`
 
@@ -169,6 +171,7 @@ T1Prep/
 │   │   └── python               # Environment Python executable
 │   └── pyvenv.cfg               # Environment configuration
 ├── scripts/
+│   ├── T1Prep_gui               # Launcher from a checkout
 │   ├── run_with_env.sh          # Generic script runner
 │   └── activate_env.sh          # Environment activation helper
 ├── src/
@@ -216,7 +219,7 @@ python src/your_script.py "$@"
 The wrapper scripts set these environment variables:
 - `VIRTUAL_ENV`: Path to the virtual environment
 - `PATH`: Updated to include environment's bin directory
-- `PYTHONPATH`: Updated to include project source directory
+- `PYTHONPATH`: only `scripts/T1Prep_gui`, `scripts/dice.sh` and the longitudinal wrappers put `src/` first; `run_with_env.sh` and `activate_env.sh` do not, so a script that imports `t1prep` gets the copy installed in `env/`
 
 ### macOS Specifics
 

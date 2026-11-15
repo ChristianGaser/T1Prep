@@ -18,8 +18,16 @@ T1Prep is a Python pipeline for preprocessing and segmenting T1-weighted MRI dat
 - White matter hyperintensity (WMH/lesion) detection
 - BIDS derivatives output naming
 
+Skull-stripping and tissue segmentation run the trained networks of
+[DeepMriPrep](https://github.com/wwu-mmll/deepmriprep) and of its brain extraction
+[deepbet](https://github.com/wwu-mmll/deepbet), which T1Prep builds on (Lukas Fisch et al.,
+"deepmriprep: Voxel-based Morphometry (VBM) Preprocessing via Deep Neural Networks",
+https://doi.org/10.48550/arXiv.2408.10656). T1Prep runs them with its own code; neither
+package has to be installed.
+
 Cortical surface reconstruction uses the [`cat-surf`](https://pypi.org/project/cat-surf/) Python package
-(pure Python bindings to the CAT-Surface C library — no compiled binaries required).
+(Python bindings to the CAT-Surface C library, shipped as pre-built wheels — no separate
+CAT-Surface binaries have to be installed).
 
 For full documentation, CLI usage, Docker instructions, and helper scripts see the
 [GitHub repository](https://github.com/ChristianGaser/T1Prep).
@@ -48,7 +56,7 @@ following commands are available:
 | Command | Role |
 | --- | --- |
 | `T1Prep` | main CLI — batch + parallel processing (`--multi`) |
-| `PyCAT` | symlink to `T1Prep`; identical, only the banner differs |
+| `PyCAT` | `T1Prep` under a second name; identical, only the banner differs |
 | `t1prep-gui` | desktop launcher: choose images, run, browse the results |
 | `t1prep-run` | single-subject Python entry |
 | `CAT_SurfView` | surface viewer |
@@ -58,6 +66,8 @@ following commands are available:
 | `t1prep-bbreg` | BOLD reference, head-motion correction and boundary-based BOLD-to-T1w registration for fMRIPrep to reuse |
 | `CAT_PlotHistogram` | histograms of volumes, surfaces or text data |
 | `CAT_PlotBoxplot` | box and violin plots of volumes, surfaces or text data |
+| `CAT_VolDiff`, `CAT_VolSmooth_ui`, `CAT_SurfResampleMulti_ui`, `CAT_SurfParameters_ui`, `CAT_Surf2ROIMulti_ui`, `CAT_GrepJson` | command-line helpers for post-processing and reports |
+| `process_longitudinal.sh`, `realign_longitudinal.sh`, `warp_longitudinal.sh`, `modulate_longitudinal.sh` | experimental longitudinal pipeline |
 
 ### Download model weights
 
@@ -67,15 +77,16 @@ Model weights are not bundled in the wheel (about 250 MB once downloaded). Downl
 t1prep-download-models
 ```
 
-Models are stored in your user cache (`~/Library/Caches/t1prep/models` on macOS,
-`~/.cache/t1prep/models` on Linux; `T1PREP_MODEL_DIR` overrides it) and are downloaded
+Models are stored in your user cache, in a folder named after the model release
+(`~/Library/Caches/t1prep/models/<release>` on macOS, `~/.cache/t1prep/models/<release>`
+on Linux; `T1PREP_MODEL_DIR` overrides it) and are downloaded
 automatically on first pipeline use if this step is skipped.
 
 ---
 
 ## Requirements
 
-- Python 3.9–3.12 (3.10+ recommended). PyTorch 2.9+ (Python 3.10+) adds MPS
+- Python 3.9–3.14 (3.10+ recommended). PyTorch 2.9+ (Python 3.10+) adds MPS
   kernels that give a measurable speed-up on Apple Silicon (2:39 min vs 3:02 min
   per subject); a Python 3.9 install is pinned to PyTorch 2.8 and falls back to
   the CPU for those kernels. On Linux/CUDA/CPU both stacks perform the same.
@@ -125,7 +136,7 @@ run_t1prep(
 | `p` | `bool` | Save native space segmentations |
 | `csf` | `bool` | Save CSF segmentation |
 | `lesions` | `bool` | Save WMH/lesion map |
-| `amap` | `bool` | Use AMAP segmentation (CAT12-style) |
+| `amap` | `bool` | Refine the network segmentation with CAT12's AMAP |
 | `skullstrip_only` | `bool` | Only run skull stripping then exit |
 | `skip_skullstrip` | `bool` | Skip skull stripping (pre-stripped input) |
 | `track` | `bool` | Report a crash of the segmentation (default: `True`) |
@@ -137,8 +148,11 @@ run_t1prep(
 **Non-BIDS** (default): subfolders `mri/`, `surf/`, `report/`, `label/` in the output directory,
 with CAT12-compatible filenames (e.g., `mwp1sub-01.nii`, `lh.thickness.sub-01`).
 
-**BIDS** (with `bids=True`): BIDS derivatives layout
-`<out_dir>/derivatives/T1Prep-v<version>/sub-XX/ses-YY/anat/`.
+**BIDS input** (the image lies in an `anat/` folder): the results go to
+`<out_dir or dataset root>/derivatives/T1Prep-v<version>/sub-XX[/ses-YY]/anat/`.
+
+`bids=True` names the files by the BIDS derivatives convention; for an image outside an
+`anat/` folder they then go directly into the output directory, without the subfolders.
 
 ---
 
@@ -160,7 +174,7 @@ the environment switch it off; details in
 | [Installation](https://github.com/ChristianGaser/T1Prep/blob/main/docs/installation.md) | pip, source checkout, WSL, manual install, Docker |
 | [Usage](https://github.com/ChristianGaser/T1Prep/blob/main/docs/usage.md) | Options, output structure, naming, examples |
 | [Viewers](https://github.com/ChristianGaser/T1Prep/blob/main/docs/viewers.md) | `CAT_SurfView` and `CAT_VolView`, interactive and batch |
-| [Tools](https://github.com/ChristianGaser/T1Prep/blob/main/docs/tools.md) | Launcher and the surface post-processing GUIs |
+| [Tools](https://github.com/ChristianGaser/T1Prep/blob/main/docs/tools.md) | Launcher, plot tools and the post-processing helpers |
 
 ---
 

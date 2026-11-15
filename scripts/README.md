@@ -1,11 +1,13 @@
 # Scripts
 
-This directory contains the shell scripts behind the T1Prep command-line interface, environment helpers, processing utilities, and CAT surface/volume tools. They resolve the Python environment themselves: in a source checkout they use the project virtual environment (`env/`) when it exists, and in a pip-installed tree they run in the environment pip installed into.
+This directory contains the shell scripts behind the T1Prep command-line interface, environment helpers, processing utilities, and CAT surface/volume tools. `T1Prep`, `T1Prep_gui`, `dice.sh` and the longitudinal wrappers resolve the Python environment themselves: in a source checkout they use the project virtual environment (`env/`) when it exists and otherwise an interpreter that has T1Prep's requirements, and in a pip-installed tree they run in the environment pip installed into. The `CAT_*_ui` helpers and `CAT_VolDiff` use the `python3` on `PATH`; `run_with_env.sh` and `activate_env.sh` need `env/`.
 
 > **Installed usage:** after `pip install` (or the bash bootstrapper), these
 > entry points are placed into the environment's `bin/` directory — put that on
 > your `PATH` and call them directly (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-run`,
-> `CAT_SurfView`, `CAT_VolView`, `t1prep-download-models`, the `CAT_*_ui` helpers). The
+> `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`,
+> `t1prep-download-models`, `t1prep-make-apps`, `t1prep-bbreg`, `CAT_VolDiff`,
+> `CAT_GrepJson`, the `CAT_*_ui` helpers, `parallelize` and the longitudinal scripts). The
 > `./scripts/<name>` form shown below is the source-tree/dev fallback; the
 > `scripts/` folder itself does not need to be on `PATH`.
 
@@ -13,7 +15,10 @@ This directory contains the shell scripts behind the T1Prep command-line interfa
 
 ## Command-line conventions
 
-Every script here answers the same way, with `CAT_VolView` as the template:
+The tools T1Prep ships answer the same way, with `CAT_VolView` as the template
+(the bootstrap helpers `install.sh`, `activate_env.sh` and `run_with_env.sh` and
+the dev scripts `qa_calibrate.py` and `mem_probe.py` do not; `install.sh` starts
+installing whatever its arguments are):
 
 | You type | You get |
 |----------|---------|
@@ -123,20 +128,20 @@ none), and the form starts from that T1Prep's defaults file.
 Bash bootstrapper that downloads a T1Prep release tarball from GitHub,
 extracts it to a chosen directory, and runs `scripts/T1Prep --install`
 to create a managed virtual environment.  Useful for users who want the
-full source tree (e.g. to run the bash orchestrator with multi-job
-parallelism) without needing pip themselves.
+full source tree (development, the tests, the evaluation tools).
 
 > **For most Python users, `pip install T1Prep` is simpler** — it pulls
 > the same package from PyPI without a source checkout and handles
-> versioning via standard pip specifiers.  Use `install.sh` only if you
-> specifically need the bundled bash scripts on disk.
+> versioning via standard pip specifiers.  Use `install.sh` only if you need
+> the source tree: `pip install T1Prep` puts the same `T1Prep` orchestrator
+> and helper scripts into the environment's `bin/`.
 
 ```bash
 # Interactive installation
 bash scripts/install.sh
 
-# Non-interactive (via environment variables)
-T1PREP_VERSION=latest T1PREP_INSTALL_DIR=/opt/T1Prep bash scripts/install.sh
+# Without the prompts (via environment variables; it still needs a terminal)
+T1PREP_VERSION=latest T1PREP_INSTALL_DIR=/opt/T1Prep T1PREP_PYTHON=python3.12 bash scripts/install.sh
 ```
 
 **Environment overrides:**
@@ -144,6 +149,7 @@ T1PREP_VERSION=latest T1PREP_INSTALL_DIR=/opt/T1Prep bash scripts/install.sh
 - `REPO_NAME` — Repository name (default: `T1Prep`)
 - `T1PREP_INSTALL_DIR` — Skip directory prompt
 - `T1PREP_VERSION` — Skip version prompt (e.g., `v1.0.0` or `latest`)
+- `T1PREP_PYTHON` — Skip the Python prompt (interpreter to install into, Python 3.9-3.14)
 
 ### `activate_env.sh`
 
@@ -155,11 +161,11 @@ source scripts/activate_env.sh
 
 ### `run_with_env.sh`
 
-Runs any Python script with the T1Prep virtual environment automatically activated. Useful for running individual modules without manually activating the environment.
+Runs a Python script file with the project virtual environment (`env/`) activated; it stops when there is no `env/`. Modules that use relative imports, such as `t1prep.segment`, cannot be run as files: use `python -m` for those.
 
 ```bash
-# Run a specific module
-./scripts/run_with_env.sh src/t1prep/segment.py --help
+# Run a script of the checkout
+./scripts/run_with_env.sh scripts/qa_calibrate.py /path/to/BWP/report
 
 # Run the viewers from a source checkout
 ./scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py --help
@@ -365,11 +371,21 @@ python scripts/qa_calibrate.py /data/BWP/report --measure NCR
 
 **Output:** per measure the fitted line, its `R²`, the leakage of the *other* degradation factor (how much inhomogeneity contaminates the noise measure and vice versa), and a ready-to-paste `_RATING_BOUNDS` entry.
 
+### `mem_probe.py`
+
+Per-stage time and memory probe of the volume pipeline, a development tool: it runs `t1prep.segment` on an image and reports which stage drives the memory peak.
+
+```bash
+PYTHONPATH=src python scripts/mem_probe.py T1.nii.gz [--gpu] [segment.py options]
+```
+
+`--upstream` probes deepmriprep's own pipeline instead and needs deepmriprep installed; nothing else in T1Prep does.
+
 ---
 
 ## CAT Surface & Volume Tools
 
-These scripts provide user-friendly wrappers around the compiled CAT-Surface binaries in `src/t1prep/bin/` for post-processing tasks (surface parameters, resampling, ROI extraction, volume smoothing). The main T1Prep pipeline uses the `cat-surf` Python package instead of these binaries. They support batch processing with built-in parallelization via `parallelize`.
+These scripts wrap the CAT-Surface tools as the `cat-surf` Python package exposes them (`cat_surf.cli`, the package the main pipeline uses too) for post-processing tasks (surface parameters, resampling, ROI extraction, volume smoothing, volume differences). T1Prep ships no compiled binaries. They support batch processing with built-in parallelization via `parallelize`.
 
 ### `make_macos_apps.sh`
 
@@ -382,7 +398,7 @@ implementation needs nothing but the standard library.
 ```bash
 t1prep-make-apps                          # installed: /Applications or ~/Applications
 ./scripts/make_macos_apps.sh              # same, from a source checkout
-t1prep-make-apps -o ~/Desktop -p /path/to/env/bin -d
+t1prep-make-apps --out-dir ~/Desktop --bin-dir /path/to/env/bin --set-default
 ```
 
 **They also appear on their own:** the first interactive start of `CAT_SurfView` or
@@ -436,7 +452,7 @@ documented in **[docs/viewers.md](../docs/viewers.md)**.
 
 ### `CAT_SurfParameters_ui`
 
-Computes curvature-based surface parameters (curvature, fractal dimension, surface area, sulcus depth) from surface mesh files. Wraps `CAT_SurfCurvature`, `CAT_SurfFractalDimension`, `CAT_SurfArea`, `CAT_SurfRatio`, and `CAT_SurfSulcusDepth`.
+Computes curvature-based surface parameters (curvature, fractal dimension, surface area, sulcus depth) from surface mesh files. Uses `cat_surf.cli.surf_curvature`, `surf_fractal_dimension`, `surf_area`, `surf_ratio` and `surf_sulcus_depth`.
 
 ```bash
 ./scripts/CAT_SurfParameters_ui [options] <surface_file> [<surface_file> ...]
@@ -448,37 +464,39 @@ Computes curvature-based surface parameters (curvature, fractal dimension, surfa
 
 ### `CAT_SurfResampleMulti_ui`
 
-Resamples surface data to a target sphere (default: 32k), with optional smoothing. Wraps `CAT_SurfResampleMulti`.
+Resamples surface data to a target sphere (default: 32k), with optional smoothing (via `cat_surf.cli.surf_resample_multi`).
 
 ```bash
 # Resample and smooth (default FWHM=12)
-./scripts/CAT_SurfResampleMulti_ui lh.thickness.gii
+./scripts/CAT_SurfResampleMulti_ui surf/lh.thickness.sub-01
 
 # Custom smoothing kernel
-./scripts/CAT_SurfResampleMulti_ui --fwhm 20 lh.thickness.gii
+./scripts/CAT_SurfResampleMulti_ui --fwhm 20 surf/lh.thickness.sub-01
 ```
 
-- Input: left hemisphere value files (right hemisphere auto-derived)
+- Input: left hemisphere value files as T1Prep names them, `lh.<measure>.<name>`;
+  `lh.central.<name>.gii`, `lh.sphere.reg.<name>.gii` and the right hemisphere
+  files are derived from that name and have to lie next to it
 - Output: combined GIfTI with resampled LH (+RH) values
 
 ### `CAT_Surf2ROIMulti_ui`
 
-Extracts ROI-wise values from surface data using atlas parcellations. Wraps `CAT_Surf2ROIMulti`.
+Extracts ROI-wise values from surface data using atlas parcellations (via `cat_surf.cli.surf2roi_multi`).
 
 ```bash
 # Default atlases (aparc_DK40, aparc_a2009s)
-./scripts/CAT_Surf2ROIMulti_ui lh.thickness.gii
+./scripts/CAT_Surf2ROIMulti_ui surf/lh.thickness.sub-01
 
 # Custom atlas
-./scripts/CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer'" lh.thickness.gii
+./scripts/CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer'" surf/lh.thickness.sub-01
 ```
 
-- Input: left hemisphere value files (sphere.reg and right hemisphere auto-derived)
-- Output: one ROI table (JSON) per input file
+- Input: left hemisphere value files, `lh.<measure>.<name>` (sphere.reg and right hemisphere auto-derived)
+- Output: one ROI table (JSON) per input file and atlas, in `label/` or the folder given with `--out`
 
 ### `CAT_VolSmooth_ui`
 
-Smooths volumetric NIfTI data with a Gaussian kernel. Wraps `CAT_VolSmooth`.
+Smooths volumetric NIfTI data with a Gaussian kernel (via `cat_surf.cli.vol_smooth`).
 
 ```bash
 # Default FWHM=6mm
@@ -491,7 +509,7 @@ Smooths volumetric NIfTI data with a Gaussian kernel. Wraps `CAT_VolSmooth`.
 ### `CAT_VolDiff`
 
 Voxel-wise difference of volumes, the volume counterpart of CAT12's
-`cat_stat_diff.m`. Wraps `CAT_VolCalc` (via `cat_surf.cli.vol_calc`). Within a
+`cat_stat_diff.m` (via `cat_surf.cli.vol_calc`). Within a
 subject the first image is the reference; every further image `j` gives
 `image_j - image_1`, written next to `image_j` as `diff_<name>`.
 
@@ -499,9 +517,9 @@ subject the first image is the reference; every further image `j` gives
 # One subject: tp2 - tp1 and tp3 - tp1 -> diff_tp2.nii, diff_tp3.nii
 ./scripts/CAT_VolDiff tp1.nii tp2.nii tp3.nii
 
-# Several subjects (-s per subject), relative differences in percent
+# Several subjects (--subject per subject), relative differences in percent
 # (200*(i2-i1)/(i1+i2) -> diffrel_<name>) after global mean normalisation
-./scripts/CAT_VolDiff --rel --glob -s s1_tp1.nii s1_tp2.nii -s s2_tp1.nii s2_tp2.nii
+./scripts/CAT_VolDiff --rel --glob --subject s1_tp1.nii s1_tp2.nii --subject s2_tp1.nii s2_tp2.nii
 ```
 
 - Input: NIfTI volumes; the images of a subject must share one grid (no reslicing)
@@ -538,14 +556,14 @@ The styles, the statistics and the outlier listing are documented in
 
 ### `CAT_GrepJson`
 
-Extracts specific fields from T1Prep JSON report files (generated during processing).
+Extracts specific fields from T1Prep JSON report files (`report/log_<name>.json`, written during processing). Needs `jq`.
 
 ```bash
 # Extract total intracranial volume
-./scripts/CAT_GrepJson --field subjectmeasures.vol_TIV report*.json
+./scripts/CAT_GrepJson --field subjectmeasures.vol_TIV report/log_*.json
 
 # Save output to file
-./scripts/CAT_GrepJson --field subjectmeasures.vol_abs_CGW --out volumes.txt report*.json
+./scripts/CAT_GrepJson --field subjectmeasures.vol_abs_CGW --out volumes.txt report/log_*.json
 ```
 
 **Common field names:**
@@ -571,6 +589,12 @@ Shared bash utility functions sourced by most other scripts. Provides:
   every tool shares (see [Command-line conventions](#command-line-conventions))
 - `exit_if_empty` — Argument validation
 - `check_python_cmd` / `check_python_module` / `check_python_libraries` — Python environment checks
+- `activate_t1prep_env` — Interpreter and `PYTHONPATH` for the wrappers of a source checkout
+- `has_python_libraries` / `install_python_libraries` — The source-tree environment `env/`: whether it has the libraries of `requirements.txt`, and installing them and T1Prep into it
+- `t1prep_output_folder_from_input` / `already_processed` — Output folder and `--no-overwrite` logic, shared with `process_longitudinal.sh`
+- `get_no_processes` — Number of jobs the memory allows
+- `logo` — The banner (T1Prep or PyCAT)
+- `telemetry_allowed` / `send_sentry` — Telemetry
 - `check_files` — Input file validation
 - `filter_arguments` — Argument filtering
 - Text formatting constants (`BOLD`, `RED`, `GREEN`, etc.)
@@ -595,11 +619,16 @@ Generic job parallelization engine. Distributes a list of input files across mul
 | `--bg` | Run in background |
 | `--test` | Print the files that would be processed, without running |
 
+**Exit status:** 0 when the command succeeded for every file, 1 when it failed
+for at least one (also with a single process); the failed files are then
+listed. With `--bg` the jobs are not waited for and the status is 0.
+
 ### `progress_bar_multi.sh`
 
 Displays real-time progress bars with ETA for parallel jobs. Supports single-job and multi-job modes with per-job and overall progress tracking.
 
 ```bash
 # Used internally by parallelize
-./scripts/progress_bar_multi.sh <n_jobs> <progress_dir> [width] [label]
+./scripts/progress_bar_multi.sh <n_jobs> <progress_dir> [width] [label] [--multi]   # overall bar; --multi: one bar per job
+./scripts/progress_bar_multi.sh 1 "" <current> <total> [label] [width] [failed]     # single job
 ```
