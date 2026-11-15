@@ -4,8 +4,7 @@ FROM python:3.12-slim
 # T1Prep version to install from PyPI.  This line is bumped automatically by
 # the "Update Dockerfile" GitHub Actions workflow once a release has reached
 # PyPI, so the committed Dockerfile always builds a reproducible, pinned
-# version (0.8.0 never reached PyPI, so this stays at 0.7.9 until the next
-# release does).  Override
+# version.  Override
 # at build time to build a different version, or pass an empty value to install
 # the latest release instead:
 #
@@ -68,7 +67,7 @@ VOLUME ["/data"]
 #
 #   # process a NIfTI file mounted from the host
 #   docker run --rm -v $PWD:/data t1prep \
-#       --input /data/sub-01_T1w.nii.gz --out-dir /data/out
+#       --out-dir /data/out /data/sub-01_T1w.nii.gz
 #
 #   # drop into an interactive Python REPL with t1prep already importable
 #   docker run --rm -it --entrypoint python t1prep
