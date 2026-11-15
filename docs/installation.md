@@ -238,6 +238,8 @@ unzip T1Prep_$version.zip -d your_installation_folder
 ./scripts/T1Prep --python python3.12 --install   # creates env/ and installs into it
 export PATH="$PWD/env/bin:$PATH"                  # then use T1Prep, t1prep-gui, …
 ```
+`--install` leaves an environment that is already complete as it is;
+`--re-install` removes `env/` first and builds it again.
 
 ## Docker
 

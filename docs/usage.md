@@ -60,7 +60,7 @@ T1Prep --help     # every option, in full
 ```
 
 Skull-stripping modes:
-- `--skullstrip-only`: run skull-stripping only and exit after writing the skull-stripped image (`mri/m<name>.nii`; with `--bids` `<name>_desc-skullstripped_T1w.nii.gz`).
+- `--skullstrip-only`: run skull-stripping only and exit after writing the skull-stripped image and the brain mask (`mri/m<name>.nii`, `mri/mask<name>.nii`; with `--bids` `<name>_desc-skullstripped_T1w.nii.gz`, `<name>_desc-brain_mask.nii.gz`).
 - `--no-skullstrip` / `--skip-skullstrip`: skip skull-stripping (assumes input is already skull-stripped).
 
 Longitudinal / advanced flags:
@@ -287,11 +287,10 @@ is built only for an input inside an 'anat' folder, with or without '--bids'.
 The JSON report in `report/` carries a `qualitymeasures` block. Alongside the
 Euler numbers (`euler_lh`, `euler_rh`, `EC_abs`) it reports glued sulci, the
 shape of the thickness distribution and the reference of the sulcal barrier.
-Only `t1prep-run` and `run_t1prep()` merge these surface measures into the
-report under the names below; `T1Prep` leaves them in the two files the
-surface step writes per subject, `report/<name>_glued-lh.json` and
-`report/<name>_glued-rh.json` (`glued_fraction`, `thickness_upper_skewness`,
-`thickness_high_fraction`, `barrier_reference`, …):
+The surface step writes these per hemisphere, and `T1Prep` as well as
+`t1prep-run` merge them into the report once both hemispheres are done (up to
+0.9.0 `T1Prep` left them in `report/<name>_glued-lh.json` and
+`report/<name>_glued-rh.json`):
 
 | Measure | Meaning |
 |---------|---------|
@@ -414,7 +413,7 @@ Process all files matching the pattern `'sTRIO*.nii'` and enable AMAP segmentati
 ```bash
   T1Prep --skullstrip-only --out-dir test_folder sTRIO*.nii
 ```
-Only run skull-stripping and write the skull-stripped image.
+Only run skull-stripping and write the skull-stripped image and brain mask.
 
 ```bash
   T1Prep --skip-skullstrip --out-dir test_folder sTRIO*_brain.nii
