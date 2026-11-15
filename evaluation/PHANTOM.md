@@ -15,6 +15,12 @@ python evaluation/tools/eval_phantom.py run --work DIR     # the same, directly
 python evaluation/tools/eval_phantom.py check --work DIR   # exit 1 on regression
 ```
 
+The `make` targets go through `scripts/run_with_env.sh` and need the project
+venv `env/`. Called directly, `eval_phantom.py run` uses the checkout's
+`scripts/T1Prep` unless `--t1prep` names another one (e.g.
+`--t1prep "$(command -v T1Prep)"`); in a checkout without `env/` that script
+builds the environment first.
+
 ## The phantom
 
 `data/phantom/` holds one anatomy, HR075 MPRAGE, rendered 14 times by
@@ -253,9 +259,12 @@ two runs on an Apple M-series machine: the default device (MPS) and
 `--device cpu`. A full run takes 15 min: about 10.5 min for T1Prep, the rest
 for the ground-truth arm and scoring.
 
-The two devices produced bit-identical segmentations. By default only brain
-extraction and the atlas warp run on MPS; the deepmriprep segmentation
-stages stay on the CPU. The thickness metrics still differed by about 0.003,
+The two devices produced bit-identical segmentations. In 0.7.5, which these
+pins describe, only brain extraction and the atlas warp ran on MPS by default
+and the deepmriprep segmentation stages stayed on the CPU. (Today all
+networks run on the selected device, the warp network is replaced by geodesic
+shooting, and only the affine and atlas registrations stay on the CPU on
+Apple Silicon.) The thickness metrics still differed by about 0.003,
 most likely through the warp's effect on the hemisphere partition. That
 difference is the spread their tolerances rest on.
 
@@ -278,7 +287,7 @@ The first run turned up the following. Each is fixed, and each has a test:
 
 | problem | fix |
 |---|---|
-| DK40/Destrieux region names in the native annots carried heap bytes | CAT-Surface annot reader and writer (cat-surf 1.0.29), the four templates rewritten; see [`results/cat_surface_annot_bug.md`](results/cat_surface_annot_bug.md) |
+| DK40/Destrieux region names in the native annots carried heap bytes | CAT-Surface annot reader and writer (cat-surf 1.0.29), the four templates rewritten |
 | with `--lesions`, `?h.seg` reached 3.8 (WMH values leaked into the surface label) | `get_partition` clips its input to [0, 3] |
 | the environment ran cat-surf 1.0.23 against `>=1.0.27`, so the shared sulcal-barrier gate was off | reinstalled from source (1.0.29) |
 | `t1prep.cat_surf` lacked 14 public cat-surf functions, `vol_pbt_barrier_reference` among them | it now re-exports everything cat-surf exports |
