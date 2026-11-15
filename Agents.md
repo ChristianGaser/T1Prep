@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Overview
-This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`, PyCAT banner), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`.
+This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and a Flask-based web UI is packaged at `src/t1prep/webui/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`, PyCAT banner), `t1prep-ui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`.
 
 ## Project Structure
 
@@ -42,6 +42,7 @@ T1Prep/
 │       ├── utils.py                # Shared utilities
 │       ├── metrics.py              # Dice/evaluation metrics + CLI
 │       ├── dice.py                 # CLI wrapper for metrics (python -m t1prep.dice)
+│       ├── plot_boxplot.py         # Box/violin plots of volumes/surfaces (CAT_PlotBoxplot)
 │       ├── plot_histogram.py       # Histograms of volumes/surfaces (CAT_PlotHistogram)
 │       ├── realign_longitudinal.py
 │       ├── warp_longitudinal.py
@@ -50,7 +51,16 @@ T1Prep/
 │       ├── data/                   # Templates, atlases, default files
 │       │   ├── templates_MNI152NLin2009cAsym/  # Volume atlases + .txt descriptions
 │       │   └── atlases_surfaces_32k/           # Surface atlases + .txt descriptions
+│       ├── launch/                 # What the front ends share (no Qt, no Flask, no VTK)
+│       │   ├── options.py          # Option table -> form and T1Prep arguments
+│       │   ├── progress.py         # Phases, bars and per-image states of a run
+│       │   ├── results.py          # Files of a subject, report measures, viewer calls
+│       │   └── inputs.py           # Finding the images of a folder
 │       ├── gui/                    # PySide6/VTK visualization tools
+│       │   ├── launcher.py         # Desktop launcher (t1prep-gui): window, T1Prep and
+│       │   │                       # viewer processes; imports no VTK
+│       │   ├── launcher_widgets.py # Its table of images, options form, results panel
+│       │   ├── theme.py            # Its colours and style sheet
 │       │   ├── cat_surf_view.py    # Surface viewer (CAT_SurfView)
 │       │   ├── make_apps.py        # macOS .app bundles (t1prep-make-apps)
 │       │   ├── cat_vol_view.py     # Orthogonal volume viewer (CAT_VolView),
@@ -153,6 +163,13 @@ scripts/CAT_Surf*_ui, scripts/CAT_VolSmooth_ui, scripts/CAT_VolDiff (post-proces
        v call
 src/t1prep/bin/* (compiled CAT-Surface binaries, used only by helper scripts)
 
+src/t1prep/gui/launcher.py (Qt launcher, `t1prep-gui`)
+       |
+       v calls                  starts as processes of their own
+T1Prep (bash orchestrator)      CAT_VolView (--headless for the pictures), CAT_SurfView
+
+src/t1prep/launch/ (option table, run states, result files; shared by both front ends)
+
 src/t1prep/webui/app.py (Web UI, `t1prep-ui`)
        |
        v calls
@@ -234,8 +251,8 @@ answers the same way, with `CAT_VolView` as the template:
 Options are spelled `--like-this`. The single-dash spellings that predate this
 (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`, and `-h`/`-v`)
 remain valid so existing command lines and scripts keep working; they are
-simply no longer listed in the help. `t1prep-ui` and `t1prep-download-models`
-are the deliberate exception to the no-argument rule — called bare they do
+simply no longer listed in the help. `t1prep-gui`, `t1prep-ui` and
+`t1prep-download-models` are the deliberate exception to the no-argument rule — called bare they do
 their job, because that job needs no input file.
 
 The behaviour lives in one place per language, so a new tool inherits it

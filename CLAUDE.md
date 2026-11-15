@@ -30,8 +30,8 @@ Run in background automatically:
 
 Entry points are installed into the environment's `bin/` (the canonical way to
 run T1Prep): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`; same
-CLI, PyCAT startup banner), `t1prep-ui`, `t1prep-run` (Python
-single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`. The
+CLI, PyCAT startup banner), `t1prep-gui`, `t1prep-ui`, `t1prep-run` (Python
+single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`. The
 `scripts/` folder
 is a source-tree/dev fallback and should not be put on `PATH`.
 
@@ -44,6 +44,9 @@ T1Prep --out-dir /tmp/out file.nii.gz
 
 # Python API
 from t1prep import run_t1prep
+
+# Desktop launcher (Qt): images, options, run, results
+t1prep-gui
 
 # Web UI
 t1prep-ui --port 5050
@@ -66,6 +69,9 @@ python -m t1prep.nn.convert model.pth --out-dir DIR
 
 # Histogram of volumes, surfaces or text data (CAT12's cat_plot_histogram.m)
 CAT_PlotHistogram [--dist kernel|gaussian_kde|none|normal|...] [--mean] [--ridgeline] [--save PREFIX] file...
+
+# Box and violin plots of the same inputs (CAT12's cat_plot_boxplot.m)
+CAT_PlotBoxplot [--style box|violin|violinbox|density|jitter] [--notch] [--columns] [--list-outliers] [--save FILE] file...
 
 # Longitudinal: rigid realignment, then the low-dimensional ageing deformation
 ./scripts/process_longitudinal.sh --long-model ageing tp1.nii.gz tp2.nii.gz
@@ -105,7 +111,7 @@ See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 |------------------|--------------|
 | `requirements.txt` | `pyproject.toml` → `[project.dependencies]` |
 | `pyproject.toml` dependencies | `requirements.txt` |
-| CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py`, `src/t1prep/webui/app.py`, `src/t1prep/webui/templates/index.html`, `T1Prep_defaults.txt`, `docs/usage.md` |
+| CLI options in `scripts/T1Prep` | `src/t1prep/t1prep.py`, `src/t1prep/launch/options.py` (the launcher's form; `tests/test_launch_options.py` holds it against `parse_args`), `src/t1prep/webui/app.py`, `src/t1prep/webui/templates/index.html`, `T1Prep_defaults.txt`, `docs/usage.md` |
 | `[project.scripts]` / `script-files` entry points in `pyproject.toml` | `README.md`, `README_pypi.md`, `docs/installation.md`, `scripts/install.sh`, `Agents.md`, `CLAUDE.md` |
 | `src/t1prep/t1prep.py` API | `docs/usage.md` → Python API section |
 | Scripts in `scripts/` (add/remove/rename) | `scripts/README.md`, `Agents.md` → Project Structure, `CLAUDE.md` |
@@ -130,9 +136,9 @@ Every tool behaves the same way, with `CAT_VolView` as the template:
 Options are spelled `--like-this`. Single-dash spellings that predate this
 (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`, `-h`, `-v`) stay
 valid so existing command lines keep working, but they are hidden from the
-help. Two launchers are the deliberate exception to the no-argument rule:
-`t1prep-ui` and `t1prep-download-models` do their job instead of printing the
-synopsis.
+help. Three launchers are the deliberate exception to the no-argument rule:
+`t1prep-gui`, `t1prep-ui` and `t1prep-download-models` do their job instead of
+printing the synopsis.
 
 The behaviour lives in one place per language — reuse it, do not re-implement:
 
@@ -149,10 +155,11 @@ The behaviour lives in one place per language — reuse it, do not re-implement:
 
 1. `scripts/T1Prep`
 2. `src/t1prep/t1prep.py` → `run_t1prep()` parameters
-3. `src/t1prep/webui/app.py`
-4. `src/t1prep/webui/templates/index.html`
-5. `T1Prep_defaults.txt`
-6. `docs/usage.md`
+3. `src/t1prep/launch/options.py` (one `Option` in the table; the launcher's form and its arguments follow)
+4. `src/t1prep/webui/app.py`
+5. `src/t1prep/webui/templates/index.html`
+6. `T1Prep_defaults.txt`
+7. `docs/usage.md`
 
 The option gets a `--` spelling, is listed in `usage()` as well as `help()`,
 and keeps any old single-dash spelling only as a hidden alias.
