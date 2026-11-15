@@ -192,10 +192,36 @@ def _load_gifti(path: str) -> np.ndarray:
     return np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
 
 
+def _is_morph_data(path: str) -> bool:
+    """True when *path* holds FreeSurfer morphometry data by its header.
+
+    nibabel's reader takes any bytes: a text file without the ``.txt``
+    extension would come back as garbage numbers.  The current format starts
+    with the bytes ``ff ff ff`` and the vertex count, so the file is at
+    least ``15 + 4 n`` bytes long; the old one starts with the vertex count
+    in three bytes and is exactly ``6 + 2 n`` bytes long.
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as handle:
+            head = handle.read(15)
+    except OSError:
+        return False
+    if len(head) < 6:
+        return False
+    magic = int.from_bytes(head[:3], "big")
+    if magic == 0xFFFFFF:
+        vertices = int.from_bytes(head[3:7], "big", signed=True)
+        return len(head) == 15 and vertices > 0 and size >= 15 + 4 * vertices
+    return magic > 0 and size == 6 + 2 * magic
+
+
 def _load_freesurfer(path: str) -> np.ndarray:
     """Return FreeSurfer morphometry data (thickness, curv, sulc, ...)."""
     from nibabel.freesurfer.io import read_morph_data
 
+    if not _is_morph_data(path):
+        raise ValueError(f"not FreeSurfer morphometry data: {path}")
     return np.asarray(read_morph_data(path))
 
 
