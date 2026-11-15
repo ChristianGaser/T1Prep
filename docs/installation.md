@@ -15,7 +15,7 @@ Once it is installed, see [usage.md](usage.md) for running it and
 
 ## Requirements
 
- [Python 3.9-3.14](https://www.python.org/downloads/) is required (3.10+ recommended), and all necessary libraries are automatically installed the first time T1Prep is run or is called with the flag "--install".
+ [Python 3.9-3.14](https://www.python.org/downloads/) is required (3.10+ recommended). `pip install T1Prep` installs all necessary libraries; in a source checkout `scripts/T1Prep` creates the environment `env/` and installs them the first time it is run, or when called with the flag "--install".
 
 > **Why prefer 3.10+?** Python 3.9 works, but PyTorch publishes no wheels for it after 2.8, so a 3.9 install is pinned to PyTorch 2.8. The GPU (MPS) kernels T1Prep relies on — `max_pool3d_with_indices`, `avg_pool3d` and `grid_sampler_3d` — only arrived in PyTorch 2.9; on 2.8 they silently fall back to the CPU. On Apple Silicon that is worth a measurable amount: one subject takes **3:02 min on Python 3.9 / PyTorch 2.8 versus 2:39 min on Python 3.12 / PyTorch 2.13**. On Linux/CUDA/CPU the two stacks perform the same, so 3.9 is a fine choice there.
 
@@ -23,7 +23,7 @@ Once it is installed, see [usage.md](usage.md) for running it and
 
 ## pip / PyPI (Recommended for Python users)
 
-If you have Python 3.9–3.12 available (3.10+ recommended), install directly from PyPI:
+If you have Python 3.9–3.14 available (3.10+ recommended), install directly from PyPI:
 
 ```bash
 # Latest release
@@ -48,8 +48,9 @@ The tinygrad backend is selected per run with `T1Prep --nn-backend tinygrad`
 > Python 3.9–3.14; a `pip` bound to a Python older than 3.9 will refuse to
 > install). On macOS, prefer 3.10+ — a 3.9 install is pinned to PyTorch 2.8 and
 > runs slower (see [Requirements](#requirements)).
-> T1Prep first tries the interpreter it was installed into and the newest
-> Python 3.9–3.12 on your `PATH`. If auto-detection picks the wrong one, point
+> T1Prep first tries the interpreter it was installed into, then `python3.14`
+> down to `python3.10`, `python3`, `python` and `python3.9` on your `PATH`, and
+> keeps the first one that can import `t1prep`. If auto-detection picks the wrong one, point
 > it explicitly — either per invocation (`T1Prep --python /path/to/python …`) or
 > for the whole session (`export T1PREP_PYTHON=/path/to/python`). Using `pipx`
 > or a dedicated venv sidesteps the ambiguity entirely.
@@ -65,7 +66,8 @@ macOS, `~/.cache/t1prep/models/<release>` on Linux (under `$XDG_CACHE_HOME`
 when set), `%LOCALAPPDATA%\t1prep\Cache\models\<release>` on Windows. Every
 environment shares that folder, and uninstalling T1Prep leaves it in place:
 delete it to free the space. Weights an earlier version kept in deepmriprep's
-model folder are no longer used. `T1PREP_MODEL_DIR` points T1Prep at a folder
+model folder are no longer loaded from there; they are only read once, to
+convert them. `T1PREP_MODEL_DIR` points T1Prep at a folder
 of your choice, e.g. a shared one on a cluster.
 
 Use it from Python:
@@ -82,7 +84,7 @@ the following commands are available:
 ```bash
 T1Prep file.nii.gz                              # main CLI (batch + parallel, --multi)
 PyCAT  file.nii.gz                              # same thing, PyCAT banner
-t1prep-run --input file.nii.gz --out-dir out/   # single-subject Python entry
+t1prep-run --out-dir out/ file.nii.gz           # single-subject Python entry
 t1prep-gui                                      # desktop launcher
 CAT_SurfView lh.central.gii                     # surface viewer
 CAT_VolView T1.nii.gz                           # volume viewer
@@ -90,11 +92,16 @@ CAT_PlotHistogram p1*.nii.gz                    # histograms of the inputs
 CAT_PlotBoxplot p1*.nii.gz                      # box or violin plots of the inputs
 t1prep-download-models                          # fetch the model weights now
 t1prep-make-apps                                # macOS: build the viewer .app bundles
+t1prep-bbreg --help                             # BOLD-to-T1w registration for fMRIPrep
 ```
 
+The bash helpers come with it as well: `CAT_VolDiff`, `CAT_VolSmooth_ui`,
+`CAT_GrepJson`, the `CAT_Surf*_ui` helpers, `parallelize` and the four
+longitudinal scripts (see [tools.md](tools.md) and [usage.md](usage.md)).
+
 > The `T1Prep` command is the bash orchestrator (full features including
-> `--multi` batch parallelism); `PyCAT` is a symlink to it, identical in every
-> respect but the startup banner; `t1prep-run` is the equivalent single-subject
+> `--multi` batch parallelism); `PyCAT` is the same script under a second name,
+> identical in every respect but the startup banner; `t1prep-run` is the equivalent single-subject
 > Python entry. Add the environment's `bin/` to `PATH` and you never need to
 > call anything from the source `scripts/` folder.
 
@@ -117,25 +124,32 @@ line to add its `bin/` directory to your shell. After that, run `T1Prep`,
 The installer will interactively prompt you to:
 1. **Select a version**: Latest release, development (main branch), or choose from available releases
 2. **Choose installation directory**: Current folder, temporary folder, or custom path
-3. **Select a Python interpreter**: if several supported Pythons (3.9–3.12) are
-   found, pick which one to install into (the newest is offered as the default).
+3. **Select a Python interpreter**: if several supported Pythons (3.9–3.14) are
+   found, pick which one to install into (the newest is offered as the default;
+   3.13 and 3.14 are only offered when they are your `python3` or `python`).
    If only one is found it is used automatically.
 
 #### Non-Interactive Installation
-Use environment variables to skip the interactive prompts:
+Use environment variables to skip the interactive prompts. They have to be
+set for `bash`, the command that runs the installer, not for `curl`:
 ```bash
 # Install latest release to current directory
-T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" \
-  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh \
+  | T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" bash
 
 # Install specific version to custom directory
-T1PREP_VERSION=v1.0.0 T1PREP_INSTALL_DIR=/opt/T1Prep \
-  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh \
+  | T1PREP_VERSION=v1.0.0 T1PREP_INSTALL_DIR=/opt/T1Prep bash
 
 # Pin the Python interpreter to install into (skips the Python prompt)
-T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" T1PREP_PYTHON=python3.12 \
-  curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/refs/heads/main/scripts/install.sh \
+  | T1PREP_VERSION=latest T1PREP_INSTALL_DIR="$PWD/T1Prep" T1PREP_PYTHON=python3.12 bash
 ```
+
+Without `T1PREP_PYTHON` the installer still asks when it finds several
+supported Pythons, and it asks before replacing an existing installation. It
+opens the terminal for these questions in any case, so it has to be started
+from one.
 
 | Environment Variable | Description |
 |---------------------|-------------|
@@ -211,7 +225,7 @@ pip install -e .                    # editable; tracks local edits
 pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
-Either way the entry points (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-run`,
+With `pip install -e .` the entry points (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-run`,
 `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`,
 `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`) are
 placed in `env/bin`. Activating
@@ -234,7 +248,7 @@ container needs no network access on first run.
 
 ### Build
 
-**Latest release from PyPI:**
+**The release pinned in the Dockerfile:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/Dockerfile \
   | sudo docker build -t t1prep:latest -
@@ -250,8 +264,10 @@ curl -fsSL https://raw.githubusercontent.com/ChristianGaser/T1Prep/main/Dockerfi
 ```
 
 The `T1PREP_VERSION` build-arg accepts any PEP 440 version string (no
-leading `v`) and is forwarded to `pip install "T1Prep==..."`. Leave it
-unset to track the latest release on PyPI.
+leading `v`) and is forwarded to `pip install "T1Prep==..."`. Left unset,
+the build installs the release pinned in the Dockerfile (`ARG T1PREP_VERSION`,
+bumped after each release that has reached PyPI); pass an empty value
+(`--build-arg T1PREP_VERSION=`) to install whatever is latest on PyPI.
 
 ### Run
 
@@ -282,9 +298,10 @@ instead of to root.
 `-e HOME=/data` belongs with it. Under `--user` the container's built-in home is
 no longer writable, and several libraries write caches under `$HOME` during a
 run. Pointing `HOME` at the mount keeps those writes on your own volume. The
-model weights themselves are already in the image, so they are unaffected —
-but if you build a variant without the `t1prep-download-models` step, `HOME`
-also decides where they are downloaded to on first run.
+model weights themselves are already in the image, so they are unaffected.
+In a variant built without the `t1prep-download-models` step they are
+downloaded on first run into `T1PREP_MODEL_DIR` (`/opt/t1prep/models`), which
+then has to be writable for the container user, e.g. a mounted volume.
 
 Append `--gpus all` to `docker run` to enable GPU acceleration when available.
 
@@ -338,10 +355,10 @@ t1 modulate_longitudinal.sh --mri-dirs /data/D1 /data/D2 --names tp1 tp2 --out-d
 has no display, so the two plotters need `--save` there; without it they print
 their table and draw nothing.
 
-**The viewers do not run in this image.** `CAT_SurfView` and `CAT_VolView` are
-installed as console scripts, but the slim base image carries none of the
-OpenGL and Qt platform libraries that PySide6 and VTK need, so both fail on a
-missing `libGL.so.1`. For interactive work, install T1Prep natively on the
+**The viewers and the launcher do not run in this image.** `CAT_SurfView`,
+`CAT_VolView` and `t1prep-gui` are installed as console scripts, but the slim base image carries none of the
+OpenGL and Qt platform libraries that PySide6 and VTK need, so the viewers fail
+on a missing `libGL.so.1` and the launcher has no display to open a window on. For interactive work, install T1Prep natively on the
 machine that has your display and point the viewers at the results.
 
 To render batch figures inside a container instead — both viewers have

@@ -141,7 +141,7 @@ CAT_SurfView surf/?h.pial.sub-01.gii surf/?h.central.sub-01.gii \
 The values are computed in memory by the CAT-Surface bindings, the same ones
 the pipeline uses for its `intensity_*` maps, so no temporary file is written.
 On a T1Prep output they match `lh.intensity_pial`, `lh.intensity_mid` and
-`lh.intensity_white` exactly.
+`lh.intensity_white` (which T1Prep writes with `--debug`) exactly.
 
 ### Cluster table
 
@@ -177,7 +177,7 @@ from the NIfTI header are applied.
 ```bash
 CAT_VolView T1.nii.gz --overlay spmT_0001.nii.gz   # overlay, resampled if needed
 CAT_VolView T1.nii.gz --contour p1T1.nii.gz        # segmentation outlined on the T1
-CAT_VolView T1.nii.gz --atlas aal3                 # name the region at the cursor
+CAT_VolView wT1.nii.gz --atlas AAL3.nii.gz         # name the region at the cursor (atlas volume in the image's space)
 ```
 
 ### Overlays and contours
@@ -294,7 +294,8 @@ the full list.
 
 `t1prep-make-apps` wraps both viewers as `.app` bundles for the Dock and Finder:
 double-click to pick a file, or drop files onto the icon. The first interactive
-start of either viewer creates them in `~/Applications` by itself; set
+start of either viewer creates them by itself, in `/Applications` or, when
+that is not writable, in `~/Applications`; set
 `T1PREP_NO_APPS=1` to prevent that.
 
 The bundles declare the file types they can open, so *Open With* offers them in

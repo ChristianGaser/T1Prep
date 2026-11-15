@@ -1,8 +1,10 @@
 # Additional tools
 
-T1Prep installs more than the pipeline itself: a desktop launcher, four small
-GUIs for surface post-processing, a histogram plotter, a box and violin plotter, and
-the two viewers (documented separately in [viewers.md](viewers.md)).
+T1Prep installs more than the pipeline itself: a desktop launcher, command-line
+helpers for post-processing (three for surfaces, two for volumes), a tool that
+prints fields of the JSON reports, the job runner `parallelize`, a histogram
+plotter, a box and violin plotter, and the two viewers (documented separately
+in [viewers.md](viewers.md)).
 
 | Command | What it is |
 |---------|------------|
@@ -12,14 +14,21 @@ the two viewers (documented separately in [viewers.md](viewers.md)).
 | `CAT_SurfParameters_ui` | Extract surface parameters |
 | `CAT_Surf2ROIMulti_ui` | Map surface values to atlas ROIs |
 | `CAT_VolDiff` | Voxel-wise differences between volumes |
+| `CAT_VolSmooth_ui` | Smooth volumes with a Gaussian kernel |
+| `CAT_GrepJson` | Print a field of the JSON reports |
+| `parallelize` | Run a command on many files in parallel |
 | `CAT_PlotHistogram` | Histograms of volumes, surfaces or text data |
 | `CAT_PlotBoxplot` | Box and violin plots of volumes, surfaces or text data |
 | `t1prep-make-apps` | macOS: build the viewer `.app` bundles |
 | `t1prep-download-models` | Fetch the model weights ahead of time |
+| `t1prep-bbreg`, `process_longitudinal.sh` and its helpers | fMRIPrep registration and the longitudinal pipeline — see [usage.md](usage.md) |
 
-Every one of them follows the same command-line convention as `T1Prep`: no
-argument prints the synopsis, `--help` the full description, `--version` the
-release, and options are spelled with two dashes. See
+They follow the same command-line convention as `T1Prep`: no argument prints
+the synopsis, `--help` the full description, `--version` the release, and
+options are spelled with two dashes. Three of them do their job when called
+without an argument instead: `t1prep-gui` opens its window,
+`t1prep-download-models` fetches the weights and `t1prep-make-apps` builds the
+app bundles. See
 [usage.md](usage.md#command-line-conventions) for the details, including the
 single-dash spellings that are still accepted.
 
@@ -70,38 +79,44 @@ The launcher itself uses neither VTK nor OpenGL. The pictures are rendered by
 own. Where the viewers cannot start (no working OpenGL), the launcher still
 runs the pipeline; only the pictures and the viewer buttons are missing.
 
-## Surface post-processing tools
+## Post-processing helpers
 
 In addition to `T1Prep`, the following commands — all installed into the
-environment's `bin/` — provide convenient entry points for CAT-Surface
-post-processing.
+environment's `bin/` — provide convenient entry points for post-processing
+with CAT-Surface. They are command-line tools, not graphical ones. They call
+the CAT-Surface functions of the `cat-surf` package (`cat_surf.cli`), the same
+package the pipeline uses; no separate binaries are involved. Several input
+files are processed in parallel through `parallelize`.
 
 ### `CAT_SurfResampleMulti_ui`
 
 Resamples LH/RH surface values to target spheres and writes a combined output
-per LH input using `CAT_SurfResampleMulti`.
+per LH input (`cat_surf.cli.surf_resample_multi`).
 
 ```bash
-CAT_SurfResampleMulti_ui [options] lh.thickness.subject.gii
+CAT_SurfResampleMulti_ui [options] surf/lh.thickness.subject
 ```
 
 Common options:
 - `--out <DIR>` output directory
-- `--res <STR>` output surface resolution (`32k` or `4k`)
+- `--res <STR>` resolution tag in the output name (`32k` by default); for a
+  target other than the 32k template also give `--trg-sphere` and `--mask`
 - `--fwhm <FLOAT>` smoothing FWHM
 - `--trg-sphere <FILE>` target LH sphere
 - `--mask <FILE>` target LH mask
 - `--jobs <N>` parallel worker count
 
 Input expectations:
-- Supports `lh.*` naming and auto-derives RH counterparts
+- A value file named as T1Prep writes it, `lh.<measure>.<name>` (no `.gii`);
+  the central surface `lh.central.<name>.gii`, the registered sphere and the
+  RH counterparts are derived from that name and have to lie next to it
 - BIDS-style `*_left*` naming is currently not implemented
 
 ### `CAT_SurfParameters_ui`
 
-Computes surface parameters from mesh files using CAT-Surface binaries
-(`CAT_SurfCurvature`, `CAT_SurfFractalDimension`, `CAT_SurfArea`,
-`CAT_SurfRatio`, `CAT_SurfSulcusDepth`) bundled in `src/t1prep/bin/`.
+Computes surface parameters from mesh files with the CAT-Surface functions of
+the `cat-surf` package (`cat_surf.cli.surf_curvature`, `surf_sulcus_depth`,
+`surf_fractal_dimension`, `surf_ratio`, `surf_area`).
 
 ```bash
 CAT_SurfParameters_ui [options] lh.central.gii
@@ -120,11 +135,12 @@ Input expectations:
 
 ### `CAT_Surf2ROIMulti_ui`
 
-Extracts ROI-wise values from surface value files using `CAT_Surf2ROIMulti`.
-For each LH input, RH files are derived automatically.
+Extracts ROI-wise values from surface value files
+(`cat_surf.cli.surf2roi_multi`). For each LH input, RH files are derived
+automatically; the input is named as for `CAT_SurfResampleMulti_ui`.
 
 ```bash
-CAT_Surf2ROIMulti_ui [options] lh.thickness.subject.gii
+CAT_Surf2ROIMulti_ui [options] surf/lh.thickness.subject
 ```
 
 Common options:
@@ -134,21 +150,20 @@ Common options:
 - `--annot <NAMES>` one or multiple atlas names
 - `--jobs <N>` / `--no-parallel` parallel control
 
-Atlas names for `--annot` are resolved as:
-- `src/t1prep/data/atlases_surfaces_<res>/lh.<name>.annot`
-- `src/t1prep/data/atlases_surfaces_<res>/rh.<name>.annot`
+Atlas names for `--annot` are those of the shipped surface atlases, the files
+`lh.<name>.annot` and `rh.<name>.annot` in `t1prep/data/atlases_surfaces_32k`.
 
 Multi-atlas examples:
 
 ```bash
-CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'" lh.thickness.subject.gii
-CAT_Surf2ROIMulti_ui --annot "aparc_DK40.freesurfer,aparc_a2009s.freesurfer" lh.thickness.subject.gii
+CAT_Surf2ROIMulti_ui --annot "'aparc_DK40.freesurfer' 'aparc_a2009s.freesurfer'" surf/lh.thickness.subject
+CAT_Surf2ROIMulti_ui --annot "aparc_DK40.freesurfer,aparc_a2009s.freesurfer" surf/lh.thickness.subject
 ```
 
 ### `CAT_VolDiff`
 
-Computes voxel-wise differences between volumes with `CAT_VolCalc`, following
-CAT12's `cat_stat_diff.m`. Within a subject the first image is the reference,
+Computes voxel-wise differences between volumes (`cat_surf.cli.vol_calc`),
+following CAT12's `cat_stat_diff.m`. Within a subject the first image is the reference,
 and every further image `j` gives `image_j - image_1`, written next to
 `image_j` as `diff_<name>`.
 
@@ -167,6 +182,47 @@ Options:
 Input expectations:
 - The images of a subject must share one grid; nothing is resliced
 - Output is float32 with the header of the reference image
+
+### `CAT_VolSmooth_ui`
+
+Smooths volumes with a Gaussian kernel (`cat_surf.cli.vol_smooth`). Each
+result is written next to its input with `s<fwhm>` in front of the name.
+
+```bash
+CAT_VolSmooth_ui mwp1*.nii                 # s6mwp1*.nii, 6 mm FWHM
+CAT_VolSmooth_ui --fwhm 8 mwp1*.nii        # s8mwp1*.nii
+```
+
+Options:
+- `--fwhm <FLOAT>` kernel FWHM in mm (default 6)
+- `--jobs <N>` / `--no-parallel` parallel control
+
+### `CAT_GrepJson`
+
+Prints one field of T1Prep's JSON reports for a list of files, e.g. to
+collect the total intracranial volume of every subject. It needs `jq`.
+
+```bash
+CAT_GrepJson --field subjectmeasures.vol_TIV report/log_*.json
+CAT_GrepJson --field qualitymeasures.IQR --out iqr.txt report/log_*.json
+```
+
+Options:
+- `--field <NAME>` the field, nested ones in dot notation
+- `--out <FILE>` write the output to a file instead of the terminal
+
+### `parallelize`
+
+Runs a command on a list of files in several processes; `T1Prep --multi` and
+the helpers above use it for their batches.
+
+```bash
+parallelize --processes 4 --command "CAT_VolSmooth_ui --no-parallel --fwhm 8" mwp1*.nii
+```
+
+It exits with status 0 when the command succeeded for every file and with 1
+when it failed for at least one, in which case the failed files are listed.
+`parallelize --help` describes the options.
 
 ---
 

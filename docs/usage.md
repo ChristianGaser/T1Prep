@@ -20,11 +20,12 @@ Back to the [README](../README.md).
 
 ## Usage
 ```bash
-T1Prep [options] file1.nii.[.gz] file2.nii[.gz] ...
+T1Prep [options] file1.nii[.gz] file2.nii[.gz] ...
 ```
 
 (`T1Prep` resolves from the environment's `bin/` once it is on your `PATH`; from
-a source checkout without an install you can still run `./scripts/T1Prep`.)
+a source checkout without an install you can still run `./scripts/T1Prep`,
+which builds its own environment `env/` on the first run.)
 
 ## Command-line conventions
 
@@ -44,9 +45,10 @@ tools used before (`CAT_SurfView -overlay`, `CAT_VolDiff -s`, `parallelize -p`)
 are still accepted so existing command lines and scripts keep working; they are
 no longer listed in the help.
 
-Two tools do a job rather than take a file, so calling them without an argument
-runs that job instead of printing the synopsis: `t1prep-gui` opens the launcher
-window, and `t1prep-download-models` fetches the model weights. Both still
+Three tools do a job rather than take a file, so calling them without an
+argument runs that job instead of printing the synopsis: `t1prep-gui` opens the
+launcher window, `t1prep-download-models` fetches the model weights, and
+`t1prep-make-apps` builds the macOS app bundles of the viewers. All three still
 answer `--help`.
 
 ## Options
@@ -58,14 +60,15 @@ T1Prep --help     # every option, in full
 ```
 
 Skull-stripping modes:
-- `--skullstrip-only`: run skull-stripping only and exit after writing a skull-stripped image and brain mask.
+- `--skullstrip-only`: run skull-stripping only and exit after writing the skull-stripped image (`mri/m<name>.nii`; with `--bids` `<name>_desc-skullstripped_T1w.nii.gz`).
 - `--no-skullstrip` / `--skip-skullstrip`: skip skull-stripping (assumes input is already skull-stripped).
 
 Longitudinal / advanced flags:
-- `--initial-surf <FILE>`: use an initial surface estimate for longitudinal processing.
+- `--initial-surf <FILE>`: use an initial surface estimate for longitudinal processing (`T1Prep` also takes the spelling `--initial-surface`).
 - `--long-data <FILE>`: process `<FILE>`, the longitudinally realigned copy of the input (as `process_longitudinal.sh` passes it), instead of the input, while output folders and names still follow the input file. Takes exactly one input file.
-- `--no-atlas`: skip the volume atlases, i.e. the ROI volumes (overrides the defaults file and `--atlas`). The surface atlases are not affected.
-- `--no-atlas-surf`: skip the surface atlases (overrides the defaults file and `--atlas-surf`).
+- `--no-atlas`: skip the volume atlases, i.e. the ROI volumes (overrides the defaults file). The surface atlases are not affected.
+- `--no-atlas-surf`: skip the surface atlases (overrides the defaults file).
+  In `T1Prep` the options apply in the order given, so the last of `--atlas` and `--no-atlas` (or of `--atlas-surf` and `--no-atlas-surf`) counts; in `t1prep-run` the `--no-…` option always wins.
 - `--hemi`: keep the hemispheric partitions of the label map (`mri/lh.seg.*`, `mri/rh.seg.*`; with `--bids` `*_hemi-L_seg.*`, `*_hemi-R_seg.*`). Surface estimation creates them as its input and removes them afterwards unless `--hemi` or `--debug` is given; after a failed surface estimation they stay. To run the surfaces later with `--no-seg`, write them with `--no-surf --hemi` first.
 
 Segmentation refinement:
@@ -121,10 +124,10 @@ Jacobians vary more between subjects, which costs sensitivity in VBM of the
 modulated maps; `--fmriprep` writes none.
 
 - `--save-h5`: additionally save the T1w↔MNI152NLin2009cAsym deformations as
-  ANTs/ITK composite HDF5 files (`y_*.h5`, `iy_*.h5`), next to the NIfTI `y_`
-  field. The composites are what `antsApplyTransforms` and `nitransforms`
+  ANTs/ITK composite HDF5 files (`y_*.h5`, `iy_*.h5`, and the same pair for
+  MNI152NLin6Asym, `y6_*.h5`, `iy6_*.h5`), next to the NIfTI `y_` field. The composites are what `antsApplyTransforms` and `nitransforms`
   consume, and unlike `--fmriprep` this does not switch the run to fMRIPrep
-  output mode. Requires the `nitransforms` package.
+  output mode.
 
   The NIfTI `y_*.nii` written by default is an SPM12-compatible deformation
   (5-D `[X, Y, Z, 1, 3]`, native millimetres, affine and non-linear stages
@@ -187,19 +190,25 @@ Any one of these switches telemetry off:
 | Python API | `run_t1prep(..., track=False)` |
 
 ## Neural networks
-T1Prep runs two of deepmriprep's networks: deepbet's skull-stripping model
-and deepmriprep's segmentation (a coarse model and 18 patch models). T1Prep
-defines both itself (`t1prep.nn`) and keeps their weights as safetensors
-files, converted once from deepmriprep's TorchScript archives (see
-[Installation](installation.md)).
+T1Prep runs the trained networks of [deepmriprep](https://github.com/wwu-mmll/deepmriprep)
+(Fisch et al., https://doi.org/10.48550/arXiv.2408.10656): the two
+skull-stripping models of deepbet, its brain extraction (bounding box and
+brain), and deepmriprep's segmentation models (a coarse model and 18 patch
+models). T1Prep holds the architectures itself (`t1prep.nn`) and keeps the
+weights as safetensors files, converted once from deepmriprep's TorchScript
+archives (see [Installation](installation.md)); the code around the networks
+is T1Prep's port of deepbet's and deepmriprep's (`t1prep.stages`). Neither
+package has to be installed. deepmriprep's other two networks are not used:
+the non-linear registration is geodesic shooting and non-cortical grey matter
+is removed by rule (see above).
 
 The networks run on the GPU when there is one (CUDA, else Apple's MPS) and
 on the CPU otherwise; `T1PREP_DEVICE=cpu`, `mps` or `cuda` forces a device
 (`cpu` gives a reference run).
 
 `--nn-backend` selects the framework that runs them (`nn_backend` in the
-defaults file, `nn_backend=` in the Python API, *Network backend* in the web
-UI). `T1PREP_NN_BACKEND` in the environment overrides the defaults file, and
+defaults file, `nn_backend=` in the Python API, *Network backend* under Expert
+in the launcher `t1prep-gui`). `T1PREP_NN_BACKEND` in the environment overrides the defaults file, and
 the option overrides both:
 
 | Backend | Install | Results | Use it |
@@ -238,6 +247,7 @@ T1Prep automatically determines output locations based on the input data structu
    
 - Subject (`sub-XXX`) and session (`ses-YYY`) are extracted from the path.
 - If `--out-dir <DIR>` is specified, the BIDS substructure will still be created inside `<DIR>`.
+- With `--amap` the folder is called `T1PrepAmap-v<version>`.
 
 2. **Non-BIDS datasets**  
 Results are written to **CAT12-style subfolders** (`mri/`, `surf/`, etc.) in:
@@ -247,10 +257,10 @@ Results are written to **CAT12-style subfolders** (`mri/`, `surf/`, etc.) in:
 or in `<DIR>` if `--out-dir <DIR>` is specified.
 
 3. **Naming Conventions**  
-- **Default (CAT12)**: Uses classic names like `mri/brainmask.nii` and `surf/lh.thickness`.
+- **Default (CAT12)**: Uses classic names like `mri/p0<name>.nii` and `surf/lh.thickness.<name>`.
 - **With `--bids`**: Uses BIDS derivatives naming, e.g.:
   ```
-  sub-01_ses-1_space-T1w_desc-brain_mask.nii.gz
+  sub-01_ses-1_label-seg.nii.gz
   sub-01_ses-1_hemi-L_thickness.shape.gii
   ```
 - All filename mappings for both modes are defined in `Names.tsv` and can be customized.   
@@ -259,29 +269,35 @@ or in `<DIR>` if `--out-dir <DIR>` is specified.
 ## Output folders structure
 Output folder structure depends on the input dataset type:
 * BIDS datasets (if the upper-level folder of the input files is 'anat'):
-    Results are placed in a BIDS-compatible derivatives folder:
-    inside &lt;DIR&gt;
+    Results are placed in a BIDS-compatible derivatives folder,
+    &lt;dataset-root&gt;/derivatives/T1Prep-v&lt;version&gt;/&lt;sub-XXX&gt;/&lt;ses-YYY&gt;/anat/
+    (below &lt;DIR&gt; instead of the dataset root when --out-dir is given).
     Subject ('sub-XXX') and session ('ses-YYY') are auto-detected.
 * Non-BIDS datasets:
     Results are placed in subfolders similar to CAT12 output
     (e.g., 'mri/', 'surf/', 'report/', 'label') inside the specified 
     output directory.
 
-If '--bids' is set, the BIDS derivatives substructure will always be used
-inside &lt;DIR&gt;.
+'--bids' changes the file names, and all files then go into one folder,
+without 'mri/', 'surf/', 'report/' and 'label/'. The derivatives substructure
+is built only for an input inside an 'anat' folder, with or without '--bids'.
 
 ## Quality measures
 
 The JSON report in `report/` carries a `qualitymeasures` block. Alongside the
 Euler numbers (`euler_lh`, `euler_rh`, `EC_abs`) it reports glued sulci, the
-shape of the thickness distribution and the reference of the sulcal barrier:
+shape of the thickness distribution and the reference of the sulcal barrier.
+Only `t1prep-run` and `run_t1prep()` merge these surface measures into the
+report under the names below; `T1Prep` leaves them in the two files the
+surface step writes per subject, `report/<name>_glued-lh.json` and
+`report/<name>_glued-rh.json` (`glued_fraction`, `thickness_upper_skewness`,
+`thickness_high_fraction`, `barrier_reference`, …):
 
 | Measure | Meaning |
 |---------|---------|
 | `euler_lh`, `euler_rh` | Euler number of the surface enclosing the white matter of each hemisphere label (FreeSurfer/CAT12 convention). Ideal 2; each handle lowers it by 2, each extra component or enclosed cavity raises it by 2. Reports written before September 2026 used the solid-volume convention (ideal 1), i.e. half these values. |
 | `EC_abs` | `abs(euler_lh - 2) + abs(euler_rh - 2)`. Ideal 0; larger means more topological defects. |
 | `glued_lh`, `glued_rh` | Percentage of central-surface vertices touching a facing patch of the same surface. Ideal 0; lower is better. |
-| `glued_lh_sigma`, `glued_rh_sigma` | Present only when the surface was re-extracted at a reduced `sulci_sigma_factor` (see below). |
 | `thickness_skew_lh`, `thickness_skew_rh` | Skewness of the final thickness over vertices >= 1 mm. Higher means a longer upper tail. |
 | `thickness_skew_asym` | Left minus right of the above. |
 | `thickness_high_lh`, `thickness_high_rh` | Percentage of vertices thicker than 1.6x the median thickness of the hemisphere. |
@@ -293,13 +309,11 @@ triangles need not cross — which is why it needs its own measure: surface
 area barely moves even when the defect count changes many-fold.
 
 Glued sulci originate upstream, in the distance map, so they are already
-present in the raw marching-cubes output. When the measure exceeds its
-threshold, `CAT_VolMarchingCubes` is re-run with a lower `sulci_sigma_factor`
-and the least-glued result is kept; the value used is recorded in the report.
-The parameter responds as a step rather than a slope (measured: glued
-vertices roughly triple between 0.60 and 0.75), and lowering it does not help
-every hemisphere, which is why the choice is made per hemisphere from the
-measurement rather than by changing the default.
+present in the raw marching-cubes output. The measure is reported; the
+surface is not extracted again. Marching cubes runs once, with a
+`sulci_sigma_factor` of 0.75. The parameter responds as a step rather than a
+slope (measured: glued vertices roughly triple between 0.60 and 0.75), and
+lowering it does not help every hemisphere.
 
 ### Thickness distribution
 
@@ -375,7 +389,7 @@ is looked for after the subject's name instead, e.g.
 ```
 Process all files matching the pattern `'sTRIO*.nii'`. Skip processing of 
 spherical registration, but additionally save lesion map (named p4sTRIO*.nii, 
-or `*_label-WMH_probseg.nii` with `--bids`) in native space.
+or `*_label-WMH_probseg.nii.gz` with `--bids`) in native space.
 
 The lesion map holds the probability of a white matter hyperintensity inside
 the detected lesions and 0 elsewhere; in the label map (`p0`) lesions read
@@ -387,7 +401,7 @@ matter, as before.  How the map was calibrated and what it achieves on
 simulated brains is described in `evaluation/PHANTOM.md`.
 
 `--debug` additionally writes the map the lesion probability is read from
-(`pd*`, or `*_label-Discrepance.nii`): the intensity the segmentation implies
+(`pd*`, or `*_label-Discrepance.nii.gz`): the intensity the segmentation implies
 minus the observed one, on the label scale, so a positive value means the
 image is darker than the label says.  It covers the whole volume, lesions or
 not, which makes it useful for seeing why a lesion was or was not found.
@@ -398,18 +412,18 @@ not, which makes it useful for seeing why a lesion was or was not found.
 Process all files matching the pattern `'sTRIO*.nii'` and enable AMAP segmentation.
 
 ```bash
-  T1Prep --multi 8 --p --csf sTRIO*.nii
-```
-
-```bash
   T1Prep --skullstrip-only --out-dir test_folder sTRIO*.nii
 ```
-Only run skull-stripping and write the skull-stripped image and brain mask.
+Only run skull-stripping and write the skull-stripped image.
 
 ```bash
   T1Prep --skip-skullstrip --out-dir test_folder sTRIO*_brain.nii
 ```
 Skip skull-stripping for already skull-stripped inputs.
+
+```bash
+  T1Prep --multi 8 --p --csf sTRIO*.nii
+```
 Process all files matching the pattern 'sTRIO*.nii'. Additionally save 
 segmentations in native space, including CSF segmentation. The processing 
 pipeline involves two stages of parallelization:
@@ -419,7 +433,7 @@ pipeline involves two stages of parallelization:
    available memory to optimize resource usage.
 
 2. Surface Extraction: This stage does not require significant memory and is
-   fully distributed across all available processorsor limited to the 
+   fully distributed across all available processors or limited to the 
    defined number of processes using the "--multi" flag.
 
 If "--multi" is set to a specific number (e.g., 8), the system still 
@@ -474,7 +488,7 @@ the T1w with boundary-based registration to T1Prep's white-matter surfaces
 For rigid realignment of a series of NIfTI volumes, use the realignment helper:
 
 ```bash
-./scripts/realign_longitudinal.sh --help
+realign_longitudinal.sh --help       # in a source checkout: ./scripts/realign_longitudinal.sh
 ```
 
 New tuning flags in the Python realigner:
@@ -486,7 +500,7 @@ New tuning flags in the Python realigner:
 
 ### Longitudinal models
 
-`scripts/process_longitudinal.sh --long-model` selects how much of the
+`process_longitudinal.sh --long-model` selects how much of the
 between-scan difference is modelled, following CAT12's naming:
 
 - `plasticity` (default): rigid realignment only. The anatomy itself is assumed
@@ -524,7 +538,7 @@ Pass `--warp-arg --apply` to also write the warped volumes.
 Run the step on its own with:
 
 ```bash
-./scripts/warp_longitudinal.sh --help
+warp_longitudinal.sh --help
 ```
 
 At the 1.5 mm default working resolution this costs a few seconds per subject
@@ -598,7 +612,7 @@ handed a directory as `--long-data`.
 Run the stage on its own with:
 
 ```bash
-./scripts/modulate_longitudinal.sh --help
+modulate_longitudinal.sh --help
 ```
 
 ## Input
