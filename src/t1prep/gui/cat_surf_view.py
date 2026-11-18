@@ -177,7 +177,7 @@ except ImportError:  # direct invocation as a script
 try:
     from .viewer_common import (
         ZOOM_EVENTS, ask_and_save_png, claim_event, dropped_files,
-        droppable_url, note, show_shortcuts,
+        droppable_url, note, show_shortcuts, stay_in_the_background,
     )
     from .cat_vol_view import (
         VolumeViewerWindow, ask_for_files, finder_open_files,
@@ -189,7 +189,7 @@ except ImportError:  # direct invocation as a script (no package context)
         raise  # a real failure inside the package, not a missing script path
     from viewer_common import (
         ZOOM_EVENTS, ask_and_save_png, claim_event, dropped_files,
-        droppable_url, note, show_shortcuts,
+        droppable_url, note, show_shortcuts, stay_in_the_background,
     )
     from cat_vol_view import (
         VolumeViewerWindow, ask_for_files, finder_open_files,
@@ -1564,10 +1564,15 @@ def read_freesurfer_mesh(filename: str) -> vtkPolyData:
     return _polydata_from_arrays(coords, faces)
 
 
-def _polydata_from_arrays(coords, faces) -> vtkPolyData:
-    """A triangle mesh from an (n, 3) vertex and an (m, 3) face array."""
+def _polydata_from_arrays(coords, faces, single: bool = False) -> vtkPolyData:
+    """A triangle mesh from an (n, 3) vertex and an (m, 3) face array.
+
+    Args:
+        single: Keep the points in single precision, VTK's default for points.
+    """
     pts = vtkPoints()
-    pts.SetData(numpy_to_vtk(np.ascontiguousarray(coords, dtype=np.float64), deep=True))
+    pts.SetData(numpy_to_vtk(np.ascontiguousarray(
+        coords, dtype=np.float32 if single else np.float64), deep=True))
     faces = np.asarray(faces, dtype=np.int64)
     cells = vtkCellArray()
     offsets = np.arange(0, 3 * len(faces) + 1, 3, dtype=np.int64)
@@ -1667,14 +1672,11 @@ def read_gifti_mesh(filename: str) -> vtkPolyData:
                 faces = d.data.astype(np.int64)
     if coords is None or faces is None:
         raise RuntimeError(f"Could not find POINTSET/TRIANGLE arrays in {filename}")
-    pts = vtkPoints(); pts.SetNumberOfPoints(coords.shape[0])
-    for i, p in enumerate(coords):
-        pts.SetPoint(i, float(p[0]), float(p[1]), float(p[2]))
-    cells = vtkCellArray()
-    for tri in faces:
-        cells.InsertNextCell(3); cells.InsertCellPoint(int(tri[0])); cells.InsertCellPoint(int(tri[1])); cells.InsertCellPoint(int(tri[2]))
-    poly = vtkPolyData(); poly.SetPoints(pts); poly.SetPolys(cells)
-    return poly
+    # Handed over as arrays.  (A loop over the vertices and one over the
+    # triangles took a third of a second per hemisphere, and a surface is
+    # read more than once on the way to the window.)  Single precision, as
+    # the points of the loop were.
+    return _polydata_from_arrays(coords, faces, single=True)
 
 
 def is_gifti_mesh_file(filename: str) -> bool:
@@ -1888,6 +1890,44 @@ def read_scalars(filename: str) -> vtkDoubleArray:
     return out
 
 # ---- Title helper ----
+#: How many views a folded surface can be shown in (``--views``)
+MONTAGE_VIEWS = (6, 4, 2)
+
+#: Share of the window's height the colour bar and its labels take
+COLORBAR_STRIP = 0.14
+
+
+def montage_layout(views: int = 6):
+    """Where the copies of the hemispheres go: ``(order, x, y, rotX, rotZ)``.
+
+    ``order[i]`` is the hemisphere view *i* shows (0 left, 1 right); the other
+    four lists place and turn its copy.  Even views are the left hemisphere,
+    odd ones the right, in every layout.
+
+    Args:
+        views: 6 puts the lateral and medial views of both hemispheres in two
+            rows with the two dorsal views between them, the sheet of
+            ``cat_surf_results``.  4 leaves the dorsal views out and moves
+            the hemispheres together: about as high as wide, the shape for a
+            small picture.  2 keeps the lateral views alone.
+    """
+    shift = 180.0
+    if views == 6:
+        posx = [0, 2 * shift, 0.15 * shift, 1.85 * shift, shift, shift]
+        posy = [0, 0, 0.8 * shift, 0.8 * shift, 0.6 * shift, 0.6 * shift]
+        return ((0, 1, 0, 1, 0, 1), posx, posy,
+                [270, 270, 270, 270, 0, 0], [90, -90, -90, 90, 0, 0])
+    if views not in MONTAGE_VIEWS:
+        raise ValueError(f"a montage has {', '.join(map(str, MONTAGE_VIEWS))} "
+                         f"views, not {views}")
+    # Side by side with room for a long brain; the medial views above
+    aside, above = 200.0, 140.0
+    if views == 4:
+        return ((0, 1, 0, 1), [0.0, aside, 0.0, aside], [0.0, 0.0, above, above],
+                [270, 270, 270, 270], [90, -90, -90, 90])
+    return ((0, 1), [0.0, aside], [0.0, 0.0], [270, 270], [90, -90])
+
+
 def _title_from_path(path: str, max_chars: int = 80) -> str:
     """Return a window-title string from *path*, trimmed to the last *max_chars* characters.
 
@@ -1979,6 +2019,7 @@ class Options:
     fix_scaling: bool = False  # Fix scaling across overlays
     free_zoom: bool = False    # Let the mouse change the zoom
     sampling: str = 'crossing'  # How a volume is mapped; see VOL2SURF_SAMPLING
+    views: int = 6             # Views of the montage; see montage_layout()
 
 
 # ---- reading a defaults file ----
@@ -2138,6 +2179,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         'Bounds shared with --range are included, so "--range 6 16 --clip -100 6"\n'
                         'hides everything up to 6.')
     p.add_argument('--size','-size','-sz', dest='size', nargs=2, type=int, default=list(DEFAULT_WINDOW_SIZE), help='Window size in pixels (width height)')
+    p.add_argument('--views', dest='views', type=int, choices=sorted(MONTAGE_VIEWS), default=6,
+                   help='Views of the montage: 6 = lateral, medial and dorsal (default),\n'
+                        '4 = lateral and medial, 2 = lateral only. The smaller sheets\n'
+                        'suit a small picture (--size, --output).')
     p.add_argument('--title','-title', dest='title', help='Window/title string (overrides auto title)')
     p.add_argument('--output','-output','-save', dest='output',
                    help='Render to this PNG file and exit without user interaction (batch mode)')
@@ -2352,6 +2397,7 @@ def parse_args(argv: List[str]) -> Options:
         fix_scaling=bool(a.fix_scaling),
         free_zoom=bool(getattr(a, 'free_zoom', False)),
         sampling=a.sampling,
+        views=int(getattr(a, 'views', 6)),
     )
 
 # ---- Control Panel ----
@@ -2815,12 +2861,7 @@ class Viewer(QtWidgets.QMainWindow):
             # uses for flatmaps), so the second map is the mirror image of the
             # first and the pair reads as one figure.
             return ((0, 1), [0.0, 0.0], [0.0, 0.0], [270, 270], [90, -90])
-        shifts = (180.0, 180.0)
-        posx = [0, 2 * shifts[0], 0.15 * shifts[0], 1.85 * shifts[0], shifts[0], shifts[0]]
-        posy = [0, 0, 0.8 * shifts[1], 0.8 * shifts[1], 0.6 * shifts[1], 0.6 * shifts[1]]
-        rotx = [270, 270, 270, 270, 0, 0]
-        rotz = [90, -90, -90, 90, 0, 0]
-        return (self._MONTAGE_ORDER, posx, posy, rotx, rotz)
+        return montage_layout(getattr(getattr(self, 'opts', None), 'views', 6))
 
     def _setup_lighting(self):
         """Light the surfaces like a figure rather than with a single headlight.
@@ -2952,6 +2993,42 @@ class Viewer(QtWidgets.QMainWindow):
 
         if self.is_flat_surface(self.poly_l):
             self._separate_flat_views()
+        elif views != 6:
+            self._arrange_in_grid()
+
+    def _arrange_in_grid(self):
+        """Put the views of a four- or two-view sheet into the cells of a grid.
+
+        Where a turned hemisphere ends up depends on where the mesh lies in
+        its space: its centre is not the point it is turned about, so the
+        lateral and the medial view of one hemisphere land in different
+        places.  The six-view sheet allows for that with fixed offsets and
+        wide spacing; here the views are packed, so each is placed by its own
+        bounds -- left hemisphere in the left column, right in the right,
+        lateral views in the lower row and medial ones above.
+        """
+        def clone(group, index):
+            return group[index] if group and index < len(group) else None
+
+        groups = (self._montage_bkg, self._montage_ov,
+                  getattr(self, '_montage_border', None))
+        boxes = {}
+        for index in range(len(self._montage_bkg)):
+            actor = clone(self._montage_bkg, index) or clone(self._montage_ov, index)
+            if actor is not None:
+                boxes[index] = actor.GetBounds()
+        if not boxes:
+            return
+        width = max(box[1] - box[0] for box in boxes.values())
+        height = max(box[3] - box[2] for box in boxes.values())
+        gap = 0.06 * width
+        for index, box in boxes.items():
+            shift_x = (index % 2) * (width + gap) - 0.5 * (box[0] + box[1])
+            shift_y = (index // 2) * (height + gap) - 0.5 * (box[2] + box[3])
+            for group in groups:
+                actor = clone(group, index)
+                if actor is not None:
+                    actor.AddPosition(shift_x, shift_y, 0.0)
 
     def _separate_flat_views(self):
         """Move the right flat map clear of the left one.
@@ -3234,12 +3311,22 @@ class Viewer(QtWidgets.QMainWindow):
             # ResetCamera fits the bounding sphere, which leaves a wide flat
             # map small in the middle of the window
             self._zoom_to_fit()
+        elif getattr(self.opts, 'views', 6) != 6:
+            # The sheets of four and two views are made for a small picture:
+            # they fill it, above the colour bar when there is one.  (The
+            # fixed zoom below is tuned to the six views in a wide window.)
+            self._zoom_to_fit(bottom=COLORBAR_STRIP if self.opts.colorbar else 0.0)
         else:
             self.ren.GetActiveCamera().Zoom(2.0)
         self._capture_camera_state()
 
-    def _zoom_to_fit(self, margin: float = 0.92):
-        """Zoom so the scene fills the window, whatever shape it has."""
+    def _zoom_to_fit(self, margin: float = 0.92, bottom: float = 0.0):
+        """Zoom so the scene fills the window, whatever shape it has.
+
+        Args:
+            margin: Share of the window the scene may take.
+            bottom: Share of the window's height kept free below the scene.
+        """
         bounds = self.ren.ComputeVisiblePropBounds()
         width = bounds[1] - bounds[0]
         height = bounds[3] - bounds[2]
@@ -3248,13 +3335,24 @@ class Viewer(QtWidgets.QMainWindow):
         camera = self.ren.GetActiveCamera()
         window = self.rw.GetSize()
         aspect = (window[0] / window[1]) if window[1] else 1.0
-        if camera.GetParallelProjection():
-            visible_height = 2.0 * camera.GetParallelScale()
-        else:
-            visible_height = 2.0 * camera.GetDistance() * math.tan(
+
+        def visible() -> float:
+            if camera.GetParallelProjection():
+                return 2.0 * camera.GetParallelScale()
+            return 2.0 * camera.GetDistance() * math.tan(
                 math.radians(camera.GetViewAngle() / 2.0))
+
+        visible_height = visible()
         visible_width = visible_height * aspect
-        camera.Zoom(margin * min(visible_height / height, visible_width / width))
+        camera.Zoom(margin * min((1.0 - bottom) * visible_height / height,
+                                 visible_width / width))
+        if bottom > 0:
+            # Lower the camera by half the strip: the scene moves up by that
+            lift = 0.5 * bottom * visible()
+            up = camera.GetViewUp()
+            for get, put in ((camera.GetPosition, camera.SetPosition),
+                             (camera.GetFocalPoint, camera.SetFocalPoint)):
+                put(*[value - lift * axis for value, axis in zip(get(), up)])
         self.ren.ResetCameraClippingRange()
 
     def _mesh_title(self, path: str) -> str:
@@ -4557,6 +4655,8 @@ class Viewer(QtWidgets.QMainWindow):
         if s in ('b','B'):
             # Flip only the middle views (indices 4 and 5) for both background and overlay clones
             for idx in (4, 5):
+                if idx >= len(getattr(self, '_montage_bkg', ())):
+                    break       # a sheet without dorsal views (--views 4 or 2)
                 a_b = self._montage_bkg[idx] if hasattr(self, '_montage_bkg') else None
                 a_o = self._montage_ov[idx] if hasattr(self, '_montage_ov') else None
                 if a_b is not None:
@@ -6362,16 +6462,24 @@ def main(argv: Optional[List[str]] = None):
     if argv is None:
         argv = sys.argv[1:]
     install_qt_message_filter()
-    ensure_apps_exist()      # macOS: leaves the app bundles behind, once
     if not argv and running_as_app():
         # Double-clicked in Finder: ask for a surface or overlay rather than
         # printing the command-line help into nowhere
+        ensure_apps_exist()
         app = qt_application()
         argv = ask_for_files(app, "Open surface or overlay",
                              "Surfaces and overlays (*.gii *.annot *.txt);;All files (*)")
         if not argv:
             return
     opts = parse_args(argv)
+    # --output writes a picture and ends: a batch call, often one of many in
+    # a row.  It leaves nothing behind and stays off the desktop -- no icon in
+    # the Dock, no window, and the keyboard stays where the user is typing.
+    batch = bool(getattr(opts, 'output', None))
+    if batch:
+        stay_in_the_background()
+    else:
+        ensure_apps_exist()      # macOS: leaves the app bundles behind, once
     # Ensure a compatible OpenGL surface format before QApplication is created.
     try:
         QSurfaceFormat.setDefaultFormat(QVTKRenderWindowInteractor.defaultFormat())
@@ -6385,7 +6493,12 @@ def main(argv: Optional[List[str]] = None):
         except Exception:
             pass
     app = qt_application()
-    win = Viewer(opts); win.show()
+    win = Viewer(opts)
+    if batch:
+        # Shown as far as Qt is concerned, so the scene is laid out and drawn
+        # as in the window, but never put on the screen
+        win.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    win.show()
     # Finder keeps sending documents while the viewer runs: a file
     # double-clicked now belongs in this window, not in the void
     finder_open_files(app).set_handler(win.open_paths)

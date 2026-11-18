@@ -196,7 +196,7 @@ try:
         ask_and_save_png, ask_for_files, claim_event, dropped_files,
         droppable_url, files_opened_by_finder, finder_open_files, note,
         qt_application, running_as_app, set_verbose, shorten_path,
-        show_shortcuts,
+        show_shortcuts, stay_in_the_background,
     )
 except ImportError:  # direct invocation as a script
     if __package__:
@@ -207,7 +207,7 @@ except ImportError:  # direct invocation as a script
         ask_and_save_png, ask_for_files, claim_event, dropped_files,
         droppable_url, files_opened_by_finder, finder_open_files, note,
         qt_application, running_as_app, set_verbose, shorten_path,
-        show_shortcuts,
+        show_shortcuts, stay_in_the_background,
     )
 
 # Colormaps are shared with the surface viewer
@@ -1946,10 +1946,19 @@ class CatImageViewer:
             total += squares.GetOutput().GetNumberOfLines()
         return total
 
-    def set_contour_level(self, path: str, level: float):
-        """Change the intensity the outline of *path* follows."""
+    def set_contour_level(self, path: str, level: float,
+                          current: Optional[float] = None):
+        """Change the intensity the outline of *path* follows.
+
+        Args:
+            current: The level the outline has now.  A volume can be outlined
+                at several levels -- the two borders of the grey matter in a
+                label map -- and this says which of them is meant; without
+                it every outline of *path* moves.
+        """
         for entry in self.contours:
-            if entry['path'] == path:
+            if entry['path'] == path and (
+                    current is None or math.isclose(entry['level'], current)):
                 entry['level'] = float(level)
                 for squares in entry['filters']:
                     if squares is not None:
@@ -1957,9 +1966,10 @@ class CatImageViewer:
                         squares.Modified()
         self.render_window.Render()
 
-    def remove_contour(self, path: str):
-        """Remove the outline of *path*."""
-        for entry in [e for e in self.contours if e['path'] == path]:
+    def remove_contour(self, path: str, level: Optional[float] = None):
+        """Remove the outline of *path*: the one at *level*, or all of them."""
+        for entry in [e for e in self.contours if e['path'] == path and (
+                level is None or math.isclose(e['level'], level))]:
             for pane, actor in enumerate(entry['actors']):
                 if actor is not None:
                     try:
@@ -3957,8 +3967,12 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
         contour_menu.addAction("Add…").triggered.connect(self._choose_contour)
         if self.viewer.contours:
             contour_menu.addSeparator()
+            names = [entry['name'] for entry in self.viewer.contours]
             for entry in self.viewer.contours:
-                submenu = contour_menu.addMenu(entry['name'])
+                # The level tells two outlines of one volume apart
+                title = entry['name'] if names.count(entry['name']) == 1 else (
+                    f"{entry['name']}  ·  {entry['level']:g}")
+                submenu = contour_menu.addMenu(title)
                 colour = QtGui.QColor.fromRgbF(*entry['color'])
                 pixmap = QtGui.QPixmap(12, 12)
                 pixmap.fill(colour)
@@ -3966,7 +3980,8 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
                 submenu.addAction(f"Level: {entry['level']:g}…").triggered.connect(
                     lambda _checked=False, e=entry: self._ask_contour_level(e))
                 submenu.addAction("Remove").triggered.connect(
-                    lambda _checked=False, p=entry['path']: self.remove_contour(p))
+                    lambda _checked=False, e=entry: self.remove_contour(
+                        e['path'], e['level']))
             contour_menu.addSeparator()
             contour_menu.addAction("Remove all").triggered.connect(self.clear_contours)
 
@@ -4066,17 +4081,19 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
                 f"{entry['level']:g} on these slices — move the cursor, or set "
                 "another level from the Contours menu", 8000)
 
-    def remove_contour(self, path: str):
-        """Remove the outline of *path* everywhere."""
-        self._for_each_window(lambda w: w.viewer.remove_contour(path))
+    def remove_contour(self, path: str, level: Optional[float] = None):
+        """Remove the outline of *path* everywhere (the one at *level*, or all)."""
+        self._for_each_window(lambda w: w.viewer.remove_contour(path, level))
 
     def clear_contours(self):
         """Remove every outline everywhere."""
         self._for_each_window(lambda w: w.viewer.clear_contours())
 
-    def set_contour_level(self, path: str, level: float):
-        """Change the level of an outline everywhere."""
-        self._for_each_window(lambda w: w.viewer.set_contour_level(path, level))
+    def set_contour_level(self, path: str, level: float,
+                          current: Optional[float] = None):
+        """Change the level of an outline everywhere (of the one at *current*)."""
+        self._for_each_window(
+            lambda w: w.viewer.set_contour_level(path, level, current))
 
     def _choose_contour(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -4091,7 +4108,7 @@ class VolumeViewerWindow(QtWidgets.QMainWindow):
             self, "Contour level", f"Intensity to follow ({low:g} … {high:g}):",
             float(entry['level']), -1e9, 1e9, 4)
         if accepted:
-            self.set_contour_level(entry['path'], level)
+            self.set_contour_level(entry['path'], level, entry['level'])
 
     def set_orientation_labels(self, visible: bool):
         """Show or hide the anatomical direction letters."""
@@ -4219,6 +4236,14 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
               "of a registration or a segmentation"),
     )
     p.add_argument(
+        "--contour-level", type=float, nargs="+", default=None, metavar="LEVEL",
+        help=("Value(s) the outlines follow; every --contour volume is "
+              "outlined at each of them.  Halfway through the values of the "
+              "volume by default.  '--contour p0T1.nii --contour-level 1.5 "
+              "2.5' draws both borders of the grey matter of a label map: "
+              "towards the CSF and towards the white matter."),
+    )
+    p.add_argument(
         "--atlas", type=str, default=None,
         help=("Atlas volume naming the region under the cursor; also "
               "selectable from the right-click menu"),
@@ -4318,6 +4343,11 @@ def _parse_args(argv: Optional[Sequence[str]] = None):
     p.add_argument(
         "--no-orientation", action="store_true",
         help="Leave out the L/R/A/P/S/I letters along the pane edges",
+    )
+    p.add_argument(
+        "--no-crosshair", action="store_true",
+        help="Leave out the crosshair: a clean view for a figure (key c shows "
+             "it again in the window)",
     )
     p.add_argument(
         "--free-zoom", action="store_true",
@@ -4578,6 +4608,16 @@ def _place_windows(windows: Sequence["VolumeViewerWindow"]):
         window.move(left + column * (width + gap), top + row * (height + gap))
 
 
+def _contours_asked_for(args) -> List[Tuple[str, Optional[float]]]:
+    """The outlines of the command line: each volume at each level.
+
+    Without ``--contour-level`` the level is left to the viewer (None), which
+    takes the middle of the volume's values.
+    """
+    levels = list(getattr(args, "contour_level", None) or [None])
+    return [(volume, level) for volume in (args.contour or ()) for level in levels]
+
+
 def _montage_options(args) -> dict:
     """Montage settings from the command line, ready for :class:`Montage`.
 
@@ -4690,9 +4730,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 def _render_without_a_window(args, options: dict, volumes: Sequence[str],
                              surfaces: Sequence[str], montage_options: dict) -> int:
     """Write the screenshots a batch call asks for, without opening a window."""
-    # Batch mode renders without a window, so no Qt application is needed
+    # Batch mode renders without a window, so no Qt application is needed --
+    # and the process has no business in the Dock either
+    stay_in_the_background()
     for i, volume in enumerate(volumes):
         viewer = CatImageViewer(**options)
+        # Off screen before anything is drawn.  render() asks for it as well,
+        # but only at the end: setup() initialises the interactor and the
+        # overlay and contour calls render, so the window was on the screen
+        # for a moment in each batch call -- once per picture of a caller
+        # that renders many (the launcher's previews).
+        try:
+            viewer.render_window.SetOffScreenRendering(1)
+        except Exception:
+            pass
         viewer.load_image(volume)
         colors = VolumeViewerWindow.SURFACE_COLORS
         for s, surf in enumerate(surfaces):
@@ -4701,14 +4752,16 @@ def _render_without_a_window(args, options: dict, volumes: Sequence[str],
             # Every volume is drawn with the same surfaces in the same colours
             report_surface_colors(viewer.surfaces)
         viewer.setup(window_title=os.path.basename(volume))
+        if args.no_crosshair:
+            viewer.set_crosshair_visible(False)
         if args.overlay:
             viewer.set_overlay(args.overlay)
         _apply_overlay_options(viewer, args)
         if args.atlas:
             viewer.set_atlas(args.atlas)
-        for contour in (args.contour or ()):
+        for contour, level in _contours_asked_for(args):
             try:
-                viewer.add_contour(contour)
+                viewer.add_contour(contour, level)
             except Exception as exc:
                 # A batch figure is worth finishing without its outline, but the
                 # reason has to be said rather than left to a blank slice
@@ -4756,9 +4809,11 @@ def _open_windows(args, options: dict, volumes: Sequence[str],
         # The windows share the surfaces, so their colours are said once
         report_surface_colors(windows[0].viewer.surfaces)
     link_windows(windows)
-    for contour in (args.contour or ()):
+    for contour, level in _contours_asked_for(args):
         # After linking, so one call outlines it in every window
-        windows[0].add_contour(contour)
+        windows[0].add_contour(contour, level)
+    if args.no_crosshair and windows:
+        windows[0].set_crosshair(False)
     for window in windows:
         window.show()
     _place_windows(windows)
