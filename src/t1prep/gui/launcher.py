@@ -14,10 +14,10 @@ How the pieces divide:
   viewer processes.
 
 The launcher never imports VTK and opens no OpenGL context.  ``CAT_VolView``
-and ``CAT_SurfView`` do the drawing, each time in a process of its own: with
-``--headless`` for the picture in the results panel, with a window when a
-view is opened.  A graphics driver that fails therefore costs the pictures,
-not the launcher or the run.
+and ``CAT_SurfView`` do the drawing, each time in a process of its own:
+without a window for the pictures in the results panel, with one when a view
+is opened.  A graphics driver that fails therefore costs the pictures, not
+the launcher or the run.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt, Signal
@@ -45,8 +45,8 @@ from ..launch.progress import (
     DONE, PHASE_TITLES, RUNNING, RunTracker, find_parallelize_logs,
     format_duration, step_text,
 )
-from ..launch.results import SURFACE, VOLUME, Subject
-from . import theme
+from ..launch.results import PICTURES, SURFACE, VOLUME, Subject
+from . import icons, theme
 from .launcher_widgets import (
     STAGES, DetailsPanel, FolderDialog, OptionsPanel, Row, Segments,
     SubjectModel, SubjectTable,
@@ -93,26 +93,54 @@ def _black_surround(image: QtGui.QImage) -> QtGui.QImage:
         return image
 
 
+#: Part of the name of every cached picture; raised when the pictures change
+#: what they show, so those of an earlier version are not taken for current
+PICTURE_VERSION = 2
+
+#: One picture to draw: whose, which of PICTURES, and the name it is kept under
+Job = Tuple[Subject, str, str]
+
+
 class Previews(QtCore.QObject):
-    """The pictures of the results panel, rendered by ``CAT_VolView --headless``.
+    """The pictures of the results panel, rendered by the viewers without a window.
 
     A picture is kept in the cache folder under a name made of what it shows —
     the files it is drawn from, with their sizes and dates — so it is rendered
-    once and again only after a run has replaced those files.  One render runs
-    at a time; of the requests that arrive meanwhile only the last is kept,
-    which is the image the user has stopped at.
+    once and again only after a run has replaced those files.
+
+    The pictures are rendered one at a time, each in a process of its own.
+    The one the user is looking at goes first (:meth:`request`).  After it
+    come those :meth:`prepare` was last given, in its order: the pictures of
+    the images around the selected one, so they are there when the selection
+    moves on.
+
+    Args:
+        folder: Where the pictures are kept; the cache folder of the
+            application by default.
     """
 
     ready = Signal(str, str)        # key, path of the PNG ("" when it failed)
+    changed = Signal()              # how many pictures are waiting has changed
 
-    def __init__(self, parent=None):
+    #: A render that takes longer than this is ended, in milliseconds
+    TIMEOUT = 120_000
+
+    def __init__(self, parent=None, folder: Optional[os.PathLike] = None):
         super().__init__(parent)
-        base = QtCore.QStandardPaths.writableLocation(
-            QtCore.QStandardPaths.StandardLocation.CacheLocation)
-        self.folder = Path(base or tempfile.gettempdir()) / "previews"
+        if folder is None:
+            base = QtCore.QStandardPaths.writableLocation(
+                QtCore.QStandardPaths.StandardLocation.CacheLocation)
+            folder = Path(base or tempfile.gettempdir()) / "previews"
+        self.folder = Path(folder)
         self._process: Optional[QtCore.QProcess] = None
-        self._running: Optional[str] = None
-        self._waiting: Optional[tuple] = None
+        self._running: Optional[Job] = None
+        self._wanted: Optional[Job] = None
+        self._queue: List[Job] = []
+        self._failed: Set[str] = set()
+        self._watchdog = QtCore.QTimer(self)
+        self._watchdog.setSingleShot(True)
+        self._watchdog.setInterval(self.TIMEOUT)
+        self._watchdog.timeout.connect(self._timed_out)
         self._discard_old()
 
     def _discard_old(self, days: int = 30) -> None:
@@ -124,12 +152,12 @@ class Previews(QtCore.QObject):
         except OSError:
             pass
 
-    def key(self, subject: Subject, stage: str) -> Optional[str]:
-        """Name of the picture of *stage*; None while there is nothing to draw."""
-        sources = res.preview_sources(subject, stage)
+    def key(self, subject: Subject, picture: str) -> Optional[str]:
+        """Name of the picture *picture*; None while there is nothing to draw."""
+        sources = res.preview_sources(subject, picture)
         if len(sources) < 2:
             return None
-        digest = hashlib.sha1(f"{stage}:{PREVIEW_SIZE}".encode())
+        digest = hashlib.sha1(f"{PICTURE_VERSION}:{picture}:{PREVIEW_SIZE}".encode())
         for path in sources:
             try:
                 info = path.stat()
@@ -141,57 +169,124 @@ class Previews(QtCore.QObject):
     def path(self, key: str) -> Path:
         return self.folder / f"{key}.png"
 
-    def render(self, subject: Subject, stage: str, key: str) -> None:
-        """Render the picture *key*; :attr:`ready` says when it is there."""
-        if self._process is not None:
-            if key != self._running:
-                self._waiting = (subject, stage, key)
+    def _unfinished(self, key: str) -> Path:
+        # A picture appears under its name only when it is complete
+        return self.folder / f"{key}.part.png"
+
+    def waiting(self) -> int:
+        """How many pictures are being rendered or still to render."""
+        return (len(self._queue) + (self._running is not None)
+                + (self._wanted is not None))
+
+    def request(self, subject: Subject, picture: str, key: str) -> None:
+        """Render the picture *key* next; :attr:`ready` says when it is there."""
+        self._failed.discard(key)
+        if self._running is not None and self._running[2] == key:
             return
-        command = res.preview(subject, stage, self.path(key), PREVIEW_SIZE)
+        self._wanted = (subject, picture, key)
+        self._next()
+        self.changed.emit()
+
+    def prepare(self, jobs: Sequence[Job]) -> None:
+        """Render *jobs* when nothing is asked for, in their order.
+
+        They replace what was given before: the pictures worth having ahead
+        change with the selection.  A picture that did not render is not
+        tried again until it is asked for by :meth:`request`.
+        """
+        self._queue = [job for job in jobs if job[2] not in self._failed]
+        self._next()
+        self.changed.emit()
+
+    def forget(self, keys: Sequence[str]) -> None:
+        """Drop the pictures *keys*, so that they are rendered anew."""
+        for key in keys:
+            self._failed.discard(key)
+            try:
+                self.path(key).unlink()
+            except OSError:
+                pass
+
+    def _next(self) -> None:
+        """Start the next render unless one is running."""
+        while self._process is None:
+            if self._wanted is not None:
+                job, self._wanted = self._wanted, None
+            elif self._queue:
+                job = self._queue.pop(0)
+            else:
+                return
+            key = job[2]
+            if self.path(key).is_file():
+                self.ready.emit(key, str(self.path(key)))
+            elif not self._start(job):
+                self._failed.add(key)
+                self.ready.emit(key, "")
+
+    def _start(self, job: Job) -> bool:
+        subject, picture, key = job
+        command = res.preview(subject, picture, self._unfinished(key), PREVIEW_SIZE)
         if command is None:
-            self.ready.emit(key, "")
-            return
+            return False
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
         except OSError:
-            self.ready.emit(key, "")
-            return
+            return False
         process = QtCore.QProcess(self)
         environment = QtCore.QProcessEnvironment()
-        for name, value in res.viewer_environment().items():
-            environment.insert(name, value)
+        for variable, value in res.viewer_environment().items():
+            environment.insert(variable, value)
         process.setProcessEnvironment(environment)
         process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.MergedChannels)
         process.finished.connect(self._finished)
-        process.errorOccurred.connect(self._failed)
-        self._process, self._running = process, key
+        process.errorOccurred.connect(self._error)
+        self._process, self._running = process, job
+        self._watchdog.start()
         process.start(command[0], command[1:])
+        return True
 
-    def _failed(self, _error) -> None:
+    def _error(self, _error) -> None:
         # A process that crashed still reports "finished"; only one that did
         # not start gets no further signal
         if (self._process is not None and self._process.state()
                 == QtCore.QProcess.ProcessState.NotRunning):
             self._finished()
 
+    def _timed_out(self) -> None:
+        if self._process is not None:
+            self._process.kill()        # "finished" follows
+
     def _finished(self, *_args) -> None:
-        process, key = self._process, self._running
-        if process is None or key is None:
+        process, job = self._process, self._running
+        if process is None or job is None:
             return
+        self._watchdog.stop()
         self._process = self._running = None
         process.deleteLater()
-        path = self.path(key)
-        self.ready.emit(key, str(path) if path.is_file() else "")
-        if self._waiting is not None:
-            subject, stage, wanted = self._waiting
-            self._waiting = None
-            if self.path(wanted).is_file():
-                self.ready.emit(wanted, str(self.path(wanted)))
-            else:
-                self.render(subject, stage, wanted)
+        key = job[2]
+        part, path = self._unfinished(key), self.path(key)
+        done = False
+        if (process.exitStatus() == QtCore.QProcess.ExitStatus.NormalExit
+                and process.exitCode() == 0 and part.is_file()):
+            try:
+                os.replace(part, path)
+                done = True
+            except OSError:
+                pass
+        if not done:
+            self._failed.add(key)
+            try:
+                part.unlink()
+            except OSError:
+                pass
+        self.ready.emit(key, str(path) if done else "")
+        self._next()
+        self.changed.emit()
 
     def shutdown(self) -> None:
-        self._waiting = None
+        self._wanted = None
+        self._queue = []
+        self._watchdog.stop()
         if self._process is not None:
             self._process.kill()
             self._process.waitForFinished(1000)
@@ -251,15 +346,22 @@ class Launcher(QtWidgets.QMainWindow):
     Args:
         command: The ``T1Prep`` to run; the one on ``PATH`` by default.
         settings: Where the window keeps its state between sessions.
+        cache: Where the pictures of the results are kept; the cache folder
+            of the application by default.
     """
 
+    #: Pictures are rendered ahead for this many images around the selected
+    #: one; the whole table on request ("Prepare All Pictures")
+    PREPARE_AROUND = 100
+
     def __init__(self, command: Optional[str] = None,
-                 settings: Optional[QtCore.QSettings] = None):
+                 settings: Optional[QtCore.QSettings] = None,
+                 cache: Optional[os.PathLike] = None):
         super().__init__()
         self.command = command or opt.t1prep_command()
         self.defaults = opt.load_defaults(opt.defaults_file(self.command))
         self.settings = settings if settings is not None else QtCore.QSettings()
-        self.colors = theme.colors_for(QtWidgets.QApplication.instance())
+        self.colors = theme.apply(QtWidgets.QApplication.instance())
         self.out_dir: Optional[Path] = None
         self.process: Optional[QtCore.QProcess] = None
         self.tracker: Optional[RunTracker] = None
@@ -272,10 +374,12 @@ class Launcher(QtWidgets.QMainWindow):
         self._naming = (False, False)          # (BIDS names, AMAP) of the subjects
         self._wanted_preview: Optional[str] = None
         self._shown_row: Optional[Row] = None
+        self._prepare_everything = False
 
         self.model = SubjectModel(self)
-        self.previews = Previews(self)
+        self.previews = Previews(self, cache)
         self.previews.ready.connect(self._preview_ready)
+        self.previews.changed.connect(self._update_count)
         self.viewers = Viewers(self)
         self.viewers.failed.connect(self._viewer_failed)
         self._timer = QtCore.QTimer(self)
@@ -286,6 +390,7 @@ class Launcher(QtWidgets.QMainWindow):
         self.setAcceptDrops(True)
         self._build()
         self._build_menu()
+        self._set_icons()
         self._restore()
         self._options_changed()
         self._selection_changed()
@@ -330,9 +435,10 @@ class Launcher(QtWidgets.QMainWindow):
         self.side_switch = Segments((("options", "Options"), ("results", "Results")))
         self.options = OptionsPanel(self.defaults)
         self.options.changed.connect(self._options_changed)
-        self.details = DetailsPanel()
-        self.details.view_requested.connect(self._open_view)
-        self.details.stage_changed.connect(lambda _stage: self._update_preview())
+        self.details = DetailsPanel(self.colors)
+        self.details.open_requested.connect(lambda: self._open_view())
+        self.details.picture_changed.connect(self._picture_changed)
+        self.details.render_requested.connect(lambda: self._render_again())
         self.details.log_requested.connect(self._show_subject_log)
         self.details.folder_requested.connect(self._open_folder)
         self.side = QtWidgets.QStackedWidget()
@@ -346,7 +452,8 @@ class Launcher(QtWidgets.QMainWindow):
         panel_layout.setSpacing(6)
         panel_layout.addWidget(self.side_switch, 0, Qt.AlignmentFlag.AlignHCenter)
         panel_layout.addWidget(self.side, 1)
-        panel.setMinimumWidth(330)
+        # Wide enough for the switch between the three pictures
+        panel.setMinimumWidth(388)
 
         self.splitter = QtWidgets.QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
@@ -355,7 +462,7 @@ class Launcher(QtWidgets.QMainWindow):
         self.splitter.addWidget(panel)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
-        self.splitter.setSizes([640, 360])
+        self.splitter.setSizes([640, 410])
         outer.addWidget(self.splitter, 1)
 
         # -- where the results go, and the run --------------------------
@@ -414,8 +521,8 @@ class Launcher(QtWidgets.QMainWindow):
 
         self.setCentralWidget(central)
         self._fill_output()
-        self.resize(1040, 680)
-        self.setMinimumSize(860, 520)
+        self.resize(1100, 790)
+        self.setMinimumSize(900, 540)
 
     def _build_menu(self) -> None:
         bar = self.menuBar()
@@ -448,11 +555,28 @@ class Launcher(QtWidgets.QMainWindow):
         action(view_menu, "Options", lambda: self._show_side("options"), "Ctrl+1")
         action(view_menu, "Results", lambda: self._show_side("results"), "Ctrl+2")
         view_menu.addSeparator()
+        self._prepare_action = action(
+            view_menu, "Prepare All Pictures", self.prepare_all_pictures)
+        self._prepare_action.setToolTip(
+            "Render the pictures of every image now, not only of those "
+            "around the selected one.")
+        view_menu.addSeparator()
         action(view_menu, "Log", lambda: self.show_log(not self.log.isVisible()), "Ctrl+L")
 
         help_menu = bar.addMenu("Help")
         action(help_menu, "T1Prep Documentation",
                lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl(DOCUMENTATION)))
+
+    def _set_icons(self) -> None:
+        """Give the buttons their icons, in the colours of the window."""
+        c = self.colors
+        for button, name in ((self.add_images_button, "add_file"),
+                             (self.add_folder_button, "add_folder"),
+                             (self.open_results_button, "results")):
+            button.setIcon(icons.icon(name, c.text, c.faint))
+        self.run_button.setIcon(icons.icon("play", c.on_accent, c.faint))
+        self.stop_button.setIcon(icons.icon("stop", c.danger, c.faint))
+        self.log_link.setIcon(icons.icon("log", c.accent, c.faint))
 
     # ------------------------------------------------------------------
     # State between sessions
@@ -616,24 +740,39 @@ class Launcher(QtWidgets.QMainWindow):
         if self.is_running():
             return
         self.model.remove(range(len(self.model.rows)))
+        self._prepare_everything = False
         self._rows_changed()
 
     def _look_at_disk(self, row: Row) -> None:
-        """Take a row's finished phases and its quality from its files."""
-        row.on_disk = {stage: row.subject.stage_done(stage) for stage in STAGES}
-        grade = res.quality(row.subject.report()) if row.on_disk[VOLUME] else None
+        """Take a row's finished phases and its quality from its files.
+
+        From wherever they are: an image keeps the results of an earlier run
+        that used the other names or, in a BIDS dataset, another T1Prep
+        version, whose folder is not the one this run writes to.
+        """
+        found = row.subject if row.fixed else res.results_on_disk(row.subject)
+        row.results = None if found == row.subject else found
+        row.on_disk = {stage: found.stage_done(stage) for stage in STAGES}
+        grade = res.quality(found.report()) if row.on_disk[VOLUME] else None
         row.grade, row.iqr = grade if grade else ("", None)
 
     def _rows_changed(self) -> None:
+        self._update_count()
+        self._update_actions()
+        self._selection_changed()
+
+    def _update_count(self) -> None:
+        """What the table holds, and how many pictures are still being drawn."""
         rows = self.model.rows
         total = len(rows)
         finished = sum(row.has_results() for row in rows)
         text = f"{total} image{'s' if total != 1 else ''}" if total else ""
         if finished:
             text += f"  ·  {finished} with results"
+        waiting = self.previews.waiting()
+        if waiting:
+            text += f"  ·  preparing {waiting} picture{'s' if waiting != 1 else ''}"
         self.count_label.setText(text)
-        self._update_actions()
-        self._selection_changed()
 
     def _update_actions(self) -> None:
         running = self.is_running()
@@ -653,6 +792,8 @@ class Launcher(QtWidgets.QMainWindow):
         self._stop_action.setEnabled(running)
         self._remove_action.setEnabled(not running and bool(selected))
         self._remove_all_action.setEnabled(not running and bool(self.model.rows))
+        self._prepare_action.setEnabled(
+            any(row.has_results() for row in self.model.rows))
 
     # -- drag and drop ---------------------------------------------------
 
@@ -1001,9 +1142,8 @@ class Launcher(QtWidgets.QMainWindow):
 
     @staticmethod
     def _views(subject: Subject) -> Dict[str, Optional[List[str]]]:
-        return {"segmentation": res.segmentation_view(subject),
-                "surfaces": res.surfaces_view(subject),
-                "thickness": res.thickness_view(subject)}
+        """The viewer call per picture; None where its files are missing."""
+        return {picture: res.view(subject, picture) for picture in PICTURES}
 
     def _selection_changed(self, *_args) -> None:
         row = self._current_row()
@@ -1011,23 +1151,32 @@ class Launcher(QtWidgets.QMainWindow):
             self._shown_row = None
             self.details.show_row(None)
         else:
-            views = self._views(row.subject)
+            views = self._views(row.found())
             self.details.show_row(
-                row, row.subject.report() if row.on_disk.get(VOLUME) else None,
-                {key: command is not None for key, command in views.items()})
+                row, row.found().report() if row.on_disk.get(VOLUME) else None,
+                {picture: command is not None for picture, command in views.items()})
             if row is not self._shown_row and row.has_results():
                 self._show_side("results")
             self._shown_row = row
         self._update_preview()
+        self._prepare_pictures()
         self._update_actions()
+
+    def _picture_changed(self, _picture: str) -> None:
+        row = self._current_row()
+        if row is not None:
+            self.details.open_button.setEnabled(
+                self._views(row.found()).get(self.details.picture()) is not None)
+        self._update_preview()
+        self._prepare_pictures()
 
     def _update_preview(self) -> None:
         row = self._current_row()
         self._wanted_preview = None
         if row is None:
             return
-        stage = self.details.stage()
-        key = self.previews.key(row.subject, stage)
+        picture = self.details.picture()
+        key = self.previews.key(row.found(), picture)
         if key is None:
             running = RUNNING in row.states.values()
             self.details.preview.show_picture(
@@ -1039,7 +1188,7 @@ class Launcher(QtWidgets.QMainWindow):
             self._preview_ready(key, str(path))
         else:
             self.details.preview.show_picture(None, "Rendering…")
-            self.previews.render(row.subject, stage, key)
+            self.previews.request(row.found(), picture, key)
 
     def _preview_ready(self, key: str, path: str) -> None:
         if key != self._wanted_preview:
@@ -1051,11 +1200,60 @@ class Launcher(QtWidgets.QMainWindow):
         self.details.preview.show_picture(
             QtGui.QPixmap.fromImage(_black_surround(image)))
 
-    def _open_view(self, key: str, row: Optional[Row] = None) -> None:
+    def _prepare_pictures(self) -> None:
+        """Have the pictures rendered that are likely to be looked at next.
+
+        Those of the images around the selected one, nearest first and the
+        kind of picture that is shown before the other two: stepping through
+        the table then finds them ready.  The whole table only on request --
+        a picture takes a second or more to render and a megabyte to keep,
+        which a study of a thousand images should not cost unasked.
+        """
+        rows = self.model.rows
+        current = self._current_row()
+        centre = next((i for i, row in enumerate(rows) if row is current), 0)
+        order = sorted(range(len(rows)), key=lambda i: (abs(i - centre), i < centre))
+        if not self._prepare_everything:
+            order = order[:self.PREPARE_AROUND]
+        shown = self.details.picture()
+        jobs = []
+        for picture in (shown,) + tuple(p for p in PICTURES if p != shown):
+            for index in order:
+                subject = rows[index].found()
+                if not rows[index].has_results():
+                    continue
+                key = self.previews.key(subject, picture)
+                if key is not None and not self.previews.path(key).is_file():
+                    jobs.append((subject, picture, key))
+        self.previews.prepare(jobs)
+
+    def prepare_all_pictures(self) -> None:
+        """Render the pictures of every image of the table, not only of those
+        around the selected one."""
+        self._prepare_everything = True
+        self._prepare_pictures()
+        waiting = self.previews.waiting()
+        self._say(f"Preparing {waiting} picture{'s' if waiting != 1 else ''}…"
+                  if waiting else "The pictures of all images are there.")
+
+    def _render_again(self, rows: Optional[Sequence[Row]] = None) -> None:
+        """Draw the pictures of *rows* (the selected image) anew."""
+        if rows is None:
+            current = self._current_row()
+            rows = [current] if current is not None else []
+        keys = [self.previews.key(row.found(), picture)
+                for row in rows for picture in PICTURES]
+        self.previews.forget([key for key in keys if key is not None])
+        self._update_preview()
+        self._prepare_pictures()
+
+    def _open_view(self, picture: Optional[str] = None,
+                   row: Optional[Row] = None) -> None:
+        """Open the viewer on *picture* (the one shown) of *row* (the selected)."""
         row = row or self._current_row()
         if row is None:
             return
-        command = self._views(row.subject).get(key)
+        command = self._views(row.found()).get(picture or self.details.picture())
         if command is not None:
             self.viewers.open(command)
 
@@ -1064,10 +1262,10 @@ class Launcher(QtWidgets.QMainWindow):
         row = self._current_row()
         if row is None:
             return
-        views = self._views(row.subject)
-        for key in ("surfaces", "segmentation"):
-            if views[key] is not None:
-                self.viewers.open(views[key])
+        views = self._views(row.found())
+        for picture in (SURFACE, VOLUME):
+            if views[picture] is not None:
+                self.viewers.open(views[picture])
                 return
 
     def _viewer_failed(self, message: str) -> None:
@@ -1076,7 +1274,7 @@ class Launcher(QtWidgets.QMainWindow):
 
     def _show_subject_log(self) -> None:
         row = self._current_row()
-        path = row.subject.log_file() if row is not None else None
+        path = row.found().log_file() if row is not None else None
         if path is None:
             return
         try:
@@ -1098,25 +1296,31 @@ class Launcher(QtWidgets.QMainWindow):
 
     def _open_folder(self) -> None:
         row = self._current_row()
-        if row is not None and row.subject.folder.is_dir():
+        if row is not None and row.found().folder.is_dir():
             QtGui.QDesktopServices.openUrl(
-                QtCore.QUrl.fromLocalFile(str(row.subject.folder)))
+                QtCore.QUrl.fromLocalFile(str(row.found().folder)))
 
     def _context_menu(self, position) -> None:
         index = self.table.indexAt(position)
         if not index.isValid():
             return
         row = self.model.rows[index.row()]
-        views = self._views(row.subject)
+        views = self._views(row.found())
         menu = QtWidgets.QMenu(self)
-        for key, text, _tip in DetailsPanel.VIEWS:
-            item = menu.addAction(f"Show {text}")
-            item.setEnabled(views[key] is not None)
-            item.triggered.connect(lambda _c=False, k=key, r=row: self._open_view(k, r))
+        for picture, text, icon, _tip in DetailsPanel.PICTURES:
+            item = menu.addAction(icons.icon(icon, self.colors.text, self.colors.faint),
+                                  f"Show {text}")
+            item.setEnabled(views[picture] is not None)
+            item.triggered.connect(
+                lambda _c=False, p=picture, r=row: self._open_view(p, r))
+        item = menu.addAction("Render Pictures Again")
+        item.setEnabled(row.has_results())
+        item.triggered.connect(
+            lambda _c=False, r=row: self._render_again(self._selected_rows() or [r]))
         menu.addSeparator()
         menu.addAction(self._run_selected_action)
         item = menu.addAction("Open Folder")
-        item.setEnabled(row.subject.folder.is_dir())
+        item.setEnabled(row.found().folder.is_dir())
         item.triggered.connect(self._open_folder)
         menu.addSeparator()
         menu.addAction(self._remove_action)
@@ -1192,8 +1396,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     app = qt_application()
     app.setApplicationDisplayName("T1Prep")
     app.setApplicationVersion(version())
-    theme.apply(app)
-    window = Launcher()
+    window = Launcher()         # gives the application its look
     if args.out_dir:
         folder = Path(os.path.abspath(args.out_dir))
         folder.mkdir(parents=True, exist_ok=True)

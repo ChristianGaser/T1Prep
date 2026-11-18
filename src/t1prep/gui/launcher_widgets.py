@@ -21,7 +21,8 @@ from PySide6.QtCore import Qt, Signal
 from ..launch import options as opt
 from ..launch.inputs import DEFAULT_PATTERN, find_images
 from ..launch.progress import DONE, FAILED, QUEUED, RUNNING
-from ..launch.results import SURFACE, VOLUME, Subject, describe
+from ..launch.results import SURFACE, THICKNESS, VOLUME, Subject, describe
+from . import icons
 from .theme import Colors, blend, grade_color
 from .viewer_common import shorten_path
 
@@ -38,7 +39,10 @@ class Row:
     """One image of the table.
 
     Attributes:
-        subject: Where its results are.
+        subject: Where a run writes its results.
+        results: Where the results there are were found, when that is
+            somewhere else: under the other naming scheme, or in the folder
+            of another T1Prep version of a BIDS dataset.
         fixed: The results were opened from disk; the options of a run do
             not move them.
         states: Its state per phase in the current or the last run.
@@ -48,6 +52,7 @@ class Row:
 
     subject: Subject
     fixed: bool = False
+    results: Optional[Subject] = None
     states: Dict[str, str] = field(default_factory=dict)
     on_disk: Dict[str, bool] = field(default_factory=dict)
     grade: str = ""
@@ -62,6 +67,10 @@ class Row:
 
     def has_results(self) -> bool:
         return any(self.on_disk.get(stage) for stage in STAGES)
+
+    def found(self) -> Subject:
+        """Whose results the row shows: those found, else where they will be."""
+        return self.results or self.subject
 
 
 class SubjectModel(QtCore.QAbstractTableModel):
@@ -89,6 +98,12 @@ class SubjectModel(QtCore.QAbstractTableModel):
                 return int(Qt.AlignmentFlag.AlignVCenter | (
                     Qt.AlignmentFlag.AlignLeft if section == 0
                     else Qt.AlignmentFlag.AlignHCenter))
+        elif role == Qt.ItemDataRole.DisplayRole:
+            # The number of the row: what an image is called by when a study
+            # is gone through ("number 37 has a C")
+            return str(section + 1)
+        elif role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -237,8 +252,14 @@ class SubjectTable(QtWidgets.QTableView):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.setWordWrap(False)
-        self.verticalHeader().hide()
-        self.verticalHeader().setDefaultSectionSize(32)
+        numbers = self.verticalHeader()
+        numbers.setDefaultSectionSize(32)
+        numbers.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Fixed)
+        numbers.setSectionsClickable(False)
+        numbers.setHighlightSections(False)
+        numbers.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.setCornerButtonEnabled(False)
         header = self.horizontalHeader()
         header.setHighlightSections(False)
         header.setSectionsClickable(False)
@@ -305,11 +326,19 @@ def rule() -> QtWidgets.QFrame:
 
 
 class Segments(QtWidgets.QFrame):
-    """A switch between a few named views, one of which is on."""
+    """A switch between a few named views, one of which is on.
+
+    Args:
+        entries: Per view ``(key, text)``, or ``(key, text, icon)`` with a
+            ``QIcon`` drawn before the text.
+        compact: Less room around the texts, for a switch of three in a
+            narrow panel.
+    """
 
     changed = Signal(str)
 
-    def __init__(self, entries: Sequence[Sequence[str]], parent=None):
+    def __init__(self, entries: Sequence[Sequence[object]], compact: bool = False,
+                 parent=None):
         super().__init__(parent)
         self.setObjectName("segments")
         layout = QtWidgets.QHBoxLayout(self)
@@ -317,15 +346,22 @@ class Segments(QtWidgets.QFrame):
         layout.setSpacing(2)
         self._group = QtWidgets.QButtonGroup(self)
         self._buttons: Dict[str, QtWidgets.QPushButton] = {}
-        for key, text in entries:
+        for entry in entries:
+            key, text = str(entry[0]), str(entry[1])
             button = QtWidgets.QPushButton(text)
             button.setObjectName("segment")
+            button.setProperty("compact", bool(compact))
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             bold = QtGui.QFont(button.font())
             bold.setBold(True)     # the one that is on; reserve its width
+            room = 22 if compact else 34
+            if len(entry) > 2 and entry[2] is not None:
+                button.setIcon(entry[2])
+                button.setIconSize(QtCore.QSize(16, 16))
+                room += 22
             button.setMinimumWidth(
-                QtGui.QFontMetrics(bold).horizontalAdvance(text) + 34)
+                QtGui.QFontMetrics(bold).horizontalAdvance(text) + room)
             self._group.addButton(button)
             self._buttons[key] = button
             layout.addWidget(button)
@@ -336,6 +372,9 @@ class Segments(QtWidgets.QFrame):
 
     def current(self) -> str:
         return next(key for key, button in self._buttons.items() if button.isChecked())
+
+    def set_icon(self, key: str, icon: QtGui.QIcon) -> None:
+        self._buttons[key].setIcon(icon)
 
     def set_current(self, key: str) -> None:
         self._buttons[key].setChecked(True)
@@ -663,61 +702,170 @@ class OptionsPanel(QtWidgets.QScrollArea):
 # The results of one image
 # ---------------------------------------------------------------------------
 
-class PreviewLabel(QtWidgets.QLabel):
-    """Shows a picture scaled to its width, or a line of text in its place."""
+class ElidedLabel(QtWidgets.QLabel):
+    """One line of text that is shortened to the room there is.
 
-    #: Height while there is no picture
-    EMPTY_HEIGHT = 200
+    A plain label asks for the width of its text, and a panel that has to
+    grant it grows with the longest file name.  This one asks for next to
+    nothing, shows what fits with "…" in the middle -- a name is told apart
+    by its start and its end -- and has the whole text as its tooltip when
+    something was left out.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("preview")
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setFixedHeight(self.EMPTY_HEIGHT)
-        self._picture: Optional[QtGui.QPixmap] = None
+        self._full = ""
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
 
-    def show_picture(self, picture: Optional[QtGui.QPixmap], text: str = "") -> None:
-        self._picture = picture if picture is not None and not picture.isNull() else None
-        if self._picture is None:
-            self.setPixmap(QtGui.QPixmap())
-            self.setText(text)
-            self.setFixedHeight(self.EMPTY_HEIGHT)
-        else:
-            self._scale()
+    def full_text(self) -> str:
+        """The text as it was set, before any shortening."""
+        return self._full
 
-    def _scale(self) -> None:
-        """Fit the picture to the width; the height follows its shape."""
-        if self._picture is None or self.width() < 20:
-            return
-        ratio = self.devicePixelRatioF()
-        width = self.width() - 8
-        height = round(width * self._picture.height() / max(1, self._picture.width()))
-        scaled = self._picture.scaled(
-            QtCore.QSize(int(width * ratio), int(height * ratio)),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
-        scaled.setDevicePixelRatio(ratio)
-        self.setFixedHeight(height + 8)
-        self.setPixmap(scaled)
+    def setText(self, text: str) -> None:      # noqa: N802
+        self._full = str(text)
+        self._elide()
+
+    def minimumSizeHint(self) -> QtCore.QSize:      # noqa: N802
+        return QtCore.QSize(24, super().minimumSizeHint().height())
+
+    def sizeHint(self) -> QtCore.QSize:             # noqa: N802
+        return QtCore.QSize(24, super().sizeHint().height())
+
+    def _elide(self) -> None:
+        shown = self.fontMetrics().elidedText(
+            self._full, Qt.TextElideMode.ElideMiddle, max(0, self.width() - 2))
+        super().setText(shown)
+        self.setToolTip(self._full if shown != self._full else "")
 
     def resizeEvent(self, event):      # noqa: N802
         super().resizeEvent(event)
-        self._scale()
+        self._elide()
+
+    def changeEvent(self, event):      # noqa: N802
+        super().changeEvent(event)
+        if event.type() in (QtCore.QEvent.Type.FontChange,
+                            QtCore.QEvent.Type.StyleChange):
+            self._elide()       # the style sheet gave it another font
+
+
+class PictureBox(QtWidgets.QWidget):
+    """The place of the picture: one size for every image and every view.
+
+    The box is as high as it is wide (up to :attr:`LARGEST`), whatever is
+    shown in it; a picture is fitted into it and centred, on the black the
+    viewers draw on.  So stepping through the images of a study does not
+    move anything below it, and the pictures of two images can be compared
+    in the same place.
+    """
+
+    clicked = Signal()
+
+    #: Largest edge in pixels; a wider panel gets black to both sides
+    LARGEST = 440
+    _MARGIN = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._picture: Optional[QtGui.QPixmap] = None
+        self._scaled: Optional[QtGui.QPixmap] = None
+        self._text = ""
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(240)        # until the layout has given it a width
+
+    def has_picture(self) -> bool:
+        return self._picture is not None
+
+    def text(self) -> str:
+        """What stands in for the picture while there is none."""
+        return self._text
+
+    def show_picture(self, picture: Optional[QtGui.QPixmap], text: str = "") -> None:
+        """Show *picture*, or the line *text* in its place."""
+        self._picture = picture if picture is not None and not picture.isNull() else None
+        self._scaled = None
+        self._text = "" if self._picture is not None else text
+        self.setCursor(Qt.CursorShape.PointingHandCursor if self._picture is not None
+                       else Qt.CursorShape.ArrowCursor)
+        self.setToolTip("Open in the viewer" if self._picture is not None else "")
+        self.update()
+
+    def minimumSizeHint(self) -> QtCore.QSize:      # noqa: N802
+        return QtCore.QSize(120, self.height())
+
+    def sizeHint(self) -> QtCore.QSize:             # noqa: N802
+        return QtCore.QSize(120, self.height())
+
+    def resizeEvent(self, event):      # noqa: N802
+        super().resizeEvent(event)
+        # The height follows the width, never the picture
+        height = max(120, min(self.width(), self.LARGEST))
+        if height != self.height():
+            self.setFixedHeight(height)
+        self._scaled = None
+
+    def _fitted(self) -> QtGui.QPixmap:
+        """The picture at the size it is drawn, kept until that changes."""
+        ratio = self.devicePixelRatioF()
+        room = QtCore.QSize(self.width() - 2 * self._MARGIN,
+                            self.height() - 2 * self._MARGIN) * ratio
+        if self._scaled is None or self._scaled.devicePixelRatio() != ratio:
+            self._scaled = self._picture.scaled(
+                room, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            self._scaled.setDevicePixelRatio(ratio)
+        return self._scaled
+
+    def paintEvent(self, _event):      # noqa: N802
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QColor("#000000"))
+        painter.drawRoundedRect(QtCore.QRectF(self.rect()), 6, 6)
+        if self._picture is None:
+            painter.setPen(QtGui.QColor("#9aa2ad"))
+            painter.drawText(self.rect(), int(Qt.AlignmentFlag.AlignCenter), self._text)
+        else:
+            picture = self._fitted()
+            size = picture.size() / picture.devicePixelRatio()
+            painter.drawPixmap(
+                QtCore.QPointF(0.5 * (self.width() - size.width()),
+                               0.5 * (self.height() - size.height())), picture)
+        painter.end()
+
+    def mouseReleaseEvent(self, event):    # noqa: N802
+        if (event.button() == Qt.MouseButton.LeftButton and self._picture is not None
+                and self.rect().contains(event.position().toPoint())):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
 
 class DetailsPanel(QtWidgets.QScrollArea):
-    """What a run left for the selected image: a picture, measures, viewers."""
+    """What a run left for the selected image: pictures, measures, the way
+    into the viewers.
 
-    view_requested = Signal(str)        # "segmentation", "surfaces", "thickness"
-    stage_changed = Signal(str)         # the picture wanted: "volume" or "surface"
+    Args:
+        colors: The colour scheme, for the icons.
+    """
+
+    open_requested = Signal()           # the viewer for the picture that is shown
+    picture_changed = Signal(str)       # the picture wanted, one of PICTURES
+    render_requested = Signal()         # draw the pictures of this image again
     log_requested = Signal()
     folder_requested = Signal()
 
-    VIEWS = (("segmentation", "Segmentation", "Image and tissue label in CAT_VolView"),
-             ("surfaces", "Surfaces", "Central surfaces outlined on the image in CAT_VolView"),
-             ("thickness", "Thickness", "Cortical thickness on the surface in CAT_SurfView"))
+    #: (picture, title, icon, what the viewer shows of it)
+    PICTURES = (
+        (VOLUME, "Segmentation", "segmentation",
+         "The borders of the grey matter outlined on the image, in CAT_VolView"),
+        (SURFACE, "Surfaces", "surface",
+         "The central surfaces outlined on the image, in CAT_VolView"),
+        (THICKNESS, "Thickness", "thickness",
+         "The cortical thickness on the surface, in CAT_SurfView"),
+    )
 
-    def __init__(self, parent=None):
+    def __init__(self, colors: Colors, parent=None):
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -726,34 +874,36 @@ class DetailsPanel(QtWidgets.QScrollArea):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(6)
 
-        self.name = QtWidgets.QLabel()
+        self.name = ElidedLabel()
         self.name.setObjectName("title")
-        self.name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.path = QtWidgets.QLabel()
+        self.path = ElidedLabel()
         self.path.setObjectName("path")
         layout.addWidget(self.name)
         layout.addWidget(self.path)
         layout.addSpacing(4)
 
-        self.stages = Segments(((VOLUME, "Segmentation"), (SURFACE, "Surfaces")))
-        self.stages.changed.connect(self.stage_changed)
-        layout.addWidget(self.stages, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.preview = PreviewLabel()
+        self.pictures = Segments(
+            [(picture, title, QtGui.QIcon()) for picture, title, _icon, _tip
+             in self.PICTURES], compact=True)
+        self.pictures.changed.connect(self.picture_changed)
+        layout.addWidget(self.pictures, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.preview = PictureBox()
+        self.preview.clicked.connect(self.open_requested)
         layout.addWidget(self.preview)
 
-        heading = QtWidgets.QLabel("Open in viewer")
-        heading.setObjectName("heading")
-        layout.addWidget(heading)
-        buttons = QtWidgets.QHBoxLayout()
-        buttons.setSpacing(6)
-        self._views: Dict[str, QtWidgets.QPushButton] = {}
-        for key, text, tip in self.VIEWS:
-            button = QtWidgets.QPushButton(text)
-            button.setToolTip(tip)
-            button.clicked.connect(lambda _c=False, k=key: self.view_requested.emit(k))
-            buttons.addWidget(button)
-            self._views[key] = button
-        layout.addLayout(buttons)
+        below = QtWidgets.QHBoxLayout()
+        below.setSpacing(6)
+        self.open_button = QtWidgets.QPushButton("Open in viewer")
+        self.open_button.clicked.connect(self.open_requested)
+        self.render_button = QtWidgets.QToolButton()
+        self.render_button.setObjectName("icon")
+        self.render_button.setToolTip("Draw the pictures of this image again")
+        self.render_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.render_button.clicked.connect(self.render_requested)
+        below.addWidget(self.open_button)
+        below.addStretch(1)
+        below.addWidget(self.render_button)
+        layout.addLayout(below)
 
         self.measures = QtWidgets.QGridLayout()
         self.measures.setContentsMargins(0, 0, 0, 0)
@@ -777,11 +927,27 @@ class DetailsPanel(QtWidgets.QScrollArea):
         layout.addLayout(links)
         layout.addStretch(1)
         self.setWidget(body)
+        self._tips = {picture: tip for picture, _title, _icon, tip in self.PICTURES}
+        self.pictures.changed.connect(self._picture_chosen)
+        self._set_icons(colors)
         self.show_row(None)
 
-    def stage(self) -> str:
-        """The phase whose picture is asked for."""
-        return self.stages.current()
+    def _set_icons(self, colors: Colors) -> None:
+        """Give the switch, the button and the links their icons."""
+        for picture, _title, icon, _tip in self.PICTURES:
+            self.pictures.set_icon(picture, icons.icon(
+                icon, colors.muted, colors.faint, colors.text))
+        self.open_button.setIcon(icons.icon("open", colors.text, colors.faint))
+        self.render_button.setIcon(icons.icon("refresh", colors.muted, colors.faint))
+        self.log_link.setIcon(icons.icon("log", colors.accent, colors.faint))
+        self.folder_link.setIcon(icons.icon("folder", colors.accent, colors.faint))
+
+    def picture(self) -> str:
+        """The picture that is asked for, one of :attr:`PICTURES`."""
+        return self.pictures.current()
+
+    def _picture_chosen(self, picture: str) -> None:
+        self.open_button.setToolTip(self._tips.get(picture, ""))
 
     def show_row(self, row: Optional[Row], report: Optional[dict] = None,
                  available: Optional[Mapping[str, bool]] = None) -> None:
@@ -789,34 +955,34 @@ class DetailsPanel(QtWidgets.QScrollArea):
 
         Args:
             report: The parsed report of the row's subject.
-            available: Per view of :attr:`VIEWS`, whether its files exist.
+            available: Per picture of :attr:`PICTURES`, whether its files exist.
         """
         available = available or {}
-        for key, button in self._views.items():
-            button.setEnabled(bool(available.get(key)))
         self._clear_measures()
         if row is None:
             self.name.setText("No image selected")
             self.path.setText("Select an image to see its results.")
-            self.stages.setVisible(False)
+            self.pictures.setVisible(False)
             self.preview.show_picture(None, "")
-            self.log_link.setEnabled(False)
-            self.folder_link.setEnabled(False)
+            for control in (self.open_button, self.render_button,
+                            self.log_link, self.folder_link):
+                control.setEnabled(False)
             return
-        subject = row.subject
+        subject = row.found()
         self.name.setText(subject.name)
-        self.path.setText(shorten_path(str(subject.folder), max_chars=44))
-        self.path.setToolTip(str(subject.folder))
-        self.stages.setVisible(True)
-        self.stages.set_available(VOLUME, bool(available.get("segmentation")))
-        self.stages.set_available(SURFACE, bool(available.get("surfaces")))
-        view_of = {VOLUME: "segmentation", SURFACE: "surfaces"}
-        if not available.get(view_of[self.stages.current()]):
-            # Show the phase that has something to show
-            for stage in (VOLUME, SURFACE):
-                if available.get(view_of[stage]):
-                    self.stages.set_current(stage)
+        self.path.setText(str(subject.folder))
+        self.pictures.setVisible(True)
+        for picture, _title, _icon, _tip in self.PICTURES:
+            self.pictures.set_available(picture, bool(available.get(picture)))
+        if not available.get(self.pictures.current()):
+            # Show a picture there is something to show of
+            for picture, _title, _icon, _tip in self.PICTURES:
+                if available.get(picture):
+                    self.pictures.set_current(picture)
                     break
+        self._picture_chosen(self.pictures.current())
+        self.open_button.setEnabled(bool(available.get(self.pictures.current())))
+        self.render_button.setEnabled(any(available.values()))
         self.log_link.setEnabled(subject.log_file() is not None)
         self.folder_link.setEnabled(subject.folder.is_dir())
         self._fill_measures(report)
@@ -824,8 +990,14 @@ class DetailsPanel(QtWidgets.QScrollArea):
     def _clear_measures(self) -> None:
         while self.measures.count():
             item = self.measures.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget is not None:
+                # Gone now, not when Qt gets round to deleting it: a label
+                # that is only scheduled for deletion is still drawn, under
+                # the measures of the next image
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
 
     def _fill_measures(self, report: Optional[dict]) -> None:
         line = 0

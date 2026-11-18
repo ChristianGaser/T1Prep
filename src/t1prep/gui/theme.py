@@ -3,7 +3,8 @@
 The viewers keep the native style of the platform — their windows are mostly
 a render view.  The launcher is forms and a table, which Qt draws differently
 on every desktop, so it brings one look of its own: the Fusion style with a
-light or a dark set of colours, chosen by what the system is set to.
+dark set of colours, whatever the desktop is set to.  The pictures of the
+results are drawn on black, and a dark window is what they sit in best.
 
 Only Qt Widgets are involved; nothing here needs OpenGL.
 """
@@ -13,7 +14,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6 import QtGui, QtWidgets
-from PySide6.QtCore import Qt
 
 
 @dataclass(frozen=True)
@@ -32,35 +32,14 @@ class Colors:
     success: str
     warning: str
     danger: str
-    dark: bool
 
 
-LIGHT = Colors(
-    window="#f5f6f8", surface="#ffffff", raised="#eef0f3", border="#dfe2e7",
-    text="#1c2026", muted="#667080", faint="#a9b0bb", accent="#2f6feb",
-    on_accent="#ffffff", success="#1f9d55", warning="#c27d0e", danger="#d5483f",
-    dark=False,
-)
-
+#: The launcher's colours
 DARK = Colors(
     window="#1d1f23", surface="#25282d", raised="#30343b", border="#3a3f47",
     text="#e7e9ec", muted="#9aa2ad", faint="#5d6570", accent="#5b9bff",
     on_accent="#0d1117", success="#4cc38a", warning="#e0a73a", danger="#f0736b",
-    dark=True,
 )
-
-
-def system_is_dark(app: QtWidgets.QApplication) -> bool:
-    """Whether the desktop asks for a dark appearance."""
-    try:    # Qt 6.5 and later say so directly
-        return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
-    except AttributeError:
-        return app.palette().color(QtGui.QPalette.ColorRole.Window).lightness() < 128
-
-
-def colors_for(app: QtWidgets.QApplication) -> Colors:
-    """The colour scheme matching the desktop's appearance."""
-    return DARK if system_is_dark(app) else LIGHT
 
 
 def blend(color: str, other: str, share: float) -> str:
@@ -100,8 +79,8 @@ def _palette(c: Colors) -> QtGui.QPalette:
 
 
 def _style_sheet(c: Colors) -> str:
-    selected = blend(c.surface, c.accent, 0.16 if not c.dark else 0.28)
-    pressed = blend(c.accent, "#000000" if not c.dark else "#ffffff", 0.14)
+    selected = blend(c.surface, c.accent, 0.28)
+    pressed = blend(c.accent, "#ffffff", 0.14)
     return f"""
     QWidget {{ color: {c.text}; }}
     QMainWindow, QDialog {{ background: {c.window}; }}
@@ -157,6 +136,11 @@ def _style_sheet(c: Colors) -> str:
         border: 1px solid {c.border};
     }}
     QPushButton#segment:disabled {{ color: {c.faint}; }}
+    QPushButton#segment[compact="true"] {{ padding: 4px 8px; }}
+    QToolButton#icon {{
+        border: none; background: transparent; padding: 4px; border-radius: 6px;
+    }}
+    QToolButton#icon:hover {{ background: {c.raised}; }}
     QFrame#segments {{ background: {c.raised}; border-radius: 7px; }}
 
     /* ---- fields ---- */
@@ -196,7 +180,15 @@ def _style_sheet(c: Colors) -> str:
         background: transparent; color: {c.muted}; border: none;
         border-bottom: 1px solid {c.border}; padding: 7px 8px; font-weight: 600;
     }}
-    QTableCornerButton::section {{ background: transparent; border: none; }}
+    /* the numbers of the rows: quieter than the names beside them */
+    QHeaderView::section:vertical {{
+        color: {c.faint}; border-bottom: none; font-weight: normal;
+        padding: 0 2px 0 10px;
+    }}
+    QTableCornerButton::section {{
+        background: transparent; border: none;
+        border-bottom: 1px solid {c.border};
+    }}
 
     /* ---- panels ---- */
     QFrame#panel {{
@@ -206,9 +198,6 @@ def _style_sheet(c: Colors) -> str:
     QLabel#title {{ font-size: 15px; font-weight: 600; }}
     QLabel#muted, QLabel#path {{ color: {c.muted}; }}
     QLabel#heading {{ color: {c.muted}; font-weight: 600; padding-top: 8px; }}
-    QLabel#preview {{
-        background: #000000; border-radius: 6px; color: #9aa2ad;
-    }}
     QScrollArea {{ background: transparent; border: none; }}
     QScrollArea > QWidget > QWidget {{ background: transparent; }}
     QPlainTextEdit {{
@@ -240,7 +229,7 @@ def _style_sheet(c: Colors) -> str:
 
 def apply(app: QtWidgets.QApplication) -> Colors:
     """Give *app* the launcher's look; return the colours it now uses."""
-    colors = colors_for(app)
+    colors = DARK
     app.setStyle("Fusion")
     app.setPalette(_palette(colors))
     app.setStyleSheet(_style_sheet(colors))

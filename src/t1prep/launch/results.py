@@ -16,7 +16,7 @@ import json
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -28,6 +28,15 @@ from .._names import NameTable, name_file
 
 VOLUME, SURFACE = "volume", "surface"
 SIDES = ("left", "right")
+
+#: The pictures of a subject's results: the two phases, and the cortical
+#: thickness on the surface, which the surface phase writes as well
+THICKNESS = "thickness"
+PICTURES = (VOLUME, SURFACE, THICKNESS)
+
+#: The borders of the grey matter in the label map (CSF 1, GM 2, WM 3):
+#: towards the CSF and towards the white matter
+GM_BORDERS = (1.5, 2.5)
 
 #: Modules holding the ``main()`` of the viewers
 VOLUME_VIEWER = "t1prep.gui.cat_vol_view"
@@ -179,6 +188,62 @@ def subject_for_input(path: os.PathLike, out_dir: Optional[os.PathLike] = None,
         str(path), str(out_dir) if out_dir else None, t1prep_version(), amap)
     return Subject(name=name, folder=Path(folder), subfolders=bool(subfolders),
                    bids=bool(bids), input=Path(os.path.abspath(str(path))))
+
+
+_DERIVATIVES = re.compile(r"^T1Prep(Amap)?-v(\d+(?:\.\d+)*)")
+
+
+def _other_versions(subject: Subject) -> List[Path]:
+    """The folders the other T1Prep versions have for *subject* in a BIDS
+    dataset: ``derivatives/T1Prep-v<version>/sub-…/anat``, newest first.
+
+    The version is part of the folder T1Prep writes to, so what an earlier
+    one left is not where the current one looks.
+    """
+    for own in subject.folder.parents:
+        if own.parent.name == "derivatives" and _DERIVATIVES.match(own.name):
+            break
+    else:
+        return []
+    below = subject.folder.relative_to(own)
+    amap = bool(_DERIVATIVES.match(own.name).group(1))
+    found = []
+    try:
+        siblings = sorted(own.parent.iterdir())
+    except OSError:
+        return []
+    for sibling in siblings:
+        match = _DERIVATIVES.match(sibling.name)
+        if match is None or sibling == own or not (sibling / below).is_dir():
+            continue
+        version = tuple(int(part) for part in match.group(2).split("."))
+        # Of the same kind (with or without AMAP) first, then by version
+        found.append((bool(match.group(1)) == amap, version, sibling / below))
+    return [folder for _same, _version, folder in sorted(found, reverse=True)]
+
+
+def results_on_disk(subject: Subject) -> Subject:
+    """The results there are of the image of *subject*, wherever a run put them.
+
+    *subject* says where a run with the current options writes.  What an
+    earlier run wrote can lie elsewhere without being any less the result of
+    this image: under the other naming scheme (CAT12 or BIDS names are a
+    choice of the run), and in a BIDS dataset in the folder of another T1Prep
+    version.  Looked for in that order -- the place of *subject* itself, the
+    other names there, then the other versions, newest first, with either
+    names -- and the first with a report or with surfaces is returned.
+
+    Returns:
+        The subject the results are found under; *subject* itself when there
+        are none, so that it still says where they will be.
+    """
+    places = [subject.folder] + _other_versions(subject)
+    for folder in places:
+        for bids in (subject.bids, not subject.bids):
+            candidate = replace(subject, folder=folder, bids=bids)
+            if candidate.stage_done(VOLUME) or candidate.stage_done(SURFACE):
+                return candidate
+    return subject
 
 
 def _report_patterns() -> List[Tuple[re.Pattern, bool]]:
@@ -350,13 +415,22 @@ def central_surfaces(subject: Subject) -> List[Path]:
     return [surface for surface in surfaces if surface is not None]
 
 
+def _tissue_borders(label: Path) -> List[object]:
+    """The arguments that outline both borders of the grey matter of *label*."""
+    return ["--contour", label, "--contour-level", *GM_BORDERS]
+
+
 def segmentation_view(subject: Subject) -> Optional[List[str]]:
-    """``CAT_VolView``: the image with the tissue label on top."""
+    """``CAT_VolView``: the borders of the grey matter outlined on the image.
+
+    Both of them, towards the CSF and towards the white matter: where the
+    segmentation put them is what there is to judge, and outlines leave the
+    image under them visible.
+    """
     image, label = subject.underlay(), subject.find("Label_volume")
     if image is None or label is None:
         return None
-    # The background of the label stays clear, so the skull remains visible
-    return _viewer(VOLUME_VIEWER, [image, "--overlay", label, "--clip", "0", "0.5"])
+    return _viewer(VOLUME_VIEWER, [image] + _tissue_borders(label))
 
 
 def surfaces_view(subject: Subject) -> Optional[List[str]]:
@@ -367,35 +441,56 @@ def surfaces_view(subject: Subject) -> Optional[List[str]]:
     return _viewer(VOLUME_VIEWER, [image] + surfaces)
 
 
+def _thickness_file(subject: Subject) -> Optional[Path]:
+    """The thickness of the left hemisphere, else of the right; the viewer
+    finds the other hemisphere and the surfaces from its name."""
+    return subject.find("GMT_shape", "left") or subject.find("GMT_shape", "right")
+
+
 def thickness_view(subject: Subject) -> Optional[List[str]]:
     """``CAT_SurfView``: the cortical thickness on the surface."""
-    thickness = subject.find("GMT_shape", "left") or subject.find("GMT_shape", "right")
+    thickness = _thickness_file(subject)
     if thickness is None:
         return None
     return _viewer(SURFACE_VIEWER, [thickness])
 
 
-def preview(subject: Subject, stage: str, png: os.PathLike,
-            size: int = 300) -> Optional[List[str]]:
-    """``CAT_VolView --headless``: a picture of a phase's result, no window.
+def view(subject: Subject, picture: str) -> Optional[List[str]]:
+    """The viewer call that shows what the picture *picture* shows."""
+    return {VOLUME: segmentation_view, SURFACE: surfaces_view,
+            THICKNESS: thickness_view}[picture](subject)
 
-    The volume phase is shown as the outline of the tissue label on the
-    image, the surfaces as the central surfaces on it.
+
+def preview(subject: Subject, picture: str, png: os.PathLike,
+            size: int = 300) -> Optional[List[str]]:
+    """A picture of a result, written by a viewer that opens no window.
+
+    The volume phase is shown as the two borders of the grey matter outlined
+    on the image, the surfaces as the central surfaces on it
+    (``CAT_VolView --headless``), the thickness on four views of the surface
+    (``CAT_SurfView --output``).
 
     Args:
         subject: Whose results.
-        stage: ``"volume"`` or ``"surface"``.
+        picture: ``"volume"``, ``"surface"`` or ``"thickness"``.
         png: The file the picture is written to.
         size: Approximate half-width of the picture in pixels.
 
     Returns:
         The command, or None while the results it needs are not there.
     """
+    if picture == THICKNESS:
+        thickness = _thickness_file(subject)
+        if thickness is None or not central_surfaces(subject):
+            return None
+        return _viewer(SURFACE_VIEWER, [
+            thickness, "--views", 4, "--size", 2 * size, round(1.5 * size),
+            "--title-mode", "none", "--output", png])
     image = subject.underlay()
     if image is None:
         return None
     arguments: List[object] = [image]
-    if stage == SURFACE:
+    if picture == SURFACE:
         surfaces = central_surfaces(subject)
         if not surfaces:
             return None
@@ -404,17 +499,27 @@ def preview(subject: Subject, stage: str, png: os.PathLike,
         label = subject.find("Label_volume")
         if label is None:
             return None
-        arguments += ["--contour", label]
-    arguments += ["--headless", "--no-info", "--size", size, "--screenshot", png]
+        arguments += _tissue_borders(label)
+    arguments += ["--no-crosshair", "--headless", "--no-info", "--size", size,
+                  "--screenshot", png]
     return _viewer(VOLUME_VIEWER, arguments)
 
 
-def preview_sources(subject: Subject, stage: str) -> List[Path]:
-    """The files a :func:`preview` is drawn from; it is stale when they change."""
+def preview_sources(subject: Subject, picture: str) -> List[Path]:
+    """The files a :func:`preview` is drawn from; it is stale when they change.
+
+    Empty while one of them is missing, i.e. while there is nothing to draw.
+    """
+    if picture == THICKNESS:
+        values = [path for path in (subject.find("GMT_shape", side) for side in SIDES)
+                  if path is not None]
+        surfaces = central_surfaces(subject)
+        return values + surfaces if values and surfaces else []
     image = subject.underlay()
     if image is None:
         return []
-    if stage == SURFACE:
-        return [image] + central_surfaces(subject)
+    if picture == SURFACE:
+        surfaces = central_surfaces(subject)
+        return [image] + surfaces if surfaces else []
     label = subject.find("Label_volume")
     return [image, label] if label is not None else []

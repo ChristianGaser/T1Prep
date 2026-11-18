@@ -278,6 +278,92 @@ def ask_and_save_png(parent, default_path: str,
     return path
 
 
+#: Kept alive for as long as the process: see stay_in_the_background()
+_BACKGROUND = []
+
+
+def stay_in_the_background() -> bool:
+    """Keep a batch render off the desktop: no Dock icon, no change of focus.
+
+    A viewer that only writes a picture is often called many times in a row
+    -- by a script over a study, by the launcher for its previews.  On macOS
+    each call would otherwise show up as an application: Python's icon in the
+    Dock for as long as it runs, and with Qt the keyboard focus taken away
+    from whatever the user is typing in.
+
+    Three things together prevent that, and each alone does not:
+
+    * the process is declared an agent (``LSUIElement``) in the information
+      of its bundle, which AppKit reads when the application object is made;
+    * requests to change that are refused from then on, because VTK asks for
+      a regular application whenever it creates a window of its own, shown or
+      not, and has no switch for it;
+    * Qt is told not to bring the process to the front.
+
+    Call it before the first render window or ``QApplication`` exists.  It
+    does nothing on other systems, where a process without a window has no
+    presence on the desktop.
+
+    Returns:
+        Whether the process was put in the background.
+    """
+    if sys.platform != "darwin":
+        return False
+    os.environ.setdefault("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "1")
+    if _BACKGROUND:
+        return True
+    try:
+        import ctypes
+        import ctypes.util
+
+        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        ctypes.cdll.LoadLibrary(ctypes.util.find_library("AppKit"))
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        objc.class_getInstanceMethod.restype = ctypes.c_void_p
+        objc.class_getInstanceMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        objc.method_setImplementation.restype = ctypes.c_void_p
+        objc.method_setImplementation.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+        def message(restype, *argtypes):
+            """objc_msgSend for one signature (it has to be called as that type)."""
+            return ctypes.CFUNCTYPE(restype, ctypes.c_void_p, ctypes.c_void_p,
+                                    *argtypes)(("objc_msgSend", objc))
+
+        get = message(ctypes.c_void_p)
+        make_string = message(ctypes.c_void_p, ctypes.c_char_p)
+        set_entry = message(None, ctypes.c_void_p, ctypes.c_void_p)
+
+        def string(value: bytes):
+            return make_string(objc.objc_getClass(b"NSString"),
+                               objc.sel_registerName(b"stringWithUTF8String:"), value)
+
+        info = get(get(objc.objc_getClass(b"NSBundle"),
+                       objc.sel_registerName(b"mainBundle")),
+                   objc.sel_registerName(b"infoDictionary"))
+        if not info:
+            return False
+        set_entry(info, objc.sel_registerName(b"setObject:forKey:"),
+                  string(b"1"), string(b"LSUIElement"))
+
+        # -[NSApplication setActivationPolicy:] answers "not changed"
+        refuse = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
+                                  ctypes.c_long)(lambda _self, _command, _policy: False)
+        method = objc.class_getInstanceMethod(
+            objc.objc_getClass(b"NSApplication"),
+            objc.sel_registerName(b"setActivationPolicy:"))
+        if not method:
+            return False
+        objc.method_setImplementation(method, ctypes.cast(refuse, ctypes.c_void_p))
+        _BACKGROUND.append(refuse)      # the callback must outlive this call
+        return True
+    except Exception as exc:    # the picture matters more than the Dock
+        note(f"could not stay in the background: {exc}")
+        return False
+
+
 def qt_application():
     """The QApplication, created once.
 

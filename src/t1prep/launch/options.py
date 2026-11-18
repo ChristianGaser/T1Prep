@@ -403,27 +403,10 @@ OPTIONS: Tuple[Option, ...] = (
            needs="seg",
            help="Framework that runs the networks. tinygrad is experimental "
                 "and needs pip install 'T1Prep[tinygrad]'."),
-    Option("thickness_method", "Thickness method", "expert", kind="choice",
-           variable="thickness_method", fallback="3", flag="--thickness-method",
-           choices=(("3", "PBT"),
-                    ("1", "Tfs distance, PBT-based"),
-                    ("2", "Tfs distance, pial to white")),
-           needs="surf",
-           help="Measure thickness by projection (PBT) or as FreeSurfer's "
-                "Tfs distance."),
-    Option("correct_folding", "Correct thickness for folding", "expert",
-           variable="correct_folding", fallback=True,
-           off="--no-correct-folding", needs="surf",
-           help="Correct the thickness for the effect of cortical folding."),
-    Option("median_filter", "Median filter passes", "expert", kind="int",
-           variable="median_filter", fallback=1, flag="--median-filter",
-           minimum=0, maximum=10, needs="surf",
-           help="Median filter passes that reduce topology artefacts before "
-                "the surface is extracted."),
-    Option("pre_fwhm", "Pre-smoothing FWHM", "expert", kind="int",
-           variable="pre_fwhm", fallback=2, flag="--pre-fwhm",
-           minimum=0, maximum=10, suffix=" mm", needs="surf",
-           help="Smoothing applied before Marching Cubes."),
+    # Not in the form on purpose: the thickness method, the correction of
+    # the thickness for folding, the median filter passes and the smoothing
+    # before Marching Cubes.  They are settings of the method, not of a run;
+    # T1Prep takes them from its defaults file or its command line.
     Option("hemi", "Keep hemisphere partitions", "expert",
            variable="save_hemi", on="--hemi",
            help="Keep the left and right partitions of the segmentation, "
