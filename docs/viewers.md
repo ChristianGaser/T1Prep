@@ -56,7 +56,13 @@ e.g. `CAT_SurfView ~/subjects/bert/surf/lh.thickness`. The second hemisphere is 
 CAT_SurfView lh.thickness.sub-01                       # overlay; the mesh is found
 CAT_SurfView lh.central.gii --overlay lh.logP.gii --clip -1.3 1.3 --colorbar
 CAT_SurfView --output view.png lh.thickness.sub-01     # render a PNG and exit
+CAT_SurfView --views 4 --size 700 520 --output small.png lh.thickness.sub-01
 ```
+
+`--views` picks the sheet: 6 (the default) as described, 4 without the dorsal
+views — lateral below, medial above, the two hemispheres side by side — and 2
+with the lateral views alone. The smaller sheets fill the window, above the
+colour bar, which makes them the choice for a small picture.
 
 ### What a click tells you
 
@@ -177,6 +183,7 @@ from the NIfTI header are applied.
 ```bash
 CAT_VolView T1.nii.gz --overlay spmT_0001.nii.gz   # overlay, resampled if needed
 CAT_VolView T1.nii.gz --contour p1T1.nii.gz        # segmentation outlined on the T1
+CAT_VolView T1.nii.gz --contour p0T1.nii.gz --contour-level 1.5 2.5   # both borders of the grey matter
 CAT_VolView wT1.nii.gz --atlas AAL3.nii.gz         # name the region at the cursor (atlas volume in the image's space)
 ```
 
@@ -191,7 +198,12 @@ transparent.
 
 Contours outline another volume on the slices — the fastest check of a
 registration or a segmentation, as `CheckReg` does it. Several can be shown at
-once, each in its own colour, with an editable level. Registration is what the
+once, each in its own colour, with an editable level. The level is halfway
+through the values of the volume unless `--contour-level` names it; with
+several levels every `--contour` volume is outlined at each, so
+`--contour-level 1.5 2.5` on a label map (`p0`: CSF 1, GM 2, WM 3) draws the
+border of the grey matter towards the CSF and the one towards the white
+matter. `--no-crosshair` leaves the crosshair out of a figure. Registration is what the
 headers say it is: a volume they place outside the image is refused with the
 reason, and one that is outlined only where the two overlap says so in the
 status bar instead of leaving a slice mysteriously blank.
@@ -293,9 +305,12 @@ The overlay is coloured with `--range`, `--clip`, `--threshold P` (clips a
 `--discrete N`; the image underneath with `--range-bkg`. `--colorbar` labels a
 −log10(p) overlay with p-values, exactly as `cat_surf_results` does.
 
-`CAT_SurfView --output` and `CAT_VolView --screenshot` write a PNG and exit, so
-neither needs a display. Run `CAT_VolView --help` or `CAT_SurfView --help` for
-the full list.
+`CAT_SurfView --output` and `CAT_VolView --screenshot` write a PNG and exit.
+Neither puts anything on the screen on the way: no window, and on macOS no
+icon in the Dock and no change of the keyboard focus, so a loop over a study
+can run while you work. (`CAT_SurfView` draws through Qt and therefore still
+needs a window system to be there, though nothing is shown in it.) Run
+`CAT_VolView --help` or `CAT_SurfView --help` for the full list.
 
 ---
 

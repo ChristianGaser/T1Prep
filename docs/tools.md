@@ -58,26 +58,53 @@ From a source checkout, without installing: `./scripts/T1Prep_gui`, which takes 
   on its own. What another choice forces is shown as it will be used (`--bids`
   compresses the volumes, `--fmriprep` implies BIDS names), and the options of
   a step that is switched off are disabled. The choices are remembered between
-  sessions; *Restore defaults* returns to the defaults file.
+  sessions; *Restore defaults* returns to the defaults file. Four settings of
+  the method are left out of the form on purpose — the thickness method, the
+  correction of the thickness for folding, the median filter passes and the
+  smoothing before Marching Cubes; `T1Prep` takes them from its defaults file
+  (or its command line), so a run from the launcher uses what is set there.
 - **Output.** Next to each image, as `T1Prep` does by default, or one folder
   for all results.
-- **Run.** The table shows for each image whether the volume and the surface
-  phase are waiting, running, finished or failed, and the image quality rating
-  of its report. *Stop* ends the run and every process it started. *Skip
+- **Run.** The table numbers the images and shows for each whether the volume
+  and the surface phase are waiting, running, finished or failed, and the image
+  quality rating of its report. *Stop* ends the run and every process it started. *Skip
   finished images* (under Processing) leaves out what is complete, so a batch
   that was stopped or partly failed can be continued.
-- **Results.** Selecting an image shows a picture of the segmentation outline
-  or of the central surfaces on the image, the measures of its report, and
-  buttons that open the segmentation and the surfaces in `CAT_VolView` and the
-  thickness in `CAT_SurfView`. The picture appears as soon as a phase has
-  written its results, so the segmentation can be checked while the surfaces
-  are still being estimated. *Open results…* shows the results of an earlier
-  run without processing anything.
+- **Results.** Selecting an image shows a picture of it and the measures of
+  its report. There are three pictures to switch between: *Segmentation*, the
+  two borders of the grey matter (towards the CSF and towards the white
+  matter) outlined on the image; *Surfaces*, the central surfaces outlined on
+  it; and *Thickness*, the cortical thickness on the lateral and medial view of
+  both hemispheres. A click on the picture, or *Open in viewer*, opens what it
+  shows in `CAT_VolView` or `CAT_SurfView`. A picture appears as soon as a
+  phase has written its results, so the segmentation can be checked while the
+  surfaces are still being estimated. *Open results…* shows the results of an
+  earlier run without processing anything.
+- **Pictures.** They are drawn ahead, in the background: for the hundred
+  images around the selected one, the kind of picture that is shown first, so
+  that stepping through a study finds them ready. *View → Prepare All
+  Pictures* does the same for the whole table, and the round arrow under the
+  picture draws those of the selected image again. The pictures are kept in
+  the cache folder of the application until their files change (about a
+  megabyte per image; unused ones are removed after a month). Every picture
+  is shown in a box of the same size, and a long file name is shortened
+  rather than widening the panel.
+- **Results of earlier runs.** An image shows the results there are of it,
+  not only those a run with the current options would write: results under
+  the other names (CAT12 or BIDS) count, and in a BIDS dataset so do those in
+  the `derivatives/T1Prep-v…` folder of another T1Prep version, the newest
+  first. The panel names the folder they come from. A run still writes to the
+  folder of its own version, and *Skip finished images* refers to that folder.
+- **Appearance.** The window is dark, whatever the desktop is set to: the
+  pictures are drawn on black.
 
 The launcher itself uses neither VTK nor OpenGL. The pictures are rendered by
-`CAT_VolView --headless`, and the viewers are started as processes of their
-own. Where the viewers cannot start (no working OpenGL), the launcher still
-runs the pipeline; only the pictures and the viewer buttons are missing.
+`CAT_VolView --headless` and `CAT_SurfView --output`, and the viewers are
+started as processes of their own. Neither puts anything on the screen while
+it renders: no window, and on macOS no icon in the Dock and no change of the
+keyboard focus. Where the viewers cannot start (no working OpenGL), the
+launcher still runs the pipeline; only the pictures and the viewers are
+missing.
 
 ## Post-processing helpers
 

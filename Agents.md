@@ -76,6 +76,7 @@ T1Prep/
 │       │   │                       # viewer processes; imports no VTK
 │       │   ├── launcher_widgets.py # Its table of images, options form, results panel
 │       │   ├── theme.py            # Its colours and style sheet
+│       │   ├── icons.py            # Its icons, drawn in code (no image files)
 │       │   ├── cat_surf_view.py    # Surface viewer (CAT_SurfView)
 │       │   ├── make_apps.py        # macOS .app bundles (t1prep-make-apps)
 │       │   ├── cat_vol_view.py     # Orthogonal volume viewer (CAT_VolView),
@@ -422,7 +423,7 @@ The Qt launcher (`t1prep-gui`) is the graphical front end of the pipeline.
 - `src/t1prep/launch/results.py` - files of a subject, report measures, viewer calls
 - `src/t1prep/launch/inputs.py` - finding the images of a folder
 - `src/t1prep/gui/launcher.py` - the window, the T1Prep process, the viewer processes
-- `src/t1prep/gui/launcher_widgets.py`, `theme.py` - table, form, results panel, look
+- `src/t1prep/gui/launcher_widgets.py`, `theme.py`, `icons.py` - table, form, results panel, look (dark only), icons
 
 **When modifying the launcher:**
 - An option is one `Option` in the table; the form and the arguments follow from it
