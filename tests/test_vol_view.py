@@ -802,6 +802,21 @@ class TestContours(unittest.TestCase):
             # only the crosshair lines are left behind
             self.assertLessEqual(actors.GetNumberOfItems(), 2)
 
+    def test_one_of_two_outlines_of_a_volume_is_moved_or_removed(self):
+        # The two borders of the grey matter are two outlines of one label
+        # map; by its level each can be changed without the other
+        self.viewer.add_contour(self.mask, level=0.3)
+        self.viewer.add_contour(self.mask, level=0.7)
+        self.viewer.set_contour_level(self.mask, 0.5, current=0.7)
+        self.assertEqual(sorted(entry['level'] for entry in self.viewer.contours),
+                         [0.3, 0.5])
+        self.viewer.remove_contour(self.mask, level=0.3)
+        self.assertEqual([entry['level'] for entry in self.viewer.contours], [0.5])
+        # ... and without a level every outline of the volume is meant
+        self.viewer.add_contour(self.mask, level=0.2)
+        self.viewer.set_contour_level(self.mask, 0.6)
+        self.assertEqual([entry['level'] for entry in self.viewer.contours], [0.6, 0.6])
+
 
 class TestSurfaceOutlines(unittest.TestCase):
     """Surfaces cut by the slice planes and drawn as coloured outlines."""

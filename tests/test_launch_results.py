@@ -136,6 +136,77 @@ class TestWhichPhasesAreComplete(_Folders):
         self.assertTrue(subject.stage_done("volume", skullstrip_only=True))
 
 
+class TestTheResultsOfAnImageWhereverTheyAre(_Folders):
+    """An image added to the table showed results only where a run with the
+    current options would write them.  In a BIDS dataset that is the folder
+    of the running T1Prep version, and with either layout it is one of the
+    two naming schemes -- so the results of an earlier version, or of a run
+    with the other names, did not count as results of the image."""
+
+    def dataset(self, version="0.6.0", bids_names=False, amap=False):
+        """A BIDS dataset with one image and its results of *version*."""
+        root = self.tmp / "study"
+        image = self.touch(root / "sub-01" / "anat" / "sub-01_T1w.nii.gz")
+        anat = (root / "derivatives" / f"T1Prep{'Amap' if amap else ''}-v{version}"
+                / "sub-01" / "anat")
+        if bids_names:
+            self.touch(anat / "sub-01_log.json", json.dumps(REPORT))
+            self.touch(anat / "sub-01_label-seg.nii.gz")
+        else:
+            self.touch(anat / "log_sub-01.json", json.dumps(REPORT))
+            self.touch(anat / "p0sub-01.nii")
+        return image, anat
+
+    def test_where_a_run_writes_is_looked_at_first(self):
+        image = self.cat12()
+        subject = res.subject_for_input(image)
+        self.assertEqual(res.results_on_disk(subject), subject)
+
+    def test_nothing_found_still_says_where_they_will_be(self):
+        subject = res.subject_for_input(self.touch(self.tmp / "new.nii"))
+        self.assertIs(res.results_on_disk(subject), subject)
+
+    def test_an_earlier_version_of_a_bids_dataset(self):
+        image, anat = self.dataset("0.6.0")
+        subject = res.subject_for_input(image)
+        self.assertNotEqual(subject.folder, anat)          # the current version's
+        self.assertFalse(subject.stage_done("volume"))
+        found = res.results_on_disk(subject)
+        self.assertEqual(found.folder, anat)
+        self.assertTrue(found.stage_done("volume"))
+        self.assertEqual(found.find("Label_volume").name, "p0sub-01.nii")
+        # The picture is still drawn on the image itself
+        self.assertEqual(found.underlay(), image)
+        self.assertEqual(res.quality(found.report()), ("A-", 2.08))
+
+    def test_the_newest_of_several_versions(self):
+        image, _old = self.dataset("0.6.0")
+        _image, newer = self.dataset("0.8.10")
+        _image, _amap = self.dataset("0.8.99", amap=True)
+        found = res.results_on_disk(res.subject_for_input(image))
+        # 0.8.10 is newer than 0.6.0 -- as numbers, not as text -- and the
+        # folders of the other kind of run (AMAP) come after those of this one
+        self.assertEqual(found.folder, newer)
+        with_amap = res.results_on_disk(res.subject_for_input(image, amap=True))
+        self.assertEqual(with_amap.folder.parents[1].name, "T1PrepAmap-v0.8.99")
+
+    def test_the_other_names(self):
+        image, anat = self.dataset("0.6.0", bids_names=True)
+        for chosen in (False, True):
+            with self.subTest(bids_option=chosen):
+                found = res.results_on_disk(res.subject_for_input(image, bids=chosen))
+                self.assertTrue(found.bids)
+                self.assertEqual(found.find("Label_volume"), anat / "sub-01_label-seg.nii.gz")
+
+    def test_the_other_names_next_to_the_image(self):
+        image = self.cat12()
+        subject = res.subject_for_input(image, bids=True)      # BIDS names ticked
+        self.assertFalse(subject.stage_done("volume"))
+        found = res.results_on_disk(subject)
+        self.assertFalse(found.bids)
+        self.assertTrue(found.stage_done("volume") and found.stage_done("surface"))
+
+
 class TestFindingResults(_Folders):
     def test_both_layouts_below_a_folder(self):
         self.cat12("a")
@@ -193,7 +264,7 @@ class TestTheViewerCalls(_Folders):
         seg = res.segmentation_view(subject)
         self.assertEqual(seg[:3], [sys.executable, "-m", res.VOLUME_VIEWER])
         self.assertEqual(seg[3], str(image))
-        self.assertEqual(Path(seg[seg.index("--overlay") + 1]).name, "p0sub1.nii")
+        self.assertEqual(Path(seg[seg.index("--contour") + 1]).name, "p0sub1.nii")
         surfaces = res.surfaces_view(subject)
         self.assertEqual([Path(item).name for item in surfaces[4:]],
                          ["lh.central.sub1.gii", "rh.central.sub1.gii"])
@@ -201,22 +272,68 @@ class TestTheViewerCalls(_Folders):
         self.assertEqual(thickness[2], res.SURFACE_VIEWER)
         self.assertEqual(Path(thickness[3]).name, "lh.thickness.sub1")
 
+    def test_both_borders_of_the_grey_matter_are_outlined(self):
+        # Towards the CSF and towards the white matter (label map: 1, 2, 3):
+        # one outline at the default level drew the outer border alone
+        subject = res.subject_for_input(self.cat12())
+        for command in (res.segmentation_view(subject),
+                        res.preview(subject, "volume", self.tmp / "p.png")):
+            at = command.index("--contour-level")
+            self.assertEqual(command[at + 1:at + 3], ["1.5", "2.5"])
+            self.assertEqual(command.count("--contour"), 1)
+
+    def test_a_view_per_picture(self):
+        subject = res.subject_for_input(self.cat12())
+        self.assertEqual(res.PICTURES, ("volume", "surface", "thickness"))
+        self.assertEqual(res.view(subject, "volume"), res.segmentation_view(subject))
+        self.assertEqual(res.view(subject, "surface"), res.surfaces_view(subject))
+        self.assertEqual(res.view(subject, "thickness"), res.thickness_view(subject))
+
     def test_no_view_without_its_files(self):
         subject = res.subject_for_input(self.cat12(surfaces=False))
         self.assertIsNotNone(res.segmentation_view(subject))
         self.assertIsNone(res.surfaces_view(subject))
         self.assertIsNone(res.thickness_view(subject))
-        self.assertIsNone(res.preview(subject, "surface", self.tmp / "p.png"))
+        for picture in ("surface", "thickness"):
+            self.assertIsNone(res.preview(subject, picture, self.tmp / "p.png"))
+            self.assertEqual(res.preview_sources(subject, picture), [])
 
     def test_the_picture_is_rendered_without_a_window(self):
         subject = res.subject_for_input(self.cat12())
-        for stage, shown in (("volume", "--contour"), ("surface", "lh.central.sub1.gii")):
-            command = res.preview(subject, stage, self.tmp / "p.png")
+        for picture, shown in (("volume", "--contour"), ("surface", "lh.central.sub1.gii")):
+            command = res.preview(subject, picture, self.tmp / "p.png")
+            self.assertEqual(command[2], res.VOLUME_VIEWER)
             self.assertIn("--headless", command)
+            self.assertIn("--no-crosshair", command)
             self.assertEqual(command[command.index("--screenshot") + 1],
                              str(self.tmp / "p.png"))
             self.assertTrue(any(shown in item for item in command))
-            self.assertGreaterEqual(len(res.preview_sources(subject, stage)), 2)
+            self.assertGreaterEqual(len(res.preview_sources(subject, picture)), 2)
+
+    def test_the_thickness_is_drawn_on_four_views_of_the_surface(self):
+        subject = res.subject_for_input(self.cat12())
+        command = res.preview(subject, "thickness", self.tmp / "p.png", size=300)
+        self.assertEqual(command[:3], [sys.executable, "-m", res.SURFACE_VIEWER])
+        self.assertEqual(Path(command[3]).name, "lh.thickness.sub1")
+        # --output is the surface viewer's batch mode: no window, no Dock icon
+        self.assertEqual(command[command.index("--output") + 1], str(self.tmp / "p.png"))
+        self.assertEqual(command[command.index("--views") + 1], "4")
+        at = command.index("--size")
+        self.assertEqual(command[at + 1:at + 3], ["600", "450"])
+        # Stale when the values or the surface they are drawn on change
+        self.assertEqual(
+            sorted(path.name for path in res.preview_sources(subject, "thickness")),
+            ["lh.central.sub1.gii", "lh.thickness.sub1",
+             "rh.central.sub1.gii", "rh.thickness.sub1"])
+
+    def test_one_hemisphere_is_enough_for_the_thickness(self):
+        image = self.cat12()
+        for name in ("lh.thickness.sub1", "lh.central.sub1.gii"):
+            (self.tmp / "data" / "surf" / name).unlink()
+        subject = res.subject_for_input(image)
+        command = res.preview(subject, "thickness", self.tmp / "p.png")
+        self.assertEqual(Path(command[3]).name, "rh.thickness.sub1")
+        self.assertEqual(len(res.preview_sources(subject, "thickness")), 2)
 
     def test_the_viewer_imports_the_t1prep_of_its_caller(self):
         env = res.viewer_environment({"PYTHONPATH": "/elsewhere"})

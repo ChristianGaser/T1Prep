@@ -115,9 +115,24 @@ class TestTheTableAgainstTheOrchestrator(unittest.TestCase):
         self.check(flipped)
 
     def test_every_number_and_choice_changed(self):
-        self.check({"multi": 3, "min_memory": 17, "median_filter": 4,
-                    "pre_fwhm": 5, "thickness_method": "2",
+        self.check({"multi": 3, "min_memory": 17, "nn_backend": "tinygrad",
                     "atlas": ("SUIT",), "atlas_surf": ("aparc_HCP_MMP1",)})
+
+    def test_the_settings_of_the_method_are_not_in_the_form(self):
+        # Thickness method, correction for folding, median filter passes and
+        # the smoothing before Marching Cubes: T1Prep keeps the options and
+        # takes them from its defaults file; a run is not where they are set
+        keys = {item.key for item in opt.OPTIONS}
+        variables = {item.variable for item in opt.OPTIONS}
+        for name in ("thickness_method", "correct_folding", "median_filter", "pre_fwhm"):
+            with self.subTest(option=name):
+                self.assertNotIn(name, keys)
+                self.assertNotIn(name, variables)
+                self.assertIn(name, _DEFAULTS)          # ... and T1Prep still has it
+        arguments = opt.build_arguments(defaults(), _DEFAULTS)
+        for flag in ("--thickness-method", "--no-correct-folding", "--median-filter",
+                     "--pre-fwhm"):
+            self.assertNotIn(flag, arguments)
 
     def test_one_job_at_a_time_and_auto(self):
         held, _ = self.check({"multi": 1})

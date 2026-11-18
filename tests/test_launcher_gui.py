@@ -71,16 +71,49 @@ for image in files:
 sys.exit(failed)
 '''
 
+# What stands in for the two viewers when a picture is rendered: it notes how
+# it was called and writes a picture -- wider than high for the thickness,
+# higher than wide otherwise, as the real ones are.  A subject called broken*
+# gets none.
+_VIEWER = '''\
+import json, os, struct, sys, zlib
+
+arguments = sys.argv[1:]
+with open(os.environ["VIEWER_LOG"], "a") as log:
+    log.write(json.dumps(arguments) + "\\n")
+if any("broken" in os.path.basename(argument) for argument in arguments[:1]):
+    sys.exit(1)
+target = arguments[arguments.index(
+    "--output" if "--output" in arguments else "--screenshot") + 1]
+width, height = (60, 30) if "--views" in arguments else (30, 40)
+
+
+def chunk(kind, body):
+    return (struct.pack(">I", len(body)) + kind + body
+            + struct.pack(">I", zlib.crc32(kind + body) & 0xffffffff))
+
+
+rows = (b"\\x00" + bytes((200, 60, 60)) * width) * height
+with open(target, "wb") as picture:
+    picture.write(b"\\x89PNG\\r\\n\\x1a\\n"
+                  + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+                  + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+'''
+
 # Runs in the child: drives the window and prints what it saw as JSON
 _DRIVER = '''\
 import json, os, sys, time
 from pathlib import Path
 
 tmp, standin = Path(sys.argv[1]), sys.argv[2]
-from PySide6 import QtCore
-from t1prep.gui import theme
+from PySide6 import QtCore, QtGui, QtWidgets
+from t1prep.gui import icons, theme
 from t1prep.gui.launcher import Launcher
 from t1prep.gui.viewer_common import qt_application
+from t1prep.launch import results as res
+
+# The pictures are drawn by the stand-in next to this file, not by the viewers
+res.VOLUME_VIEWER = res.SURFACE_VIEWER = "standin_viewer"
 
 seen = {"vtk": sorted(name for name in sys.modules if name.startswith("vtk"))}
 app = qt_application()
@@ -105,7 +138,12 @@ def rows(win):
             for row in win.model.rows}
 
 
-win = Launcher(command=standin, settings=settings())
+def viewer_calls():
+    log = tmp / "viewer.log"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+win = Launcher(command=standin, settings=settings(), cache=tmp / "cache")
 win.show()
 box = win.options._controls
 seen["run_enabled_when_empty"] = win.run_button.isEnabled()
@@ -180,15 +218,138 @@ seen["found"] = win.add_results(tmp)
 seen["results"] = rows(win)
 win.table.selectRow(0)
 app.processEvents()
-seen["details"] = {"name": win.details.name.text(),
+details = win.details
+seen["details"] = {"name": details.name.full_text(),
                    "side": win.side_switch.current(),
-                   "segmentation": win.details._views["segmentation"].isEnabled(),
-                   "thickness": win.details._views["thickness"].isEnabled()}
+                   "segmentation": details.pictures._buttons["volume"].isEnabled(),
+                   "thickness": details.pictures._buttons["thickness"].isEnabled(),
+                   "shown": details.picture(),
+                   "open": details.open_button.isEnabled()}
 
-# -- the options are kept ------------------------------------------------
+# -- the pictures: there before they are asked for, in a box of one size ---
+# (as T1Prep names the results of sub-..._T1w.nii.gz: without the _T1w)
+LONG = "sub-0123456789_ses-baseline_acq-MPRAGE_run-01_desc-aVeryLongDescriptionOfTheScanAndItsSite"
+report = {"qualitymeasures": {"IQR": {"value": 2.08, "grade": "A-"}}}
+
+
+def results_of(folder, name):
+    for path in ("report/log_%s.json", "mri/p0%s.nii", "mri/m%s.nii",
+                 "surf/lh.central.%s.gii", "surf/rh.central.%s.gii",
+                 "surf/lh.thickness.%s", "surf/rh.thickness.%s"):
+        target = folder / (path % name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(report) if path.endswith(".json") else "")
+
+
+for subject in ("a", "b", LONG):
+    results_of(tmp / "study", subject)
+win.remove_all()
+before = len(viewer_calls())
+seen["study_found"] = win.add_results(tmp / "study")
+seen["waiting_at_once"] = win.previews.waiting()
+seen["count_while_preparing"] = win.count_label.text()
+seen["prepared"] = wait(lambda: win.previews.waiting() == 0)
+cache = tmp / "cache"
+seen["unfinished_left"] = len(list(cache.glob("*.part.png")))
+seen["pictures_of_study"] = len(viewer_calls()) - before
+seen["viewer_calls"] = viewer_calls()[before:]
+names = [row.subject.name for row in win.model.rows]
+boxes, drawn = [], []
+for index in range(len(names)):
+    win.table.selectRow(index)
+    for picture in ("volume", "surface", "thickness"):
+        details.pictures._buttons[picture].click()
+        app.processEvents()
+        boxes.append([details.preview.width(), details.preview.height()])
+        drawn.append(details.preview.has_picture())
+seen["boxes"], seen["drawn_at_once"] = boxes, drawn
+seen["drawn_without_another_render"] = len(viewer_calls()) - before
+win.table.selectRow(names.index(LONG))
+app.processEvents()
+seen["long"] = {"full": details.name.full_text() == LONG, "shown": details.name.text(),
+                "tooltip": details.name.toolTip() == LONG,
+                "body": details.widget().width(), "viewport": details.viewport().width()}
+
+# -- again on request ----------------------------------------------------------
+before = len(viewer_calls())
+win._render_again()
+wait(lambda: win.previews.waiting() == 0)
+seen["rendered_again"] = len(viewer_calls()) - before
+seen["drawn_after_again"] = details.preview.has_picture()
+
+# -- a picture that cannot be drawn is not tried over and over -------------------
+results_of(tmp / "bad", "broken")
+before = len(viewer_calls())
+win.add_results(tmp / "bad")
+wait(lambda: win.previews.waiting() == 0)
+for _ in range(3):
+    win._prepare_pictures()
+    wait(lambda: win.previews.waiting() == 0)
+seen["tries_of_a_broken_one"] = len(viewer_calls()) - before
+win.table.selectRow(len(win.model.rows) - 1)
+wait(lambda: win.previews.waiting() == 0)
+app.processEvents()
+seen["broken_says"] = details.preview.text()
+
+# -- an image of a BIDS dataset whose results an earlier T1Prep wrote ---------------
+dataset = tmp / "dataset"
+image = dataset / "sub-01" / "anat" / "sub-01_T1w.nii.gz"
+image.parent.mkdir(parents=True)
+image.write_text("")
+earlier = dataset / "derivatives" / "T1Prep-v0.1.0" / "sub-01" / "anat"
+earlier.mkdir(parents=True)
+(earlier / "log_sub-01.json").write_text(json.dumps(report))
+(earlier / "p0sub-01.nii").write_text("")
+win.remove_all()
+win.add_images([image])
+win.table.selectRow(0)
+app.processEvents()
+row = win.model.rows[0]
+seen["earlier_version"] = {
+    "volume": row.shown("volume"), "grade": row.grade, "fixed": row.fixed,
+    "folder_shown": details.path.full_text() == str(earlier),
+    "run_writes_elsewhere": str(row.subject.folder) != str(earlier),
+    "side": win.side_switch.current(),
+    "picture": wait(lambda: details.preview.has_picture(), 30)}
+wait(lambda: win.previews.waiting() == 0)
+
+# -- the window is dark, the rows are numbered, the form is short ---------------------
+def lightness(role):
+    return app.palette().color(role).lightness()
+
+
+seen["dark"] = {"window": lightness(QtGui.QPalette.ColorRole.Window),
+                "text": lightness(QtGui.QPalette.ColorRole.WindowText)}
+seen["menus"] = {menu.title(): [item.text() for item in menu.actions() if item.text()]
+                 for menu in win.menuBar().findChildren(QtWidgets.QMenu)}
+win.remove_all()
+win.add_results(tmp / "study")
+vertical = QtCore.Qt.Orientation.Vertical
+seen["numbers"] = {
+    "shown": not win.table.verticalHeader().isHidden(),
+    "texts": [win.model.headerData(row, vertical) for row in range(len(win.model.rows))],
+    "first_name": win.model.index(0, 0).data()}
+seen["form"] = sorted(box)
+
+# -- icons ---------------------------------------------------------------------------
+def painted(name):
+    image = icons.pixmap(name, "#000000", 16, 2.0).toImage()
+    return sum(image.pixelColor(x, y).alpha() > 0
+               for x in range(image.width()) for y in range(image.height()))
+
+
+seen["icons"] = {name: painted(name) for name in icons.NAMES}
+seen["buttons_without_icon"] = [
+    button.text() for button in (
+        win.add_images_button, win.add_folder_button, win.open_results_button,
+        win.run_button, win.stop_button, details.open_button, details.log_link,
+        details.folder_link, *details.pictures._buttons.values())
+    if button.icon().isNull()]
+
+# -- the options and the look are kept ---------------------------------------------
 box["p"].setChecked(True)
 win.close()
-again = Launcher(command=standin, settings=settings())
+again = Launcher(command=standin, settings=settings(), cache=tmp / "cache")
 seen["kept"] = again.options.values()["p"]
 again.close()
 print("RESULT " + json.dumps(seen))
@@ -205,10 +366,13 @@ class TestTheLauncher(unittest.TestCase):
         standin.chmod(0o755)
         driver = cls.tmp / "driver.py"
         driver.write_text(textwrap.dedent(_DRIVER))
+        (cls.tmp / "standin_viewer.py").write_text(textwrap.dedent(_VIEWER))
         environment = dict(
             os.environ, QT_QPA_PLATFORM="offscreen", T1PREP_NO_APPS="1",
+            VIEWER_LOG=str(cls.tmp / "viewer.log"),
             PYTHONPATH=os.pathsep.join(
-                [str(_SRC)] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]))
+                [str(_SRC), str(cls.tmp)]
+                + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]))
         environment.pop("STANDIN", None)
         done = subprocess.run(
             [sys.executable, str(driver), str(cls.tmp), str(standin)],
@@ -289,11 +453,110 @@ class TestTheLauncher(unittest.TestCase):
         self.assertEqual(details["side"], "results")
         self.assertTrue(details["thickness"])
         # The stand-in keeps no corrected image, so there is nothing to
-        # draw the label on once the input is unknown
+        # draw the label on once the input is unknown ...
         self.assertFalse(details["segmentation"])
+        # ... and the panel turns to a picture there is something to show of
+        self.assertEqual(details["shown"], "thickness")
+        self.assertTrue(details["open"])
 
     def test_the_options_are_kept_between_sessions(self):
         self.assertTrue(self.seen["kept"])
+
+    def test_the_pictures_are_there_before_they_are_asked_for(self):
+        # Three images with three pictures each, queued when the results are
+        # opened and not when a row is selected
+        self.assertEqual(self.seen["study_found"], 3)
+        self.assertGreater(self.seen["waiting_at_once"], 0)
+        self.assertIn("preparing", self.seen["count_while_preparing"])
+        self.assertTrue(self.seen["prepared"])
+        self.assertEqual(self.seen["pictures_of_study"], 9)
+        self.assertEqual(self.seen["unfinished_left"], 0)
+        # Going through the rows and the pictures then draws nothing anew
+        self.assertEqual(self.seen["drawn_at_once"], [True] * 9)
+        self.assertEqual(self.seen["drawn_without_another_render"], 9)
+
+    def test_every_picture_gets_the_same_box(self):
+        # The stand-in's pictures are 30 x 40 and 60 x 30; the names are one
+        # letter and ninety
+        boxes = self.seen["boxes"]
+        self.assertEqual(len(boxes), 9)
+        self.assertEqual({tuple(box) for box in boxes}, {tuple(boxes[0])})
+        width, height = boxes[0]
+        self.assertEqual(width, height)
+        self.assertGreater(width, 200)
+
+    def test_a_long_name_is_shortened_not_given_the_room(self):
+        long = self.seen["long"]
+        self.assertTrue(long["full"] and long["tooltip"])
+        self.assertIn("…", long["shown"])
+        self.assertTrue(long["shown"].startswith("sub-0123") and long["shown"].endswith("Site"))
+        # The panel's content is as wide as the panel, not as the name
+        self.assertEqual(long["body"], long["viewport"])
+
+    def test_the_viewers_draw_the_pictures_without_a_window(self):
+        calls = self.seen["viewer_calls"]
+        volumes = [call for call in calls if "--contour" in call]
+        surfaces = [call for call in calls if "--contour" not in call and "--headless" in call]
+        thickness = [call for call in calls if "--output" in call]
+        self.assertEqual((len(volumes), len(surfaces), len(thickness)), (3, 3, 3))
+        for call in volumes:
+            at = call.index("--contour-level")
+            self.assertEqual(call[at + 1:at + 3], ["1.5", "2.5"])    # both borders
+            self.assertIn("--headless", call)
+        for call in thickness:
+            self.assertEqual(call[call.index("--views") + 1], "4")
+        # A picture is written under another name until it is complete
+        for call in calls:
+            target = call[call.index("--output" if "--output" in call else "--screenshot") + 1]
+            self.assertTrue(target.endswith(".part.png"), target)
+
+    def test_the_pictures_of_an_image_are_drawn_again_on_request(self):
+        self.assertEqual(self.seen["rendered_again"], 3)
+        self.assertTrue(self.seen["drawn_after_again"])
+
+    def test_a_picture_that_fails_is_not_tried_over_and_over(self):
+        # Once per picture when it is prepared; asking for it by selecting
+        # the image tries the one that is shown once more
+        self.assertEqual(self.seen["tries_of_a_broken_one"], 3)
+        self.assertEqual(self.seen["broken_says"], "No picture available")
+
+    def test_an_image_shows_the_results_an_earlier_version_left(self):
+        # derivatives/T1Prep-v0.1.0 of a BIDS dataset, while this T1Prep
+        # writes to the folder of its own version
+        earlier = self.seen["earlier_version"]
+        self.assertEqual(earlier["volume"], "done")
+        self.assertEqual(earlier["grade"], "A-")
+        self.assertTrue(earlier["folder_shown"] and earlier["run_writes_elsewhere"])
+        self.assertEqual(earlier["side"], "results")
+        self.assertTrue(earlier["picture"])
+        self.assertFalse(earlier["fixed"])          # it can still be run
+
+    def test_the_window_is_dark_and_only_dark(self):
+        dark = self.seen["dark"]
+        self.assertLess(dark["window"], 60)
+        self.assertGreater(dark["text"], 190)
+        # ... with nothing to switch it by
+        self.assertNotIn("Appearance", self.seen["menus"].get("View", []))
+        self.assertIn("Prepare All Pictures", self.seen["menus"]["View"])
+
+    def test_the_images_are_numbered(self):
+        numbers = self.seen["numbers"]
+        self.assertTrue(numbers["shown"])
+        self.assertEqual(numbers["texts"], ["1", "2", "3"])
+        self.assertEqual(numbers["first_name"], "a")       # the name stays the name
+
+    def test_the_form_leaves_the_settings_of_the_method_out(self):
+        form = self.seen["form"]
+        for option in ("thickness_method", "correct_folding", "median_filter", "pre_fwhm"):
+            self.assertNotIn(option, form)
+        for option in ("amap", "vessel", "nn_backend", "skullstrip", "hemi", "debug"):
+            self.assertIn(option, form)                    # the other expert options stay
+
+    def test_every_button_of_a_file_a_folder_a_run_or_a_view_has_its_icon(self):
+        self.assertEqual(self.seen["buttons_without_icon"], [])
+        for name, pixels in self.seen["icons"].items():
+            with self.subTest(icon=name):
+                self.assertGreater(pixels, 40)
 
 
 class TestTheCommandLine(unittest.TestCase):
