@@ -85,7 +85,7 @@ the following commands are available:
 T1Prep file.nii.gz                              # main CLI (batch + parallel, --multi)
 PyCAT  file.nii.gz                              # same thing, PyCAT banner
 t1prep-run --out-dir out/ file.nii.gz           # single-subject Python entry
-t1prep-gui                                      # desktop launcher
+t1prep-gui                                      # desktop launcher (also: T1Prep_gui)
 CAT_SurfView lh.central.gii                     # surface viewer
 CAT_VolView T1.nii.gz                           # volume viewer
 CAT_PlotHistogram p1*.nii.gz                    # histograms of the inputs
@@ -227,7 +227,7 @@ pip install -e .                    # editable; tracks local edits
 pip install -r requirements.txt     # dependencies only (no T1Prep itself)
 ```
 
-With `pip install -e .` the entry points (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-run`,
+With `pip install -e .` the entry points (`T1Prep`, `PyCAT`, `t1prep-gui`, `T1Prep_gui`, `t1prep-run`,
 `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`,
 `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`) are
 placed in `env/bin`. Activating

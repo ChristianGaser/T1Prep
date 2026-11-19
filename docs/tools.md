@@ -8,7 +8,7 @@ in [viewers.md](viewers.md)).
 
 | Command | What it is |
 |---------|------------|
-| `t1prep-gui` | Desktop launcher: choose images, run the pipeline, browse the results |
+| `t1prep-gui`, `T1Prep_gui` | Desktop launcher: choose images, run the pipeline, browse the results |
 | `CAT_SurfView` / `CAT_VolView` | Surface and volume viewers — see [viewers.md](viewers.md) |
 | `CAT_SurfResampleMulti_ui` | Resample and smooth surface data |
 | `CAT_SurfParameters_ui` | Extract surface parameters |
@@ -48,7 +48,8 @@ t1prep-gui --out-dir /data/results /data/study/*.nii
 t1prep-gui /data/results                          # browse the results of an earlier run
 ```
 
-From a source checkout, without installing: `./scripts/T1Prep_gui`, which takes the same arguments.
+`T1Prep_gui` is the same launcher under a second name. From a source checkout,
+without installing: `./scripts/T1Prep_gui`, which takes the same arguments.
 
 - **Images.** *Add images…*, *Add folder…* (a name pattern, optionally with
   subfolders; folders that hold T1Prep results are left out) or drag and drop.
