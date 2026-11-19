@@ -48,6 +48,40 @@ class TestVtkCompatibility(unittest.TestCase):
         self.assertIsInstance(cat_vol_view.VTK_CURSOR_CROSSHAIR, int)
         self.assertEqual(cat_vol_view.VTK_CURSOR_CROSSHAIR, 10)
 
+    def test_a_window_without_x_gets_no_x_interactor(self):
+        """VTK 9.4+ draws through EGL on Linux without a display, but still
+        hands out the X interactor, whose Initialize() then passes the EGL
+        display to XSync: a segmentation fault in setup(), in every batch
+        call and on CI.  Faked here, so it is held on every platform."""
+        from unittest import mock
+
+        from t1prep.gui import cat_vol_view
+
+        class _Named:
+            def __init__(self, name):
+                self._name = name
+
+            def GetClassName(self):
+                return self._name
+
+        x_interactor = _Named("vtkXRenderWindowInteractor")
+        with mock.patch.object(cat_vol_view, "vtkRenderWindowInteractor",
+                               return_value=x_interactor):
+            on_egl = cat_vol_view._interactor_for(_Named("vtkEGLRenderWindow"))
+            on_osmesa = cat_vol_view._interactor_for(_Named("vtkOSOpenGLRenderWindow"))
+            on_x = cat_vol_view._interactor_for(_Named("vtkXOpenGLRenderWindow"))
+        self.assertEqual(on_egl.GetClassName(), "vtkGenericRenderWindowInteractor")
+        self.assertEqual(on_osmesa.GetClassName(), "vtkGenericRenderWindowInteractor")
+        self.assertIs(on_x, x_interactor)
+
+    def test_the_viewer_s_own_interactor_fits_its_window(self):
+        from t1prep.gui import cat_vol_view
+
+        viewer = CatImageViewer(percentile_range=None)
+        self.assertFalse(viewer.embedded)
+        expected = cat_vol_view._interactor_for(viewer.render_window).GetClassName()
+        self.assertEqual(viewer.interactor.GetClassName(), expected)
+
 
 def _write_volume(path: Path, affine: np.ndarray, shape=(20, 24, 28)):
     """Write a volume whose voxel values encode their own file index."""

@@ -480,6 +480,28 @@ def _mirror_polydata_x(poly: vtkPolyData) -> vtkPolyData:
     return f.GetOutput()
 
 
+def _interactor_for(window: vtkRenderWindow) -> vtkRenderWindowInteractor:
+    """Return an interactor that can be initialised on *window*.
+
+    VTK 9.4+ chooses the window type at run time on Linux: without an X
+    display it renders through EGL (or OSMesa), but vtkRenderWindowInteractor()
+    still gives the X interactor.  Its Initialize() -- called by setup(), and
+    by the window's first Render() otherwise -- then hands the EGL display to
+    XSync, and the process dies with a segmentation fault that no except
+    clause catches: every batch call on a machine without X (a cluster node,
+    an SSH session, CI).  Such a window has no screen to take the mouse or the
+    keys from, so it gets the generic interactor, which has no event loop and
+    leaves X alone.
+    """
+    interactor = vtkRenderWindowInteractor()
+    if (interactor.GetClassName() == "vtkXRenderWindowInteractor"
+            and window.GetClassName() != "vtkXOpenGLRenderWindow"):
+        from vtkmodules.vtkRenderingUI import vtkGenericRenderWindowInteractor
+
+        interactor = vtkGenericRenderWindowInteractor()
+    return interactor
+
+
 class CatImageViewer:
     """Single-window orthogonal viewer with SPM12-like layout.
 
@@ -618,7 +640,7 @@ class CatImageViewer:
         self.embedded = render_window is not None and interactor is not None
         self.render_window: vtkRenderWindow = render_window or vtkRenderWindow()
         self.interactor: vtkRenderWindowInteractor = (
-            interactor or vtkRenderWindowInteractor()
+            interactor or _interactor_for(self.render_window)
         )
         # Viewport bounds computed in setup – default equal quadrants
         self._viewports: List[Tuple[float, float, float, float]] = [
