@@ -82,7 +82,10 @@ From a source checkout, without installing: `./scripts/T1Prep_gui`, which takes 
   earlier run without processing anything.
 - **Pictures.** They are drawn ahead, in the background: for the hundred
   images around the selected one, the kind of picture that is shown first, so
-  that stepping through a study finds them ready. *View → Prepare All
+  that stepping through a study finds them ready. Several are drawn at once —
+  on half the cores, eight at most, and at low priority, so that the picture
+  of the selected image comes first — and one at a time while a run is
+  going. *View → Prepare All
   Pictures* does the same for the whole table, and the round arrow under the
   picture draws those of the selected image again. The pictures are kept in
   the cache folder of the application until their files change (about a

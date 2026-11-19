@@ -101,6 +101,21 @@ PICTURE_VERSION = 2
 Job = Tuple[Subject, str, str]
 
 
+#: The command that starts a process at low priority, where there is one
+_NICE = shutil.which("nice")
+
+
+def render_processes() -> int:
+    """How many pictures are rendered at once on this machine.
+
+    A render is one process on one core, with about 0.6 GB at its peak, and
+    they do not get in each other's way: eight took 6.7 times the pictures
+    of one on a 24-core machine.  Half the cores, eight at most, leave the
+    desktop and a run its share.
+    """
+    return max(1, min(8, (os.cpu_count() or 2) // 2))
+
+
 class Previews(QtCore.QObject):
     """The pictures of the results panel, rendered by the viewers without a window.
 
@@ -108,8 +123,9 @@ class Previews(QtCore.QObject):
     the files it is drawn from, with their sizes and dates — so it is rendered
     once and again only after a run has replaced those files.
 
-    The pictures are rendered one at a time, each in a process of its own.
-    The one the user is looking at goes first (:meth:`request`).  After it
+    Each picture is rendered in a process of its own, several of them at a
+    time (:meth:`set_workers`).  The one the user is looking at goes first
+    (:meth:`request`), at once and whatever else is being rendered.  After it
     come those :meth:`prepare` was last given, in its order: the pictures of
     the images around the selected one, so they are there when the selection
     moves on.
@@ -117,6 +133,8 @@ class Previews(QtCore.QObject):
     Args:
         folder: Where the pictures are kept; the cache folder of the
             application by default.
+        workers: How many are rendered at once; :func:`render_processes` by
+            default.
     """
 
     ready = Signal(str, str)        # key, path of the PNG ("" when it failed)
@@ -125,22 +143,20 @@ class Previews(QtCore.QObject):
     #: A render that takes longer than this is ended, in milliseconds
     TIMEOUT = 120_000
 
-    def __init__(self, parent=None, folder: Optional[os.PathLike] = None):
+    def __init__(self, parent=None, folder: Optional[os.PathLike] = None,
+                 workers: Optional[int] = None):
         super().__init__(parent)
         if folder is None:
             base = QtCore.QStandardPaths.writableLocation(
                 QtCore.QStandardPaths.StandardLocation.CacheLocation)
             folder = Path(base or tempfile.gettempdir()) / "previews"
         self.folder = Path(folder)
-        self._process: Optional[QtCore.QProcess] = None
-        self._running: Optional[Job] = None
+        self._workers = max(1, int(workers or render_processes()))
+        #: The renders that are running, each with the picture it draws
+        self._running: Dict[QtCore.QProcess, Job] = {}
         self._wanted: Optional[Job] = None
         self._queue: List[Job] = []
         self._failed: Set[str] = set()
-        self._watchdog = QtCore.QTimer(self)
-        self._watchdog.setSingleShot(True)
-        self._watchdog.setInterval(self.TIMEOUT)
-        self._watchdog.timeout.connect(self._timed_out)
         self._discard_old()
 
     def _discard_old(self, days: int = 30) -> None:
@@ -173,15 +189,34 @@ class Previews(QtCore.QObject):
         # A picture appears under its name only when it is complete
         return self.folder / f"{key}.part.png"
 
+    def workers(self) -> int:
+        """How many pictures are rendered at once."""
+        return self._workers
+
+    def set_workers(self, number: int) -> None:
+        """Render *number* pictures at once from now on.
+
+        Renders that are running are left to finish; with a smaller number
+        no new one starts until enough of them have.
+        """
+        self._workers = max(1, int(number))
+        self._next()
+
+    def rendering(self) -> int:
+        """How many renders are running."""
+        return len(self._running)
+
     def waiting(self) -> int:
         """How many pictures are being rendered or still to render."""
-        return (len(self._queue) + (self._running is not None)
-                + (self._wanted is not None))
+        return len(self._queue) + len(self._running) + (self._wanted is not None)
+
+    def _is_rendering(self, key: str) -> bool:
+        return any(job[2] == key for job in self._running.values())
 
     def request(self, subject: Subject, picture: str, key: str) -> None:
-        """Render the picture *key* next; :attr:`ready` says when it is there."""
+        """Render the picture *key* now; :attr:`ready` says when it is there."""
         self._failed.discard(key)
-        if self._running is not None and self._running[2] == key:
+        if self._is_rendering(key):
             return
         self._wanted = (subject, picture, key)
         self._next()
@@ -208,26 +243,46 @@ class Previews(QtCore.QObject):
                 pass
 
     def _next(self) -> None:
-        """Start the next render unless one is running."""
-        while self._process is None:
+        """Start as many renders as there is room for.
+
+        The picture that is asked for does not wait for room: it is what the
+        user is looking at an empty box for, so it gets a process beyond the
+        number that are rendered ahead.
+        """
+        while True:
             if self._wanted is not None:
                 job, self._wanted = self._wanted, None
-            elif self._queue:
+                ahead = False
+            elif self._queue and len(self._running) < self._workers:
                 job = self._queue.pop(0)
+                # The first of the queue is the picture nearest to what is
+                # shown; the others are drawn ahead and yield to it
+                ahead = bool(self._running)
             else:
                 return
             key = job[2]
+            if self._is_rendering(key):
+                continue                # its "ready" is on the way
             if self.path(key).is_file():
                 self.ready.emit(key, str(self.path(key)))
-            elif not self._start(job):
+            elif not self._start(job, ahead):
                 self._failed.add(key)
                 self.ready.emit(key, "")
 
-    def _start(self, job: Job) -> bool:
+    def _start(self, job: Job, ahead: bool = False) -> bool:
+        """Start the render of *job*; *ahead* of need it runs at low priority.
+
+        Several renders starting together slow each other down on a machine
+        that is busy, and the picture the user is waiting for is one of
+        them.  The others are therefore run "nice": they take the time that
+        is free and give way to it.
+        """
         subject, picture, key = job
         command = res.preview(subject, picture, self._unfinished(key), PREVIEW_SIZE)
         if command is None:
             return False
+        if ahead and _NICE:
+            command = [_NICE, "-n", "10"] + command
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -238,31 +293,28 @@ class Previews(QtCore.QObject):
             environment.insert(variable, value)
         process.setProcessEnvironment(environment)
         process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.MergedChannels)
-        process.finished.connect(self._finished)
-        process.errorOccurred.connect(self._error)
-        self._process, self._running = process, job
-        self._watchdog.start()
+        process.finished.connect(lambda *_args, p=process: self._finished(p))
+        process.errorOccurred.connect(lambda _error, p=process: self._error(p))
+        # One that hangs must not hold its place for good
+        watchdog = QtCore.QTimer(process)
+        watchdog.setSingleShot(True)
+        watchdog.timeout.connect(process.kill)      # "finished" follows
+        watchdog.start(self.TIMEOUT)
+        self._running[process] = job
         process.start(command[0], command[1:])
         return True
 
-    def _error(self, _error) -> None:
+    def _error(self, process: QtCore.QProcess) -> None:
         # A process that crashed still reports "finished"; only one that did
         # not start gets no further signal
-        if (self._process is not None and self._process.state()
-                == QtCore.QProcess.ProcessState.NotRunning):
-            self._finished()
+        if process.state() == QtCore.QProcess.ProcessState.NotRunning:
+            self._finished(process)
 
-    def _timed_out(self) -> None:
-        if self._process is not None:
-            self._process.kill()        # "finished" follows
-
-    def _finished(self, *_args) -> None:
-        process, job = self._process, self._running
-        if process is None or job is None:
-            return
-        self._watchdog.stop()
-        self._process = self._running = None
-        process.deleteLater()
+    def _finished(self, process: QtCore.QProcess) -> None:
+        job = self._running.pop(process, None)
+        if job is None:
+            return                      # reported twice: as an error and as finished
+        process.deleteLater()           # and its watchdog with it
         key = job[2]
         part, path = self._unfinished(key), self.path(key)
         done = False
@@ -286,10 +338,10 @@ class Previews(QtCore.QObject):
     def shutdown(self) -> None:
         self._wanted = None
         self._queue = []
-        self._watchdog.stop()
-        if self._process is not None:
-            self._process.kill()
-            self._process.waitForFinished(1000)
+        for process in list(self._running):
+            process.kill()
+        for process in list(self._running):
+            process.waitForFinished(1000)
 
 
 class Viewers(QtCore.QObject):
@@ -378,6 +430,7 @@ class Launcher(QtWidgets.QMainWindow):
 
         self.model = SubjectModel(self)
         self.previews = Previews(self, cache)
+        self._render_processes = self.previews.workers()
         self.previews.ready.connect(self._preview_ready)
         self.previews.changed.connect(self._update_count)
         self.viewers = Viewers(self)
@@ -954,6 +1007,9 @@ class Launcher(QtWidgets.QMainWindow):
         process.errorOccurred.connect(self._process_error)
         self.process = process
 
+        # The run comes first: a segmentation needs 10-16 GB and the surfaces
+        # every core, so the pictures are rendered one at a time while it lasts
+        self.previews.set_workers(1)
         self.log.clear()
         self.log.appendPlainText(opt.format_command(command) + "\n")
         self.options.set_locked(True)
@@ -1126,6 +1182,7 @@ class Launcher(QtWidgets.QMainWindow):
         self.options.set_locked(False)
         self.table.set_spinning(False)
         self._say(message)
+        self.previews.set_workers(self._render_processes)
         self._rows_changed()
 
     # ------------------------------------------------------------------

@@ -246,6 +246,114 @@ class TestReadingASurface(unittest.TestCase):
         np.testing.assert_array_equal(cells, triangles)
 
 
+class TestValuesAndPointsAreHandedOverWhole(unittest.TestCase):
+    """The viewer set overlay values and moved points one vertex at a time:
+    a quarter of a second for a subject, on every start."""
+
+    def test_an_overlay_keeps_its_values(self):
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        from vtkmodules.vtkCommonCore import vtkDoubleArray
+        from t1prep.gui.cat_surf_view import _double_array, _split_scalars, read_scalars
+
+        values = np.array([0.5, np.pi, -2.0, 1e-12, 4.25], dtype=np.float32)
+        array = _double_array(values)
+        self.assertIsInstance(array, vtkDoubleArray)
+        np.testing.assert_array_equal(vtk_to_numpy(array), values.astype(np.float64))
+        left, right = _split_scalars(array, 2, 3)
+        np.testing.assert_array_equal(vtk_to_numpy(left), values[:2].astype(np.float64))
+        np.testing.assert_array_equal(vtk_to_numpy(right), values[2:].astype(np.float64))
+        with tempfile.TemporaryDirectory() as folder:
+            text = Path(folder) / "overlay.txt"
+            text.write_text("1.5\n\nnan\n-3\n")
+            np.testing.assert_array_equal(vtk_to_numpy(read_scalars(str(text))),
+                                          [1.5, 0.0, -3.0])
+
+    def test_the_shift_moves_the_points_as_setting_them_one_by_one_did(self):
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        from vtkmodules.vtkFiltersSources import vtkSphereSource
+        from t1prep.gui.cat_surf_view import Viewer
+
+        source = vtkSphereSource()
+        source.SetRadius(57.3)
+        source.SetCenter(3.7, 11.1, -4.9)
+        source.SetThetaResolution(24)
+        source.SetPhiResolution(24)
+        source.Update()
+        poly = source.GetOutput()
+        before = vtk_to_numpy(poly.GetPoints().GetData()).copy()
+        self.assertEqual(before.dtype, np.float32)
+        shift = Viewer._shift_y_to(None, poly, -100.0)
+        after = vtk_to_numpy(poly.GetPoints().GetData())
+        # In double precision, stored in single: the loop's arithmetic
+        expected = before.copy()
+        expected[:, 1] = (before[:, 1].astype(np.float64) + shift).astype(np.float32)
+        np.testing.assert_array_equal(after, expected)
+        self.assertAlmostEqual(shift, -100.0 - float(before[:, 1].min()), places=4)
+        # ... and VTK knows: the bounds are those of the moved surface
+        self.assertAlmostEqual(poly.GetBounds()[2], -100.0, places=3)
+        self.assertEqual(Viewer._shift_y_to(None, None), 0.0)
+
+
+class TestTheCurvatureIsComputedOnce(unittest.TestCase):
+    """The mean curvature of a surface was computed three times on the way to
+    the window: on loading, again before the shading and once more for it."""
+
+    def setUp(self):
+        from vtkmodules.vtkFiltersGeneral import vtkCurvatures
+        from vtkmodules.vtkFiltersSources import vtkSphereSource
+
+        source = vtkSphereSource()
+        source.SetRadius(50.0)
+        source.Update()
+        self.poly = source.GetOutput()
+        self.filter = vtkCurvatures()
+        self.filter.SetInputData(self.poly)
+        self.filter.SetCurvatureTypeToMean()
+        self.filter.Update()
+
+    def holds(self, poly=None):
+        from t1prep.gui.cat_surf_view import Viewer
+
+        return Viewer._holds_curvature(self.filter, poly or self.poly)
+
+    def test_what_was_computed_is_kept(self):
+        self.assertTrue(self.holds())
+
+    def test_an_overlay_on_the_surface_does_not_change_its_curvature(self):
+        # Attaching values marks the surface as modified, which made VTK run
+        # the filter again; the shape is what the curvature depends on
+        from t1prep.gui.cat_surf_view import _double_array
+
+        values = _double_array(np.zeros(self.poly.GetNumberOfPoints()))
+        values.SetName("thickness")
+        self.poly.GetPointData().SetScalars(values)
+        self.poly.Modified()
+        self.assertTrue(self.holds())
+
+    def test_a_changed_shape_does(self):
+        self.poly.GetPoints().SetPoint(0, 0.0, 0.0, 60.0)
+        self.poly.GetPoints().Modified()
+        self.assertFalse(self.holds())
+
+    def test_a_shading_written_over_it_does(self):
+        from t1prep.gui.cat_surf_view import _double_array
+
+        shading = _double_array(np.zeros(self.poly.GetNumberOfPoints()))
+        shading.SetName("shading")
+        self.filter.GetOutput().GetPointData().SetScalars(shading)
+        self.assertFalse(self.holds())
+
+    def test_another_surface_is_another_matter(self):
+        from vtkmodules.vtkFiltersSources import vtkSphereSource
+
+        other = vtkSphereSource()
+        other.Update()
+        self.assertFalse(self.holds(other.GetOutput()))
+        from t1prep.gui.cat_surf_view import Viewer
+
+        self.assertFalse(Viewer._holds_curvature(None, self.poly))
+
+
 def _has_a_window_system() -> bool:
     if sys.platform in ("darwin", "win32"):
         return True
@@ -261,6 +369,14 @@ class TestTheSurfaceViewerWritesItsPictureOffScreen(_WithATemporaryFolder):
 
         seen = {}
         show = viewer.Viewer.show
+        seen["curvatures"] = 0
+
+        class Counted(viewer.vtkCurvatures):
+            def Update(self):
+                seen["curvatures"] += 1
+                return super().Update()
+
+        viewer.vtkCurvatures = Counted
 
         def watched_show(self):
             seen["kept_off_the_screen"] = bool(self.testAttribute(
@@ -286,6 +402,10 @@ class TestTheSurfaceViewerWritesItsPictureOffScreen(_WithATemporaryFolder):
         self.assertTrue(seen["written"])
         self.assertTrue(seen["kept_off_the_screen"])
         self.assertEqual(seen["views"], 4)
+        # Two hemispheres (the right one is found by its name), one
+        # curvature each: computed when the surface was loaded and not again
+        # for its shading -- that used to make four, and six with an overlay
+        self.assertEqual(seen["curvatures"], 2)
         from PySide6 import QtGui
 
         image = QtGui.QImage(str(picture))

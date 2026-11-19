@@ -174,9 +174,12 @@ seen["added"] = [win.add_images(images + [data / "notes.txt"]), win.add_images(i
 seen["run_enabled_with_images"] = win.run_button.isEnabled()
 
 # -- a run: one image passes, one fails ----------------------------------
+seen["renders"] = {"before": win.previews.workers()}
 seen["started"] = win.start()
+seen["renders"]["in_a_run"] = win.previews.workers()
 seen["locked_while_running"] = not box["seg"].isEnabled()
 seen["finished"] = wait(lambda: not win.is_running())
+seen["renders"]["after"] = win.previews.workers()
 seen["steps_logged"] = win.log.toPlainText().count("  25%  step")
 seen["first_run"] = {"rows": rows(win), "status": win.status_label.text(),
                      "log_shown": win.log.isVisible(), "count": win.count_label.text(),
@@ -276,6 +279,29 @@ win._render_again()
 wait(lambda: win.previews.waiting() == 0)
 seen["rendered_again"] = len(viewer_calls()) - before
 seen["drawn_after_again"] = details.preview.has_picture()
+
+# -- several are drawn at once, and the one that is looked at does not wait ----------
+keys = [win.previews.key(row.found(), picture) for row in win.model.rows
+        for picture in ("volume", "surface", "thickness")]
+
+
+def draw_all_again(workers):
+    win.table.clearSelection()
+    wait(lambda: win.previews.waiting() == 0)
+    win.previews.set_workers(workers)
+    win.previews.forget(keys)
+    win._prepare_pictures()
+    return win.previews.rendering()
+
+
+at_once = {"one": draw_all_again(1)}
+win.table.selectRow(2)          # a picture other than the one being drawn
+at_once["and_the_one_asked_for"] = win.previews.rendering()
+at_once["three"] = draw_all_again(3)
+wait(lambda: win.previews.waiting() == 0)
+at_once["all_there"] = all(win.previews.path(key).is_file() for key in keys)
+at_once["none_left"] = win.previews.rendering()
+seen["at_once"] = at_once
 
 # -- a picture that cannot be drawn is not tried over and over -------------------
 results_of(tmp / "bad", "broken")
@@ -513,6 +539,27 @@ class TestTheLauncher(unittest.TestCase):
     def test_the_pictures_of_an_image_are_drawn_again_on_request(self):
         self.assertEqual(self.seen["rendered_again"], 3)
         self.assertTrue(self.seen["drawn_after_again"])
+
+    def test_several_pictures_are_drawn_at_once(self):
+        at_once = self.seen["at_once"]
+        self.assertEqual(at_once["one"], 1)
+        self.assertEqual(at_once["three"], 3)
+        self.assertTrue(at_once["all_there"])
+        self.assertEqual(at_once["none_left"], 0)
+
+    def test_the_picture_that_is_looked_at_does_not_wait_for_room(self):
+        # One render at a time, and it is busy with a picture drawn ahead:
+        # the one of the selected image starts beside it
+        self.assertEqual(self.seen["at_once"]["and_the_one_asked_for"], 2)
+
+    def test_a_run_leaves_one_render_at_a_time(self):
+        from t1prep.gui.launcher import render_processes
+
+        renders = self.seen["renders"]
+        self.assertEqual(renders["before"], render_processes())
+        self.assertTrue(1 <= renders["before"] <= 8)
+        self.assertEqual(renders["in_a_run"], 1)
+        self.assertEqual(renders["after"], renders["before"])
 
     def test_a_picture_that_fails_is_not_tried_over_and_over(self):
         # Once per picture when it is prepared; asking for it by selecting

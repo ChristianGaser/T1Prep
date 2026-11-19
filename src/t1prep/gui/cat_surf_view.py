@@ -1020,18 +1020,20 @@ def order_by_hemisphere(filename, own, other):
     return own, other
 
 
+def _double_array(values) -> vtkDoubleArray:
+    """One value per vertex as the array VTK takes them in.
+
+    Handed over whole.  Setting the values one by one in a loop took 50 ms
+    for the 150 000 vertices of a hemisphere, on every overlay that is read.
+    """
+    return numpy_to_vtk(np.ascontiguousarray(values, dtype=np.float64), deep=True)
+
+
 def _split_scalars(arr: vtkDoubleArray, n_left: int, n_right: int) -> Tuple[vtkDoubleArray, vtkDoubleArray]:
     """Split a concatenated LH+RH scalar array into per-hemisphere arrays."""
     values = vtk_to_numpy(arr)
-
-    def _to_vtk(chunk) -> vtkDoubleArray:
-        out = vtkDoubleArray()
-        out.SetNumberOfTuples(len(chunk))
-        for i, v in enumerate(chunk):
-            out.SetValue(i, float(v))
-        return out
-
-    return _to_vtk(values[:n_left]), _to_vtk(values[n_left:n_left + n_right])
+    return (_double_array(values[:n_left]),
+            _double_array(values[n_left:n_left + n_right]))
 
 
 @lru_cache(maxsize=64)
@@ -1771,12 +1773,7 @@ def _read_spm_overlay(filename: str) -> vtkDoubleArray:
             break
     if data_arr is None:
         raise RuntimeError(f"No scalar data found in SPM overlay {filename}")
-    data_arr = np.nan_to_num(data_arr, nan=0.0)
-    out = vtkDoubleArray()
-    out.SetNumberOfTuples(len(data_arr))
-    for i, v in enumerate(data_arr):
-        out.SetValue(i, float(v))
-    return out
+    return _double_array(np.nan_to_num(data_arr, nan=0.0))
 
 
 def _is_freesurfer_morph(filename: str) -> bool:
@@ -1823,10 +1820,7 @@ def read_scalars(filename: str) -> vtkDoubleArray:
             elif img and img.GetPointData() and img.GetPointData().GetNumberOfArrays() > 0:
                 arr = img.GetPointData().GetArray(0)
             if arr:
-                npv = np.nan_to_num(vtk_to_numpy(arr).astype(float), nan=0.0)
-                out = vtkDoubleArray(); out.SetNumberOfTuples(len(npv))
-                for i, v in enumerate(npv): out.SetValue(i, float(v))
-                return out
+                return _double_array(np.nan_to_num(vtk_to_numpy(arr).astype(float), nan=0.0))
         # fallback with nibabel
         try:
             g = _nib_load_gifti(filename)
@@ -1843,10 +1837,7 @@ def read_scalars(filename: str) -> vtkDoubleArray:
                 data_arr = d.data.reshape(-1).astype(float); break
         if data_arr is None:
             raise RuntimeError(f"No scalar data array found in {filename}")
-        data_arr = np.nan_to_num(data_arr, nan=0.0)
-        out = vtkDoubleArray(); out.SetNumberOfTuples(len(data_arr))
-        for i, v in enumerate(data_arr): out.SetValue(i, float(v))
-        return out
+        return _double_array(np.nan_to_num(data_arr, nan=0.0))
 
     # --- Case 2: FreeSurfer texture data (thickness/curv/sulc, with or without extension) ---
     # Only when the file really carries the curv magic: nibabel happily
@@ -1854,10 +1845,8 @@ def read_scalars(filename: str) -> vtkDoubleArray:
     if _is_freesurfer_morph(filename):
         try:
             from nibabel.freesurfer.io import read_morph_data
-            fs = np.nan_to_num(read_morph_data(filename).astype(float), nan=0.0)
-            out = vtkDoubleArray(); out.SetNumberOfTuples(len(fs))
-            for i, v in enumerate(fs): out.SetValue(i, float(v))
-            return out
+            return _double_array(
+                np.nan_to_num(read_morph_data(filename).astype(float), nan=0.0))
         except Exception as exc:
             note(f"{Path(filename).name} does not read as FreeSurfer morph "
                  f"data ({exc}); trying the remaining formats")
@@ -1884,14 +1873,14 @@ def read_scalars(filename: str) -> vtkDoubleArray:
                     continue
     if not data:
         raise RuntimeError(f"Unsupported overlay format for {filename}. Use GIFTI, FreeSurfer morph, or text.")
-    data_np = np.nan_to_num(np.array(data, dtype=float), nan=0.0)
-    out = vtkDoubleArray(); out.SetNumberOfTuples(len(data_np))
-    for i, v in enumerate(data_np): out.SetValue(i, float(v))
-    return out
+    return _double_array(np.nan_to_num(np.array(data, dtype=float), nan=0.0))
 
 # ---- Title helper ----
 #: How many views a folded surface can be shown in (``--views``)
 MONTAGE_VIEWS = (6, 4, 2)
+
+#: The name vtkCurvatures gives the mean curvature it computes
+CURVATURE_ARRAY = "Mean_Curvature"
 
 #: Share of the window's height the colour bar and its labels take
 COLORBAR_STRIP = 0.14
@@ -4330,12 +4319,19 @@ class Viewer(QtWidgets.QMainWindow):
                     source = [left, right]
 
         values: List[Optional["np.ndarray"]] = []
-        for poly, shown in zip(source, (self.poly_l, self.poly_r)):
+        filters = (getattr(self, 'curv_l', None), getattr(self, 'curv_r', None))
+        for poly, shown, own in zip(source, (self.poly_l, self.poly_r), filters):
             if poly is None or shown is None:
                 values.append(None)
                 continue
             if poly.GetNumberOfPoints() != shown.GetNumberOfPoints():
                 poly = shown          # not the same subject: use what is shown
+            if poly is shown and Viewer._holds_curvature(own, shown):
+                # The surface that is shown is the folded one, and its
+                # curvature is what the viewer computed when it loaded it
+                values.append(vtk_to_numpy(
+                    own.GetOutput().GetPointData().GetScalars()).astype(float))
+                continue
             curvature = vtkCurvatures()
             curvature.SetInputData(poly)
             curvature.SetCurvatureTypeToMean()
@@ -4345,12 +4341,36 @@ class Viewer(QtWidgets.QMainWindow):
                           if scalars is not None else None)
         return values
 
+    @staticmethod
+    def _holds_curvature(filt, poly) -> bool:
+        """Whether the output of the curvature filter *filt* still carries the
+        curvature of *poly*.
+
+        It does until a shading is written over it or the shape of the surface
+        changes.  The shape, not the surface as a whole: an overlay attached
+        to the surface makes it "modified" as far as VTK is concerned, and the
+        curvature does not depend on it.
+        """
+        if filt is None or poly is None or filt.GetInput() is not poly:
+            return False
+        output, points, cells = filt.GetOutput(), poly.GetPoints(), poly.GetPolys()
+        if output is None or points is None or cells is None:
+            return False
+        if filt.GetMTime() < max(points.GetMTime(), cells.GetMTime()):
+            return False
+        scalars = output.GetPointData().GetScalars()
+        return (scalars is not None and scalars.GetName() == CURVATURE_ARRAY
+                and scalars.GetNumberOfTuples() == poly.GetNumberOfPoints())
+
     def _apply_underlay(self):
         """Put the current shading on the surface and rescale its colours."""
-        # Recompute the curvature, which the previous shading overwrote
+        # Recompute the curvature where the previous shading overwrote it.
+        # (It used to be recomputed in any case, and once more for the
+        # shading: three times for a surface that had just been loaded.)
         for filt, poly in ((getattr(self, 'curv_l', None), self.poly_l),
                            (getattr(self, 'curv_r', None), self.poly_r)):
-            if filt is not None and poly is not None:
+            if (filt is not None and poly is not None
+                    and not Viewer._holds_curvature(filt, poly)):
                 filt.SetInputData(poly)
                 filt.Modified()
                 filt.Update()
@@ -4695,10 +4715,12 @@ class Viewer(QtWidgets.QMainWindow):
         pts = poly.GetPoints()
         if pts is None:
             return 0.0
-        n = pts.GetNumberOfPoints()
-        for i in range(n):
-            x, y, z = pts.GetPoint(i)
-            pts.SetPoint(i, x, y + y_shift, z)
+        # On the array of the points itself, not point by point (which took
+        # 80 ms per hemisphere).  Added in double precision and stored at the
+        # precision of the points, as setting them one by one did.
+        coords = vtk_to_numpy(pts.GetData())
+        coords[:, 1] = (coords[:, 1].astype(np.float64) + y_shift).astype(coords.dtype)
+        pts.GetData().Modified()
         # The points were moved in place, so VTK has to be told: bounds are
         # cached, and everything framed from them — the cameras, the placement
         # of the flat maps — would otherwise use the position before the shift
