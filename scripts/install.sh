@@ -598,6 +598,7 @@ main() {
   echo "  T1Prep                 # main CLI (batch + parallel, --multi)"
   echo "  PyCAT                  # T1Prep under a second name, PyCAT banner"
   echo "  t1prep-gui             # desktop launcher (images, options, run, results)"
+  echo "  T1Prep_gui             # the same launcher under a second name"
   echo "  t1prep-run             # single-subject Python entry"
   echo "  CAT_SurfView           # surface viewer"
   echo "  CAT_VolView            # volume viewer (3 orthogonal slices)"

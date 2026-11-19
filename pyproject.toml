@@ -73,6 +73,9 @@ tinygrad = ["tinygrad==0.14.0; python_version >= '3.11'"]
 # filesystems (macOS), where ``t1prep`` and ``T1Prep`` are the same path.
 t1prep-run = "t1prep.t1prep:main"
 t1prep-gui = "t1prep.gui.launcher:main"
+# Same launcher under the name of the source-tree wrapper scripts/T1Prep_gui,
+# so one spelling works installed and from a checkout.
+T1Prep_gui = "t1prep.gui.launcher:main"
 CAT_SurfView = "t1prep.gui.cat_surf_view:main"
 CAT_VolView = "t1prep.gui.cat_vol_view:main"
 CAT_PlotHistogram = "t1prep.plot_histogram:main"
@@ -95,7 +98,8 @@ package-dir = {"" = "src"}
 # works because setuptools dumps them all into the same bin/ directory.
 # Skipped on purpose:
 #   - install.sh / activate_env.sh / run_with_env.sh  (bootstrappers)
-#   - T1Prep_gui                                      (dev launcher; installed: t1prep-gui)
+#   - T1Prep_gui                                      (dev launcher; installed as the
+#                                                      console scripts t1prep-gui and T1Prep_gui)
 #   - dice.sh                                         (use `python -m t1prep.dice`)
 #   - the viewers                                     (console scripts:
 #                                                      CAT_SurfView, CAT_VolView)
