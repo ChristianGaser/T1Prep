@@ -57,7 +57,7 @@ following commands are available:
 | --- | --- |
 | `T1Prep` | main CLI — batch + parallel processing (`--multi`) |
 | `PyCAT` | `T1Prep` under a second name; identical, only the banner differs |
-| `t1prep-gui` | desktop launcher: choose images, run, browse the results |
+| `t1prep-gui`, `T1Prep_gui` | desktop launcher: choose images, run, browse the results |
 | `t1prep-run` | single-subject Python entry |
 | `CAT_SurfView` | surface viewer |
 | `CAT_VolView` | volume viewer (3 orthogonal slices) |

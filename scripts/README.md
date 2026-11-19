@@ -4,7 +4,7 @@ This directory contains the shell scripts behind the T1Prep command-line interfa
 
 > **Installed usage:** after `pip install` (or the bash bootstrapper), these
 > entry points are placed into the environment's `bin/` directory — put that on
-> your `PATH` and call them directly (`T1Prep`, `PyCAT`, `t1prep-gui`, `t1prep-run`,
+> your `PATH` and call them directly (`T1Prep`, `PyCAT`, `t1prep-gui`, `T1Prep_gui`, `t1prep-run`,
 > `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`,
 > `t1prep-download-models`, `t1prep-make-apps`, `t1prep-bbreg`, `CAT_VolDiff`,
 > `CAT_GrepJson`, the `CAT_*_ui` helpers, `parallelize` and the longitudinal scripts). The
@@ -94,8 +94,8 @@ the banner correct either way.
 ### `T1Prep_gui`
 
 Opens the T1Prep launcher (choose images and options, run the pipeline, browse
-the results) from the source tree (installed: `t1prep-gui`). The arguments are
-those of `t1prep-gui`.
+the results) from the source tree (installed: `t1prep-gui`, or under this
+script's name `T1Prep_gui`). The arguments are those of `t1prep-gui`.
 
 ```bash
 # Open the window

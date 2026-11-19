@@ -68,7 +68,7 @@ T1Prep is on PyPI and needs nothing but Python:
 python3 -m pip install T1Prep
 ```
 
-That places every command — `T1Prep` (aka `PyCAT`), `t1prep-gui`, `t1prep-run`,
+That places every command — `T1Prep` (aka `PyCAT`), `t1prep-gui` (aka `T1Prep_gui`), `t1prep-run`,
 `CAT_SurfView`, `CAT_VolView` and the helpers — into the active environment's
 `bin/`. Model
 weights are fetched on the first run (or ahead of time with
@@ -110,7 +110,7 @@ Installed alongside the pipeline, and usable on their own:
 |---------|------------|
 | `CAT_SurfView` | Surface viewer: overlays, atlases, cluster tables, figures |
 | `CAT_VolView` | Volume viewer: three orthogonal slices, overlays, montages |
-| `t1prep-gui` | Desktop launcher: choose images, run the pipeline, browse the results |
+| `t1prep-gui`, `T1Prep_gui` | Desktop launcher: choose images, run the pipeline, browse the results |
 | `CAT_SurfResampleMulti_ui`, `CAT_SurfParameters_ui`, `CAT_Surf2ROIMulti_ui` | Command-line helpers for surface post-processing: resampling and smoothing, surface parameters, ROI values |
 | `CAT_VolDiff`, `CAT_VolSmooth_ui` | Voxel-wise volume differences (`diff_*` / `diffrel_*`); volume smoothing |
 | `CAT_PlotHistogram` | Histograms of volumes, surfaces or text data |
