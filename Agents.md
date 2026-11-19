@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Overview
-This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and the Qt launcher lives in `src/t1prep/gui/` on top of `src/t1prep/launch/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`, PyCAT banner), `t1prep-gui`, `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`.
+This repository contains **T1Prep**, a Python-based pipeline for preprocessing and segmenting T1-weighted MRI data. The project supports tasks such as bias-field correction, segmentation, lesion detection, cortical surface reconstruction, and integration with CAT12. The code lives in the `src` directory, source-tree/dev helper scripts are in `scripts/`, and the Qt launcher lives in `src/t1prep/gui/` on top of `src/t1prep/launch/`. Installed entry points (in the environment's `bin/`): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`, PyCAT banner), `t1prep-gui` (also `T1Prep_gui`), `t1prep-run` (Python single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`.
 
 ## Project Structure
 
@@ -88,7 +88,7 @@ T1Prep/
 │   ├── README.md                   # Comprehensive script documentation
 │   ├── T1Prep                      # Main CLI entry point (bash; shipped to <venv>/bin)
 │   ├── PyCAT -> T1Prep             # Symlink; same CLI, PyCAT banner (logo() switches on $0)
-│   ├── T1Prep_gui                  # Launcher dev wrapper (installed: t1prep-gui)
+│   ├── T1Prep_gui                  # Launcher dev wrapper (installed: t1prep-gui, T1Prep_gui)
 │   ├── activate_env.sh             # Source to activate the venv
 │   ├── run_with_env.sh             # Run a Python script file with env/ (needs env/)
 │   ├── make_macos_apps.sh          # macOS .app bundles (installed: t1prep-make-apps)

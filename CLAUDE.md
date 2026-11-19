@@ -30,7 +30,7 @@ Run in background automatically:
 
 Entry points are installed into the environment's `bin/` (the canonical way to
 run T1Prep): `T1Prep` (bash orchestrator), `PyCAT` (symlink to `T1Prep`; same
-CLI, PyCAT startup banner), `t1prep-gui`, `t1prep-run` (Python
+CLI, PyCAT startup banner), `t1prep-gui` (also `T1Prep_gui`), `t1prep-run` (Python
 single-subject), `CAT_SurfView`, `CAT_VolView`, `CAT_PlotHistogram`, `CAT_PlotBoxplot`, `t1prep-make-apps`, `t1prep-download-models`, `t1prep-bbreg`. The
 `scripts/` folder
 is a source-tree/dev fallback and should not be put on `PATH`.
@@ -104,7 +104,7 @@ work without it, on the first interpreter that has T1Prep's requirements
 | `scripts/run_with_env.sh src/t1prep/gui/cat_surf_view.py` | Surface viewer from a checkout (installed: `CAT_SurfView`) |
 | `scripts/run_with_env.sh src/t1prep/gui/cat_vol_view.py` | Volume viewer from a checkout (installed: `CAT_VolView`) |
 | `scripts/make_macos_apps.sh` | Build macOS `.app` bundles (installed: `t1prep-make-apps`) |
-| `scripts/T1Prep_gui` | Launcher from a checkout (installed: `t1prep-gui`) |
+| `scripts/T1Prep_gui` | Launcher from a checkout (installed: `t1prep-gui`, `T1Prep_gui`) |
 
 See [ENVIRONMENT_USAGE.md](ENVIRONMENT_USAGE.md) for details.
 
