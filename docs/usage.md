@@ -169,8 +169,10 @@ The files are processed one after another; for parallel batches use
 `T1Prep --multi N`.
 
 `track=False` switches off the crash report (see [Telemetry](#telemetry)),
-and `nn_backend="tinygrad"` runs the networks on tinygrad (see
-[Neural networks](#neural-networks)).
+`nn_backend="tinygrad"` runs the networks on tinygrad (see
+[Neural networks](#neural-networks)), and `unified_seg=True` replaces them by
+CAT-Surface's unified segmentation (see
+[Unified segmentation](#unified-segmentation-experimental)).
 
 ## Telemetry
 Unless you opt out, T1Prep reports two things to its developers (Sentry,
@@ -243,6 +245,42 @@ A retrained network is exported with
 or a TorchScript archive) and placed in the model folder
 (`t1prep-download-models` prints it) under its name in
 `t1prep.nn.models.NETWORKS`.
+
+## Unified segmentation (experimental)
+`--unified-seg` (`use_unified_seg=1` in the defaults file, `unified_seg=True`
+in the Python API, *Unified segmentation* under Expert in `t1prep-gui`)
+replaces the three steps that run deepbet's and DeepMriPrep's networks --
+skull-stripping, affine registration and segmentation -- with the unified
+segmentation of [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface)
+(`cat_surf.vol_unified_seg`): SPM's model, a mixture of Gaussians per tissue
+class with a smooth bias field and tissue priors, whose priors are a series
+of shooting templates of six classes (GM, WM, CSF, bone, soft tissue, air)
+deformed onto the image by geodesic shooting. No network runs, and the
+network weights are not needed.
+
+It runs in two passes:
+
+1. The affine registration to MNI152NLin2009cAsym, on the scan as it came.
+2. The segmentation, on the scan denoised by T1Prep's SANLM filter (at the
+   resolution of the scan) and resampled onto the 0.5 mm grid on which the
+   networks segment, with the parameters estimated on voxels 2 mm apart and
+   a bias field of 30 mm FWHM; everything else keeps cat-surf's defaults.
+
+The brain mask is where the posteriors of GM, WM and CSF add up to at least
+0.5 (the largest component, its holes filled). Everything after the
+segmentation runs as it does by default: the bias correction from the label,
+the dura removal, LAS, the vessel correction, the non-cortical grey matter,
+the lesions, the shooting and the surfaces. With `--amap`, AMAP starts from
+the unified segmentation instead of the network's, as CAT12 starts it from
+SPM's. The report records the method, its settings and the volumes of all
+six classes under `software.segmentation`.
+
+It needs cat-surf 1.1.9 or newer and the six-class templates
+`Template_{0..4}_GS_6class.nii.gz` in `templates_MNI152NLin2009cAsym` (44 MB,
+stored as uint16 like CAT12's shooting templates). The templates are not in
+the PyPI package yet, so the option needs a source checkout.
+
+<!-- RESULTS -->
 
 ## Output Folder Structure and Naming Conventions
 
@@ -417,6 +455,13 @@ not, which makes it useful for seeing why a lesion was or was not found.
   T1Prep --amap sTRIO*.nii
 ```
 Process all files matching the pattern `'sTRIO*.nii'` and enable AMAP segmentation.
+
+```bash
+  T1Prep --unified-seg --amap sTRIO*.nii
+```
+Segment with CAT-Surface's unified segmentation instead of the networks and
+refine it with AMAP, as CAT12 does (see
+[Unified segmentation](#unified-segmentation-experimental)).
 
 ```bash
   T1Prep --skullstrip-only --out-dir test_folder sTRIO*.nii

@@ -36,6 +36,8 @@ T1Prep runs DeepMriPrep's segmentation networks and the skull-stripping networks
 
 An alternative approach (`--amap`) uses the DeepMriPrep segmentation to guide the bias field correction and the lesion detection, and as the initial estimate for the subsequent AMAP segmentation from CAT12.
 
+Experimental: `--unified-seg` replaces the networks, the skull-stripping and the affine registration by the unified segmentation of [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (`cat_surf.vol_unified_seg`), SPM's model with six-class shooting templates as priors; with `--amap` it is the initial estimate of AMAP, as in CAT12. See [Usage](docs/usage.md#unified-segmentation-experimental).
+
 The non-linear registration to MNI152NLin2009cAsym is not deepmriprep's warp network but CAT12's optimised geodesic shooting, ported to C in [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (`cat_surf.vol_shoot`). It carries manual cortical labels between subjects more accurately than the network: with CAT12's own setting, the default, as accurately as CAT12 itself, and with the more flexible setting of `--fmriprep` more accurately than CAT12 (see [the evaluation](evaluation/results/README.md)).
 
 Cortical surface reconstruction and thickness estimation use the algorithms from [CAT-Surface](https://github.com/ChristianGaser/CAT-Surface) (a core component of the [CAT12 toolbox](https://github.com/ChristianGaser/cat12)) via the [`cat-surf`](https://pypi.org/project/cat-surf/) Python package, which provides Python bindings to the CAT-Surface C library as pre-built wheels — no separate CAT-Surface binaries have to be installed.

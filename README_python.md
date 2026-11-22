@@ -129,6 +129,7 @@ run_t1prep(
     pial_white=True,         # estimate the pial and white surfaces as well
     lesions=False,
     amap=False,              # refine the network segmentation with AMAP
+    unified_seg=False,       # cat-surf's unified segmentation instead of the networks
     fmriprep=False,          # fMRIPrep-compatible results
     save_h5=False,           # deformations also as ANTs/ITK .h5
     fast=False,
