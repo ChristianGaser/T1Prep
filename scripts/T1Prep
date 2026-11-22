@@ -373,6 +373,9 @@ parse_args()
       --amap)
         use_amap=1
         ;;
+      --unified-seg)
+        use_unified_seg=1
+        ;;
       --bids)
         use_bids_naming=1
         nii_ext='nii.gz'
@@ -849,6 +852,7 @@ process()
       
       # Append options conditionally
       [ "${use_amap}" -eq 1 ] && cmd+=(--amap)
+      [ "${use_unified_seg:-0}" -eq 1 ] && cmd+=(--unified-seg)
       [ "${save_mwp}" -eq 1 ] && cmd+=(--mwp)
       [ "${save_wp}" -eq 1 ] && cmd+=(--wp)
       [ "${save_rp}" -eq 1 ] && cmd+=(--rp)
@@ -1099,7 +1103,7 @@ usage() {
     "          --no-pial-white  --hemi  --wp  --rp  --p  --csf  --lesions" \
     "          --atlas <LIST>  --atlas-surf <LIST>" \
     "" \
-    "${BOLD}Expert:${NC}   --initial-surface <FILE>  --amap" \
+    "${BOLD}Expert:${NC}   --initial-surface <FILE>  --amap  --unified-seg" \
     "          --thickness-method <NUMBER>  --no-correct-folding" \
     "          --pre-fwhm <NUMBER>  --no-vessel  --median-filter <NUMBER>" \
     "          --nn-backend <NAME>  --fast" \
@@ -1142,6 +1146,11 @@ nonlinear spatial registration is CAT12's geodesic shooting.
 An alternative approach (--amap) uses the DeepMriPrep segmentation to guide the bias 
 field correction and the lesion detection, and as the initial estimate for the 
 subsequent AMAP segmentation from CAT12. 
+
+The unified segmentation of CAT-Surface (--unified-seg) can replace the networks, the
+skull-stripping and the affine registration: SPM's unified segmentation, with six-class
+shooting templates as priors that geodesic shooting deforms onto the image. Together
+with --amap it is the initial estimate of AMAP, as in CAT12.
 
 Cortical surface reconstruction and thickness estimation are performed using Cortex 
 Analysis Tools for Surface, a core component of the CAT12 toolbox.
@@ -1415,6 +1424,18 @@ ${BOLD}${GREEN}Expert Options:${NC}
 
   --amap                      
       Use DeepMRIPrep segmentation only as initialization, followed by AMAP segmentation.
+      With --unified-seg the unified segmentation is the initialization.
+
+  --unified-seg
+      Skull-strip, register and segment with the unified segmentation of CAT-Surface
+      instead of the DeepMriPrep and deepbet networks and the affine registration:
+      SPM's model (Gaussians per class, a bias field, tissue priors) with six-class
+      shooting templates (GM, WM, CSF, bone, soft tissue, air) deformed onto the image
+      by geodesic shooting. The scan is denoised by SANLM, resampled onto the 0.5 mm
+      grid the networks segment on, and segmented there; the parameters are
+      estimated on voxels 2 mm apart, and the bias field has a FWHM of 30 mm.
+      The steps after the segmentation are the same. Experimental; needs
+      cat-surf >= 1.1.9.
 
   --nn-backend <NAME>
       Set the framework that runs the neural networks (default: $nn_backend):
