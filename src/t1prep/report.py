@@ -97,6 +97,7 @@ def write_t1prep_report(
     out_name: str,
     use_bids: bool,
     input_fname: str,
+    segmentation: dict = None,
 ) -> None:
     """Write a comprehensive T1Prep JSON report to the report directory.
 
@@ -116,6 +117,10 @@ def write_t1prep_report(
         out_name: Base name of the subject (no extension).
         use_bids: Whether to use BIDS-style output filenames.
         input_fname: Full path to the original input T1 file.
+        segmentation: What segmented the image when deepmriprep's networks
+            did not: ``--unified-seg``'s entry
+            (:func:`t1prep._unified_seg.report_entry`).  The report then
+            records it instead of the provenance of the network weights.
     """
     code_vars = get_filenames(use_bids, out_name, "", "", "", "")
 
@@ -194,7 +199,8 @@ def write_t1prep_report(
             "date": datetime.now().strftime("%Y%m%d-%H%M%S"),
             "system": system_str,
             "versions": _package_versions(),
-            "models": model_provenance(),
+            "segmentation": segmentation or {"method": "deepmriprep"},
+            "models": model_provenance() if segmentation is None else None,
         },
         "subjectmeasures": subjectmeasures,
         "qualitymeasures": qualitymeasures,

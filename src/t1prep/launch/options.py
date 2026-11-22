@@ -394,6 +394,11 @@ OPTIONS: Tuple[Option, ...] = (
            on="--amap", needs="seg",
            help="Use the network's segmentation as the starting estimate of "
                 "CAT12's AMAP segmentation instead of as the result."),
+    Option("unified_seg", "Unified segmentation", "expert",
+           variable="use_unified_seg", on="--unified-seg", needs="seg",
+           help="Skull-strip, register and segment with CAT-Surface's unified "
+                "segmentation (SPM's model, six-class templates) instead of "
+                "the networks. Experimental; needs cat-surf 1.1.9."),
     Option("vessel", "Vessel removal", "expert", variable="vessel",
            fallback=True, off="--no-vessel",
            help="Remove blood vessels from the tissue maps and the surface "
@@ -566,11 +571,16 @@ def irrelevant(values: Mapping[str, object]) -> Set[str]:
     """Keys of the options that have no effect with these *values*.
 
     An option that belongs to a step (:attr:`Option.needs`) does nothing
-    while that step is switched off.
+    while that step is switched off, and the network backend nothing while
+    the unified segmentation replaces the networks.
     """
     current = effective(values)
-    return {item.key for item in OPTIONS
-            if item.needs and not current.get(item.needs, True)}
+    unused = {item.key for item in OPTIONS
+              if item.needs and not current.get(item.needs, True)}
+    # The unified segmentation runs no network
+    if current.get("unified_seg"):
+        unused.add("nn_backend")
+    return unused
 
 
 def can_change(item: Option, default: object) -> bool:

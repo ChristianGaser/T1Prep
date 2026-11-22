@@ -93,6 +93,7 @@ from .vessels import (
 from .nn.backends import get_backend
 from .nn.models import prepare_model_files
 from .stages import Preprocess
+from . import _unified_seg as unified_seg
 from ._telemetry import init_crash_reporting
 from ._shoot import SHOOT_SETTINGS_FMRIPREP
 from .nogm import run_segment_nogm_conventional
@@ -212,6 +213,16 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--amap", action="store_true", help="Use AMAP segmentation."
+    )
+    parser.add_argument(
+        "--unified-seg",
+        action="store_true",
+        help=(
+            "Skull-strip, register and segment with the unified segmentation "
+            "of cat_surf (SPM's model with six-class shooting templates) "
+            "instead of deepbet's and deepmriprep's networks and the affine "
+            "registration."
+        ),
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Print progress output."
@@ -362,6 +373,62 @@ def save_skullstrip_only_outputs(
         binary = (np.asanyarray(mask.dataobj) > 0).astype(np.uint8)
         nib.save(nib.Nifti1Image(binary, mask.affine, header),
                  f"{mri_dir}/{mask_name}")
+
+
+def unified_segmentation(
+    t1: nib.Nifti1Image,
+    t1_raw: nib.Nifti1Image,
+    working_grid: nib.Nifti1Image,
+    skullstripped: bool,
+    verbose: bool,
+    debug: bool,
+    count: int,
+    end_count: int,
+):
+    """Unified segmentation on the working grid, with brain mask and skull-stripped image.
+
+    Takes the place of skull-stripping, affine registration and segmentation
+    (``--unified-seg``, :mod:`t1prep._unified_seg`): the affine comes from a
+    first pass on the unfiltered scan, the segmentation from a second one on
+    the denoised scan resampled onto the 0.5 mm working grid.  The
+    skull-stripped image is cut from the denoised one, as deepbet's is.
+
+    Returns:
+        ``(brain, mask, affine, brain_large, p0_large, info, count)``: the
+        skull-stripped image and its uint8 mask on the grid of *t1*, the
+        affine as ``affine_register`` returns it, the corrected brain and the
+        label map on the working grid, and the report entry.
+    """
+    if verbose:
+        count = shell_progress(count, end_count,
+            "Affine registration          ")
+
+    def next_step(_name):
+        nonlocal count
+        if verbose:
+            count = shell_progress(count, end_count,
+                "Unified segmentation         ")
+
+    seg = unified_seg.segment(
+        t1, t1_raw, working_grid, verbose=bool(verbose and debug), on_step=next_step
+    )
+
+    if verbose:
+        count = shell_progress(count, end_count,
+            "Brain mask                   ")
+    mask_large = unified_seg.brain_mask(seg.pop("prob"))
+    mask = unified_seg.to_native(mask_large, seg)
+    if skullstripped:
+        # Zeros carry no data and take their prior, which is brain wherever
+        # the template has brain: a tighter strip than that is kept.
+        stripped = np.asanyarray(
+            nib.as_closest_canonical(mask_from_skullstripped(t1)).dataobj) > 0
+        mask &= stripped
+        mask_large &= unified_seg.to_working_grid(stripped, seg)
+    brain, mask_img = unified_seg.native_brain(t1, mask)
+    affine, brain_large, p0_large = unified_seg.working_grid_maps(seg, mask_large)
+    info = unified_seg.report_entry(seg["params"], seg["affine_params"], seg["world"])
+    return brain, mask_img, affine, brain_large, p0_large, info, count
 
 
 def affine_register(
@@ -1290,11 +1357,17 @@ def run_segment():
     """Run the full segmentation workflow."""
 
     args = parse_arguments()
+    use_unified = args.unified_seg
 
-    # An unknown or uninstalled network backend (--nn-backend) is a setting,
-    # not a crash: one line, before any work and before crash reporting
+    # An unknown or uninstalled network backend (--nn-backend), or a cat-surf
+    # without the unified segmentation (--unified-seg), is a setting, not a
+    # crash: one line, before any work and before crash reporting.  The
+    # unified segmentation runs no network, so the backend does not matter.
     try:
-        get_backend()
+        if use_unified:
+            unified_seg.check_available()
+        else:
+            get_backend()
     except (ValueError, RuntimeError) as exc:
         sys.exit(f"ERROR: {exc}")
 
@@ -1329,16 +1402,27 @@ def run_segment():
     start = time.perf_counter()
     t1 = nib.load(t1_name)
 
-    # Ensure required model files are available
-    prepare_model_files()
+    # Ensure required model files are available (no network runs with
+    # --unified-seg)
+    if not use_unified:
+        prepare_model_files()
 
     # Preprocess volume and create preprocess object
     t1, t1_raw, prep, ras_affine = preprocess_input(t1, no_gpu, use_amap)
 
-    # Step 1: Skull-stripping (or skip)
-    if skip_skullstrip:
+    # Step 1: Skull-stripping (or skip).  With --unified-seg the brain mask
+    # comes out of the unified segmentation, which also gives the affine
+    # registration and the label map of steps 3 and 4.
+    segmentation_info = None
+    if use_unified:
+        (brain, mask, affine, brain_large, p0_large, segmentation_info,
+         count) = unified_segmentation(
+            t1, t1_raw, prep.affine_template, skip_skullstrip, verbose, debug,
+            count, end_count,
+        )
+    elif skip_skullstrip:
         if verbose:
-            count = shell_progress(count, end_count, 
+            count = shell_progress(count, end_count,
                 "Skull-stripping              ")
         brain = t1
         mask = mask_from_skullstripped(brain)
@@ -1350,16 +1434,17 @@ def run_segment():
             brain, mask, opts.use_bids, mri_dir, out_name, ext)
         return
 
-    # Step 2: Initial bias-correction that is beneficial for strong signal
-    # inhomogeneities (i.e. 7T data).  The fit subsamples every 5th voxel and
-    # median-filters with an even size, so it is run in RAS storage order as
-    # well: otherwise the storage order of the scan changed the result.
-    brain = in_ras_storage(brain, correct_bias_field)
+    if not use_unified:
+        # Step 2: Initial bias-correction that is beneficial for strong signal
+        # inhomogeneities (i.e. 7T data).  The fit subsamples every 5th voxel and
+        # median-filters with an even size, so it is run in RAS storage order as
+        # well: otherwise the storage order of the scan changed the result.
+        brain = in_ras_storage(brain, correct_bias_field)
 
-    # Step 3: Affine registration
-    affine, brain_large, mask_large, affine_loss, count = affine_register(
-        prep, brain, mask, verbose, count, end_count
-    )
+        # Step 3: Affine registration
+        affine, brain_large, mask_large, affine_loss, count = affine_register(
+            prep, brain, mask, verbose, count, end_count
+        )
 
     # Ensure that minimum of brain is not negative (which can happen after B-spline interpolation)
     brain_value = brain_large.get_fdata().copy()
@@ -1372,12 +1457,13 @@ def run_segment():
     del brain_value, mask_value  # the image owns the array now
 
     # Step 4: Segmentation
-    if verbose:
-        count = shell_progress(
-            count, end_count, "DeepMriPrep segmentation     ")
-    output_seg = prep.run_segment_brain(brain_large, mask_large)
-    p0_large = output_seg["p0_large"]
-    del output_seg, mask_large
+    if not use_unified:
+        if verbose:
+            count = shell_progress(
+                count, end_count, "DeepMriPrep segmentation     ")
+        output_seg = prep.run_segment_brain(brain_large, mask_large)
+        p0_large = output_seg["p0_large"]
+        del output_seg, mask_large
 
     # Due to B-spline interpolation we have to change values below zero
     p0_value = p0_large.get_fdata(caching="unchanged")  # no float64 cache
@@ -1635,7 +1721,10 @@ def run_segment():
     with open(f"{opts.report_dir}/{log_name}", "a") as f:
         f.write(text)
 
-    write_t1prep_report(opts.report_dir, out_name, opts.use_bids, t1_name)
+    write_t1prep_report(
+        opts.report_dir, out_name, opts.use_bids, t1_name,
+        segmentation=segmentation_info,
+    )
 
 
 if __name__ == "__main__":

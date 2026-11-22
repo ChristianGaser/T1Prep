@@ -118,8 +118,25 @@ class Preprocess:
         self.affine_template = affine_template
         self.warp_template = warp_template
         self.device = torch.device("cpu") if no_gpu else stage_device()
-        self.brain_extract = BrainExtraction(no_gpu)
-        self.brain_segment = BrainSegmentation(no_gpu)
+        self._no_gpu = no_gpu
+        self._brain_extract = None
+        self._brain_segment = None
+
+    # The networks are loaded on first use: ``--unified-seg`` runs neither,
+    # and their weights need not even be on disk then.
+    @property
+    def brain_extract(self) -> BrainExtraction:
+        """deepbet's skull-stripping networks."""
+        if self._brain_extract is None:
+            self._brain_extract = BrainExtraction(self._no_gpu)
+        return self._brain_extract
+
+    @property
+    def brain_segment(self) -> BrainSegmentation:
+        """deepmriprep's segmentation networks."""
+        if self._brain_segment is None:
+            self._brain_segment = BrainSegmentation(self._no_gpu)
+        return self._brain_segment
 
     def run_bet(self, t1):
         """Skull-strip *t1*: ``{"brain", "mask"}`` on its grid."""

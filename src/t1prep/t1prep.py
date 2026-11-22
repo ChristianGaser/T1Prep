@@ -179,6 +179,7 @@ def _build_segment_cmd(
     save_fmriprep: bool = False,
     save_h5: bool = False,
     use_amap: bool = False,
+    use_unified_seg: bool = False,
     use_bids: bool = False,
     gz: bool = False,
     verbose: bool = True,
@@ -205,6 +206,7 @@ def _build_segment_cmd(
             cmd.append(f)
 
     flag("--amap",            use_amap)
+    flag("--unified-seg",     use_unified_seg)
     flag("--mwp",             save_mwp)
     flag("--wp",              save_wp)
     flag("--rp",              save_rp)
@@ -376,6 +378,7 @@ def _process_single(
     p: bool = False,
     csf: bool = False,
     amap: bool = False,
+    unified_seg: bool = False,
     bids: bool = False,
     correct_folding: bool = True,
     fmriprep: bool = False,
@@ -457,6 +460,7 @@ def _process_single(
             save_fmriprep=fmriprep,
             save_h5=save_h5,
             use_amap=amap,
+            use_unified_seg=unified_seg,
             use_bids=bids,
             gz=gz,
             verbose=verbose,
@@ -623,6 +627,7 @@ def run_t1prep(
     # extra outputs
     lesions: bool = False,
     amap: bool = False,
+    unified_seg: bool = False,
     fmriprep: bool = False,
     save_h5: bool = False,
     # fast mode
@@ -720,7 +725,12 @@ def run_t1prep(
         detected lesions, 0 elsewhere.
     amap:
         Refine the segmentation with CAT12's AMAP, which starts from the
-        DeepMRIPrep segmentation.
+        DeepMRIPrep segmentation (or the unified one with *unified_seg*).
+    unified_seg:
+        Skull-strip, register and segment with CAT-Surface's unified
+        segmentation (SPM's model with six-class shooting templates) instead
+        of the DeepMRIPrep and deepbet networks and the affine registration.
+        Needs cat-surf >= 1.1.9.
     fmriprep:
         Save fMRIPrep-compatible outputs (deformation fields, dseg, etc.),
         registered with the setting for fMRIPrep: every scheduled
@@ -852,6 +862,7 @@ def run_t1prep(
             p=bool(p),
             csf=bool(csf),
             amap=bool(amap),
+            unified_seg=bool(unified_seg),
             bids=bool(bids),
             correct_folding=not no_correct_folding,
             fmriprep=bool(fmriprep),
@@ -978,6 +989,10 @@ def _build_parser() -> ArgumentParser:
                     help="Skip pial and white matter surface estimation")
     g3.add_argument("--amap", action="store_true",
                     help="Refine the DeepMRIPrep segmentation with CAT12's AMAP")
+    g3.add_argument("--unified-seg", action="store_true",
+                    help="Skull-strip, register and segment with CAT-Surface's "
+                         "unified segmentation instead of the DeepMRIPrep "
+                         "networks (needs cat-surf >= 1.1.9)")
     g3.add_argument("--nn-backend", metavar="NAME", choices=backend_names(),
                     help="Framework that runs the networks: torch or tinygrad "
                          "(experimental); default: T1PREP_NN_BACKEND, else torch")
@@ -1054,6 +1069,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         hemisphere=args.hemisphere,
         lesions=args.lesions,
         amap=args.amap,
+        unified_seg=args.unified_seg,
         fmriprep=args.fmriprep,
         save_h5=args.save_h5,
         fast=args.fast,
