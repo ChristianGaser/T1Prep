@@ -153,3 +153,10 @@ t1prep = [
     "data/templates_surfaces_fsLR/**",
 ]
 
+[tool.setuptools.exclude-package-data]
+# The six-class shooting templates of --unified-seg (44 MB as uint16) would
+# take the wheel (76 MB without them) over PyPI's 100 MB limit.  Until they
+# are downloaded on first use like the network weights, --unified-seg needs
+# a source checkout.
+t1prep = ["data/templates_MNI152NLin2009cAsym/Template_*_GS_6class.nii.gz"]
+
