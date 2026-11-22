@@ -137,6 +137,7 @@ run_t1prep(
 | `csf` | `bool` | Save CSF segmentation |
 | `lesions` | `bool` | Save WMH/lesion map |
 | `amap` | `bool` | Refine the network segmentation with CAT12's AMAP |
+| `unified_seg` | `bool` | Skull-strip, register and segment with CAT-Surface's unified segmentation instead of the networks (experimental) |
 | `skullstrip_only` | `bool` | Only run skull stripping then exit |
 | `skip_skullstrip` | `bool` | Skip skull stripping (pre-stripped input) |
 | `track` | `bool` | Report a crash of the segmentation (default: `True`) |
