@@ -280,7 +280,44 @@ It needs cat-surf 1.1.9 or newer and the six-class templates
 stored as uint16 like CAT12's shooting templates). The templates are not in
 the PyPI package yet, so the option needs a source checkout.
 
-<!-- RESULTS -->
+Measured on an M2 MacBook Air (volume pipeline only). On the simulated
+HR075 with a known ground truth (`evaluation/data/phantom`, SNR 25, bias
+field 45; its label comes from SPM12's unified segmentation, which favours
+this model over the networks):
+
+| Segmentation | Dice CSF/GM/WM | soft Dice CSF/GM/WM | label RMSE | Euler lh/rh |
+|---|---|---|---|---|
+| networks (default) | 0.834/0.930/0.955 | 0.798/0.886/0.930 | 0.266 | 146/218 |
+| `--unified-seg` (0.5 mm) | 0.858/0.950/0.968 | 0.843/0.916/0.949 | 0.246 | 442/558 |
+| unified at the resolution of the scan, label resampled | 0.871/0.945/0.963 | 0.836/0.906/0.943 | 0.247 | 402/460 |
+
+On nine real scans (0.5-1.3 mm, 1.5-7 T, an averaged scan, a defaced
+motion scan, an R1 map) the unified label agrees with the networks' at a
+median Dice of 0.83/0.90/0.94 (CSF/GM/WM), the run takes 154 instead of 99 s
+(median) and its memory peak is 2 GB lower (11.3 instead of 13.3 GB). Where
+the scan is unusual they part: on the motion scan the networks draw a smooth
+cortex with 808 ml GM, the unified segmentation a noisier one with 655 ml; on
+the R1 map 874 against 764 ml.
+
+The price of segmenting each 0.5 mm voxel on its own is topology: the
+partial volume label follows the intensity of every voxel, and the
+hemispheres' Euler numbers at the GM/WM boundary come out worse than the
+networks' on seven of the nine scans (median |EC_lh - 2| + |EC_rh - 2| 548
+against 260). With `--amap`, which classifies voxel by voxel as well, they are
+of the same order with either start (IXI199: 320/428 from the unified
+segmentation, 334/704 from the networks). A segmentation at the resolution of
+the scan with its label resampled has fewer defects, but was less accurate
+for GM and WM on the phantom (table).
+
+The surfaces show it too. On IXI199 (central surfaces and thickness, no
+spherical registration) the glued-sulci measure came out at 0.107/0.182
+(lh/rh) against 0.030/0.056 with the networks, and the cortex 0.1 mm thicker
+(mean 2.17 against 2.06 mm). With the label of the segmentation at the
+resolution of the scan it was the same (0.134/0.130, 2.20 mm), so this comes
+from the unified label itself, not from its resolution: it leaves less CSF in
+narrow sulci than the networks do. The thickness correction of PBT is
+calibrated for the networks' label (and set to zero for AMAP's), not for
+this one.
 
 ## Output Folder Structure and Naming Conventions
 
