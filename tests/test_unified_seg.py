@@ -303,6 +303,43 @@ class TestAnotherTemplateFolder(unittest.TestCase):
         self.assertEqual(seg["grid"].shape, grid.shape)
 
 
+class TestTheDeformation(unittest.TestCase):
+    """``deformation=True`` hands on what the library returns of the shooting."""
+
+    def run_segment(self, **kwargs):
+        calls = []
+
+        def fit(src, templates, mat, template_mat, **kw):
+            calls.append(kw)
+            out = {"prob": None, "label": None, "corrected": None,
+                   "params": {"affine": np.eye(4)}}
+            if kw.get("inverse"):
+                out.update(iy="iy", y="y", jac="jac")
+            return out
+
+        grid = nib.Nifti1Image(np.zeros((9, 11, 13), np.float32), np.diag([0.5, 0.5, 0.5, 1.0]))
+        data = np.ones((8, 9, 10), np.float32)
+        template_mat = np.diag([1.5, 1.5, 1.5, 1.0])
+        with mock.patch.object(useg, "check_available"), \
+             mock.patch.object(useg, "unified_templates", return_value=([], template_mat)), \
+             mock.patch.object(useg.cat_surf, "vol_unified_seg", fit, create=True):
+            seg = useg.segment(_las_image(data), _las_image(data), grid, **kwargs)
+        return seg, calls, template_mat
+
+    def test_it_is_not_computed_unless_asked_for(self):
+        seg, calls, _ = self.run_segment()
+        self.assertFalse(calls[1]["deformation"])
+        self.assertFalse(calls[1]["inverse"])
+        self.assertNotIn("iy", seg)
+
+    def test_the_second_pass_returns_it_with_the_matrix_of_the_templates(self):
+        seg, calls, template_mat = self.run_segment(deformation=True)
+        self.assertNotIn("inverse", calls[0])            # the affine pass has no use for it
+        self.assertTrue(calls[1]["deformation"] and calls[1]["inverse"])
+        self.assertEqual((seg["iy"], seg["y"], seg["jac"]), ("iy", "y", "jac"))
+        np.testing.assert_array_equal(seg["template_mat"], template_mat)
+
+
 class TestThePublicNames(unittest.TestCase):
     def test_las_and_the_module_are_exported(self):
         import t1prep
