@@ -1,6 +1,6 @@
 """The unified segmentation (``--unified-seg``) and how it is handed on.
 
-``t1prep._unified_seg`` replaces deepbet, the affine registration and
+``t1prep.unified_seg`` replaces deepbet, the affine registration and
 deepmriprep's networks by ``cat_surf.vol_unified_seg``.  The fit itself is
 CAT-Surface's and tested there; these tests hold what T1Prep adds: the
 affine in deepmriprep's convention, the brain mask, the storage order, and
@@ -8,7 +8,9 @@ how the option travels from the command lines to ``segment.py``.
 """
 
 import json
+import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,7 +26,7 @@ _SRC = _ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from t1prep import _unified_seg as useg  # noqa: E402
+from t1prep import unified_seg as useg  # noqa: E402
 from t1prep import report  # noqa: E402
 from t1prep import t1prep as orchestrator  # noqa: E402
 from t1prep.launch import options as opt  # noqa: E402
@@ -247,6 +249,69 @@ class TestAvailability(unittest.TestCase):
              mock.patch.object(useg, "resolve_template_file", side_effect=FileNotFoundError):
             with self.assertRaisesRegex(RuntimeError, "six-class"):
                 useg.check_available()
+
+    def test_a_folder_without_the_templates_is_named(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             mock.patch.object(useg, "cat_surf", mock.Mock(vol_unified_seg=None)):
+            with self.assertRaisesRegex(RuntimeError, "six-class.*" + re.escape(folder)):
+                useg.check_available(folder)
+
+
+class TestAnotherTemplateFolder(unittest.TestCase):
+    """``template_dir``: the templates of a caller that brings its own."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.folder = Path(self._tmp.name)
+        self.mat = np.diag([1.5, 1.5, 1.5, 1.0])
+        rng = np.random.default_rng(1)
+        for k, name in enumerate(useg.UNIFIED_TEMPLATES):
+            data = (rng.random((3, 4, 5, 6)) + k).astype(np.float32)
+            nib.save(nib.Nifti1Image(data, self.mat), self.folder / f"{name}.nii.gz")
+
+    def test_the_templates_are_read_from_it_and_normalised(self):
+        with mock.patch.object(useg, "resolve_template_file",
+                               side_effect=AssertionError("T1Prep's folder was asked")):
+            templates, mat = useg.unified_templates(self.folder)
+        self.assertEqual(len(templates), 5)
+        np.testing.assert_allclose(mat, self.mat)
+        for tpl in templates:
+            self.assertEqual(tpl.shape, (3, 4, 5, 6))
+            np.testing.assert_allclose(tpl.sum(-1), 1, rtol=1e-5)
+
+    def test_a_missing_template_is_not_looked_up_elsewhere(self):
+        (self.folder / f"{useg.UNIFIED_TEMPLATES[2]}.nii.gz").unlink()
+        with self.assertRaises(FileNotFoundError):
+            useg.unified_templates(self.folder)
+
+    def test_segment_hands_it_on_and_finds_the_working_grid_itself(self):
+        grid = nib.Nifti1Image(np.zeros((9, 11, 13), np.float32), np.diag([0.5, 0.5, 0.5, 1.0]))
+        data = np.ones((8, 9, 10), np.float32)
+
+        def fit(src, templates, mat, template_mat, **kwargs):
+            return {"prob": None, "label": None, "corrected": None, "params": {"affine": np.eye(4)}}
+
+        with mock.patch.object(useg, "check_available") as check, \
+             mock.patch.object(useg, "unified_templates", return_value=([], np.eye(4))) as load, \
+             mock.patch.object(useg, "default_working_grid", return_value=grid) as default, \
+             mock.patch.object(useg.cat_surf, "vol_unified_seg", fit, create=True):
+            seg = useg.segment(_las_image(data), _las_image(data), template_dir=self.folder)
+        check.assert_called_once_with(self.folder)
+        load.assert_called_once_with(self.folder)
+        default.assert_called_once_with()
+        self.assertEqual(seg["grid"].shape, grid.shape)
+
+
+class TestThePublicNames(unittest.TestCase):
+    def test_las_and_the_module_are_exported(self):
+        import t1prep
+        from t1prep import _intensity, apply_LAS
+
+        self.assertIs(apply_LAS, _intensity.apply_LAS)
+        self.assertIs(t1prep.unified_seg, useg)
+        self.assertIn("apply_LAS", t1prep.__all__)
+        self.assertIn("unified_seg", t1prep.__all__)
 
 
 @unittest.skipUnless(
