@@ -197,7 +197,7 @@ normalised = apply_LAS(brain, label)               # CSF 1/3, GM 2/3, WM 1
 
 | Name | Purpose |
 |---|---|
-| `unified_seg.segment(t1, t1_raw, working_grid=None, verbose=False, on_step=None, template_dir=None)` | Affine registration on the scan as it came, then the segmentation of the denoised scan on the working grid. Returns a dict with `label` (0 background, 1 CSF, 2 GM, 3 WM, partial volumes in between), `corrected` (denoised and bias-corrected, whole head), `prob` (posteriors of the six classes times 255), `affine`, `world`, `grid`, `native_mat`, `native_shape`, and `params` |
+| `unified_seg.segment(t1, t1_raw, working_grid=None, verbose=False, on_step=None, template_dir=None, deformation=False)` | Affine registration on the scan as it came, then the segmentation of the denoised scan on the working grid. Returns a dict with `label` (0 background, 1 CSF, 2 GM, 3 WM, partial volumes in between), `corrected` (denoised and bias-corrected, whole head), `prob` (posteriors of the six classes times 255), `affine`, `world`, `grid`, `native_mat`, `native_shape`, and `params`. With `deformation=True` also `iy` (for every voxel of the working grid the template voxel it maps to), `y` with its Jacobian determinant `jac`, and `template_mat`: what is needed to bring an atlas of the template space onto the working grid |
 | `unified_seg.default_working_grid()` | The 0.5 mm working grid `segment` uses when none is given |
 | `unified_seg.brain_mask(prob, threshold=0.5)` | Where GM, WM and CSF together reach the threshold: the largest component, its cavities filled |
 | `unified_seg.to_native(mask_large, seg)`, `unified_seg.to_working_grid(mask, seg)` | A mask between the working grid and the grid of the scan (RAS order) |
