@@ -240,7 +240,7 @@ def default_working_grid() -> nib.Nifti1Image:
 
 def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
             working_grid: nib.Nifti1Image = None, verbose: bool = False, on_step=None,
-            template_dir=None) -> dict:
+            template_dir=None, deformation: bool = False) -> dict:
     """Unified segmentation of the input on the 0.5 mm working grid.
 
     The scan goes in in RAS storage order: the lattices the affine and the
@@ -258,6 +258,9 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
             (progress reporting).
         template_dir: Folder with the six-class templates; default: T1Prep's
             template folder (see :func:`unified_templates`).
+        deformation: Also return the deformation between the working grid
+            and the templates, for callers that bring an atlas or another
+            map of the template space onto the working grid.
 
     Returns:
         A dict: ``affine`` (4x4, :func:`grid_affine`), ``prob`` (posteriors of
@@ -267,7 +270,12 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
         (that grid as an image), ``world`` (scan to template millimetres),
         ``native_mat`` and ``native_shape`` (the RAS-ordered grid of the
         scan), ``params`` and ``affine_params`` (cat-surf's summaries of the
-        two passes).
+        two passes).  With *deformation* also ``iy`` ((X, Y, Z, 3), for every
+        voxel of the working grid the template voxel it maps to, 0-based and
+        NaN where undefined), ``y`` (for every template voxel the voxel of
+        the working grid it pulls from) with its Jacobian determinant
+        ``jac``, and ``template_mat`` (voxel-to-world matrix of the
+        templates).
     """
     check_available(template_dir)
     if working_grid is None:
@@ -311,11 +319,18 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
         prob=True,
         label=True,
         corrected=True,
+        deformation=bool(deformation),
+        inverse=bool(deformation),
         verbose=int(verbose),
         **UNIFIED_SETTINGS,
     )
     del templates, on_grid
+    extra = {}
+    if deformation:
+        extra = {"iy": result["iy"], "y": result["y"], "jac": result["jac"],
+                 "template_mat": np.asarray(template_mat, dtype=np.float64)}
     return {
+        **extra,
         "affine": affine,
         "prob": result["prob"],
         "label": result["label"],
