@@ -10,7 +10,7 @@ if _sys.platform == "darwin":
     _os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     _os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 
 # What the package exports is imported on first use (PEP 562), not here:
 # ``utils`` pulls in torch, which costs about a second on every start -- of
