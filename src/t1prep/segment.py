@@ -93,7 +93,7 @@ from .vessels import (
 from .nn.backends import get_backend
 from .nn.models import prepare_model_files
 from .stages import Preprocess
-from . import _unified_seg as unified_seg
+from . import unified_seg
 from ._telemetry import init_crash_reporting
 from ._shoot import SHOOT_SETTINGS_FMRIPREP
 from .nogm import run_segment_nogm_conventional
@@ -388,7 +388,7 @@ def unified_segmentation(
     """Unified segmentation on the working grid, with brain mask and skull-stripped image.
 
     Takes the place of skull-stripping, affine registration and segmentation
-    (``--unified-seg``, :mod:`t1prep._unified_seg`): the affine comes from a
+    (``--unified-seg``, :mod:`t1prep.unified_seg`): the affine comes from a
     first pass on the unfiltered scan, the segmentation from a second one on
     the denoised scan resampled onto the 0.5 mm working grid.  The
     skull-stripped image is cut from the denoised one, as deepbet's is.

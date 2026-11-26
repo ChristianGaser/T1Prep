@@ -54,6 +54,8 @@ WM were less accurate than at 0.5 mm: soft Dice 0.906/0.943 against
 
 from __future__ import annotations
 
+import os
+
 import cat_surf
 import fill_voids
 import nibabel as nib
@@ -93,8 +95,23 @@ BRAIN_THRESHOLD = 0.5
 _CONNECTIVITY = np.ones((3, 3, 3), dtype=bool)
 
 
-def check_available() -> None:
-    """Raise if the unified segmentation cannot run: cat-surf too old, templates missing."""
+def _template_file(name: str, template_dir=None) -> str:
+    """Path of a six-class template, in *template_dir* or T1Prep's template folder."""
+    if template_dir is None:
+        return resolve_template_file(name, ".nii.gz")
+    path = os.path.join(os.fspath(template_dir), f"{name}.nii.gz")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Template file '{name}.nii.gz' not found in {template_dir}")
+    return path
+
+
+def check_available(template_dir=None) -> None:
+    """Raise if the unified segmentation cannot run: cat-surf too old, templates missing.
+
+    Args:
+        template_dir: Folder with the six-class templates; default: T1Prep's
+            template folder.
+    """
     if not hasattr(cat_surf, "vol_unified_seg"):
         raise RuntimeError(
             f"--unified-seg needs cat-surf >= {MIN_CAT_SURF}, but "
@@ -103,8 +120,13 @@ def check_available() -> None:
         )
     for name in UNIFIED_TEMPLATES:
         try:
-            resolve_template_file(name, ".nii.gz")
+            _template_file(name, template_dir)
         except FileNotFoundError:
+            if template_dir is not None:
+                raise RuntimeError(
+                    f"The unified segmentation needs the six-class shooting templates, "
+                    f"but {name}.nii.gz is not in {template_dir}."
+                ) from None
             raise RuntimeError(
                 f"--unified-seg needs the six-class shooting templates, but {name}.nii.gz "
                 "is not in T1Prep's template folder.  They are not part of the "
@@ -112,8 +134,12 @@ def check_available() -> None:
             ) from None
 
 
-def unified_templates():
+def unified_templates(template_dir=None):
     """Load the six-class shooting templates.
+
+    Args:
+        template_dir: Folder with ``Template_{0..4}_GS_6class.nii.gz``;
+            default: T1Prep's template folder.
 
     Returns:
         The five templates as float32 arrays (X, Y, Z, 6) in their stored
@@ -121,7 +147,7 @@ def unified_templates():
         classes of every voxel are renormalised to sum to one, which the
         rounding of the stored values may have upset by a few 1e-5.
     """
-    images = [nib.load(resolve_template_file(name, ".nii.gz")) for name in UNIFIED_TEMPLATES]
+    images = [nib.load(_template_file(name, template_dir)) for name in UNIFIED_TEMPLATES]
     templates = []
     for img in images:
         tpl = img.get_fdata(dtype=np.float32)
@@ -200,8 +226,21 @@ def affine_registration(data, mat, templates, template_mat, verbose=False):
     return np.asarray(result["params"]["affine"], dtype=np.float64), result["params"]
 
 
-def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image, working_grid: nib.Nifti1Image,
-            verbose: bool = False, on_step=None) -> dict:
+def default_working_grid() -> nib.Nifti1Image:
+    """T1Prep's 0.5 mm working grid, on which the segmentation is computed.
+
+    The grid of :attr:`t1prep.stages.preprocess.Preprocess.affine_template`:
+    deepmriprep's affine template with the geometry of its content.  No
+    network is loaded for it.
+    """
+    from .stages.preprocess import Preprocess
+
+    return Preprocess(no_gpu=True).affine_template
+
+
+def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
+            working_grid: nib.Nifti1Image = None, verbose: bool = False, on_step=None,
+            template_dir=None) -> dict:
     """Unified segmentation of the input on the 0.5 mm working grid.
 
     The scan goes in in RAS storage order: the lattices the affine and the
@@ -212,10 +251,13 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image, working_grid: nib.Nift
         t1: The input denoised by T1Prep's SANLM filter: what is segmented.
         t1_raw: The input as it came, on the grid of *t1*: what the affine
             is estimated from.
-        working_grid: The 0.5 mm working grid (``Preprocess.affine_template``).
+        working_grid: The 0.5 mm working grid; default: :func:`default_working_grid`
+            (``Preprocess.affine_template``).
         verbose: Print the stages and parameters of the fit.
         on_step: Called with ``"segmentation"`` between the two passes
             (progress reporting).
+        template_dir: Folder with the six-class templates; default: T1Prep's
+            template folder (see :func:`unified_templates`).
 
     Returns:
         A dict: ``affine`` (4x4, :func:`grid_affine`), ``prob`` (posteriors of
@@ -227,7 +269,9 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image, working_grid: nib.Nift
         scan), ``params`` and ``affine_params`` (cat-surf's summaries of the
         two passes).
     """
-    check_available()
+    check_available(template_dir)
+    if working_grid is None:
+        working_grid = default_working_grid()
     image = nib.as_closest_canonical(t1_raw)
     data = np.nan_to_num(image.get_fdata(dtype=np.float32))
     denoised = nib.as_closest_canonical(t1)
@@ -235,7 +279,7 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image, working_grid: nib.Nift
         raise ValueError("the denoised and the unfiltered input must share their grid")
     grid_img = nib.as_closest_canonical(working_grid)
     shape = grid_img.shape[:3]
-    templates, template_mat = unified_templates()
+    templates, template_mat = unified_templates(template_dir)
 
     world, affine_params = affine_registration(
         data, image.affine, templates, template_mat, verbose=verbose

@@ -119,7 +119,7 @@ def write_t1prep_report(
         input_fname: Full path to the original input T1 file.
         segmentation: What segmented the image when deepmriprep's networks
             did not: ``--unified-seg``'s entry
-            (:func:`t1prep._unified_seg.report_entry`).  The report then
+            (:func:`t1prep.unified_seg.report_entry`).  The report then
             records it instead of the provenance of the network weights.
     """
     code_vars = get_filenames(use_bids, out_name, "", "", "", "")

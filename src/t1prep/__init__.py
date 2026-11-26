@@ -27,6 +27,7 @@ _EXPORTS = {
     "get_filenames": "utils",
     "get_volume_native_space": "utils",
     "compute_dice_nifti": "metrics",
+    "apply_LAS": "_intensity",
 }
 
 
@@ -59,7 +60,9 @@ def __dir__():
 
 __all__ = [
     "cat_surf",
+    "unified_seg",
     "run_t1prep",
+    "apply_LAS",
     "progress_bar",
     "remove_file",
     "resample_and_save_nifti",

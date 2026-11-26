@@ -420,7 +420,16 @@ def _tissue_masks(seg0):
     )
 
 
-def global_intensity_norm(brain, seg, vx=None, verbose=False):
+def _given_peaks(peaks):
+    """*peaks* as a (CSF, GM, WM) tuple of floats, None where a peak is to be estimated."""
+    if peaks is None:
+        return (None, None, None)
+    if len(peaks) != 3:
+        raise ValueError("peaks must hold three values: CSF, GM and WM (None: estimate it)")
+    return tuple(None if v is None else float(v) for v in peaks)
+
+
+def global_intensity_norm(brain, seg, vx=None, verbose=False, peaks=None):
     """Global intensity normalisation, after CAT12's cat_main_gintnorm.
 
     Estimates one intensity peak per tissue and maps the image through those
@@ -438,6 +447,13 @@ def global_intensity_norm(brain, seg, vx=None, verbose=False):
     The mapping runs through a node list rather than a single linear scale,
     with a node above WM, so hyperintensities are compressed into a bounded
     range instead of extrapolating away.
+
+    ``peaks`` gives the intensity of pure CSF, GM and WM where it is known
+    already, e.g. from the mixture of Gaussians of a unified segmentation
+    (CAT12 hands LAS the GM mean of SPM's mixture as well); an entry that is
+    None is estimated as described.  The estimate and the model of one image
+    can differ by a few percent: on a 0.75 mm MPRAGE the GM peak estimated
+    here was 362.7, the GM mean of the mixture 380.0 (WM: 502.9 and 501.1).
 
     Returns
     -------
@@ -477,6 +493,16 @@ def global_intensity_norm(brain, seg, vx=None, verbose=False):
     csf = _median(sel_csf, c0)
     gm = _median(sel_gm, g0)
     wm = _median(sel_wm, w0)
+
+    given = _given_peaks(peaks)
+    if any(v is not None for v in given):
+        if not (csf < gm < wm):
+            csf, gm, wm = c0, g0, w0
+        csf, gm, wm = (e if v is None else v for v, e in zip(given, (csf, gm, wm)))
+        if not (csf < gm < wm):
+            raise ValueError(
+                f"peaks must increase from CSF to GM to WM, but are {csf:.4g}, {gm:.4g}, "
+                f"{wm:.4g} (given: {given}; the others are estimated)")
 
     # Contrast-to-noise, as in cat_main_gintnorm: local sigma inside the two
     # most homogeneous tissues over the smallest tissue gap.
@@ -526,7 +552,7 @@ def _map_through_nodes(src, csf, gm, wm):
 
 def fit_intensity_field(
     brain, seg, limit=None, steps=1000, spacing=1.0, stopthr=5e-4, use_prctile=3,
-    exclude=None
+    exclude=None, level=None
 ):
     """Estimate a smooth bias-like intensity field.
 
@@ -534,7 +560,9 @@ def fit_intensity_field(
     limit[1]]``, minus ``exclude``, and optionally trimmed to the 5-95th
     intensity percentile (``use_prctile``: 1 = lower, 2 = upper, 3 = both).
     It is returned on the image grid, scaled so that its median over the
-    fitted voxels matches the image's.
+    fitted voxels matches the image's -- or is ``level``, where the intensity
+    of the tissue is known: the field then only says how the tissue varies
+    over the image, not how bright it is.
     """
     if limit is None:
         limit = [2.75, 3]
@@ -573,13 +601,13 @@ def fit_intensity_field(
     field = np.exp(_fit_log_field(
         brain0, dataSub, maskSub, spacing, steps, stopthr=stopthr, center=False,
     ))
-    mean_raw = np.median(brain0[mask])
+    mean_raw = np.median(brain0[mask]) if level is None else float(level)
     mean_field = np.median(field[mask])
     field = field * (mean_raw / mean_field)
     return field
 
 
-def apply_LAS(t1, label, verbose=False):
+def apply_LAS(t1, label, verbose=False, peaks=None):
     """Apply Local Adaptive Segmentation to T1 images.
 
     Runs in two stages, following CAT12's order of gintnorm -> LAS: a global
@@ -591,12 +619,33 @@ def apply_LAS(t1, label, verbose=False):
     with the edge / vessel voxels excluded.  Previously the GM window ran to
     2.85 and so was fitted largely on GM/WM partial-volume voxels, which
     biased the GM reference towards WM and compressed the GM/WM contrast.
+
+    Args:
+        t1: The skull-stripped image.
+        label: A label map on its grid (CSF 1, GM 2, WM 3, partial volumes
+            in between).
+        verbose: Print the peaks of the global normalisation.
+        peaks: Intensity of pure CSF, GM and WM in *t1* where it is known,
+            e.g. ``(None, gm, None)`` with the GM mean of the mixture of
+            Gaussians the label map comes from; None, or an entry that is
+            None: estimated from the image and the label map.  A given peak
+            is where that tissue ends up: the global mapping runs through
+            it, and the local field of the tissue keeps its shape but is
+            scaled to that level instead of to the median of the voxels it
+            was fitted on.
+
+    Returns:
+        The image on the scale CSF 1/3, GM 2/3, WM 1, up to 5/3 for what is
+        brighter than WM.
     """
     eps = np.finfo(float).eps
     stopthr = 5e-4
     spacing = 1.0
 
-    t1, stats = global_intensity_norm(t1, label, verbose=verbose)
+    # Where a peak is given, the tissue sits at its nominal level after the
+    # global mapping, and its field is held there
+    levels = [None if v is None else (k + 1) / 3.0 for k, v in enumerate(_given_peaks(peaks))]
+    t1, stats = global_intensity_norm(t1, label, verbose=verbose, peaks=peaks)
 
     Ysrc = np.array(t1.dataobj, dtype=np.float64, order="C")  # one copy
     minYsrc = np.min(Ysrc)
@@ -611,15 +660,15 @@ def apply_LAS(t1, label, verbose=False):
 
     fit_csf = fit_intensity_field(
         t1, label, limit=[0.75, 1.25], spacing=spacing, stopthr=stopthr,
-        use_prctile=3, exclude=exclude_soft
+        use_prctile=3, exclude=exclude_soft, level=levels[0]
     )
     fit_gm = fit_intensity_field(
         t1, label, limit=[1.75, 2.25], spacing=spacing, stopthr=stopthr,
-        use_prctile=3, exclude=exclude_soft
+        use_prctile=3, exclude=exclude_soft, level=levels[1]
     )
     fit_wm = fit_intensity_field(
         t1, label, limit=[2.75, 3], spacing=spacing, stopthr=stopthr,
-        use_prctile=3, exclude=exclude_hard
+        use_prctile=3, exclude=exclude_hard, level=levels[2]
     )
 
     Yml = np.zeros_like(Ysrc, dtype=np.float32)
