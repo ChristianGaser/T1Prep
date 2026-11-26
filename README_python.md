@@ -12,6 +12,7 @@ requiring a separate `cat-surf` import.
 - [Installation](#installation)
 - [Package Layout](#package-layout)
 - [Pipeline: `run_t1prep()`](#pipeline-run_t1prep)
+- [Segmentation Steps: `t1prep.unified_seg`, `t1prep.apply_LAS`](#segmentation-steps-t1prepunified_seg-t1prepapply_las)
 - [CAT-Surface Interface: `t1prep.cat_surf`](#cat-surface-interface-t1prepcat_surf)
   - [I/O](#io)
   - [Surface Metrics](#surface-metrics)
@@ -57,6 +58,7 @@ t1prep/
 ├── __init__.py          # top-level exports
 ├── t1prep.py            # run_t1prep() – pipeline entry point
 ├── segment.py           # volume pipeline (python -m t1prep.segment)
+├── unified_seg.py       # unified segmentation on the working grid (--unified-seg)
 ├── surface_estimation.py  # surface pipeline per hemisphere
 ├── stages/              # skull-strip, affine registration, segmentation
 ├── nn/                  # the networks: weights, architectures, backends
@@ -166,6 +168,59 @@ run_t1prep(
     nn_backend=None,         # "torch" | "tinygrad"; default T1PREP_NN_BACKEND, else torch
 ) -> int                     # number of files that failed (0 = all succeeded)
 ```
+
+---
+
+## Segmentation Steps: `t1prep.unified_seg`, `t1prep.apply_LAS`
+
+Two steps of the volume pipeline can be called on their own, for tools that
+need the segmentation without the rest of T1Prep (a simulator that derives
+its ground truth from it, for instance): the unified segmentation of
+`--unified-seg` and LAS, the local intensity normalisation.
+
+```python
+import cat_surf
+import nibabel as nib
+import numpy as np
+from t1prep import apply_LAS, unified_seg
+
+raw = nib.as_closest_canonical(nib.load("sub-01_T1w.nii.gz"))
+data = np.nan_to_num(raw.get_fdata(dtype=np.float32))
+raw = nib.Nifti1Image(data, raw.affine)
+denoised = nib.Nifti1Image(cat_surf.vol_sanlm(data), raw.affine)
+
+seg = unified_seg.segment(denoised, raw)           # on the 0.5 mm working grid
+mask = unified_seg.brain_mask(seg["prob"])
+affine, brain, label = unified_seg.working_grid_maps(seg, mask)
+normalised = apply_LAS(brain, label)               # CSF 1/3, GM 2/3, WM 1
+```
+
+| Name | Purpose |
+|---|---|
+| `unified_seg.segment(t1, t1_raw, working_grid=None, verbose=False, on_step=None, template_dir=None)` | Affine registration on the scan as it came, then the segmentation of the denoised scan on the working grid. Returns a dict with `label` (0 background, 1 CSF, 2 GM, 3 WM, partial volumes in between), `corrected` (denoised and bias-corrected, whole head), `prob` (posteriors of the six classes times 255), `affine`, `world`, `grid`, `native_mat`, `native_shape`, and `params` |
+| `unified_seg.default_working_grid()` | The 0.5 mm working grid `segment` uses when none is given |
+| `unified_seg.brain_mask(prob, threshold=0.5)` | Where GM, WM and CSF together reach the threshold: the largest component, its cavities filled |
+| `unified_seg.to_native(mask_large, seg)`, `unified_seg.to_working_grid(mask, seg)` | A mask between the working grid and the grid of the scan (RAS order) |
+| `unified_seg.working_grid_maps(seg, mask_large)` | The affine as a DataFrame, and the corrected brain and the label map cut to the mask, as images |
+| `unified_seg.unified_templates(template_dir=None)` | The five six-class shooting templates and their voxel-to-world matrix |
+| `apply_LAS(t1, label, verbose=False, peaks=None)` | Global, then local intensity normalisation of a skull-stripped image, given a label map on its grid. Returns an image on the scale CSF 1/3, GM 2/3, WM 1, up to 5/3 for what is brighter than WM. `peaks` gives the intensity of pure CSF, GM and WM where it is known (None, or an entry that is None: estimated): the global mapping runs through a given peak and the local field of that tissue is held at its level |
+
+`seg["params"]` is what `cat_surf.vol_unified_seg` estimated: the mixture of
+Gaussians among it (`lkp`, the 0-based class of every Gaussian in the order of
+`classes`; `mg`, `mn`, `vr`) and the intensities of pure CSF, GM and WM of its
+partial volume model (`pve_mean`), on the scale of `corrected`.
+
+Left to itself, LAS estimates the three tissue peaks from the image and the
+label map. `peaks=(None, gm, None)` with the GM mean of the mixture makes
+that mean the intensity of pure GM instead, as CAT12 hands LAS the GM mean of
+SPM's mixture. The two differ: on a 0.75 mm MPRAGE the estimate was 362.7 and
+the mixture mean 380.0, which moved the GM/WM boundary of the normalised
+image by 0.14 mm and its WM volume by 7% (627 against 587 ml). T1Prep's own
+pipeline does not pass `peaks`.
+
+The six-class templates `Template_{0..4}_GS_6class.nii.gz` are not in the PyPI
+package. `template_dir` names a folder that holds them; without it they are
+taken from T1Prep's template folder, which has them in a source checkout only.
 
 ---
 

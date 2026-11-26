@@ -19,8 +19,9 @@ T1Prep/
 │       ├── nogm.py                 # Conventional non-cortical GM removal (replaces
 │       │                           # the DeepMRIPrep nogm model)
 │       ├── dura.py                 # Removes dura left outside the CSF by the skull-strip
-│       ├── _unified_seg.py         # --unified-seg: cat_surf.vol_unified_seg in place of
-│       │                           # skull-strip, affine and segmentation networks
+│       ├── unified_seg.py          # --unified-seg: cat_surf.vol_unified_seg in place of
+│       │                           # skull-strip, affine and segmentation networks;
+│       │                           # public, with apply_LAS (README_python.md)
 │       ├── _atlas.py               # Template lookup, atlas resampling, region masks
 │       ├── _intensity.py           # Bias-field fits, global intensity norm, LAS
 │       ├── _lesions.py             # WMH detection and tissue-map correction

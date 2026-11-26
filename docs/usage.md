@@ -174,6 +174,10 @@ The files are processed one after another; for parallel batches use
 CAT-Surface's unified segmentation (see
 [Unified segmentation](#unified-segmentation-experimental)).
 
+The unified segmentation and LAS can also be called on their own, as
+`t1prep.unified_seg.segment` and `t1prep.apply_LAS`; see
+[README_python.md](../README_python.md#segmentation-steps-t1prepunified_seg-t1prepapply_las).
+
 ## Telemetry
 Unless you opt out, T1Prep reports two things to its developers (Sentry,
 EU region):
@@ -278,7 +282,9 @@ six classes under `software.segmentation`.
 It needs cat-surf 1.1.9 or newer and the six-class templates
 `Template_{0..4}_GS_6class.nii.gz` in `templates_MNI152NLin2009cAsym` (44 MB,
 stored as uint16 like CAT12's shooting templates). The templates are not in
-the PyPI package yet, so the option needs a source checkout.
+the PyPI package yet, so the option needs a source checkout. From Python,
+`t1prep.unified_seg.segment(..., template_dir=DIR)` takes them from another
+folder.
 
 Measured on an M2 MacBook Air (volume pipeline only). On the simulated
 HR075 with a known ground truth (`evaluation/data/phantom`, SNR 25, bias
