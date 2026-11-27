@@ -182,6 +182,45 @@ class TestTwoPasses(unittest.TestCase):
         self.assertFalse(second["kwargs"]["sanlm"])     # denoised already
         self.assertEqual(seg["label"].shape, grid.shape)
 
+    def test_a_given_registration_skips_the_first_pass(self):
+        data = np.ones((4, 5, 6), np.float32)
+        world = np.diag([1.1, 1.1, 1.1, 1.0])
+        world[:3, 3] = [0.3, -0.2, 0.1]
+        calls = []
+
+        def fit(src, templates, mat, template_mat, **kwargs):
+            calls.append({"mat": np.array(mat), "kwargs": kwargs})
+            return {"prob": np.zeros(np.shape(src) + (6,), np.uint8), "label": np.array(src),
+                    "corrected": np.array(src), "params": {}}
+
+        grid = nib.Nifti1Image(np.zeros((9, 11, 13), np.float32), np.diag([0.5, 0.5, 0.5, 1.0]))
+        with mock.patch.object(useg, "check_available"), \
+             mock.patch.object(useg, "unified_templates", return_value=([], np.eye(4))), \
+             mock.patch.object(useg.cat_surf, "vol_unified_seg", fit, create=True):
+            seg = useg.segment(_las_image(data), _las_image(data), grid, world=world)
+        self.assertEqual(len(calls), 1)                     # the segmentation alone
+        self.assertEqual(calls[0]["kwargs"]["affine_mode"], "fixed")
+        np.testing.assert_array_equal(seg["world"], world)
+        self.assertIsNone(seg["affine_params"])
+        canonical = nib.as_closest_canonical(_las_image(data))
+        np.testing.assert_allclose(
+            seg["affine"], useg.grid_affine(world, canonical.affine, data.shape, grid.affine, grid.shape))
+        # the same as with the registration estimated, when it comes out as the given one
+        same, _, _ = self.run_segment(data, world)
+        np.testing.assert_allclose(seg["affine"], same["affine"])
+        np.testing.assert_allclose(seg["label"], same["label"])
+
+    def test_a_given_registration_is_checked(self):
+        data = np.ones((4, 5, 6), np.float32)
+        grid = nib.Nifti1Image(np.zeros((3, 3, 3), np.float32), np.eye(4))
+        bad = (np.eye(3), np.full((4, 4), np.nan), np.diag([1.0, 1.0, 0.0, 1.0]),
+               np.vstack([np.eye(4)[:3], [0, 0, 1, 1]]))
+        with mock.patch.object(useg, "check_available"), \
+             mock.patch.object(useg, "unified_templates", return_value=([], np.eye(4))):
+            for world in bad:
+                with self.subTest(world=world.tolist()), self.assertRaises(ValueError):
+                    useg.segment(_las_image(data), _las_image(data), grid, world=world)
+
     def test_both_inputs_share_their_grid(self):
         data = np.ones((4, 5, 6), np.float32)
         with mock.patch.object(useg, "check_available"):

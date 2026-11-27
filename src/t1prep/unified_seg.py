@@ -226,6 +226,18 @@ def affine_registration(data, mat, templates, template_mat, verbose=False):
     return np.asarray(result["params"]["affine"], dtype=np.float64), result["params"]
 
 
+def _checked_world(world) -> np.ndarray:
+    """A registration handed in by the caller, as a 4x4 float64 array, or an error."""
+    world = np.asarray(world, dtype=np.float64)
+    if world.shape != (4, 4) or not np.all(np.isfinite(world)):
+        raise ValueError(f"world must be a finite 4x4 matrix, not one of shape {world.shape}")
+    if not np.allclose(world[3], [0.0, 0.0, 0.0, 1.0]):
+        raise ValueError("world must be an affine matrix: its last row is 0 0 0 1")
+    if abs(np.linalg.det(world[:3, :3])) < 1e-6:
+        raise ValueError("world is singular")
+    return world
+
+
 def default_working_grid() -> nib.Nifti1Image:
     """T1Prep's 0.5 mm working grid, on which the segmentation is computed.
 
@@ -240,7 +252,7 @@ def default_working_grid() -> nib.Nifti1Image:
 
 def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
             working_grid: nib.Nifti1Image = None, verbose: bool = False, on_step=None,
-            template_dir=None, deformation: bool = False) -> dict:
+            template_dir=None, deformation: bool = False, world=None) -> dict:
     """Unified segmentation of the input on the 0.5 mm working grid.
 
     The scan goes in in RAS storage order: the lattices the affine and the
@@ -261,6 +273,13 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
         deformation: Also return the deformation between the working grid
             and the templates, for callers that bring an atlas or another
             map of the template space onto the working grid.
+        world: The affine registration of this scan, from scan to template
+            millimetres, as :func:`affine_registration` returns it; the
+            first pass is then skipped.  For a caller that needs the
+            registration before it can choose the working grid, e.g. a grid
+            along the axes of the scan, which has to be handed over in
+            template millimetres; it would otherwise run twice.  Default:
+            estimated here.
 
     Returns:
         A dict: ``affine`` (4x4, :func:`grid_affine`), ``prob`` (posteriors of
@@ -270,7 +289,7 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
         (that grid as an image), ``world`` (scan to template millimetres),
         ``native_mat`` and ``native_shape`` (the RAS-ordered grid of the
         scan), ``params`` and ``affine_params`` (cat-surf's summaries of the
-        two passes).  With *deformation* also ``iy`` ((X, Y, Z, 3), for every
+        two passes; ``affine_params`` is None when *world* was given).  With *deformation* also ``iy`` ((X, Y, Z, 3), for every
         voxel of the working grid the template voxel it maps to, 0-based and
         NaN where undefined), ``y`` (for every template voxel the voxel of
         the working grid it pulls from) with its Jacobian determinant
@@ -289,9 +308,12 @@ def segment(t1: nib.Nifti1Image, t1_raw: nib.Nifti1Image,
     shape = grid_img.shape[:3]
     templates, template_mat = unified_templates(template_dir)
 
-    world, affine_params = affine_registration(
-        data, image.affine, templates, template_mat, verbose=verbose
-    )
+    if world is None:
+        world, affine_params = affine_registration(
+            data, image.affine, templates, template_mat, verbose=verbose
+        )
+    else:
+        world, affine_params = _checked_world(world), None
     affine = grid_affine(world, image.affine, data.shape, grid_img.affine, shape)
     if on_step is not None:
         on_step("segmentation")
